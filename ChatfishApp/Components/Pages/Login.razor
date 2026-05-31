@@ -1,0 +1,34 @@
+@page "/login"
+@using Services
+@rendermode InteractiveServer
+@inject MagicLinkService MagicLinks
+@inject NavigationManager Nav
+
+<h3>Login</h3>
+
+@if (sent)
+{
+    <p>Check your email for your magic login link.</p>
+}
+else
+{
+    <input @bind="email" placeholder="Enter your email" />
+    <button @onclick="SendLink">Send Magic Link</button>
+}
+
+@code {
+    string email = "";
+    bool sent = false;
+
+    private async Task SendLink()
+    {
+        string? token = await MagicLinks.CreateMagicLinkTokenAsync(email);
+
+        // In production you would send an email.
+        // For now, we just navigate directly:
+        Nav.NavigateTo($"/magic-login?token={token}", forceLoad: true);
+
+
+        sent = true;
+    }
+}

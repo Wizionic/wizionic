@@ -1,0 +1,132 @@
+# =============================================================================
+# .NET + Blazor + Entity Framework + SQLite .gitignore
+# =============================================================================
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Visual Studio Code
+.vscode/
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Build artifacts
+*.dll
+*.exe
+*.pdb
+*.mdb
+*.cache
+*.ilk
+*.meta
+*.obj
+*.pch
+*.pdb
+*.pgc
+*.pgd
+*.rsp
+*.scc
+*.sdf
+*.cachefile
+*.opendb
+*.opensdf
+*.suo
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.log
+*.vspscc
+*.vssscc
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# .NET Core / .NET 5+
+project.assets.json
+project.nuget.cache
+*.nuget.props
+*.nuget.targets
+
+# ASP.NET / Blazor
+wwwroot/_framework/
+wwwroot/_content/
+wwwroot/_blazor/
+
+# Entity Framework Migrations (optional - most teams keep these)
+# Migrations/
+
+# Database files (SQLite)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+chatfish.db
+
+# User secrets
+secrets.json
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+# Publish output
+publish/
+*.publish.xml
+*.publishsettings
+
+# Grok / Worktree tooling artifacts
+.kilo/
+.kilo-*/
+
+# Misc
+*.bak
+*.tmp
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# Others
+*.swp
+*~
+*.orig
+*.diff
+*.patch
+
+# Windows
+$RECYCLE.BIN/

@@ -1,0 +1,244 @@
+@page "/chat"
+@page "/chat/{ConversationId:guid?}"
+
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using Markdig
+@using ChatfishApp.Services
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Authorization
+@inject ConversationService Conversations
+@inject AuthenticationStateProvider Auth
+@inject Microsoft.JSInterop.IJSRuntime JS
+@attribute [Authorize]
+
+<link href="css/chat.css" rel="stylesheet" />
+
+<div class="chat-wrapper">
+    <div class="chat-container" @ref="chatContainer" id="chat-container">
+        @foreach (var msg in messages)
+        {
+            <div class="message-row">
+                @if (msg.User == currentUserEmail)
+                {
+                    <div class="message-me">@((MarkupString)msg.Content)</div>
+                }
+                else
+                {
+                    <div class="message-bot">
+                        <div class="chat-markdown">
+                            @((MarkupString)msg.Content)
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (isTyping)
+        {
+            <div class="message-row">
+                <div class="message-bot typing">ChatFish is thinking<span class="dots">...</span></div>
+            </div>
+        }
+    </div>
+
+    <!-- === COMPACT SEAMLESS INPUT BAR === -->
+    <div class="input-area">
+        <div class="input-container">
+            <button class="action-btn" @onclick="NewConversation" title="New Chat">
+                <i class="bi bi-plus-circle"></i>
+            </button>
+
+            <select @bind="selectedModel" class="model-selector">
+                @foreach (var m in modelList)
+                {
+                    <option value="@m.Id">@m.Icon @m.Label</option>
+                }
+            </select>
+
+            <div class="message-wrapper flex-grow-1">
+                <textarea @ref="messageTextarea"
+                          @bind="message"
+                          @onkeydown="HandleKey"
+                          @oninput="ResizeTextarea"
+                          placeholder="Message ChatFish..."
+                          class="message-input"
+                          rows="3" />
+            </div>
+
+            <button class="send-btn" @onclick="Send" disabled="@string.IsNullOrWhiteSpace(message)">
+                <i class="bi bi-arrow-up-circle-fill"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid? ConversationId { get; set; }
+
+    Guid? activeConversationId;
+
+    string? currentUserEmail;
+    string message = "";
+    string selectedModel = "llama-3.1-8b-instant";
+    bool isTyping = false;
+
+    private ElementReference chatContainer;
+    private ElementReference messageTextarea;
+    private bool _hasRendered = false;
+
+    List<ChatMessage> messages = new();
+
+    record ChatMessage(string User, string Content);
+
+    class ModelInfo
+    {
+        public string Id { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public string Label { get; set; } = "";
+    }
+
+    List<ModelInfo> modelList = new()
+    {
+        new() { Id = "llama-3.1-8b-instant", Icon = "⚡", Label = "Llama 3.1 8B" },
+        new() { Id = "llama-3.3-70b-versatile", Icon = "🧠", Label = "Llama 3.3 70B" },
+        new() { Id = "qwen/qwen3-32b", Icon = "🐉", Label = "Qwen3 32B" },
+        new() { Id = "openai/gpt-oss-20b", Icon = "🔧", Label = "GPT-OSS 20B" },
+        new() { Id = "openai/gpt-oss-120b", Icon = "🔧", Label = "GPT-OSS 120B" },
+        new() { Id = "meta-llama/llama-4-scout-17b-16e-instruct", Icon = "🦙", Label = "Llama 4 Scout" },
+        new() { Id = "allam-2-7b", Icon = "🪶", Label = "Allam 2 7B" }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        currentUserEmail = authState.User.Identity?.Name;
+
+        if (ConversationId.HasValue)
+        {
+            activeConversationId = ConversationId.Value;
+            await LoadConversation(activeConversationId.Value);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ConversationId.HasValue && ConversationId.Value != activeConversationId)
+        {
+            await LoadConversation(ConversationId.Value);
+        }
+    }
+
+    async Task LoadConversation(Guid id)
+    {
+        activeConversationId = id;
+
+        var msgs = await Conversations.GetConversationMessagesAsync(id);
+
+        messages = msgs
+            .OrderBy(m => m.Timestamp)
+            .Select(m =>
+            {
+                var user = m.Role == "user" ? currentUserEmail! : "ChatFish";
+                return new ChatMessage(user, FormatMessage(m.Content));
+            })
+            .ToList();
+
+        StateHasChanged();           // let the UI render first
+        await ScrollToBottom();      // safe scroll after render
+    }
+
+    async Task HandleKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await Send();
+    }
+
+    async Task ResizeTextarea()
+    {
+        try { await JS.InvokeVoidAsync("resizeChatTextarea", messageTextarea); }
+        catch { /* ignore during initial render */ }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+        _hasRendered = true;
+        if (firstRender || messages.Any() || isTyping)
+            await ScrollToBottom();
+    }
+
+    async Task Send()
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        if (!activeConversationId.HasValue)
+        {
+            activeConversationId = await Conversations.StartNewConversationAsync();
+        }
+
+        var convoId = activeConversationId.Value;
+
+        var formattedUser = FormatMessage(message);
+        messages.Add(new ChatMessage(currentUserEmail!, formattedUser));
+
+        // Placeholder bot message
+        var botIndex = messages.Count;
+        messages.Add(new ChatMessage("ChatFish", ""));
+
+        isTyping = true;
+        StateHasChanged();
+
+        var accumulated = "";
+
+        await foreach (var partial in Conversations.StreamMessageAsync(convoId, message, selectedModel))
+        {
+            accumulated = partial;
+            messages[botIndex] = new ChatMessage("ChatFish", FormatMessage(accumulated));
+            StateHasChanged();
+            await ScrollToBottom();   // scroll during streaming
+        }
+
+        isTyping = false;
+        message = "";
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        await ScrollToBottom();
+        StateHasChanged();
+    }
+
+    async Task NewConversation()
+    {
+        activeConversationId = await Conversations.StartNewConversationAsync();
+        messages.Clear();
+        isTyping = false;
+        message = "";
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        StateHasChanged();
+        await ScrollToBottom();
+    }
+
+    async Task ScrollToBottom()
+    {
+        if (!_hasRendered) return;
+        await Task.Delay(80);
+        try
+        {
+            await JS.InvokeVoidAsync("scrollChatToBottom");
+        }
+        catch { /* ignore during hot reload / initial render */ }
+    }
+
+    string FormatMessage(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "";
+
+        var pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .UseEmojiAndSmiley()
+            .Build();
+
+        return Markdown.ToHtml(raw, pipeline);
+    }
+}
