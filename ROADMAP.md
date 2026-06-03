@@ -142,6 +142,8 @@ Primary goals:
 
 **Current State:** Preparation and intent only (visible in the roadmap and some csproj/Program.cs wiring). The `Microsoft.AspNetCore.Components.WebAssembly.Server` package + `AddInteractiveWebAssemblyComponents` + debug support exist, but `Routes.razor` globally forces `@rendermode InteractiveServer`, only server render mode is mapped in `Program.cs`, there is no Client/WASM project or shared RCL yet, and there is zero client-side persistence (no LocalStorage usage for chats/keys at all — everything goes through server SQLite via services). AI is always server-proxied. JS interop exists only for UX helpers (resize/scroll in MainLayout + Chat). This is the gap between the "privacy-first, LocalStorage by default" vision and today's server-centric reality.
 
+**Note (July 2026):** A safe parallel WASM implementation was started in a separate ChatfishApp.Client project (modeled after initial template in bak). Core chat functionality (UI, local multi-convo history in browser storage, model selector, Ollama direct AI calls with streaming) is being built in new files (e.g. WasmChat.razor) **without modifying the server Chat.razor**. This allows testing local-first while keeping the server path deployable as fallback. See worktree for the Client project.
+
 **Goal:** Move toward (and deliver) the true local-first architecture in a pure browser client. Conversations live encrypted in the browser only. Sync only among the user's local clients/browsers/profiles — the central server never sees or stores chat history. Local models (Ollama) are direct and first-class. Reuse as much of the existing Blazor investment as possible. Minimal (or optional thin-proxy) server involvement for the chat experience itself.
 
 **Key Tasks**

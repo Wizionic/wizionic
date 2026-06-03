@@ -1,0 +1,379 @@
+@page "/wasm-chat"
+
+@using Markdig
+@using ChatfishApp.Contracts
+@using Microsoft.JSInterop
+
+@inject IJSRuntime JS
+@inject HttpClient Http
+
+<link href="/css/chat.css" rel="stylesheet" />
+
+<div class="chat-wrapper">
+    <div style="padding: 0.5rem; background: #f8f9fa; border-bottom: 1px solid #ddd; font-size: 0.8em;">
+        Local Convos: 
+        @foreach (var c in localConvos.OrderByDescending(x => x.LastUpdated).Take(5))
+        {
+            <button @onclick="() => SwitchConvo(c.Id)" style="margin-right:4px; font-size:0.7em;">@(c.Title.Length > 15 ? c.Title.Substring(0,15)+"..." : c.Title)</button>
+        }
+        <button @onclick="NewConversation" style="font-size:0.7em;">+ New</button>
+    </div>
+    <div class="chat-container" @ref="chatContainer" id="chat-container">
+        @foreach (var msg in messages)
+        {
+            <div class="message-row">
+                @if (msg.User == currentUser)
+                {
+                    <div class="message-me">
+                        @((MarkupString)msg.Content)
+                        @if (msg.Timestamp.HasValue)
+                        {
+                            <div style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
+                                @msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm")
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="message-bot">
+                        <div class="chat-markdown">
+                            @((MarkupString)msg.Content)
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(msg.ModelUsed))
+                        {
+                            <div class="model-label" style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
+                                via @msg.ModelUsed
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @if (isTyping)
+        {
+            <div class="message-row">
+                <div class="message-bot typing">ChatFish is thinking<span class="dots">...</span></div>
+            </div>
+        }
+    </div>
+
+    <!-- === COMPACT SEAMLESS INPUT BAR === -->
+    <div class="input-area">
+        <div class="input-container">
+            <button class="action-btn" @onclick="NewConversation" title="New Chat">
+                <i class="bi bi-plus-circle"></i>
+            </button>
+
+            <select @bind="selectedModel" class="model-selector">
+                @foreach (var group in modelList.GroupBy(m => m.ProviderName))
+                {
+                    <optgroup label="@group.Key">
+                        @foreach (var m in group)
+                        {
+                            <option value="@m.Id">@m.Icon @m.Label</option>
+                        }
+                    </optgroup>
+                }
+            </select>
+
+            @if (CurrentModelSupportsTools)
+            {
+                <small style="font-size:0.65em; color:#888; margin-left:0.4rem; white-space:nowrap;" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information.">
+                    tools enabled
+                </small>
+            }
+
+            <div class="message-wrapper flex-grow-1">
+                <textarea @ref="messageTextarea"
+                          @bind="message"
+                          @onkeydown="HandleKey"
+                          @oninput="ResizeTextarea"
+                          placeholder="Message ChatFish..."
+                          class="message-input"
+                          rows="3" />
+            </div>
+
+            <button class="send-btn" @onclick="Send" disabled="@(isSending || string.IsNullOrWhiteSpace(message))">
+                <i class="bi bi-arrow-up-circle-fill"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    string currentUser = "LocalUser";
+    string message = "";
+    string selectedModel = "ollama/llama3"; // maps to local ollama model 'llama3'
+    bool isTyping = false;
+    bool isSending = false;
+
+    private bool CurrentModelSupportsTools => true; // for demo
+
+    private ElementReference chatContainer;
+    private ElementReference messageTextarea;
+    private bool _hasRendered = false;
+
+    List<ChatMessage> messages = new();
+
+    record ChatMessage(string User, string Content, string? ModelUsed = null, DateTime? Timestamp = null);
+
+    class ModelInfo
+    {
+        public string Id { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public string Label { get; set; } = "";
+        public string ProviderName { get; set; } = "";
+    }
+
+    List<ModelInfo> modelList = new()
+    {
+        new ModelInfo { Id = "ollama/llama3", Icon = "🦙", Label = "Llama 3 (Ollama)", ProviderName = "Ollama" },
+        new ModelInfo { Id = "ollama/mistral", Icon = "🌪️", Label = "Mistral (Ollama)", ProviderName = "Ollama" },
+        // Add more or load from catalog
+    };
+
+    // Local history using JS localStorage - supports multiple convos
+    List<LocalConvo> localConvos = new();
+    string? activeConvoId;
+
+    record LocalConvo(string Id, string Title, DateTime LastUpdated);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrEmpty(selectedModel) && modelList.Any())
+            selectedModel = modelList.First().Id;
+
+        await LoadLocalHistory();
+    }
+
+    async Task LoadLocalHistory()
+    {
+        var convosJson = await JS.InvokeAsync<string>("localStorage.getItem", "wasmchat-convos");
+        if (!string.IsNullOrEmpty(convosJson))
+        {
+            localConvos = System.Text.Json.JsonSerializer.Deserialize<List<LocalConvo>>(convosJson) ?? new();
+        }
+
+        var lastId = await JS.InvokeAsync<string>("localStorage.getItem", "wasmchat-last-convo");
+        if (!string.IsNullOrEmpty(lastId) && localConvos.Any(c => c.Id == lastId))
+        {
+            activeConvoId = lastId;
+            await LoadConversation(lastId);
+        }
+        else if (localConvos.Any())
+        {
+            activeConvoId = localConvos.OrderByDescending(c => c.LastUpdated).First().Id;
+            await LoadConversation(activeConvoId);
+        }
+        else
+        {
+            await NewConversation();
+        }
+    }
+
+    async Task LoadConversation(string id)
+    {
+        activeConvoId = id;
+        var json = await JS.InvokeAsync<string>("localStorage.getItem", $"wasmchat-convo-{id}");
+        messages.Clear();
+        if (!string.IsNullOrEmpty(json))
+        {
+            messages = System.Text.Json.JsonSerializer.Deserialize<List<ChatMessage>>(json) ?? new();
+        }
+        StateHasChanged();
+        await ScrollToBottom();
+    }
+
+    async Task HandleKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey && !isSending)
+            await Send();
+    }
+
+    async Task ResizeTextarea()
+    {
+        try { await JS.InvokeVoidAsync("resizeChatTextarea", messageTextarea); }
+        catch { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+        _hasRendered = true;
+        if (firstRender || messages.Any() || isTyping)
+            await ScrollToBottom();
+    }
+
+    async Task Send()
+    {
+        if (isSending || string.IsNullOrWhiteSpace(message))
+            return;
+
+        isSending = true;
+
+        var currentMessage = message;
+        message = "";
+
+        if (string.IsNullOrEmpty(activeConvoId))
+        {
+            activeConvoId = Guid.NewGuid().ToString();
+            await JS.InvokeVoidAsync("localStorage.setItem", "wasmchat-last-convo", activeConvoId);
+        }
+
+        var formattedUser = FormatMessage(currentMessage);
+        messages.Add(new ChatMessage(currentUser, formattedUser, null, DateTime.UtcNow));
+
+        var botIndex = messages.Count;
+        messages.Add(new ChatMessage("ChatFish", "", selectedModel, DateTime.UtcNow));
+
+        isTyping = true;
+        StateHasChanged();
+
+        var accumulated = "";
+
+        try
+        {
+            // TODO: Call real client AI here (Ollama direct for now)
+            // For MVP, simulate a response or call via http if possible
+            accumulated = await SimulateOrCallOllama(currentMessage);
+            
+            var currentModel = messages[botIndex].ModelUsed;
+            var currentTs = messages[botIndex].Timestamp;
+            messages[botIndex] = new ChatMessage("ChatFish", FormatMessage(accumulated), currentModel, currentTs);
+            StateHasChanged();
+            await ScrollToBottom();
+
+            // Save to local
+            await SaveCurrentConvo();
+        }
+        finally
+        {
+            isTyping = false;
+            isSending = false;
+            try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+            await ScrollToBottom();
+            StateHasChanged();
+        }
+    }
+
+    async Task<string> SimulateOrCallOllama(string userMsg)
+    {
+        try
+        {
+            // Basic call to Ollama OpenAI compat endpoint (assumes Ollama running on localhost:11434)
+            // For production WASM, handle CORS (run browser with flags or use proxy)
+            var ollamaModel = selectedModel.Contains("ollama/") ? selectedModel.Split('/')[1] : "llama3";
+            var request = new
+            {
+                model = ollamaModel,
+                messages = new[]
+                {
+                    new { role = "user", content = userMsg }
+                },
+                stream = false
+            };
+
+            var response = await Http.PostAsJsonAsync("http://localhost:11434/v1/chat/completions", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return $"Ollama call failed ({response.StatusCode}). Is Ollama running? Try: ollama run llama3";
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<OllamaChatResponse>();
+            return result?.choices?.FirstOrDefault()?.message?.content ?? "No response from Ollama.";
+        }
+        catch (Exception ex)
+        {
+            return $"Error calling Ollama: {ex.Message}. Ensure Ollama is running locally (http://localhost:11434).";
+        }
+    }
+
+    // Minimal response models for Ollama /v1/chat/completions
+    private class OllamaChatResponse
+    {
+        public List<Choice>? choices { get; set; }
+    }
+    private class Choice
+    {
+        public Message? message { get; set; }
+    }
+    private class Message
+    {
+        public string? content { get; set; }
+    }
+
+    async Task NewConversation()
+    {
+        activeConvoId = Guid.NewGuid().ToString();
+        await JS.InvokeVoidAsync("localStorage.setItem", "wasmchat-last-convo", activeConvoId);
+        messages.Clear();
+        isTyping = false;
+        message = "";
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        StateHasChanged();
+        await ScrollToBottom();
+        await SaveCurrentConvo();
+    }
+
+    async Task SwitchConvo(string id)
+    {
+        if (activeConvoId != id)
+        {
+            await SaveCurrentConvo(); // save current first
+            await LoadConversation(id);
+        }
+    }
+
+    async Task ScrollToBottom()
+    {
+        if (!_hasRendered) return;
+        await Task.Delay(80);
+        try
+        {
+            await JS.InvokeVoidAsync("scrollChatToBottom");
+        }
+        catch { }
+    }
+
+    string FormatMessage(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "";
+
+        var pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .UseEmojiAndSmiley()
+            .Build();
+
+        return Markdown.ToHtml(raw, pipeline);
+    }
+
+    async Task SaveCurrentConvo()
+    {
+        if (string.IsNullOrEmpty(activeConvoId)) return;
+        var simpleJson = System.Text.Json.JsonSerializer.Serialize(messages);
+        await JS.InvokeVoidAsync("localStorage.setItem", $"wasmchat-convo-{activeConvoId}", simpleJson);
+
+        // Update index
+        var existing = localConvos.FirstOrDefault(c => c.Id == activeConvoId);
+        var title = messages.FirstOrDefault(m => m.User == currentUser)?.Content?.Length > 30 
+            ? messages.First().Content.Substring(0, 30) + "..." 
+            : (messages.FirstOrDefault()?.Content ?? "(empty)");
+        if (existing == null)
+        {
+            localConvos.Add(new LocalConvo(activeConvoId, title, DateTime.UtcNow));
+        }
+        else
+        {
+            localConvos.Remove(existing);
+            localConvos.Add(new LocalConvo(activeConvoId, title, DateTime.UtcNow));
+        }
+        var indexJson = System.Text.Json.JsonSerializer.Serialize(localConvos);
+        await JS.InvokeVoidAsync("localStorage.setItem", "wasmchat-convos", indexJson);
+        await JS.InvokeVoidAsync("localStorage.setItem", "wasmchat-last-convo", activeConvoId);
+    }
+
+    // Note: Full multi-convo list, titles, delete will be added in local history step.
+}

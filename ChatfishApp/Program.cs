@@ -109,7 +109,8 @@ app.MapGet("/logout", async (HttpContext ctx) =>
 
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    .AddInteractiveWebAssemblyRenderMode();
 
 
 //app.MapHub<ChatHub>("/chathub").RequireAuthorization();
