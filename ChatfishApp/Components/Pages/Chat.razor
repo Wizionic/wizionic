@@ -4,12 +4,14 @@
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 @using Markdig
+@using ChatfishApp.Contracts
 @using ChatfishApp.Services
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Authorization
 @inject ConversationService Conversations
 @inject AuthenticationStateProvider Auth
 @inject Microsoft.JSInterop.IJSRuntime JS
+@inject AiProviderService AiProviders
 @attribute [Authorize]
 
 <link href="css/chat.css" rel="stylesheet" />
@@ -21,7 +23,15 @@
             <div class="message-row">
                 @if (msg.User == currentUserEmail)
                 {
-                    <div class="message-me">@((MarkupString)msg.Content)</div>
+                    <div class="message-me">
+                        @((MarkupString)msg.Content)
+                        @if (msg.Timestamp.HasValue)
+                        {
+                            <div style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
+                                @msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm")
+                            </div>
+                        }
+                    </div>
                 }
                 else
                 {
@@ -29,6 +39,12 @@
                         <div class="chat-markdown">
                             @((MarkupString)msg.Content)
                         </div>
+                        @if (!string.IsNullOrWhiteSpace(msg.ModelUsed))
+                        {
+                            <div class="model-label" style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
+                                via @msg.ModelUsed
+                            </div>
+                        }
                     </div>
                 }
             </div>
@@ -50,11 +66,23 @@
             </button>
 
             <select @bind="selectedModel" class="model-selector">
-                @foreach (var m in modelList)
+                @foreach (var group in modelList.GroupBy(m => m.ProviderName))
                 {
-                    <option value="@m.Id">@m.Icon @m.Label</option>
+                    <optgroup label="@group.Key">
+                        @foreach (var m in group)
+                        {
+                            <option value="@m.Id">@m.Icon @m.Label</option>
+                        }
+                    </optgroup>
                 }
             </select>
+
+            @if (CurrentModelSupportsTools)
+            {
+                <small style="font-size:0.65em; color:#888; margin-left:0.4rem; white-space:nowrap;" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information.">
+                    tools enabled
+                </small>
+            }
 
             <div class="message-wrapper flex-grow-1">
                 <textarea @ref="messageTextarea"
@@ -66,7 +94,7 @@
                           rows="3" />
             </div>
 
-            <button class="send-btn" @onclick="Send" disabled="@string.IsNullOrWhiteSpace(message)">
+            <button class="send-btn" @onclick="Send" disabled="@(isSending || string.IsNullOrWhiteSpace(message))">
                 <i class="bi bi-arrow-up-circle-fill"></i>
             </button>
         </div>
@@ -80,8 +108,13 @@
 
     string? currentUserEmail;
     string message = "";
-    string selectedModel = "llama-3.1-8b-instant";
+    string selectedModel = "";
     bool isTyping = false;
+    bool isSending = false;  // guard against double-sends from rapid Enter presses etc.
+
+    private bool CurrentModelSupportsTools =>
+        !string.IsNullOrEmpty(selectedModel) &&
+        (ProviderCatalog.GetModel(selectedModel)?.Model.SupportsTools ?? false);
 
     private ElementReference chatContainer;
     private ElementReference messageTextarea;
@@ -89,30 +122,42 @@
 
     List<ChatMessage> messages = new();
 
-    record ChatMessage(string User, string Content);
+    record ChatMessage(string User, string Content, string? ModelUsed = null, DateTime? Timestamp = null);
 
+    // Local projection for the select (populated from AiProviderService for the current user)
     class ModelInfo
     {
         public string Id { get; set; } = "";
         public string Icon { get; set; } = "";
         public string Label { get; set; } = "";
+        public string ProviderName { get; set; } = "";
     }
 
-    List<ModelInfo> modelList = new()
-    {
-        new() { Id = "llama-3.1-8b-instant", Icon = "⚡", Label = "Llama 3.1 8B" },
-        new() { Id = "llama-3.3-70b-versatile", Icon = "🧠", Label = "Llama 3.3 70B" },
-        new() { Id = "qwen/qwen3-32b", Icon = "🐉", Label = "Qwen3 32B" },
-        new() { Id = "openai/gpt-oss-20b", Icon = "🔧", Label = "GPT-OSS 20B" },
-        new() { Id = "openai/gpt-oss-120b", Icon = "🔧", Label = "GPT-OSS 120B" },
-        new() { Id = "meta-llama/llama-4-scout-17b-16e-instruct", Icon = "🦙", Label = "Llama 4 Scout" },
-        new() { Id = "allam-2-7b", Icon = "🪶", Label = "Allam 2 7B" }
-    };
+    List<ModelInfo> modelList = new();
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await Auth.GetAuthenticationStateAsync();
         currentUserEmail = authState.User.Identity?.Name;
+
+        // Load only the models for providers the current user has keys for.
+        // This drives the grouped selector and ensures we only offer usable models.
+        var available = await AiProviders.GetAvailableModelsForCurrentUserAsync();
+        modelList = available
+            .Select(m => new ModelInfo
+            {
+                Id = m.Id,
+                Icon = m.Icon,
+                Label = m.Label,
+                ProviderName = m.ProviderName
+            })
+            .ToList();
+
+        if (!string.IsNullOrEmpty(selectedModel) && modelList.All(m => m.Id != selectedModel))
+            selectedModel = modelList.FirstOrDefault()?.Id ?? "";
+
+        if (string.IsNullOrEmpty(selectedModel) && modelList.Any())
+            selectedModel = modelList.First().Id;
 
         if (ConversationId.HasValue)
         {
@@ -140,7 +185,7 @@
             .Select(m =>
             {
                 var user = m.Role == "user" ? currentUserEmail! : "ChatFish";
-                return new ChatMessage(user, FormatMessage(m.Content));
+                return new ChatMessage(user, FormatMessage(m.Content), m.Model, m.Timestamp);
             })
             .ToList();
 
@@ -150,7 +195,7 @@
 
     async Task HandleKey(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !e.ShiftKey)
+        if (e.Key == "Enter" && !e.ShiftKey && !isSending)
             await Send();
     }
 
@@ -170,8 +215,15 @@
 
     async Task Send()
     {
-        if (string.IsNullOrWhiteSpace(message))
+        if (isSending || string.IsNullOrWhiteSpace(message))
             return;
+
+        isSending = true;
+
+        // Capture and clear immediately to prevent double-sends from rapid Enter key presses
+        // (common cause of "burst" requests that exhaust tiny free tier RPM buckets)
+        var currentMessage = message;
+        message = "";
 
         if (!activeConversationId.HasValue)
         {
@@ -180,31 +232,39 @@
 
         var convoId = activeConversationId.Value;
 
-        var formattedUser = FormatMessage(message);
-        messages.Add(new ChatMessage(currentUserEmail!, formattedUser));
+        var formattedUser = FormatMessage(currentMessage);
+        messages.Add(new ChatMessage(currentUserEmail!, formattedUser, null, DateTime.UtcNow));
 
         // Placeholder bot message
         var botIndex = messages.Count;
-        messages.Add(new ChatMessage("ChatFish", ""));
+        messages.Add(new ChatMessage("ChatFish", "", selectedModel, DateTime.UtcNow));
 
         isTyping = true;
         StateHasChanged();
 
         var accumulated = "";
 
-        await foreach (var partial in Conversations.StreamMessageAsync(convoId, message, selectedModel))
+        try
         {
-            accumulated = partial;
-            messages[botIndex] = new ChatMessage("ChatFish", FormatMessage(accumulated));
-            StateHasChanged();
-            await ScrollToBottom();   // scroll during streaming
+            await foreach (var partial in Conversations.StreamMessageAsync(convoId, currentMessage, selectedModel))
+            {
+                accumulated = partial;
+                // Preserve the model and timestamp for this response (set at placeholder time)
+                var currentModel = messages[botIndex].ModelUsed;
+                var currentTs = messages[botIndex].Timestamp;
+                messages[botIndex] = new ChatMessage("ChatFish", FormatMessage(accumulated), currentModel, currentTs);
+                StateHasChanged();
+                await ScrollToBottom();   // scroll during streaming
+            }
         }
-
-        isTyping = false;
-        message = "";
-        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
-        await ScrollToBottom();
-        StateHasChanged();
+        finally
+        {
+            isTyping = false;
+            isSending = false;
+            try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+            await ScrollToBottom();
+            StateHasChanged();
+        }
     }
 
     async Task NewConversation()

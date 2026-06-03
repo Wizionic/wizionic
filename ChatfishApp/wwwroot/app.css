@@ -96,7 +96,7 @@ a:hover {
     --topbar-height: 56px;
 
     /* Component Tokens — Sidebar */
-    --sidebar-bg: var(--grey-100);
+    --sidebar-bg: var(--light-blue-2);
     --sidebar-border: var(--grey-200);
     --sidebar-hover: var(--grey-200);
     --sidebar-active: var(--grey-300);

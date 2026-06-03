@@ -1,3 +1,6 @@
+// Deprecated - models moved to ProviderCatalog.cs (supports multi-provider + Gemini etc.)
+// This file kept only to avoid breaking any external references during transition.
+[Obsolete("Use ProviderCatalog instead")]
 public static class GroqModels
 {
     public static readonly string[] FreeModels =

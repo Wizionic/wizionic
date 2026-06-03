@@ -68,11 +68,11 @@
 }
 
 .conversation-item:hover {
-    background: var(--grey-200);
+    background: var(--light-blue-1);
 }
 
 .conversation-item.active {
-    background: var(--grey-100);
+    background: var(--light-blue-1);
     border-left: 3px solid var(--primary-blue);
 }
 

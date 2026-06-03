@@ -16,6 +16,12 @@
             </span>
         </div>
 
+        <div class="cf-item px-3" style="margin-top:0.25rem;">
+            <a class="cf-link small" href="/settings" style="text-decoration:none; color:inherit;">
+                <i class="bi bi-key"></i> API Keys
+            </a>
+        </div>
+
         @foreach (var convo in aiConversations.OrderByDescending(c => c.LastUpdatedAt))
         {
             var isActive = activeConversationId == convo.Id;
