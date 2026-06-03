@@ -3,6 +3,11 @@ using System.Text.Json;
 
 namespace ChatfishApp.Services;
 
+/// <summary>
+/// Legacy single-provider service (hardcoded Groq). Kept for reference during multi-provider transition.
+/// New code uses AiProviderService + IChatClient (Microsoft.Extensions.AI).
+/// </summary>
+[Obsolete("Use AiProviderService (IChatClient based) instead.")]
 public class AiChatService
 {
     private readonly HttpClient _http;

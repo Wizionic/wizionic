@@ -1,18 +1,21 @@
+using ChatfishApp.Contracts;
 using ChatfishApp.Data;
 using ChatfishApp.Services;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
+using System.ClientModel;
 
 namespace ChatfishApp.Hubs;
 
 public class ChatHub : Hub
 {
-    private readonly AiChatService _ai;
+    private readonly AiProviderService _aiProvider;
     private readonly ChatfishDbContext _db;
 
-    public ChatHub(AiChatService ai, ChatfishDbContext db)
+    public ChatHub(AiProviderService aiProvider, ChatfishDbContext db)
     {
-        _ai = ai;
+        _aiProvider = aiProvider;
         _db = db;
     }
 
@@ -75,7 +78,37 @@ public async Task SendMessage(string message, string model)
 
         history.Add(("user", message));
 
-        var reply = await _ai.GetBotReply(model, history);
+        // Use the pluggable provider (IChatClient) - duplicated conversion for the dead hub path.
+        string reply;
+        try
+        {
+            var client = await _aiProvider.GetChatClientForModelAsync(model);
+            var chatHistory = history
+                .Select(h => new Microsoft.Extensions.AI.ChatMessage(
+                    string.Equals(h.Role, "user", StringComparison.OrdinalIgnoreCase)
+                        ? Microsoft.Extensions.AI.ChatRole.User
+                        : Microsoft.Extensions.AI.ChatRole.Assistant,
+                    h.Content))
+                .ToList();
+            var response = await client.GetResponseAsync(chatHistory);
+            reply = response.Text ?? "I'm not sure how to respond.";
+        }
+        catch (ClientResultException ex)
+        {
+            var status = ex.Status;
+            var entry = ProviderCatalog.GetModel(model);
+            string providerName = entry?.Provider.DisplayName ?? "the provider";
+            reply = status switch
+            {
+                429 => $"Rate limit (429) from {providerName}. This provider/key has low rate limits. Wait a bit, check your provider dashboard, or add credits if needed.",
+                401 or 403 => $"Auth error for {providerName}. Check key in Settings.",
+                _ => $"Provider error ({status}) for {providerName}."
+            };
+        }
+        catch (Exception ex)
+        {
+            reply = "ChatFish error: " + ex.Message;
+        }
 
         // Save bot reply
         var botMsg = new Message
