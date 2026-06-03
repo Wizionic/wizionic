@@ -4,6 +4,7 @@ using ChatfishApp.Data;
 using ChatfishApp.Hubs;
 using ChatfishApp.Components;
 using ChatfishApp.Services;
+using ChatfishApp.Services.Tools;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 
@@ -19,14 +20,21 @@ builder.Services.AddDbContext<ChatfishDbContext>(options =>
     options.UseSqlite("Data Source=chatfish.db");
 });
 
-builder.Services.AddHttpClient<AiChatService>(client =>
-{
-    client.BaseAddress = new Uri("https://api.groq.com/openai/v1/"); 
-    client.DefaultRequestHeaders.Add("Authorization", "Bearer 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");
-});
+// NOTE: Removed the previous hardcoded Groq HttpClient + embedded API key (security issue).
+// Keys are now per-user via ProviderKeyService + AiProviderService (using IChatClient abstraction).
 
 builder.Services.AddScoped<MagicLinkService>();
 builder.Services.AddScoped<ConversationService>();
+builder.Services.AddScoped<ProviderKeyService>();
+builder.Services.AddScoped<AiProviderService>();
+
+// App-level tools (web search, URL summarization via Jina, etc.) exposed to models via ME.AI function calling.
+// These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
+builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
+
+// Optional for future key encryption at rest (IDataProtector).
+// builder.Services.AddDataProtection();
+
 builder.Services.AddAuthentication("ChatfishAuth")
     .AddCookie("ChatfishAuth", options =>
     {

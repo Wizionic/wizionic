@@ -3,6 +3,7 @@ using System;
 using ChatfishApp.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ChatfishApp.Migrations
 {
     [DbContext(typeof(ChatfishDbContext))]
-    partial class ChatfishDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260602124957_AddUserProviderKeys")]
+    partial class AddUserProviderKeys
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
@@ -111,9 +114,6 @@ namespace ChatfishApp.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Key")
                         .IsRequired()

@@ -29,7 +29,7 @@ main {
    Sidebar Container
    ---------------------------------------- */
 .sidebar {
-    background: var(--grey-100);
+    background: var(--light-blue-2);
     color: var(--text-dark);
     width: 250px;
 
@@ -191,7 +191,7 @@ main {
         width: 250px;
         height: calc(100vh - 3.5rem);
         z-index: 1500;
-        background: var(--grey-300);
+        background: var(--light-blue-2);
         transform: translateX(-260px);
         transition: transform 0.25s ease;
     }

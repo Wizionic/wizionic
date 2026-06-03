@@ -7,6 +7,7 @@ public class ChatfishDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<UserProviderKey> ProviderKeys => Set<UserProviderKey>();
 
     public ChatfishDbContext(DbContextOptions<ChatfishDbContext> options)
         : base(options)
@@ -32,5 +33,15 @@ public class ChatfishDbContext : DbContext
             .WithOne(m => m.Conversation)
             .HasForeignKey(m => m.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserProviderKey>()
+            .HasOne(k => k.User)
+            .WithMany()
+            .HasForeignKey(k => k.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserProviderKey>()
+            .HasIndex(k => new { k.UserId, k.ProviderId })
+            .IsUnique();
     }
 }
