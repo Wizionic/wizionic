@@ -126,14 +126,13 @@ Primary goals:
 **Key Tasks (new + adapted from prior work)**
 - Introduce storage and context abstractions to remove tight coupling (current services rely on `IHttpContextAccessor` + direct EF `ChatfishDbContext` for both keys *and* chats): `IUserContext`, `IChatHistoryStore` (client-local impl even under server render via `IJSRuntime` + LocalStorage/ProtectedStorage), `IKeyStore`. Refactor `ConversationService`, `ProviderKeyService`, `Chat.razor` (the local `ChatMessage` list + load/save), `NavMenu.razor` (the convo list + delete + titles), and any other callers. Server-rendered pages will transparently use client interop for history while still benefiting from server for AI/tool execution.
 - Remove (or migrate away from) server persistence of chat history. Update `ChatfishDbContext`, entities (`Conversation.cs`, `Message.cs`), migrations, and `ConversationService` (keep `StartNew...`, `Get...` etc. but route through the store abstraction; server DB keeps only User + UserProviderKey). Document data migration or "history will now be local to this browser".
-- Add full Ollama support here (extend `ProviderCatalog` with Ollama entry using Type="Ollama", implement in `AiProviderService` using localhost:11434 OpenAI-compat or dedicated client + auto-detect via /api/tags; local = no key required; surface "local" badge / group in selector). It can work if the server can reach the user's Ollama, or by having client pages initiate and the server proxy (prefer direct in targets 2/3).
 - Keep and enhance what already works well for hosted: magic-link login flow + logout endpoints, per-user keys + enable/disable in Settings (with good provider guidance), clean grouped model selector, "tools enabled" hints, full agentic tool execution on the server (powerful, no browser sandbox/CORS limits), context management UI (when built), vision upload (when built).
 - Update NavMenu and chat loading/sending flows to source the conversation list and messages from the client-local store (even while running under InteractiveServerRenderMode).
 - Maintain minimal server resource usage and cheap-hosting friendliness.
 
 **Why here?** This *is* the current foundation that already delivers the multi-provider (partial), tool/agentic, and login work. It provides immediate usable value and a stable base while the stronger local targets are built on the shared abstractions and components. Hosted convenience (login, central keys) remains useful for some users without compromising the "no server chat history" rule.
 
-**Dependencies:** Core shared capabilities (multi-provider, tools, context, vision) + the abstraction + decoupling work. **Estimated effort:** 3–6 days (mostly the refactor to enable the vision without breaking the hosted experience today; Ollama is additive).
+**Dependencies:** Core shared capabilities (multi-provider, tools, context, vision) + the abstraction + decoupling work. **Estimated effort:** 3–6 days (mostly the refactor to enable the vision without breaking the hosted experience today).
 
 **Reuse (strong here):** All current code is the starting point and "donor" for sharing: `ProviderCatalog.cs`, `AiProviderService.cs` (and `CreateOpenAICompatibleClient`), `ConversationService.cs` + `StreamMessageAsync` (ME.AI + tools loop), `DefaultToolProvider`/`AppTools.cs`, `ProviderKeyService`, `UserProviderKey`, `ChatfishDbContext` (trimmed), Razor components (`Chat.razor`, `Settings.razor`, `MainLayout.razor`, `NavMenu.razor`), JS interop patterns, Markdig usage, CSS, `Roadmap.razor` md loader. The server target proves the core flows.
 
@@ -249,9 +248,9 @@ Primary goals:
 
 - **Abstractions first (the key that unlocks everything):** Before heavy target-specific work, introduce `IUserContext` (replaces direct HttpContext/claims everywhere), `IChatHistoryStore` (client-local default impl; server target 1 uses a client-local variant too for chats, keeps server DB only for keys), `IKeyStore`, `IBrowserContext` (stub/no-op in web targets, full WebView impl in MAUI), and make `IToolProvider` / tool registration easy to extend with target-specific tools. Refactor the existing services and pages to the interfaces. This makes adding WASM and MAUI clean instead of forks.
 - Recommended sequence (so hosted value continues while we build the future):
-  1. Core (finish Ollama in catalog + provider) + server target 1 decoupling (move chats to client-local store via interop, trim DB to users+keys only, keep hosted usable and useful).
-  2. Extract shared RCL + implement the pure WASM target (part 2) with local storage, direct calls, and local-only sync.
-  3. Add the MAUI hybrid target (part 3) + the WebView browser context bridge and tools (this is where "AI visibility into browser tabs" + agentic control become real and powerful).
+  1. Core multi-provider work (including groundwork for local models like Ollama) + server target 1 decoupling (move chats to client-local store via interop, trim DB to users+keys only, keep hosted usable and useful).
+  2. Extract shared RCL + implement the pure WASM target (part 2) with local storage, direct calls, and local-only sync. Full Ollama support (auto-discovery, seamless localhost experience) lands here and in target 3.
+  3. Add the MAUI hybrid target (part 3) + the WebView browser context bridge and tools (this is where "AI visibility into browser tabs" + agentic control become real and powerful). Ollama is a first-class, zero-config default in the native app.
 - Old Phase 5 "browser extension for tab awareness" idea is deprioritized (or kept as a lighter optional for pure-web users) in favor of the superior, integrated MAUI WebView realization. MCP concepts can apply across targets (device-local servers are easiest in 3).
 - The "local clients only, never saved on the server" rule is designed into parts 2 and 3 from the start and retrofitted to part 1.
 - Each target owns its render mode, storage story, and any unique tools (browser tabs = 3 only for now). Shared code stays as portable as possible.
@@ -266,7 +265,7 @@ Primary goals:
 - All prior "Future extensions", "Why here?", efforts, and dependencies are carried forward under the appropriate new headings.
 - Delivered work (OpenRouter, Gemini, tool wiring, etc.) remains clearly marked as delivered in the Core section.
 
-**Last updated:** July 2026 (Restructured around the three parts the project is now viewed as: 1) pure Blazor interactive server app, 2) WASM development, 3) .NET MAUI with Blazor Hybrid. Placed all prior phase details correctly. Added prominent emphasis on syncing chat history only to local clients (not saved on the server), integration with local AI (Ollama), and AI visibility into browser tabs via WebView agentic control in the hybrid target. All original detail preserved.)
+**Last updated:** July 2026 (Restructured around the three parts; removed Ollama from pure Interactive Server target 1 per decision to implement it properly in client-side targets. All prior phase details correctly placed; local-only history and browser visibility emphasized.)
 
 **Maintained in:** `ROADMAP.md` (the source of truth) + `Pages/Roadmap.razor` (for web targets 1 and 2); the MAUI app (target 3) will include the roadmap content (via the shared renderer or a dedicated page).
 
