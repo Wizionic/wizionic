@@ -1,6 +1,6 @@
 ﻿@page "/weather"
 @attribute [StreamRendering]
-@rendermode InteractiveServer
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 
 

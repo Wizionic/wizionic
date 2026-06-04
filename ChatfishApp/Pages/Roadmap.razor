@@ -10,7 +10,7 @@
     <h1>Chatfish.me Project Roadmap</h1>
     
     <div class="roadmap-meta" style="margin-bottom: 2rem; color: #666;">
-        <p><strong>Version:</strong> 2.0 (June 2026)</p>
+        <p><strong>Version:</strong> 3.0 (July 2026)</p>
         <p><strong>Developer:</strong> Daniel Goodwin — Senior Web Application Developer (25+ years experience)</p>
         <p><strong>Project Status:</strong> Active personal / resume project</p>
     </div>
@@ -31,19 +31,29 @@
 
         string markdown = "# Roadmap file not found";
 
-        // Try to load from the project root (one level above ChatfishApp)
-        var mdPath = Path.Combine(Directory.GetCurrentDirectory(), "..", "ROADMAP.md");
-        if (File.Exists(mdPath))
+        // Robust loading for multiple targets (server app, WASM host, MAUI hybrid, different working dirs).
+        // ROADMAP.md is the single source of truth. In MAUI or packaged apps, consider copying it to wwwroot
+        // and loading via HttpClient, or embedding as a resource. These fallbacks cover dev scenarios.
+        var candidates = new[]
         {
-            markdown = File.ReadAllText(mdPath);
-        }
-        else
+            // Common dev: run from repo root or one level above the ChatfishApp dir
+            Path.Combine(Directory.GetCurrentDirectory(), "..", "ROADMAP.md"),
+            // Run directly from the ChatfishApp folder
+            Path.Combine(Directory.GetCurrentDirectory(), "ROADMAP.md"),
+            // WASM / published wwwroot case (if ROADMAP.md is copied there at build/publish time)
+            Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "ROADMAP.md"),
+            // MAUI content root or other subdir cases
+            Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "ROADMAP.md"),
+            // Absolute fallback if someone sets an env or known location
+            Path.Combine(AppContext.BaseDirectory, "ROADMAP.md")
+        };
+
+        foreach (var candidate in candidates)
         {
-            // Fallback for when running from ChatfishApp folder directly
-            mdPath = Path.Combine(Directory.GetCurrentDirectory(), "ROADMAP.md");
-            if (File.Exists(mdPath))
+            if (File.Exists(candidate))
             {
-                markdown = File.ReadAllText(mdPath);
+                markdown = File.ReadAllText(candidate);
+                break;
             }
         }
 

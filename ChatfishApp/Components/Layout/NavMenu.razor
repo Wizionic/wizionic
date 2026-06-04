@@ -12,7 +12,9 @@
         <div class="cf-item px-3 mt-4">
             <span class="cf-link small">
                 AI Chats
-                <button class="menu-button"><i class="cf-icon bi-plus-circle"></i></button>
+                <button class="menu-button" @onclick="NewConversation" @onclick:stopPropagation title="New chat">
+                    <i class="cf-icon bi-plus-circle"></i>
+                </button>
             </span>
         </div>
 

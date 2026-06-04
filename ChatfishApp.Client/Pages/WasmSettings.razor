@@ -1,0 +1,174 @@
+@page "/wasm-settings"
+@layout ChatfishApp.Client.Shared.WasmLayout
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject ChatfishApp.Client.Services.WasmAuthService AuthService
+
+<link href="css/wasm-chat.css" rel="stylesheet" />
+
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
+    <h2>Settings</h2>
+    <p style="color: #666; font-size: 0.9em;">Provider keys and Ollama configuration are stored only in your browser (localStorage).</p>
+
+    <!-- Provider Keys -->
+    <h3>Provider Keys</h3>
+    <div style="display: grid; gap: 0.75rem; max-width: 500px;">
+        <div>
+            <label>Groq API Key</label>
+            <input type="text" @bind="groqKey" placeholder="gsk_..." class="form-control" />
+        </div>
+        <div>
+            <label>Gemini API Key</label>
+            <input type="text" @bind="geminiKey" placeholder="AIza..." class="form-control" />
+        </div>
+        <div>
+            <label>OpenRouter API Key</label>
+            <input type="text" @bind="openrouterKey" placeholder="sk-or-..." class="form-control" />
+        </div>
+    </div>
+    <button @onclick="SaveKeys" class="btn btn-primary" style="margin-top: 0.75rem;">Save Keys</button>
+
+    @if (AuthService.IsAuthenticated)
+    {
+        <button @onclick="ImportKeysFromAccount" class="btn btn-outline-secondary" style="margin-top: 0.75rem; margin-left: 0.5rem;">
+            Import keys from my account
+        </button>
+        <small style="margin-left: 0.5rem; color:#666;">(pulls your server-side keys for use in this WASM client)</small>
+    }
+
+    <!-- Ollama Settings -->
+    <h3>Ollama</h3>
+    <div style="max-width: 500px;">
+        <label>Base URL</label>
+        <input type="text" @bind="ollamaBaseUrl" placeholder="http://localhost:11434" class="form-control" />
+
+        <button @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.5rem;">Refresh Models from Ollama</button>
+
+        <div class="model-list">
+            <label>Available Ollama Models (click to remove)</label>
+            @if (ollamaModels.Any())
+            {
+                <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                    @foreach (var m in ollamaModels)
+                    {
+                        <span class="model-chip" @onclick="() => RemoveOllamaModel(m)">
+                            @m ✕
+                        </span>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="font-size: 0.8em; color: #888;">No models loaded. Click refresh above (Ollama must be running).</div>
+            }
+        </div>
+
+        <div style="margin-top: 0.5rem;">
+            <label>Add custom model tag</label>
+            <div style="display: flex; gap: 4px;">
+                <input type="text" @bind="newOllamaModel" placeholder="gemma2:4b" class="form-control" style="flex:1;" />
+                <button @onclick="AddCustomOllamaModel" class="btn btn-outline-secondary">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top: 1.5rem;">
+        <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+    </div>
+</div>
+
+@code {
+    string groqKey = "";
+    string geminiKey = "";
+    string openrouterKey = "";
+
+    string ollamaBaseUrl = "http://localhost:11434";
+    List<string> ollamaModels = new();
+    string newOllamaModel = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await KeyStore.LoadAsync(JS);
+        await AuthService.LoadAsync();
+
+        groqKey = KeyStore.GetKey("groq");
+        geminiKey = KeyStore.GetKey("gemini");
+        openrouterKey = KeyStore.GetKey("openrouter");
+
+        ollamaBaseUrl = KeyStore.OllamaBaseUrl;
+        ollamaModels = new List<string>(KeyStore.OllamaModels);
+    }
+
+    async Task SaveKeys()
+    {
+        await KeyStore.SaveAllKeysAsync(JS, groqKey, geminiKey, openrouterKey);
+        // UI fields are already bound; store is updated
+    }
+
+    async Task RefreshOllamaModels()
+    {
+        try
+        {
+            await KeyStore.RefreshOllamaModelsFromServerAsync(JS, Http);
+            ollamaModels = new List<string>(KeyStore.OllamaModels);
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", ex.Message);
+        }
+    }
+
+    async Task AddCustomOllamaModel()
+    {
+        await KeyStore.AddOllamaModelAsync(JS, newOllamaModel);
+        ollamaModels = new List<string>(KeyStore.OllamaModels);
+        newOllamaModel = "";
+    }
+
+    async Task RemoveOllamaModel(string model)
+    {
+        await KeyStore.RemoveOllamaModelAsync(JS, model);
+        ollamaModels = new List<string>(KeyStore.OllamaModels);
+    }
+
+    async Task ImportKeysFromAccount()
+    {
+        try
+        {
+            var serverKeys = await Http.GetFromJsonAsync<List<ImportedKey>>("/api/keys");
+            if (serverKeys != null)
+            {
+                bool importedAny = false;
+                foreach (var k in serverKeys)
+                {
+                    if (!string.IsNullOrWhiteSpace(k.ProviderId) && !string.IsNullOrWhiteSpace(k.Key))
+                    {
+                        await KeyStore.SetKeyAsync(JS, k.ProviderId, k.Key);
+                        importedAny = true;
+                    }
+                }
+                if (importedAny)
+                {
+                    // Refresh the bound fields
+                    groqKey = KeyStore.GetKey("groq");
+                    geminiKey = KeyStore.GetKey("gemini");
+                    openrouterKey = KeyStore.GetKey("openrouter");
+                    await JS.InvokeVoidAsync("alert", "Keys imported from your account and stored locally (encrypted with your sync key).");
+                }
+                else
+                {
+                    await JS.InvokeVoidAsync("alert", "No keys with actual values were returned (or you have none configured on the server yet).");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", "Could not import keys: " + ex.Message);
+        }
+    }
+
+    private record ImportedKey(string ProviderId, bool Enabled, string? Key);
+}

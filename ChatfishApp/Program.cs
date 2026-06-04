@@ -5,6 +5,7 @@ using ChatfishApp.Hubs;
 using ChatfishApp.Components;
 using ChatfishApp.Services;
 using ChatfishApp.Services.Tools;
+using ChatfishApp.Apis;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 
@@ -32,8 +33,24 @@ builder.Services.AddScoped<AiProviderService>();
 // These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
 builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
 
-// Optional for future key encryption at rest (IDataProtector).
-// builder.Services.AddDataProtection();
+// Shared state for WASM sidebar toggle (used by WasmTopBar in WasmLayout for /wasm-chat etc.)
+// Must be registered here (main app DI) so that server-side rendering of WASM pages (layout + topbar)
+// can provide the service. The Client's DI also registers it for the interactive WASM runtime.
+builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
+
+// HttpClient for WASM client components (e.g. WasmSettings) during any server-side rendering of the component tree (layout, topbar, etc.).
+// The actual interactive WASM runtime (in Client/Program.cs) provides its own configured instance (with BaseAddress).
+builder.Services.AddScoped<HttpClient>();
+
+// Data Protection for at-rest encryption of sensitive per-user values (e.g. the LocalEncryptionKey
+// used by WASM clients for browser-stored history blobs + live sync payloads, and the existing
+// UserProviderKey.Key values). The protector is used server-side when storing/retrieving these
+// values; authenticated WASM clients receive the *unprotected* key over TLS+cookie so they can
+// perform client-side AES-GCM encryption of their local data and of blobs transferred during
+// live (both-devices-open) sync. The server never stores the WASM history content itself.
+// See User.LocalEncryptionKey and the Wasm*Store + WasmLiveSyncClient in the Client project.
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<KeyProtectionService>();
 
 builder.Services.AddAuthentication("ChatfishAuth")
     .AddCookie("ChatfishAuth", options =>
@@ -107,9 +124,14 @@ app.MapGet("/logout", async (HttpContext ctx) =>
     ctx.Response.Redirect("/login");
 });
 
+// WASM client APIs (kept in WasmApiEndpoints.cs so Program.cs stays small).
+// All under /api + cookie auth. See Apis/WasmApiEndpoints.cs for the implementations.
+app.MapWasmApis();
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    .AddInteractiveWebAssemblyRenderMode()
+    .AddAdditionalAssemblies(typeof(ChatfishApp.Client.WasmMarker).Assembly);
 
 
 //app.MapHub<ChatHub>("/chathub").RequireAuthorization();

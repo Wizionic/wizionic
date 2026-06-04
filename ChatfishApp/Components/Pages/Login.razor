@@ -1,6 +1,6 @@
 @page "/login"
 @using Services
-@rendermode InteractiveServer
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 @inject MagicLinkService MagicLinks
 @inject NavigationManager Nav
 
