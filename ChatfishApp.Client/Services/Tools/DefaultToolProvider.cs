@@ -3,14 +3,9 @@ using Microsoft.Extensions.AI;
 namespace ChatfishApp.Services.Tools;
 
 /// <summary>
-/// Simple registry of AIFunction tools available to models.
-/// These are app-level (not per-user-key) and enhance any chat that uses a tool-calling capable model.
+/// Simple registry of AIFunction tools available to models (WASM/client-side version).
+/// Tools run in the browser when using WASM chat.
 /// </summary>
-public interface IToolProvider
-{
-    IReadOnlyList<AITool> GetTools();
-}
-
 public class DefaultToolProvider : IToolProvider
 {
     private readonly List<AITool> _tools;

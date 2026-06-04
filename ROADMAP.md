@@ -6,7 +6,17 @@
 
 ## Project Vision & Goals
 
-Chatfish.me is a **privacy-first, local-first AI chat hub** that lets you chat with multiple AI models while keeping conversations in the browser. It is delivered through three distinct parts:
+Chatfish.me is a **privacy-first, local-first AI chat hub** that lets you chat with multiple AI models while keeping conversations in the browser.  
+
+Core Goals
+1) Privacy : Keep chat history encrypted and private 
+2) Email login is only needed for syncing chats/settings privately between browsers and devices
+2) Local :  Focus on allowing local chat through the users device as this is the most private
+3) Low cost Cloud AI :  When cloud AI services are used, emphasize the ones that are free or low cost
+4) Keep Hosting costs down :  Store as little as possible on the server and use client technologies where possible
+5) Frictionless setup :  Some configuration is needed for setup but always make it is easy as possible to start using
+
+ It is delivered through three distinct parts:
 
 1. **Pure Blazor interactive server app** — the convenient hosted experience (current foundation).
 2. **Blazor WebAssembly** — full browser-native local client.
@@ -161,6 +171,32 @@ Primary goals:
     - Local network sync: when two instances are on the same LAN/WiFi, discover and offer peer-to-peer merge (user approves).
     - Future: file-based or CRDT-based merge for seamless multi-client.
     - Hard rule: the chatfish server (if used at all for auth or a thin proxy) receives *zero* conversation history or message content.
+  - **Live authenticated sync (server as signaling/auth only — Brave model, real-time only when both devices open)**: In addition to the user-controlled local mechanisms above, support *live* cross-browser/device history sync for users who have logged in with the same email (magic link). This is real-time only (both WASM instances must be open and online at the same time) — no store-and-forward or persistent central copy of history. The server acts purely as authentication + signaling (like a WebRTC signaling server). It never stores or sees the chat content blobs.
+    - How it works (high level): Both devices authenticate (cookie or thin token from the login flow). Server confirms both are online for that user and facilitates handshake. Devices then transfer the (encrypted) history snapshot or deltas. Server is "blind" to the payload.
+    - Transfer options (key decision):
+      - WebRTC Data Channels (preferred for true P2P — server only does signaling/auth; data never touches the server at all).
+      - WebSocket relay via the server (simpler fallback; data passes through but is encrypted with a client-held key so server cannot read it).
+    - Encryption: A per-user encryption key (random secret) is stored in the `User` table in the DB (protected at rest with IDataProtector). Authenticated WASM clients fetch the key over the secure channel. They use it to encrypt localStorage/IndexedDB blobs *and* the data transferred during live sync. This matches the requirement "besides email in the database, some kind of encryption key should be stored there."
+    - Storage backend (important): `localStorage` has a ~5 MB limit. Use `IndexedDB` (via Blazor's `IJSObjectReference` or a wrapper) for the actual encrypted history blobs (much larger quota, async, good for structured data). Keep only small index/metadata in `localStorage` if desired. Current WasmConversationStore / WasmKeyStore use `localStorage` + plain JSON; this work will migrate the blobs to encrypted IndexedDB entries.
+    - Sync flow (rough):
+      Device A                  Server                  Device B
+         |                         |                        |
+         |-- Auth + "I'm online" ->|                        |
+         |                         |<-- Auth + "I'm online"-|
+         |                         |                        |
+         |<-- "Device B is ready" -|                        |
+         |                         |                        |
+         |<======= WebRTC / WebSocket data channel ========>|
+         |         (encrypted blob, server blind)           |
+    - Key open design decisions (to be resolved during implementation):
+      - Conflict resolution: If both devices modified data since last sync, which wins? Last-write-wins? Vector clocks + merge? User prompt?
+      - Encryption in transit: Encrypt the blob client-side before sending (recommended, even if using WebRTC which is already over DTLS). Still do it beyond TLS.
+      - Sync triggers: Automatic when peer comes online (server push / presence), periodic poll, or explicit "Sync now" button in the WASM UI?
+      - Mid-sync disconnect: Partial transfer recovery, resume, or full re-sync on next connection?
+      - WebRTC vs. relay default: WebRTC is the purest "server never sees the blob"; WebSocket relay is easier to implement first.
+      - Storage: Prioritize IndexedDB for blobs; decide on schema (one object store per convo? encrypted index?).
+    - This enables the "logged in (email) will be able to sync conversation history to another browser or device" vision while obeying "the history is never stored in the SQLite database" and "sync ... can only happen when they are both open."
+    - The encryption key + email are the only things the WASM "gets from the database" for this feature (plus optional import of the user's server-side provider keys for convenience).
   - Update *all* affected UI and services: Chat.razor (render mode, local store instead of service for history), NavMenu (local convo list), Settings, Roadmap.razor (robust md loading that works from WASM host too), any other pages. Remove or conditionalize server-only assumptions.
   - Add Ollama as a first-class, zero-config experience (auto-detect, prominent in selector, "local" indicators).
   - Bring core context management, tools, and later vision/multimodal over the local store.

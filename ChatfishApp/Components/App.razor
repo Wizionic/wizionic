@@ -21,6 +21,121 @@
     <Routes />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+    <script>
+        // Helper functions for WASM chat pages (e.g. /wasm-chat) that run with InteractiveWebAssembly render mode.
+        // These are defined here in the host shell so they are available when WASM components are active.
+        // (The Client project's own index.html only applies when running the Client project standalone.)
+        window.scrollChatToBottom = () => {
+            const container = document.getElementById('chat-container');
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+        };
+
+        window.resizeChatTextarea = (el) => {
+            if (!el) return;
+            el.style.height = 'auto';
+            const minH = 86;
+            const maxH = 110;
+            const target = Math.max(minH, Math.min(el.scrollHeight, maxH));
+            el.style.height = target + 'px';
+        };
+
+        window.resetChatTextarea = (el) => {
+            if (!el) return;
+            el.style.height = '86px';
+        };
+
+        // WASM sidebar toggle (for /wasm-chat page)
+        window.toggleWasmSidebar = function () {
+            const sidebar = document.querySelector('.sidebar');
+            const mainEl = document.querySelector('main');
+            if (sidebar) {
+                if (sidebar.style.display === 'none') {
+                    sidebar.style.display = '';
+                    if (mainEl) mainEl.style.marginLeft = '250px';
+                } else {
+                    sidebar.style.display = 'none';
+                    if (mainEl) mainEl.style.marginLeft = '0';
+                }
+            }
+        };
+
+        window.getMenuPopupPosition = function (buttonId) {
+            const btn = document.getElementById(buttonId);
+            if (!btn) return { top: 120, left: 260 };
+            const rect = btn.getBoundingClientRect();
+            const popupWidth = 120;
+            let left = rect.right + 5;
+            if (left + popupWidth > window.innerWidth) {
+                left = rect.left - popupWidth - 5;
+            }
+            return {
+                top: rect.bottom + 2,
+                left: left
+            };
+        };
+
+        // --------------------------------------------------------------------
+        // AES-GCM helpers for WASM localStorage / IndexedDB encryption and for
+        // encrypting live-sync payloads (Brave-style: server does auth + signaling
+        // only; the actual history blobs are encrypted with a key the client
+        // fetches from the DB so the relay never sees plaintext).
+        // These are called from WasmCryptoService via IJSRuntime.
+        // --------------------------------------------------------------------
+        async function getAesGcmKey(base64Key) {
+            const keyData = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
+            return await crypto.subtle.importKey(
+                "raw",
+                keyData,
+                { name: "AES-GCM" },
+                false,
+                ["encrypt", "decrypt"]
+            );
+        }
+
+        window.encryptLocalData = async (base64Key, plaintext) => {
+            if (!base64Key || !plaintext) return plaintext || "";
+            try {
+                const key = await getAesGcmKey(base64Key);
+                const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for GCM
+                const encoded = new TextEncoder().encode(plaintext);
+                const ciphertext = await crypto.subtle.encrypt(
+                    { name: "AES-GCM", iv },
+                    key,
+                    encoded
+                );
+                const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+                combined.set(iv, 0);
+                combined.set(new Uint8Array(ciphertext), iv.length);
+                // Return a single base64 string (IV || ciphertext) for easy storage.
+                return btoa(String.fromCharCode.apply(null, combined));
+            } catch (e) {
+                console.warn("encryptLocalData failed, returning plaintext", e);
+                return plaintext;
+            }
+        };
+
+        window.decryptLocalData = async (base64Key, combinedBase64) => {
+            if (!base64Key || !combinedBase64) return combinedBase64 || "";
+            try {
+                const key = await getAesGcmKey(base64Key);
+                const combined = Uint8Array.from(atob(combinedBase64), c => c.charCodeAt(0));
+                const iv = combined.slice(0, 12);
+                const ciphertext = combined.slice(12);
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv },
+                    key,
+                    ciphertext
+                );
+                return new TextDecoder().decode(decrypted);
+            } catch (e) {
+                // Probably a legacy plaintext value or the key changed.
+                console.warn("decryptLocalData failed (legacy data?), returning as-is", e);
+                return combinedBase64;
+            }
+        };
+    </script>
 </body>
 
 </html>

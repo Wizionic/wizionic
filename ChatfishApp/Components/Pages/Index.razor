@@ -2,6 +2,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
 @using Microsoft.AspNetCore.Components.Authorization
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 @code {
     protected override async Task OnInitializedAsync()
