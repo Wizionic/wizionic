@@ -1,0 +1,52 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chatfish WASM</title>
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="css/chat.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <div style="display:flex; align-items:center; justify-content:center; height:100vh; font-family:sans-serif;">
+            Loading Chatfish WASM...
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script>
+        window.scrollChatToBottom = () => {
+            const container = document.getElementById('chat-container');
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+        };
+
+        window.resizeChatTextarea = (el) => {
+            if (!el) return;
+            el.style.height = 'auto';
+            const minH = 86;
+            const maxH = 110;
+            const target = Math.max(minH, Math.min(el.scrollHeight, maxH));
+            el.style.height = target + 'px';
+        };
+
+        window.resetChatTextarea = (el) => {
+            if (!el) return;
+            el.style.height = '86px';
+        };
+    </script>
+</body>
+
+</html>

@@ -62,27 +62,3 @@
         sidebarVisible = !sidebarVisible;
     }
 }
-
-<script>
-    window.scrollChatToBottom = () => {
-        const container = document.getElementById('chat-container');
-        if (container) {
-            container.scrollTop = container.scrollHeight;
-        }
-    };
-
-    // Auto-growing textarea helpers (used by Chat page)
-    window.resizeChatTextarea = (el) => {
-        if (!el) return;
-        el.style.height = 'auto';
-        const minH = 86;   // ~3 lines visible by default
-        const maxH = 110;  // scrollbar appears after three lines
-        const target = Math.max(minH, Math.min(el.scrollHeight, maxH));
-        el.style.height = target + 'px';
-    };
-
-    window.resetChatTextarea = (el) => {
-        if (!el) return;
-        el.style.height = '86px';   // snap back to the comfortable 3-line default height
-    };
-</script>

@@ -1,0 +1,633 @@
+/* ========================================
+   Chatfish — Chat Page Styles (FINAL FIXED VERSION)
+   ======================================== */
+
+.chat-layout { display: flex; height: calc(100vh - 80px); }
+
+/* Sidebar legacy styles (kept for safety) */
+.chat-sidebar, .chat-sidebar-section-title, .chat-sidebar-new, .chat-sidebar-item { /* unused but harmless */ }
+
+/* ====================== CHAT STRUCTURE ====================== */
+.chat-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 3.5rem);
+    width: 100%;               /* fills the parent <main> perfectly */
+    background: var(--light-blue-3);   /* uniform background so sides match the area around chat bubbles */
+}
+
+.chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem 1rem 195px;  /* reserve space for taller 3-line input bar */
+    background: var(--light-blue-3);
+    max-width: 1080px;
+    margin: 0 auto;
+    width: 100%;
+    scroll-behavior: smooth;
+}
+
+.message-row { display: flex; margin-bottom: 0.75rem; }
+
+.message-me {
+    margin-left: auto;
+    background: #d1e7ff;
+    padding: 0.6rem 1rem;
+    border-radius: 12px;
+    max-width: 70%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.message-bot {
+    margin-right: auto;
+    background: #ffffff;
+    padding: 0.6rem 1rem;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    max-width: 100%;
+    width: fit-content;
+}
+
+.chat-markdown { max-width: 100%; overflow-x: auto; }
+.chat-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.chat-markdown th, .chat-markdown td { white-space: nowrap; padding: 6px 10px; border: 1px solid #ccc; }
+.chat-markdown table::-webkit-scrollbar { height: 8px; }
+.chat-markdown table::-webkit-scrollbar-thumb { background: #bbb; border-radius: 4px; }
+
+.typing { font-style: italic; color: #666; margin-left: 0.5rem; }
+
+/* ====================== COMPACT SEAMLESS INPUT (full-width of chat content) ====================== */
+.input-area {
+    background: var(--light-blue-3);   /* exact match to .chat-container for seamless look */
+    border-top: none;
+    box-shadow: none;
+    padding: 10px 24px 14px;  /* side padding controls distance from edges of the chat pane */
+    width: 100%;
+}
+
+.input-container {
+    display: flex;
+    align-items: flex-end;   /* buttons stay at bottom when textarea grows */
+    gap: 6px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    padding: 6px 12px;
+    max-width: none;         /* let it fill the full available width of the chat area */
+    width: 100%;
+    margin: 0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.action-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.action-btn:hover { background: #f1f5f9; color: #0ea5e9; }
+
+.model-selector {
+    /* Much smaller + compact dropdown */
+    font-size: 0.7rem;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 500;
+    max-width: 128px;
+    min-width: 0;
+    height: 28px;
+    line-height: 1.1;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.model-selector:focus {
+    outline: 1px solid #3b82f6;
+    outline-offset: -1px;
+}
+
+.message-wrapper {
+    flex: 1 1 auto;
+    min-width: 0;            /* allows the wrapper (and textarea) to shrink/grow properly in flex row */
+}
+
+.message-input {
+    flex: 1 1 auto;
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 1rem;
+    padding: 10px 8px;       /* a bit more vertical padding for comfort */
+    resize: none;
+    min-height: 86px;        /* ~3 lines visible by default */
+    max-height: 110px;       /* scrollbar appears after ~3 lines */
+    overflow-y: auto;
+    line-height: 1.4;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Subtle scrollbar for when it does appear after 3 lines */
+.message-input::-webkit-scrollbar {
+    width: 5px;
+}
+.message-input::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+.message-input::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+}
+
+.message-input:focus { outline: none; }
+
+.message-input::placeholder {
+    color: #94a3b8;
+}
+
+.send-btn {
+    width: 36px; height: 36px;
+    border: none;
+    background: #3b82f6;
+    color: white;
+    font-size: 1.35rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+.send-btn:hover:not(:disabled) { background: #2563eb; transform: scale(1.05); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ====================== SIDEBAR ALIGNMENT (NO DOUBLE MARGIN!) ====================== */
+/* We rely 100% on MainLayout's existing main { margin-left: 250px } */
+@media (min-width: 641px) {
+    .chat-wrapper,
+    .input-area {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+}
+
+/* Mobile */
+@media (max-width: 640.98px) {
+    .chat-wrapper,
+    .input-area {
+        margin-left: 0;
+        width: 100%;
+    }
+    .chat-container { padding-bottom: 185px; }
+}
+
+/* Tiny cleanup - base for conversation items, detailed below */
+.conversation-item {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+/* The detailed conversation item styles are in the sidebar block below to match main */
+
+@media (min-width: 641px) {
+    main { padding-bottom: 0 !important; }   /* prevents any extra push */
+}
+
+/* WASM full sidebar layout (for /wasm-chat) */
+.wasm-page {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+}
+.wasm-sidebar {
+    width: 240px;
+    background: #f8f9fa;
+    border-right: 1px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.wasm-sidebar-header {
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 0.9em;
+    background: white;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.wasm-convo-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-size: 0.82em;
+}
+.wasm-convo-item {
+    padding: 6px 10px;
+    margin: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.wasm-convo-item.active {
+    background: #d1e7ff;
+    font-weight: 500;
+}
+.wasm-convo-item:hover {
+    background: #f0f0f0;
+}
+
+/* Ensure conversation items keep menu on same line like main */
+.conversation-item .row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.15rem;
+}
+
+.conversation-item .title {
+    font-size: 0.9rem;
+    margin-bottom: 0.1rem;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conversation-item .menu {
+    position: relative;
+    flex-shrink: 0;
+}
+
+/* Make chat take full width of the right pane in WASM layout (no auto margin) */
+.page .chat-container,
+.wasm-page .chat-container {
+    max-width: none !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+
+/* cf-brand from main */
+.cf-brand {
+    color: var(--text-dark);
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Settings page polish for WASM to match main app look */
+.settings-content h2 {
+    font-size: 2rem;
+    color: var(--text-dark);
+    margin-bottom: 0.25rem;
+}
+
+.settings-content h3 {
+    font-size: 1.25rem;
+    color: var(--text-dark);
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.settings-content label {
+    font-size: 0.85rem;
+    color: #555;
+    margin-bottom: 0.25rem;
+    display: block;
+}
+
+.settings-content .form-control {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--grey-300);
+    border-radius: 6px;
+    font-size: 0.95rem;
+    background: white;
+    color: var(--text-dark);
+}
+
+.settings-content .form-control:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.settings-content .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border: 1px solid var(--grey-300);
+    text-decoration: none;
+    display: inline-block;
+}
+
+.settings-content .btn-primary {
+    background: var(--primary-blue);
+    color: white;
+    border-color: var(--primary-blue);
+}
+
+.settings-content .btn-primary:hover {
+    background: #1f7fcc;
+}
+
+.settings-content .btn-outline-primary {
+    background: transparent;
+    color: var(--primary-blue);
+    border-color: var(--primary-blue);
+}
+
+.settings-content .btn-outline-primary:hover {
+    background: var(--light-blue-1);
+}
+
+.settings-content .btn-outline-secondary {
+    background: transparent;
+    color: var(--text-dark);
+    border-color: var(--grey-300);
+}
+
+.settings-content .btn-outline-secondary:hover {
+    background: var(--grey-100);
+}
+
+.settings-content .model-chip {
+    display: inline-flex;
+    align-items: center;
+    background: var(--light-blue-1);
+    color: var(--text-dark);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    margin: 0.25rem 0.25rem 0.25rem 0;
+    border: 1px solid var(--grey-200);
+    cursor: pointer;
+}
+
+.settings-content .model-chip:hover {
+    background: var(--light-blue-2);
+}
+
+.settings-content .model-list {
+    margin-top: 0.5rem;
+}
+
+/* Top bar styles copied/adapted from main MainLayout.razor.css for WASM */
+.top-row {
+    background: var(--light-blue-2);
+    border-bottom: var(--border-light);
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space-4);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+}
+
+.top-row a,
+.top-row .btn-link {
+    color: var(--primary-dark);
+    text-decoration: none;
+    white-space: nowrap;
+    margin-left: var(--space-0);
+}
+
+.top-row a:hover,
+.top-row .btn-link:hover {
+    text-decoration: underline;
+}
+
+.top-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.sidebar-toggle {
+    background: none;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    color: black;
+}
+
+/* Basic page and sidebar for WASM layout to mimic main */
+.page {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.sidebar {
+    width: 250px;
+    flex-shrink: 0;
+    background: var(--light-blue-2);
+    border-right: 1px solid var(--grey-200);
+    overflow-y: auto;
+    position: fixed;
+    top: 3.5rem;
+    height: calc(100vh - 3.5rem);
+    z-index: 900;
+    box-sizing: border-box;
+}
+
+main {
+    flex: 1;
+    margin-top: 0;
+    margin-left: 250px;
+    min-width: 0;
+    background: var(--grey-50);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 3.5rem);
+    box-sizing: border-box;
+}
+
+/* Chat area flex to keep input at bottom */
+.chat-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+    z-index: 1;
+    position: relative;
+}
+
+/* Sidebar collapsed state (via page class, controlled by SidebarState service) */
+.page.sidebar-collapsed .sidebar {
+    display: none !important;
+}
+
+.page.sidebar-collapsed main {
+    margin-left: 0 !important;
+}
+
+.wasm-sidebar .menu {
+    position: relative;
+}
+
+/* ========================================
+   WASM Sidebar to match main server site (adapted from NavMenu.razor.css)
+   Using .sidebar to match current page structure
+   ======================================== */
+
+.sidebar .cf-nav,
+.cf-nav {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 0;
+    color: #1F2A37;
+}
+
+.sidebar .cf-item,
+.cf-item {
+    padding: 4px 12px;
+}
+
+.sidebar .cf-link,
+.cf-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #1F2A37;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.sidebar .conversation-item,
+.conversation-item {
+    padding: 6px 12px;
+    margin: 0;
+    line-height: 1.2;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar .conversation-item:hover,
+.conversation-item:hover {
+    background: #E6F2FF;
+}
+
+.sidebar .conversation-item.active,
+.conversation-item.active {
+    background: #E6F2FF;
+    border-left: 3px solid #3BA7FF;
+}
+
+.sidebar .conversation-item .row-top,
+.conversation-item .row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2px;
+}
+
+.sidebar .conversation-item .title,
+.conversation-item .title {
+    font-size: 14px;
+    font-weight: 500;
+    color: #1F2A37;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sidebar .conversation-item .date,
+.conversation-item .date {
+    font-size: 12px;
+    opacity: 0.7;
+    color: #1F2A37;
+}
+
+.sidebar .menu-button,
+.menu-button {
+    background: none;
+    border: none;
+    color: #1F2A37;
+    cursor: pointer;
+    padding: 4px;
+    opacity: 0.6;
+    font-size: 14px;
+}
+
+.sidebar .menu-button:hover,
+.menu-button:hover {
+    opacity: 1;
+    background: #C3CCD6;
+    border-radius: 4px;
+}
+
+.sidebar .menu-popup,
+.menu-popup {
+    position: fixed;  /* use fixed to escape overflow clipping and stacking contexts */
+    background: white;
+    border: 1px solid #D9E0E7;
+    border-radius: 6px;
+    padding: 4px 8px;
+    margin-top: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    z-index: 10000;
+    font-size: 13px;
+}
+
+.sidebar .menu-popup div,
+.menu-popup div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.sidebar .menu-popup div:hover,
+.menu-popup div:hover {
+    background: #EEF2F6;
+}
+
+.sidebar .menu-overlay,
+.menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+    z-index: 9999;
+}
+
+/* Icons for sidebar */
+.cf-icon {
+    color: var(--text-dark);
+    font-size: 1.1rem;
+}

@@ -1,0 +1,8 @@
+@inherits LayoutComponentBase
+
+<div style="height: 100vh; display: flex; flex-direction: column;">
+    <WasmTopBar />
+    <div style="flex: 1; overflow: hidden; padding-top: 3.5rem; height: 100%;"> @* space for fixed top-row *@
+        @Body
+    </div>
+</div>

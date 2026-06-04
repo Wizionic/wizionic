@@ -7,6 +7,33 @@
 /* Sidebar legacy styles (kept for safety) */
 .chat-sidebar, .chat-sidebar-section-title, .chat-sidebar-new, .chat-sidebar-item { /* unused but harmless */ }
 
+/* WASM sidebar enhancements (used in /wasm-chat) */
+.wasm-sidebar {
+    width: 240px;
+    background: #f8f9fa;
+    border-right: 1px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.wasm-sidebar-header {
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 0.9em;
+    background: white;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.wasm-convo-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-size: 0.82em;
+}
+
 /* ====================== CHAT STRUCTURE ====================== */
 .chat-wrapper {
     display: flex;
