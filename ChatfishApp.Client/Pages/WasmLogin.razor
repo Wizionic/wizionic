@@ -1,0 +1,149 @@
+@page "/"
+@page "/account"
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@layout ChatfishApp.Client.Shared.WasmLayout
+
+@inject ChatfishApp.Client.Services.WasmAuthService AuthService
+@inject HttpClient Http
+@inject NavigationManager Nav
+
+<link href="css/wasm-chat.css" rel="stylesheet" />
+
+<div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
+    <h2>Chatfish</h2>
+    <p style="color:#555;">Chats and settings work entirely in your browser (local-first). Log in with an email <em>only</em> if you want to sync your encrypted chat history and provider keys across browsers or devices.</p>
+
+    @if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
+    {
+        <div style="margin: 1rem 0; padding: 0.75rem 1rem; background: #e6ffed; border: 1px solid #0a0; border-radius: 6px;">
+            Logged in as <strong>@AuthService.Email</strong>.<br />
+            <span style="font-size:0.9em;">Your chats and settings can now sync (end-to-end encrypted) to other devices signed in with the same email.</span>
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/wasm-chat")'>Continue to Chat</button>
+            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/wasm-settings")'>Settings</button>
+            <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
+        </div>
+    }
+    else
+    {
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div style="color:#c00; margin: 0.25rem 0 0.5rem; font-size:0.9em;">@error</div>
+        }
+
+        @if (magicSent)
+        {
+            <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: #f0f7ff; border: 1px solid #3BA7FF; border-radius: 6px;">
+                <p style="margin:0 0 0.25rem 0;"><strong>Magic link sent!</strong></p>
+                <p style="margin:0; font-size:0.95em;">
+                    We've emailed a login link to <strong>@email</strong>. Open your inbox (and check spam).
+                    The email contains a big clickable "Log in to Chatfish" button <em>and</em> the raw URL
+                    so you can copy-paste it if you're reading email on a different device or browser.
+                </p>
+            </div>
+
+            <button class="btn btn-outline-secondary" @onclick="Reset">Use a different email</button>
+        }
+        else
+        {
+            <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:1; min-width:220px;">
+                    <label style="display:block; font-size:0.85rem; color:#555; margin-bottom:0.2rem;">Email address</label>
+                    <input type="email" @bind="email" placeholder="you@example.com" class="form-control" />
+                </div>
+                <button class="btn btn-primary" @onclick="SendMagic" disabled="@string.IsNullOrWhiteSpace(email)">Send Magic Login Link</button>
+            </div>
+        }
+
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size:0.95em;">
+            <strong>Continue without logging in</strong> (your chats and settings will stay only in <em>this</em> browser):
+            <div style="margin-top:0.35rem;">
+                <a href="/wasm-chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Go to Chat</a>
+                &nbsp;•&nbsp;
+                <a href="/wasm-settings" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Settings</a>
+            </div>
+        </div>
+
+        <p style="margin-top:1rem; font-size:0.8em; color:#666;">
+            Logging in with email is only needed when you want the same encrypted history and keys available on another browser or device.
+        </p>
+    }
+</div>
+
+@code {
+    string email = "";
+    bool magicSent = false;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.LoadAsync();
+
+        // Determine if the user explicitly navigated to the account view (e.g. via the profile icon).
+        // When on /account (or /account/), we want to show the "Logged in as ... Sign out" UI
+        // even for already-authenticated users, instead of auto-redirecting to chat.
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        string path = uri.AbsolutePath.TrimEnd('/');
+        bool isExplicitAccountView = path.Equals("/account", StringComparison.OrdinalIgnoreCase);
+
+        if (!AuthService.IsAuthenticated && isExplicitAccountView)
+        {
+            // Non-logged-in users clicking the profile icon should see the login form at the clean root URL.
+            Nav.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthService.IsAuthenticated && !isExplicitAccountView)
+        {
+            Nav.NavigateTo("/wasm-chat", replace: true);
+            return;
+        }
+    }
+
+    async Task SendMagic()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(email)) return;
+
+        try
+        {
+            var payload = new { Email = email.Trim() };
+            var resp = await Http.PostAsJsonAsync("/api/auth/request-magic-link", payload);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                // We no longer receive (or display) the raw magic link here.
+                // The only way the user gets the link is via the real email that was just sent.
+                // The email body includes both a nice clickable button and the raw URL for copy/paste.
+                await resp.Content.ReadFromJsonAsync<MagicLinkResponse>(); // consume response
+                magicSent = true;
+            }
+            else
+            {
+                var txt = await resp.Content.ReadAsStringAsync();
+                error = $"Could not send magic link ({resp.StatusCode}): {txt}";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = "Network or unexpected error: " + ex.Message;
+        }
+    }
+
+    void Reset()
+    {
+        magicSent = false;
+        error = null;
+        // keep the typed email value so the user can quickly correct it
+    }
+
+    void DoLogout()
+    {
+        // Force load so the cookie is cleared by the server handler and we come back to a fresh "/"
+        Nav.NavigateTo("/logout", forceLoad: true);
+    }
+
+    private record MagicLinkResponse(bool Sent, string? Message);
+}

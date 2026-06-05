@@ -4,9 +4,10 @@ namespace ChatfishApp.Client.Services;
 
 /// <summary>
 /// Thin wrapper around browser Web Crypto (AES-GCM) exposed via IJSRuntime.
-/// Used by WasmConversationStore / WasmKeyStore to encrypt the JSON blobs stored
-/// in localStorage (or IndexedDB) and by the live sync client to encrypt payloads
-/// before they cross the relay.
+/// Used by WasmConversationStore to encrypt *all* history content blobs stored in
+/// IndexedDB (guest chats use a locally-generated key; authenticated chats use the
+/// server key so they can be decrypted on other devices of the same user for sync).
+/// Also used by the future live sync client for encrypted payloads.
 ///
 /// The key bytes come from the server (User.LocalEncryptionKey, unprotected for
 /// the authenticated client only). The JS side does the actual subtle crypto work

@@ -29,6 +29,11 @@ builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<ProviderKeyService>();
 builder.Services.AddScoped<AiProviderService>();
 
+// Email sending (used for real magic link delivery). Configure the "Email" section in appsettings
+// (passwords should come from user-secrets or environment variables, never committed).
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection("Email"));
+builder.Services.AddScoped<IEmailSender, EmailSender>();
+
 // App-level tools (web search, URL summarization via Jina, etc.) exposed to models via ME.AI function calling.
 // These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
 builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
@@ -55,7 +60,10 @@ builder.Services.AddSingleton<KeyProtectionService>();
 builder.Services.AddAuthentication("ChatfishAuth")
     .AddCookie("ChatfishAuth", options =>
     {
-        options.LoginPath = "/login";
+        // Root (/) is now the WASM landing page that handles both "login with email" and
+        // "continue without login" (guest/local mode). The cookie middleware therefore
+        // redirects unauthenticated users who hit a [Authorize] page to "/".
+        options.LoginPath = "/";
         options.LogoutPath = "/logout";
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = true;
@@ -99,7 +107,8 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
 
     if (user == null)
     {
-        ctx.Response.Redirect("/login");
+        // Invalid/expired token → send back to the new WASM root landing page (guest form).
+        ctx.Response.Redirect("/");
         return;
     }
 
@@ -114,14 +123,19 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
 
     await ctx.SignInAsync("ChatfishAuth", principal);
 
-    ctx.Response.Redirect("/chat");
+    // After successful magic-link sign-in, land on "/" so the WASM landing page can
+    // immediately show the "Logged in as ..." state (with buttons to chat/settings).
+    // The user then explicitly chooses to go to chat or settings.
+    ctx.Response.Redirect("/");
 });
 
 
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
     await ctx.SignOutAsync("ChatfishAuth");
-    ctx.Response.Redirect("/login");
+    // Return to the WASM root so the user sees the (now guest) landing page with
+    // the option to log in again or continue without an account.
+    ctx.Response.Redirect("/");
 });
 
 // WASM client APIs (kept in WasmApiEndpoints.cs so Program.cs stays small).

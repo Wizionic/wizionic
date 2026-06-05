@@ -3,7 +3,7 @@ using System;
 namespace ChatfishApp.Client.Services;
 
 /// <summary>
-/// Simple state service to share sidebar collapsed state between WasmTopBar (in layout) and WasmChat page.
+/// Simple state service for sidebar collapsed state (used by WasmChat.razor for the toggle button + .page class binding).
 /// </summary>
 public class SidebarState
 {

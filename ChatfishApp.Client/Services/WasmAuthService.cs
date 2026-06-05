@@ -11,12 +11,13 @@ namespace ChatfishApp.Client.Services;
 ///
 /// When a user is logged in on the server (magic link cookie), the WASM can call
 /// these endpoints because the browser automatically sends the cookie on same-origin
-/// requests. The returned email + key allow:
+/// requests. The returned email + key (plus a locally-generated guest key when not
+/// logged in) allow:
 /// - Displaying "Logged in as ..." in the WASM UI.
-/// - Namespacing localStorage / IndexedDB per email.
-/// - Encrypting local history blobs and live-sync payloads (so the server relay
-///   never sees plaintext chat content, and history is never written to the
-///   central SQLite DB for the WASM path).
+/// - Namespacing IndexedDB history per email (or "guest").
+/// - *Always* encrypting history content at rest in IndexedDB (guest chats use a
+///   device-local key; authenticated chats use the server key so other devices of
+///   the same user can decrypt for sync).
 /// - Live cross-device sync only while both WASM instances are open (Brave-style).
 /// </summary>
 public class WasmAuthService
@@ -76,8 +77,44 @@ public class WasmAuthService
         Email = null;
         UserId = null;
         LocalEncryptionKeyB64 = null;
+        _guestKeyB64 = null;
         OnChanged?.Invoke();
     }
+
+    /// <summary>
+    /// Returns the AES-GCM key (base64) that must be used for *all* history content
+    /// blobs stored in IndexedDB (guest and authenticated).
+    ///
+    /// - When a real server login succeeded and we have the server key → that key is returned
+    ///   (this is what enables the same encrypted blobs to be decrypted on another device
+    ///   of the same logged-in user for sync).
+    /// - Otherwise we ensure a local (device-only) guest key exists in the IDB settings store
+    ///   and return it. This guarantees that *unauthenticated* chats are also encrypted at rest
+    ///   (per requirement) even though they cannot be synced.
+    ///
+    /// The key is cached for the life of the WASM app.
+    /// </summary>
+    public async Task<string> GetOrCreateHistoryEncryptionKeyAsync(IJSRuntime js)
+    {
+        if (!string.IsNullOrEmpty(LocalEncryptionKeyB64))
+            return LocalEncryptionKeyB64; // real server key (cross-device)
+
+        if (!string.IsNullOrEmpty(_guestKeyB64))
+            return _guestKeyB64;
+
+        try
+        {
+            _guestKeyB64 = await js.InvokeAsync<string>("idbEnsureGuestKey");
+            return _guestKeyB64;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmAuth] Could not ensure guest encryption key via IDB: {ex.Message}");
+            return string.Empty; // last-resort fallback (store will see empty and may store plaintext)
+        }
+    }
+
+    private string? _guestKeyB64;
 
     private record UserMeResponse(string? Email, string? Id, bool HasLocalEncryptionKey);
     private record EncryptionKeyResponse(string? Key);

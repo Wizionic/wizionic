@@ -46,19 +46,32 @@
             el.style.height = '86px';
         };
 
-        // WASM sidebar toggle (for /wasm-chat page)
-        window.toggleWasmSidebar = function () {
+        // WASM sidebar toggle (for /wasm-chat page). Button + handler colocated in WasmChat.razor (owns the .page).
+        // JS receives desired collapsed state and *sets* the class on .page (plus clears inlines); Blazor binding also updates class attr.
+        // CSS rules (.page.sidebar-collapsed .sidebar {display:none!important} etc) do the actual hide + margin shift.
+        window.toggleWasmSidebar = function (collapsed) {
+            console.log('[WasmSidebar] toggleWasmSidebar called, collapsed=', collapsed);
+            const pageEl = document.querySelector('.page');
             const sidebar = document.querySelector('.sidebar');
             const mainEl = document.querySelector('main');
-            if (sidebar) {
-                if (sidebar.style.display === 'none') {
-                    sidebar.style.display = '';
-                    if (mainEl) mainEl.style.marginLeft = '250px';
+            if (pageEl) {
+                if (collapsed) {
+                    pageEl.classList.add('sidebar-collapsed');
                 } else {
-                    sidebar.style.display = 'none';
-                    if (mainEl) mainEl.style.marginLeft = '0';
+                    pageEl.classList.remove('sidebar-collapsed');
                 }
             }
+            // Clear any previous inline styles so CSS (base + !important collapsed) fully controls computed display/margin.
+            if (sidebar) {
+                sidebar.style.display = '';
+            }
+            if (mainEl) {
+                mainEl.style.marginLeft = '';
+            }
+            // Log resulting state for easy diagnosis in DevTools console
+            console.log('[WasmSidebar] after: page has sidebar-collapsed?', !!(pageEl && pageEl.classList.contains('sidebar-collapsed')),
+                'sidebar display=', sidebar ? sidebar.style.display : 'n/a',
+                'main marginLeft=', mainEl ? mainEl.style.marginLeft : 'n/a');
         };
 
         window.getMenuPopupPosition = function (buttonId) {
@@ -134,6 +147,147 @@
                 console.warn("decryptLocalData failed (legacy data?), returning as-is", e);
                 return combinedBase64;
             }
+        };
+
+        // --------------------------------------------------------------------
+        // IndexedDB helpers for WASM chat history (replaces localStorage for
+        // the conversation blobs and metadata).
+        //
+        // All *content* (the serialized List<ChatMessage> JSON) is *always*
+        // encrypted with AES-GCM before being written to convoContents:
+        //   - When the user is logged in we use the server-provided
+        //     LocalEncryptionKey (so other devices of the same account can
+        //     decrypt for live sync).
+        //   - For completely unauthenticated/guest use we generate a local
+        //     (device-only) 256-bit key the first time and store it in the
+        //     settings store. This gives at-rest protection for guest history
+        //     without any server involvement.
+        //
+        // The lightweight meta (title, lastUpdated, syncEnabled flag) is
+        // stored in cleartext in convoMetas so the list of conversations is
+        // always visible even before the encryption key is available.
+        //
+        // This also gives us a clean place for the per-conversation
+        // "syncEnabled" flag so future sync code can do "all or only some".
+        // --------------------------------------------------------------------
+        let _chatfishDbPromise = null;
+
+        async function getChatfishDb() {
+            if (_chatfishDbPromise) return _chatfishDbPromise;
+            _chatfishDbPromise = new Promise((resolve, reject) => {
+                const req = indexedDB.open("chatfish-conversations", 1);
+                req.onupgradeneeded = (ev) => {
+                    const db = ev.target.result;
+                    if (!db.objectStoreNames.contains("convoMetas")) {
+                        const meta = db.createObjectStore("convoMetas", { keyPath: "key" });
+                        meta.createIndex("byNamespace", "namespace", { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains("convoContents")) {
+                        db.createObjectStore("convoContents", { keyPath: "key" });
+                    }
+                    if (!db.objectStoreNames.contains("settings")) {
+                        db.createObjectStore("settings", { keyPath: "key" });
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+            return _chatfishDbPromise;
+        }
+
+        window.idbGetMetasByNamespace = async (namespace) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("convoMetas", "readonly");
+                const store = tx.objectStore("convoMetas");
+                const idx = store.index("byNamespace");
+                const req = idx.getAll(namespace || "");
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutMeta = async (meta) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("convoMetas", "readwrite");
+                tx.objectStore("convoMetas").put(meta);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetContent = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("convoContents", "readonly");
+                const req = tx.objectStore("convoContents").get(key);
+                req.onsuccess = () => resolve(req.result ? req.result.content : null);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutContent = async (key, content) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("convoContents", "readwrite");
+                tx.objectStore("convoContents").put({ key, content });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteByKey = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(["convoMetas", "convoContents"], "readwrite");
+                tx.objectStore("convoMetas").delete(key);
+                tx.objectStore("convoContents").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetSetting = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("settings", "readonly");
+                const req = tx.objectStore("settings").get(key);
+                req.onsuccess = () => resolve(req.result ? req.result.value : null);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutSetting = async (key, value) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("settings", "readwrite");
+                tx.objectStore("settings").put({ key, value });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetAllMetas = async () => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("convoMetas", "readonly");
+                const req = tx.objectStore("convoMetas").getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        // Ensures a per-browser guest encryption key exists (device-local only).
+        // The key is a base64 32-byte value, stored in the settings store.
+        // It is used exactly like the server key for AES-GCM of guest history.
+        window.idbEnsureGuestKey = async () => {
+            const existing = await window.idbGetSetting("guest-encryption-key");
+            if (existing) return existing;
+            const bytes = crypto.getRandomValues(new Uint8Array(32));
+            const b64 = btoa(String.fromCharCode.apply(null, bytes));
+            await window.idbPutSetting("guest-encryption-key", b64);
+            return b64;
         };
     </script>
 </body>

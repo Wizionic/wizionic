@@ -9,16 +9,20 @@ namespace ChatfishApp.Apis;
 /// <summary>
 /// Minimal API endpoints exposed specifically for the WASM client.
 /// 
-/// These are the "get some info from the database" surface for authenticated WASM:
-/// - /api/auth/me           → basic identity (email, id, has key)
-/// - /api/user/encryption-key → the per-user key for client-side AES-GCM (localStorage + live sync payloads)
-/// - /api/keys              → server-stored provider keys (decrypted) so WASM can import them
+/// Auth surface:
+/// - POST /api/auth/request-magic-link  (PUBLIC, no auth required) → creates the short-lived magic token and sends a real email containing both a prominent clickable login link and the raw URL for copy/paste (the recipient may be on a different device/browser than the one that started the login flow).
+/// - GET  /api/auth/me                  (protected) → basic identity (email, id, has key) for a logged-in WASM client
+/// - GET  /api/user/encryption-key      (protected) → the per-user key for client-side AES-GCM (localStorage + live sync payloads)
+/// - GET  /api/keys                     (protected) → server-stored provider keys (decrypted) so WASM can import them
 ///
 /// Plus tool proxies (under /api/tools) so that agentic/tool-calling in WASM chat can use
 /// web search and page summarization without browser CORS problems. The real work happens
 /// on the server (reusing the same AppTools as the interactive server chat).
 ///
-/// All under /api and protected by the existing cookie auth (for WASM users).
+/// The /api/auth/request-magic-link endpoint (and all /api/tools/*) are deliberately public
+/// so that WASM clients work fully without an email login (guest / local-only mode).
+/// The identity + key + provider-key endpoints remain protected by the cookie set by the
+/// /magic-login handler.
 /// 
 /// The server never stores WASM conversation history (per design).
 /// 
@@ -28,6 +32,36 @@ public static class WasmApiEndpoints
 {
     public static IEndpointRouteBuilder MapWasmApis(this IEndpointRouteBuilder endpoints)
     {
+        // Public (no auth) auth endpoints for the WASM client.
+        // /api/auth/request-magic-link lets a WASM page (the new root landing page) initiate
+        // a magic link without a cookie. A real email is sent (via IEmailSender / MailKit)
+        // containing a nice clickable button/link PLUS the raw URL so the user can copy it
+        // if they are on a different device or browser than the one where they started login.
+        // The raw token/link is NEVER returned to the browser (security).
+        var publicAuth = endpoints.MapGroup("/api/auth");
+        publicAuth.MapPost("/request-magic-link", async (HttpContext ctx, MagicLinkService magic, IEmailSender emailSender, RequestMagicLink req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Email))
+                return Results.BadRequest("Email is required.");
+
+            var token = await magic.CreateMagicLinkTokenAsync(req.Email.Trim());
+
+            var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+            var magicLink = $"{baseUrl}/magic-login?token={token}";
+
+            // Always log for dev / ops visibility (even when real SMTP is configured).
+            // This is safe because the link is only useful to someone who also controls the inbox.
+            Console.WriteLine($"[DEV] Magic link for {req.Email}: {magicLink}");
+
+            // Send the real email. The email body (both HTML and text) contains a prominent
+            // clickable login action and the raw URL for copy/paste.
+            await emailSender.SendMagicLinkEmailAsync(req.Email.Trim(), magicLink);
+
+            // Do not return the magicLink to the caller. The only delivery channel is the
+            // email that was just sent. The client UI only shows a generic "check your email" message.
+            return Results.Ok(new { sent = true, message = "Magic login link sent. Check your email inbox (and spam folder). The message contains a clickable link and the raw URL for copying." });
+        });
+
         var group = endpoints.MapGroup("/api").RequireAuthorization();
 
         // Tool endpoints are intentionally *not* under the authorized group.
@@ -119,4 +153,7 @@ public static class WasmApiEndpoints
     public record WebSearchRequest(string Query, int? MaxResults = 5);
     public record SummarizeUrlRequest(string Url);
     public record WeatherRequest(double Latitude, double Longitude, string? Units = "celsius", int? ForecastDays = 0);
+
+    // Request for the public magic-link flow (used by the WASM landing page at /).
+    public record RequestMagicLink(string Email);
 }
