@@ -19,8 +19,6 @@
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
 @inject ChatfishApp.Services.Tools.IToolProvider ToolProvider
 
-<link href="css/wasm-chat.css" rel="stylesheet" />
-
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
     <!-- Sidebar toggle button is here (in WasmChat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
          Positioned absolutely (via WasmLayout body container) to overlay the top bar near the fish logo (user's red box location).

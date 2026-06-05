@@ -1,5 +1,241 @@
 /* ========================================
-   Chatfish — Chat Page Styles (FINAL FIXED VERSION)
+   Chatfish — Unified Custom Styles (single source of truth for client + server)
+   Merged from previous app.css (design tokens + common) + wasm-chat.css (chat + WASM UI)
+   All hard-coded colors standardized to CSS vars where possible. Duplicated layout/component
+   rules from old files have been deduped into this global file.
+   ======================================== */
+
+/* -------------------------------------------------------
+   Chatfish Design System — Global Styles & Tokens
+   (from server wwwroot/app.css)
+   ------------------------------------------------------- */
+
+/* ------------------------------
+   1. CSS RESET (lightweight)
+   ------------------------------ */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    background: var(--grey-50);
+    color: var(--text-dark);
+    font-family: "Segoe UI", sans-serif;
+    line-height: var(--line-normal);
+}
+
+/* Remove default link styling */
+a {
+    color: var(--primary-dark);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+/* ------------------------------
+   2. DESIGN TOKENS
+   ------------------------------ */
+:root {
+    /* Primary Blues */
+    --primary-blue: #3BA7FF;
+    --primary-dark: #1F7FCC;
+    --primary-light: #7CCBFF;
+    --bubble-blue: #D1E7FF;
+
+    /* Extra Light Blues */
+    --light-blue-1: #E6F2FF;
+    --light-blue-2: #F0F7FF;
+    --light-blue-3: #F7FBFF;
+
+    /* Greys */
+    --grey-50:  #F7F9FC;
+    --grey-100: #EEF2F6;
+    --grey-200: #D9E0E7;
+    --grey-300: #C3CCD6;
+    --grey-400: #A5AFBA;
+    --grey-500: #7E8894;
+    --grey-600: #5A6470;
+
+    /* Accents */
+    --success: #4CC9A7;
+    --warning: #FFD66B;
+    --error:   #FF6B6B;
+
+    /* Text */
+    --text-dark: #1F2A37;
+    --text-light: #FFFFFF;
+
+    /* Spacing Scale (8pt system) */
+    --space-0: 0px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 32px;
+    --space-8: 40px;
+    --space-9: 48px;
+    --space-10: 64px;
+    --space-11: 124px;
+
+    /* Typography Scale */
+    --font-xs: 12px;
+    --font-sm: 14px;
+    --font-md: 16px;
+    --font-lg: 20px;
+    --font-xl: 24px;
+    --font-2xl: 32px;
+
+    --font-weight-light: 300;
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    --line-tight: 1.2;
+    --line-normal: 1.5;
+    --line-relaxed: 1.7;
+
+    --topbar-height: 56px;
+
+    /* Component Tokens — Sidebar */
+    --sidebar-bg: var(--light-blue-2);
+    --sidebar-border: var(--grey-200);
+    --sidebar-hover: var(--grey-200);
+    --sidebar-active: var(--grey-300);
+    --sidebar-text: var(--text-dark);
+
+    /* Component Tokens — Chat Window */
+    --chat-bg: var(--grey-50);
+    --chat-border: var(--grey-200);
+
+    /* Component Tokens — Chat Bubbles */
+    --bubble-user-bg: var(--bubble-blue);
+    --bubble-user-text: var(--text-dark);
+
+    --bubble-ai-bg: #FFFFFF;
+    --bubble-ai-border: var(--grey-200);
+    --bubble-ai-text: var(--text-dark);
+
+    /* Buttons */
+    --btn-primary-bg: var(--primary-blue);
+    --btn-primary-text: var(--text-light);
+    --btn-primary-hover: var(--primary-dark);
+
+    --btn-danger-bg: var(--error);
+    --btn-danger-text: var(--text-light);
+
+    /* Borders & Radii */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    --border-light: 1px solid var(--grey-200);
+    --border-medium: 1px solid var(--grey-300);
+}
+
+/* ------------------------------
+   3. GLOBAL UTILITIES
+   ------------------------------ */
+
+/* Spacing utilities */
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mb-1 { margin-bottom: var(--space-1); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-3 { margin-bottom: var(--space-3); }
+.p-2  { padding: var(--space-2); }
+.p-3  { padding: var(--space-3); }
+
+/* Text utilities */
+.text-light { color: var(--text-light); }
+.text-dark  { color: var(--text-dark); }
+.text-sm    { font-size: var(--font-sm); }
+.text-md    { font-size: var(--font-md); }
+.text-lg    { font-size: var(--font-lg); }
+
+/* Buttons */
+.btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-text);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+}
+.btn-primary:hover {
+    background: var(--btn-primary-hover);
+}
+
+.btn-danger {
+    background: var(--btn-danger-bg);
+    color: var(--btn-danger-text);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+}
+
+
+.ollama-instructions {
+  font-size: 0.9rem;
+  color: #444;
+  max-width: 580px;
+  margin: 0 auto;
+}
+
+.ollama-instructions a {
+  color: #3BA7FF;
+  text-decoration: none;
+}
+
+.ollama-instructions a:hover {
+  text-decoration: underline;
+}
+
+.model-commands {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.model-command {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.model-desc {
+  display: block;
+  font-size: 0.82rem;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.model-command pre {
+  margin: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
+.model-command code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* ========================================
+   Chat / WASM specific (from wasm-chat.css, deduped + var-ified)
    ======================================== */
 
 .chat-layout { display: flex; height: calc(100vh - 80px); }
@@ -31,7 +267,7 @@
 
 .message-me {
     margin-left: auto;
-    background: #d1e7ff;
+    background: var(--bubble-blue);
     padding: 0.6rem 1rem;
     border-radius: 12px;
     max-width: 70%;
@@ -40,7 +276,7 @@
 
 .message-bot {
     margin-right: auto;
-    background: #ffffff;
+    background: var(--bubble-ai-bg, #ffffff);
     padding: 0.6rem 1rem;
     border-radius: 12px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
@@ -162,7 +398,7 @@
 .send-btn {
     width: 36px; height: 36px;
     border: none;
-    background: #3b82f6;
+    background: var(--primary-blue);
     color: white;
     font-size: 1.35rem;
     border-radius: 50%;
@@ -173,7 +409,7 @@
     transition: all 0.2s;
     flex-shrink: 0;
 }
-.send-btn:hover:not(:disabled) { background: #2563eb; transform: scale(1.05); }
+.send-btn:hover:not(:disabled) { background: var(--primary-dark); transform: scale(1.05); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ====================== SIDEBAR ALIGNMENT (NO DOUBLE MARGIN!) ====================== */
@@ -352,7 +588,7 @@
 }
 
 .settings-content .btn-primary:hover {
-    background: #1f7fcc;
+    background: var(--primary-dark);
 }
 
 .settings-content .btn-outline-primary {
@@ -396,7 +632,7 @@
     margin-top: 0.5rem;
 }
 
-/* Top bar styles copied/adapted from main MainLayout.razor.css for WASM */
+/* Top bar / page / sidebar structure (previously copied; now in unified global so WASM + any server pages share) */
 .top-row {
     background: var(--light-blue-2);
     border-bottom: var(--border-light);
@@ -429,7 +665,30 @@
     display: flex;
     align-items: center;
     gap: 1.5rem;
-    /* margin-left reset: toggle button moved into WasmChat.razor (now fixed at left:5px of content area) */
+}
+
+/* Right side icon group in WasmTopBar (and shell for WASM routes) - now class-based so CSS is single source */
+.top-row-right,
+.top-row > div:last-child {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    color: var(--primary-dark);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+}
+
+.top-row-right a i,
+.top-row-right a .bi,
+.top-row > div:last-child a i,
+.top-row > div:last-child a .bi {
+    font-size: 1.35rem;
 }
 
 .sidebar-toggle {
@@ -438,10 +697,7 @@
     padding: 6px;
     cursor: pointer;
     color: black;
-    /* Absolute placement relative to the layout body container (position:relative + overflow:visible in WasmLayout.razor).
-       Small positive top + left places the button inside the fixed .top-row (overlaid on the top bar).
-       left:220px was tuned to the user's desired red-box location in the header (to the right of the fish logo).
-       z-index > 1000 ensures it paints in front of the top bar. Button lives in WasmChat.razor for reliable toggle handling. */
+    /* Absolute placement... (comments preserved for the WasmChat absolute toggle) */
     position: absolute;
     top: 8px;
     left: 220px;
@@ -502,16 +758,6 @@ main {
 .page.sidebar-collapsed main {
     margin-left: 0 !important;
 }
-
-/* (Previously added indent for when toggle lived inside the sidebar area at top:3.5rem.
-   Now that the toggle is absolutely positioned over the topbar, normal padding on cf-item / conversation-item is desired again.
-   The rule below is left as a no-op / commented for reference; delete later if not needed.) */
-/*
-.page:not(.sidebar-collapsed) .sidebar .cf-item,
-.page:not(.sidebar-collapsed) .sidebar .conversation-item {
-    padding-left: 38px !important;
-}
-*/
 
 .wasm-sidebar .menu {
     position: relative;
@@ -648,8 +894,249 @@ main {
     z-index: 9999;
 }
 
-/* Icons for sidebar */
-.cf-icon {
-    color: var(--text-dark);
-    font-size: 1.1rem;
+/* ========================================
+   WASM / Chat page layout forces (to ensure topbar blue, spacing, sidebar, chat area
+   render correctly when using the unified CSS in InteractiveWebAssembly mode.
+   These !important rules guarantee the visual from the original wasm-chat.css even
+   if order or other styles interfere. They target the structure in WasmLayout + WasmChat.
+   ======================================== */
+
+/* Force the topbar (WasmTopBar) to have blue shading and proper flex layout */
+body .top-row,
+.top-row {
+    background: var(--light-blue-2) !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    height: 3.5rem !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 1000 !important;
+    padding: 0 1rem !important;
+    box-sizing: border-box !important;
+}
+
+/* Left side (logo area) */
+body .top-left,
+.top-left {
+    display: flex !important;
+    align-items: center !important;
+    gap: 1.5rem !important;
+}
+
+/* Right side icons container (the div with gear/person) gets pushed right. Supports both legacy inline div and new .top-row-right class. */
+.top-row > div:last-child,
+.top-row-right {
+    margin-left: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.6rem !important;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    color: var(--primary-dark) !important;
+    text-decoration: none !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.top-row-right a i,
+.top-row-right a .bi,
+.top-row > div:last-child a i,
+.top-row > div:last-child a .bi {
+    font-size: 1.35rem !important;
+}
+
+/* Sidebar for WASM chat page */
+body .sidebar,
+.sidebar {
+    width: 250px !important;
+    background: var(--light-blue-2) !important;
+    border-right: 1px solid var(--grey-200) !important;
+    position: fixed !important;
+    top: 3.5rem !important;
+    height: calc(100vh - 3.5rem) !important;
+    z-index: 900 !important;
+    overflow-y: auto !important;
+    box-sizing: border-box !important;
+}
+
+/* Main content area pushed by sidebar */
+body main,
+main {
+    margin-left: 250px !important;
+    background: var(--grey-50) !important;
+    min-width: 0 !important;
+}
+
+/* When sidebar collapsed via .page.sidebar-collapsed (used in WasmChat) */
+body .page.sidebar-collapsed .sidebar,
+.page.sidebar-collapsed .sidebar {
+    display: none !important;
+}
+
+body .page.sidebar-collapsed main,
+.page.sidebar-collapsed main {
+    margin-left: 0 !important;
+}
+
+/* Chat area */
+body .chat-wrapper,
+.chat-wrapper {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    height: 100% !important;
+    z-index: 1 !important;
+    position: relative !important;
+    background: var(--light-blue-3) !important;
+}
+
+body .chat-container,
+.chat-container {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 1.5rem 1rem 195px !important;
+    background: var(--light-blue-3) !important;
+    max-width: 1080px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    scroll-behavior: smooth !important;
+}
+
+/* Input bar at bottom */
+body .input-area,
+.input-area {
+    background: var(--light-blue-3) !important;
+    border-top: none !important;
+    box-shadow: none !important;
+    padding: 10px 24px 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+body .input-container,
+.input-container {
+    display: flex !important;
+    align-items: flex-end !important;
+    gap: 6px !important;
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 18px !important;
+    padding: 6px 12px !important;
+    width: 100% !important;
+    margin: 0 !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Message input textarea */
+body .message-input,
+.message-input {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    border: none !important;
+    outline: none !important;
+    background: transparent !important;
+    font-size: 1rem !important;
+    padding: 4px 8px 4px 8px !important;
+    resize: none !important;
+    min-height: 86px !important;
+    max-height: 110px !important;
+    overflow-y: auto !important;
+    line-height: 1.4 !important;
+}
+
+/* Send button */
+body .send-btn,
+.send-btn {
+    width: 36px !important;
+    height: 36px !important;
+    border: none !important;
+    background: var(--primary-blue) !important;
+    color: white !important;
+    font-size: 1.35rem !important;
+    border-radius: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+}
+
+/* Sidebar toggle (absolute over topbar) */
+body .sidebar-toggle,
+.sidebar-toggle {
+    background: none !important;
+    border: none !important;
+    padding: 6px !important;
+    cursor: pointer !important;
+    color: black !important;
+    position: absolute !important;
+    top: 8px !important;
+    left: 220px !important;
+    z-index: 1100 !important;
+}
+
+/* Basic convo and nav items for sidebar in chat */
+body .cf-nav,
+.cf-nav {
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 4px 0 !important;
+}
+
+body .cf-item,
+.cf-item {
+    padding: 4px 12px !important;
+}
+
+body .conversation-item,
+.conversation-item {
+    padding: 6px 12px !important;
+    margin: 2px 4px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+body .conversation-item.active,
+.conversation-item.active {
+    background: #E6F2FF !important;
+    border-left: 3px solid var(--primary-blue) !important;
+}
+
+/* Message bubbles already have some, but reinforce for WASM (and ensure base rules from earlier in file also apply now that CSS is balanced) */
+body .message-row,
+.message-row {
+    display: flex !important;
+    margin-bottom: 0.75rem !important;
+}
+
+body .message-me,
+.message-me {
+    margin-left: auto !important;
+    background: var(--bubble-blue) !important;
+    color: var(--text-dark) !important;
+    padding: 0.6rem 1rem !important;
+    border-radius: 12px !important;
+    max-width: 70% !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    display: block !important; /* ensure it acts as a block container for its timestamp etc */
+}
+
+body .message-bot,
+.message-bot {
+    margin-right: auto !important;
+    background: var(--bubble-ai-bg, #ffffff) !important;
+    color: var(--text-dark) !important;
+    padding: 0.6rem 1rem !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    max-width: 100% !important;
+    width: fit-content !important;
 }

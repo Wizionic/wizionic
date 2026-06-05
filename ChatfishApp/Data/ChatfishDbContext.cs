@@ -5,8 +5,6 @@ namespace ChatfishApp.Data;
 public class ChatfishDbContext : DbContext
 {
     public DbSet<User> Users => Set<User>();
-    public DbSet<Conversation> Conversations => Set<Conversation>();
-    public DbSet<Message> Messages => Set<Message>();
     public DbSet<UserProviderKey> ProviderKeys => Set<UserProviderKey>();
 
     public ChatfishDbContext(DbContextOptions<ChatfishDbContext> options)
@@ -21,18 +19,6 @@ public class ChatfishDbContext : DbContext
         modelBuilder.Entity<User>()
             .HasIndex(u => u.Email)
             .IsUnique();
-
-        modelBuilder.Entity<User>()
-            .HasMany(u => u.Conversations)
-            .WithOne(c => c.User)
-            .HasForeignKey(c => c.UserId)
-            .OnDelete(DeleteBehavior.Cascade);
-
-        modelBuilder.Entity<Conversation>()
-            .HasMany(c => c.Messages)
-            .WithOne(m => m.Conversation)
-            .HasForeignKey(m => m.ConversationId)
-            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<UserProviderKey>()
             .HasOne(k => k.User)

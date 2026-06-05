@@ -19,6 +19,4 @@ public class User
     /// history blobs are never stored in SQLite for the WASM path).
     /// </summary>
     public string? LocalEncryptionKey { get; set; }
-
-    public List<Conversation> Conversations { get; set; } = new();
 }
