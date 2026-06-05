@@ -7,17 +7,15 @@
 @inject HttpClient Http
 @inject NavigationManager Nav
 
-<link href="css/wasm-chat.css" rel="stylesheet" />
-
 <div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
     <h2>Chatfish</h2>
-    <p style="color:#555;">Chats and settings work entirely in your browser (local-first). Log in with an email <em>only</em> if you want to sync your encrypted chat history and provider keys across browsers or devices.</p>
+    <p style="color:#555;">Chat history and settings are stored entirely in your browser (local-first). Log in with an email <em>only</em> if you want to sync your encrypted chat history and provider keys across browsers or devices.</p>
 
     @if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
     {
         <div style="margin: 1rem 0; padding: 0.75rem 1rem; background: #e6ffed; border: 1px solid #0a0; border-radius: 6px;">
             Logged in as <strong>@AuthService.Email</strong>.<br />
-            <span style="font-size:0.9em;">Your chats and settings can now sync (end-to-end encrypted) to other devices signed in with the same email.</span>
+            <span style="font-size:0.9em;">Your chats are now encrypted and stored locally.</span>
         </div>
 
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">

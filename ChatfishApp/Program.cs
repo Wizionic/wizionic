@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.AI;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using ChatfishApp.Data;
-using ChatfishApp.Hubs;
 using ChatfishApp.Components;
 using ChatfishApp.Services;
 using ChatfishApp.Services.Tools;
@@ -19,20 +18,47 @@ builder.Services.AddRazorComponents()
 builder.Services.AddDbContext<ChatfishDbContext>(options =>
 {
     options.UseSqlite("Data Source=chatfish.db");
+    // Ignore this in dev so that model changes during active development (e.g. after removing legacy tables)
+    // don't hard-crash startup before the corresponding migration is created/applied.
+    // We always add a proper migration for model changes (see RemoveLegacyServerChatHistoryTables).
+    options.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
 });
 
 // NOTE: Removed the previous hardcoded Groq HttpClient + embedded API key (security issue).
-// Keys are now per-user via ProviderKeyService + AiProviderService (using IChatClient abstraction).
+// Keys are now per-user via ProviderKeyService (WASM clients call providers directly; server only proxies tools + serves keys).
 
 builder.Services.AddScoped<MagicLinkService>();
-builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<ProviderKeyService>();
-builder.Services.AddScoped<AiProviderService>();
 
 // Email sending (used for real magic link delivery). Configure the "Email" section in appsettings
 // (passwords should come from user-secrets or environment variables, never committed).
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection("Email"));
 builder.Services.AddScoped<IEmailSender, EmailSender>();
+
+// Force SmtpUser / SmtpPass from environment variables (Email__SmtpUser / Email__SmtpPass)
+// when those variables are defined in the process environment. This ensures the values
+// the user explicitly set via $env: (or system/user environment variables) take
+// precedence over anything in appsettings or dotnet user-secrets.
+builder.Services.PostConfigure<EmailOptions>(opts =>
+{
+    // Check Process (current $env:), then persistent User scope (for when people use
+    // [System.Environment]::SetEnvironmentVariable(..., "User") ), then the colon form.
+    string? envUser = Environment.GetEnvironmentVariable("Email__SmtpUser")
+                   ?? Environment.GetEnvironmentVariable("Email__SmtpUser", EnvironmentVariableTarget.User)
+                   ?? Environment.GetEnvironmentVariable("Email:SmtpUser");
+    if (envUser is not null)
+    {
+        opts.SmtpUser = envUser;
+    }
+
+    string? envPass = Environment.GetEnvironmentVariable("Email__SmtpPass")
+                   ?? Environment.GetEnvironmentVariable("Email__SmtpPass", EnvironmentVariableTarget.User)
+                   ?? Environment.GetEnvironmentVariable("Email:SmtpPass");
+    if (envPass is not null)
+    {
+        opts.SmtpPass = envPass;
+    }
+});
 
 // App-level tools (web search, URL summarization via Jina, etc.) exposed to models via ME.AI function calling.
 // These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
@@ -74,6 +100,34 @@ builder.Services.AddHttpContextAccessor();
 
 
 var app = builder.Build();
+
+// Diagnostic at startup so it's obvious whether Email__Smtp* env vars (or user-secrets)
+// were picked up for SMTP credentials. Never logs secret values.
+{
+    var emailSection = builder.Configuration.GetSection("Email");
+    var sectionUser = emailSection["SmtpUser"] ?? string.Empty;
+    var sectionPass = emailSection["SmtpPass"] ?? string.Empty;
+
+    string liveUser = Environment.GetEnvironmentVariable("Email__SmtpUser")
+                   ?? Environment.GetEnvironmentVariable("Email__SmtpUser", EnvironmentVariableTarget.User)
+                   ?? Environment.GetEnvironmentVariable("Email:SmtpUser")
+                   ?? "(not set)";
+    string livePass = Environment.GetEnvironmentVariable("Email__SmtpPass")
+                   ?? Environment.GetEnvironmentVariable("Email__SmtpPass", EnvironmentVariableTarget.User)
+                   ?? Environment.GetEnvironmentVariable("Email:SmtpPass")
+                   ?? "(not set)";
+    int livePassLen = livePass == "(not set)" ? 0 : livePass.Length;
+    string livePassPreview = livePassLen >= 8 ? livePass.Substring(0,4) + "..." + livePass.Substring(livePassLen-4) : livePass;
+
+    bool userFromEnv = liveUser != "(not set)";
+    bool passFromEnv = livePass != "(not set)";
+
+    bool hasUser = !string.IsNullOrWhiteSpace(sectionUser);
+    bool hasPass = !string.IsNullOrWhiteSpace(sectionPass);
+
+    Console.WriteLine($"[Email] SMTP configured: host={emailSection["SmtpHost"] ?? "<none>"} port={emailSection["SmtpPort"] ?? "587"} hasUser={hasUser} hasPass={hasPass} user=\"{sectionUser}\" from={emailSection["From"] ?? "<default>"}");
+    Console.WriteLine($"[Email] LIVE ENV AT STARTUP: Email__SmtpUser='{liveUser}' | Email__SmtpPass len={livePassLen} preview={livePassPreview} (fromEnv user:{userFromEnv} pass:{passFromEnv})");
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

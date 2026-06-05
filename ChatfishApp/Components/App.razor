@@ -7,7 +7,8 @@
     <base href="/" />
     <ResourcePreloader />
     <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
-    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <!-- Unified custom CSS (design tokens + common components + chat/WASM UI). Single source for client + server. -->
+    <link rel="stylesheet" href="css/chatfish.css" />
     <link rel="stylesheet" href="@Assets["ChatfishApp.styles.css"]" />
     <ImportMap />
     <link rel="icon" type="image/png" href="favicon.png" />
@@ -20,7 +21,6 @@
 <body>  
     <Routes />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
     <script>
         // Helper functions for WASM chat pages (e.g. /wasm-chat) that run with InteractiveWebAssembly render mode.
         // These are defined here in the host shell so they are available when WASM components are active.
