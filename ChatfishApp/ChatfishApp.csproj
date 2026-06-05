@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     <RootNamespace>ChatfishApp</RootNamespace>
+    <UserSecretsId>a8d4cf06-2e6d-4968-9752-b26c847c8502</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +24,8 @@
     <!-- For robust parsing of search results in the free web_search tool (DDG HTML) -->
     <PackageReference Include="HtmlAgilityPack" Version="1.11.70" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.8" />
+    <!-- Real email sending for magic links (SMTP via MailKit). Configure in appsettings under "Email" section (use user-secrets for passwords in real deploys). -->
+    <PackageReference Include="MailKit" Version="4.8.0" />
     <ProjectReference Include="..\ChatfishApp.Client\ChatfishApp.Client.csproj" />
   </ItemGroup>
 

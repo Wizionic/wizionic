@@ -2,7 +2,7 @@
 
 <div style="height: 100vh; display: flex; flex-direction: column;">
     <WasmTopBar />
-    <div style="flex: 1; overflow: hidden; padding-top: 3.5rem; height: 100%;"> @* space for fixed top-row *@
+    <div style="flex: 1; overflow: visible; padding-top: 3.5rem; height: 100%; position: relative;"> @* overflow:visible + position:relative so the sidebar-toggle button (absolute inside WasmChat.razor) can be pulled upward to overlay the top bar *@
         @Body
     </div>
 </div>

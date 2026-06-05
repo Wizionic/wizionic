@@ -22,6 +22,26 @@
 <link href="css/wasm-chat.css" rel="stylesheet" />
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+    <!-- Sidebar toggle button is here (in WasmChat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
+         Positioned absolutely (via WasmLayout body container) to overlay the top bar near the fish logo (user's red box location).
+         See .sidebar-toggle rule in wasm-chat.css for the absolute top/left/z-index values. -->
+    <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
+        @if (SidebarState.IsCollapsed)
+        {
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
+            </svg>
+        }
+        else
+        {
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
+            </svg>
+        }
+    </button>
+
     <!-- Sidebar -->
     <div class="sidebar">
         <nav class="cf-nav cf-column">
@@ -53,13 +73,6 @@
             {
                 <div class="cf-item" style="font-size:0.75em; color:#888; padding-left:12px;">No local conversations yet.</div>
             }
-
-            <!-- Settings link -->
-            <div class="cf-item" style="margin-top: 8px; border-top: 1px solid #ddd; padding-top: 8px;">
-                <a class="cf-link small" href="/wasm-settings" style="text-decoration:none; color:inherit;">
-                    <i class="bi bi-gear"></i> Settings
-                </a>
-            </div>
         </nav>
     </div>
 
@@ -85,7 +98,7 @@
                         else
                         {
                             <div class="message-bot">
-                                @if (showToolTraces && !string.IsNullOrWhiteSpace(msg.ToolTrace))
+                                @if (!string.IsNullOrWhiteSpace(msg.ToolTrace))
                                 {
                                     <details style="margin-bottom: 2px; font-size: 0.7em;">
                                         <summary style="cursor:pointer; color:#888;">Thinking / tool calls</summary>
@@ -121,6 +134,16 @@
                         <i class="bi bi-plus-circle"></i>
                     </button>
 
+                    <div class="message-wrapper flex-grow-1">
+                        <textarea @ref="messageTextarea"
+                                  @bind="message"
+                                  @onkeydown="HandleKey"
+                                  @oninput="ResizeTextarea"
+                                  placeholder="Message ChatFish..."
+                                  class="message-input"
+                                  rows="3" />
+                    </div>
+
                     <select @bind="selectedModel" class="model-selector">
                         @foreach (var group in modelList.GroupBy(m => m.ProviderName))
                         {
@@ -135,24 +158,8 @@
 
                     @if (CurrentModelSupportsTools)
                     {
-                        <small style="font-size:0.65em; color:#888; margin-left:0.4rem; white-space:nowrap;" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information.">
-                            tools enabled
-                        </small>
-                        <label style="font-size:0.6em; color:#888; margin-left:0.4rem; cursor:pointer; white-space:nowrap;">
-                            <input type="checkbox" @bind="showToolTraces" style="vertical-align: middle;" />
-                            show thinking
-                        </label>
+                        <i class="bi bi-tools" style="font-size:0.9em; color:#888; margin-left:0.4rem; cursor:default;" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information."></i>
                     }
-
-                    <div class="message-wrapper flex-grow-1">
-                        <textarea @ref="messageTextarea"
-                                  @bind="message"
-                                  @onkeydown="HandleKey"
-                                  @oninput="ResizeTextarea"
-                                  placeholder="Message ChatFish..."
-                                  class="message-input"
-                                  rows="3" />
-                    </div>
 
                     <button class="send-btn" @onclick="Send" disabled="@(isSending || string.IsNullOrWhiteSpace(message))">
                         <i class="bi bi-arrow-up-circle-fill"></i>
@@ -180,10 +187,6 @@
     string selectedModel = ""; // will be set to a valid model from the current list in OnInitializedAsync
     bool isTyping = false;
     bool isSending = false;
-
-    // Optional UI toggle for showing the agent's tool calls / "thinking" trace.
-    // Persisted only in-memory for the session; can be moved to localStorage later if desired.
-    bool showToolTraces = true;
 
     // Captured during the current CallProvider for the just-generated bot message.
     private string _pendingToolTrace = "";
@@ -224,6 +227,8 @@
         public double top { get; set; }
         public double left { get; set; }
     }
+
+    private Action? _sidebarStateChangedHandler;
 
     protected override async Task OnInitializedAsync()
     {
@@ -269,12 +274,31 @@
             await NewConversation();
         }
 
-        SidebarState.OnChanged += StateHasChanged;
+        _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
+        SidebarState.OnChanged += _sidebarStateChangedHandler;
     }
 
     public void Dispose()
     {
-        SidebarState.OnChanged -= StateHasChanged;
+        if (_sidebarStateChangedHandler != null)
+        {
+            SidebarState.OnChanged -= _sidebarStateChangedHandler;
+        }
+    }
+
+    private async Task ToggleSidebar()
+    {
+        SidebarState.Toggle();
+        StateHasChanged();  // immediate re-render of this component (including .page class and button icon) since handler is local
+        try
+        {
+            // Pass the target state so JS can *set* (not toggle) the class exactly; avoids parity issues with Blazor render timing.
+            await JS.InvokeVoidAsync("toggleWasmSidebar", SidebarState.IsCollapsed);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmChat] toggleWasmSidebar failed: {ex.Message}");
+        }
     }
 
     async Task LoadConversation(string id)

@@ -119,6 +119,7 @@
 .message-wrapper {
     flex: 1 1 auto;
     min-width: 0;            /* allows the wrapper (and textarea) to shrink/grow properly in flex row */
+    align-self: flex-start;  /* ensure textarea starts at top of input bar (buttons can stay at bottom via container) so text doesn't appear in the middle */
 }
 
 .message-input {
@@ -128,7 +129,7 @@
     outline: none;
     background: transparent;
     font-size: 1rem;
-    padding: 10px 8px;       /* a bit more vertical padding for comfort */
+    padding: 4px 8px 4px 8px;  /* reduced top padding so text starts higher; left aligned */
     resize: none;
     min-height: 86px;        /* ~3 lines visible by default */
     max-height: 110px;       /* scrollbar appears after ~3 lines */
@@ -136,6 +137,8 @@
     line-height: 1.4;
     scrollbar-width: thin;
     scrollbar-color: #cbd5e1 transparent;
+    text-align: left;
+    vertical-align: top;
 }
 
 /* Subtle scrollbar for when it does appear after 3 lines */
@@ -426,6 +429,7 @@
     display: flex;
     align-items: center;
     gap: 1.5rem;
+    /* margin-left reset: toggle button moved into WasmChat.razor (now fixed at left:5px of content area) */
 }
 
 .sidebar-toggle {
@@ -434,6 +438,14 @@
     padding: 6px;
     cursor: pointer;
     color: black;
+    /* Absolute placement relative to the layout body container (position:relative + overflow:visible in WasmLayout.razor).
+       Small positive top + left places the button inside the fixed .top-row (overlaid on the top bar).
+       left:220px was tuned to the user's desired red-box location in the header (to the right of the fish logo).
+       z-index > 1000 ensures it paints in front of the top bar. Button lives in WasmChat.razor for reliable toggle handling. */
+    position: absolute;
+    top: 8px;
+    left: 220px;
+    z-index: 1100;
 }
 
 /* Basic page and sidebar for WASM layout to mimic main */
@@ -490,6 +502,16 @@ main {
 .page.sidebar-collapsed main {
     margin-left: 0 !important;
 }
+
+/* (Previously added indent for when toggle lived inside the sidebar area at top:3.5rem.
+   Now that the toggle is absolutely positioned over the topbar, normal padding on cf-item / conversation-item is desired again.
+   The rule below is left as a no-op / commented for reference; delete later if not needed.) */
+/*
+.page:not(.sidebar-collapsed) .sidebar .cf-item,
+.page:not(.sidebar-collapsed) .sidebar .conversation-item {
+    padding-left: 38px !important;
+}
+*/
 
 .wasm-sidebar .menu {
     position: relative;
