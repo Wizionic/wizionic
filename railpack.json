@@ -2,12 +2,12 @@
   "provider": "dotnet",
   "install": {
     "cmds": [
-      "dotnet restore ChatfishApp/ChatfishApp.csproj"
+      "dotnet restore ChatfishApp.csproj"
     ]
   },
   "build": {
     "cmds": [
-      "dotnet publish ChatfishApp/ChatfishApp.csproj -c Release -o out"
+      "dotnet publish ChatfishApp.csproj -c Release -o out"
     ]
   },
   "deploy": {
