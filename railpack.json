@@ -1,11 +1,12 @@
 {
   "provider": "dotnet",
-  "dotnet": {
-    "project": "ChatfishApp/ChatfishApp.csproj"
+  "install": {
+    "cmds": [
+      "dotnet restore ChatfishApp/ChatfishApp.csproj"
+    ]
   },
   "build": {
     "cmds": [
-      "dotnet restore ChatfishApp/ChatfishApp.csproj",
       "dotnet publish ChatfishApp/ChatfishApp.csproj -c Release -o out"
     ]
   },
