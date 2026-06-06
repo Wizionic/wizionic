@@ -1,0 +1,15 @@
+**/.git
+**/.gitignore
+**/bin
+**/obj
+**/.vs
+**/.vscode
+**/out
+**/*.bak
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/railpack.json
+**/railpack.json.bak
+**/Dockerfile*
+**/.dockerignore
