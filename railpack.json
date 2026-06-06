@@ -1,8 +1,13 @@
 {
   "provider": "dotnet",
   "dotnet": {
-    "project": "ChatfishApp/ChatfishApp.csproj",
-    "version": "10.0"
+    "project": "ChatfishApp/ChatfishApp.csproj"
+  },
+  "build": {
+    "cmds": [
+      "dotnet restore ChatfishApp/ChatfishApp.csproj",
+      "dotnet publish ChatfishApp/ChatfishApp.csproj -c Release -o out"
+    ]
   },
   "deploy": {
     "startCommand": "./out/ChatfishApp"
