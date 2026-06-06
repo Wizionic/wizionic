@@ -1,7 +1,9 @@
 {
   "provider": "dotnet",
   "dotnet": {
-    "project": "ChatfishApp/ChatfishApp.csproj",
-    "startCommand": "dotnet ChatfishApp.dll"
+    "project": "ChatfishApp/ChatfishApp.csproj"
+  },
+  "deploy": {
+    "startCommand": "./out/ChatfishApp"
   }
 }
