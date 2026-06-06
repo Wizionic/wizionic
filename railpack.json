@@ -1,0 +1,6 @@
+{
+  "provider": "dotnet",
+  "dotnet": {
+    "project": "ChatfishApp/ChatfishApp.csproj"
+  }
+}
