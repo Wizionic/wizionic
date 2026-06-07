@@ -6,14 +6,7 @@
 
 <PageTitle>Roadmap - Chatfish.me</PageTitle>
 
-<div class="roadmap-page" style="max-width: 960px; margin: 2rem auto; padding: 0 1rem;">
-    <h1>Chatfish.me Project Roadmap</h1>
-    
-    <div class="roadmap-meta" style="margin-bottom: 2rem; color: #666;">
-        <p><strong>Version:</strong> 3.0 (July 2026)</p>
-        <p><strong>Developer:</strong> Daniel Goodwin — Senior Web Application Developer (25+ years experience)</p>
-        <p><strong>Project Status:</strong> Active personal / resume project</p>
-    </div>
+<div class="roadmap-page" style="height: calc(100vh - 4rem); overflow-y: auto; max-height: 1000px; padding: 0 1rem;">
 
     <div class="roadmap-content" style="line-height: 1.7;">
         @((MarkupString)RenderedMarkdown)
@@ -45,6 +38,9 @@
             // MAUI content root or other subdir cases
             Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "ROADMAP.md"),
             // Absolute fallback if someone sets an env or known location
+             // Base directory fallback (last resort)
+            Path.Combine(AppContext.BaseDirectory, "wwwroot", "ROADMAP.md"),
+            // Final absolute fallback
             Path.Combine(AppContext.BaseDirectory, "ROADMAP.md")
         };
 
