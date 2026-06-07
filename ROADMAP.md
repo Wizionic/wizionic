@@ -1,8 +1,6 @@
 ﻿# Chatfish.me Project Roadmap
 
-**Version:** 3.0 (July 2026)  
-**Developer:** Daniel Goodwin — Senior Web Application Developer (25+ years experience)  
-**Project Status:** Active personal / resume project
+**Product Manager / Software Architect :** Daniel Goodwin — Senior Web Application Developer (25+ years experience)  
 
 ## Project Vision & Goals
 
