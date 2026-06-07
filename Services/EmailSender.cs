@@ -164,13 +164,7 @@ If you did not request this login link you can safely ignore this email.
 
         try
         {
-           // var secure = _options.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto;
-            //await smtp.ConnectAsync(_options.SmtpHost, _options.SmtpPort, secure);
-
-
-// Force SslOnConnect for port 465, fallback to STARTTLS for others
-            var secure = _options.SmtpPort == 465 ? SecureSocketOptions.SslOnConnect : (_options.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
-
+            var secure = _options.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto;
             await smtp.ConnectAsync(_options.SmtpHost, _options.SmtpPort, secure);
 
             if (!string.IsNullOrWhiteSpace(_options.SmtpUser))
