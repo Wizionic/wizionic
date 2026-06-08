@@ -9,10 +9,11 @@ Chatfish.me is a **privacy-first, local-first AI chat hub** that lets you chat w
 Core Goals
 1) Privacy : Keep chat history encrypted and private 
 2) Email login is only needed for syncing chats/settings privately between browsers and devices
-2) Local :  Focus on allowing local chat through the users device as this is the most private
-3) Low cost Cloud AI :  When cloud AI services are used, emphasize the ones that are free or low cost
-4) Keep Hosting costs down :  Store as little as possible on the server and use client technologies where possible
-5) Frictionless setup :  Some configuration is needed for setup but always make it is easy as possible to start using
+3) Local :  Focus on allowing local chat through the users device as this is the most private
+4) Add the best tool use possible for the AI to use including MCP
+5) Low cost Cloud AI :  When cloud AI services are used, emphasize the ones that are free or low cost
+6) Keep Hosting costs down :  Store as little as possible on the server and use client technologies where possible
+7) Frictionless setup :  Some configuration is needed for setup but always make it is easy as possible to start using
 
  It is delivered through three distinct parts:
 

@@ -30,10 +30,21 @@ builder.Services.AddDbContext<ChatfishDbContext>(options =>
 builder.Services.AddScoped<MagicLinkService>();
 builder.Services.AddScoped<ProviderKeyService>();
 
-// Email sending (used for real magic link delivery). Configure the "Email" section in appsettings
-// (passwords should come from user-secrets or environment variables, never committed).
-builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection("Email"));
-builder.Services.AddScoped<IEmailSender, EmailSender>();
+// Email sending (used for real magic link delivery).
+// Brevo HTTP API is now the primary sender (SMTP is blocked by some hosts e.g. Railway).
+// The old EmailSender (SMTP/MailKit) is left in place and can be swapped back by changing the registration below.
+// Configure non-secret parts under the "Brevo" section in appsettings.
+// The secret BREVO_API_KEY must come from environment variable.
+builder.Services.Configure<BrevoEmailOptions>(builder.Configuration.GetSection("Brevo"));
+
+// Named HttpClient for Brevo transactional email API
+builder.Services.AddHttpClient("brevo", client =>
+{
+    client.BaseAddress = new Uri("https://api.brevo.com/v3/");
+    client.DefaultRequestHeaders.Add("accept", "application/json");
+});
+
+builder.Services.AddScoped<IEmailSender, BrevoEmailSender>();
 
 // Force SmtpUser / SmtpPass from environment variables (Email__SmtpUser / Email__SmtpPass)
 // when those variables are defined in the process environment. This ensures the values
@@ -127,6 +138,28 @@ var app = builder.Build();
 
     Console.WriteLine($"[Email] SMTP configured: host={emailSection["SmtpHost"] ?? "<none>"} port={emailSection["SmtpPort"] ?? "587"} hasUser={hasUser} hasPass={hasPass} user=\"{sectionUser}\" from={emailSection["From"] ?? "<default>"}");
     Console.WriteLine($"[Email] LIVE ENV AT STARTUP: Email__SmtpUser='{liveUser}' | Email__SmtpPass len={livePassLen} preview={livePassPreview} (fromEnv user:{userFromEnv} pass:{passFromEnv})");
+}
+
+// Brevo HTTP API diagnostics (new primary email path)
+{
+    string? brevoKey = Environment.GetEnvironmentVariable("BREVO_API_KEY")
+                    ?? Environment.GetEnvironmentVariable("Email__BrevoApiKey")
+                    ?? Environment.GetEnvironmentVariable("Email__BrevoApiKey", EnvironmentVariableTarget.User)
+                    ?? Environment.GetEnvironmentVariable("Email:BrevoApiKey");
+
+    var brevoSection = builder.Configuration.GetSection("Brevo");
+    string from = brevoSection["From"] ?? builder.Configuration["Email:From"] ?? "(default)";
+    string senderName = brevoSection["SenderName"] ?? "Chatfish";
+
+    bool keyPresent = !string.IsNullOrWhiteSpace(brevoKey);
+    int keyLen = brevoKey?.Length ?? 0;
+    string keyPreview = keyLen >= 8 ? brevoKey!.Substring(0, 4) + "..." + brevoKey!.Substring(keyLen - 4) : (brevoKey ?? "(not set)");
+
+    Console.WriteLine($"[Brevo] Configured: from={from} senderName={senderName} keyPresent={keyPresent} keyLen={keyLen} preview={keyPreview}");
+    if (!keyPresent)
+    {
+        Console.WriteLine("[Brevo] WARNING: No BREVO_API_KEY (or Email__BrevoApiKey) found. Emails will not be sent via Brevo until the env var is set.");
+    }
 }
 
 app.UseAuthentication();
