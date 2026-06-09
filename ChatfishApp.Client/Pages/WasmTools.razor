@@ -1,0 +1,449 @@
+@page "/wasm-tools"
+@layout ChatfishApp.Client.Shared.WasmLayout
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject ChatfishApp.Client.Services.Mcp.McpToolSource McpToolSource
+
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
+
+    <p style="color: #666; font-size: 0.9em;">
+        Select remote MCP servers to make available to the model during chat. Only servers that publish HTTP/SSE endpoints (streamable-http or SSE) are shown — stdio-only local servers are filtered out because a browser cannot launch them.
+    </p>
+
+    <div style="background:#f8f9fa; border:1px solid #eee; padding:0.75rem 1rem; border-radius:6px; margin: 0.75rem 0; font-size:0.85em; color:#444;">
+        <strong>Important notes:</strong>
+        <ul style="margin:0.4rem 0 0 1rem; padding:0;">
+            <li><strong>Authentication:</strong> Servers marked "requires token" need an API key / Bearer token. Full token management UI is planned; for now the model will be unable to use protected servers until you can supply credentials securely.</li>
+            <li><strong>Latency:</strong> Every enabled server can be invoked by the LLM. Checking many boxes may result in sequential tool calls before the final answer (you may see "reading X...", "querying Y...").</li>
+            <li><strong>Experimental:</strong> This page manages the list of candidate remote tools. Actual dynamic MCP client connection + tool exposure inside the chat loop is under development.</li>
+        </ul>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem; flex-wrap:wrap;">
+        <h3 style="margin:0;">Remote MCP Tools</h3>
+        <button @onclick="RefreshRegistry" class="btn btn-outline-primary btn-sm" disabled="@isLoading">
+            @(isLoading ? "Loading..." : "Refresh from Registry")
+        </button>
+        <span style="font-size:0.8em; color:#888; margin-left:auto;">@enabledCount enabled</span>
+    </div>
+
+    @if (isLoading && !registryTools.Any())
+    {
+        <div style="color:#666; padding:1rem 0;">Loading MCP servers from registry...</div>
+    }
+    else if (!string.IsNullOrEmpty(loadError))
+    {
+        <div style="color:#c00; background:#fff0f0; padding:0.5rem 0.75rem; border-radius:4px;">
+            @loadError
+            <button @onclick="RefreshRegistry" class="btn btn-link" style="padding:0 0.25rem; font-size:0.9em;">Retry</button>
+        </div>
+    }
+
+    @if (registryTools.Any())
+    {
+        <div style="display:flex; flex-direction:column; gap:0.5rem;">
+            @foreach (var t in registryTools)
+            {
+                <div style="border:1px solid #e5e5e5; border-radius:6px; padding:0.6rem 0.8rem; background:white;">
+                    <label style="display:flex; gap:0.6rem; align-items:flex-start; cursor:pointer; margin:0;">
+                        <input type="checkbox"
+                               checked="@t.IsEnabled"
+                               @onchange="(e) => ToggleEnabled(t, e)"
+                               style="margin-top:0.2rem;" />
+
+                        <div style="flex:1; min-width:0;">
+                            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                                <strong>@t.Name</strong>
+                                @if (!string.IsNullOrWhiteSpace(t.Version))
+                                {
+                                    <span style="font-size:0.75em; background:#f0f0f0; padding:1px 5px; border-radius:3px; color:#555;">v@t.Version</span>
+                                }
+                                @if (t.RequiresAuth)
+                                {
+                                    <span style="font-size:0.7em; background:#fff3cd; color:#856404; padding:1px 6px; border-radius:3px; border:1px solid #ffeaa7;">requires token</span>
+                                }
+                                <span style="font-size:0.7em; color:#888; margin-left:auto;">@t.Transport</span>
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(t.Description))
+                            {
+                                <div style="font-size:0.85em; color:#444; margin-top:2px; line-height:1.3;">
+                                    @t.Description
+                                </div>
+                            }
+
+                            <div style="font-size:0.75em; color:#666; margin-top:4px; word-break:break-all;">
+                                <span style="color:#888;">endpoint:</span> @t.RemoteUrl
+                            </div>
+
+                            @if (t.IsEnabled)
+                            {
+                                <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+                                    <span style="font-size:0.72em; color:#555; white-space:nowrap;">Token / Key:</span>
+                                    <input type="password"
+                                           value="@t.Token"
+                                           @oninput="@(e => UpdateAndSaveToken(t, (e as ChangeEventArgs)?.Value?.ToString() ?? ""))"
+                                           placeholder="@(t.RequiresAuth ? "Required for this server (paste your key)" : "Optional — only if this server needs auth")"
+                                           style="font-family:monospace; font-size:0.78em; flex:1; max-width:340px; padding:2px 4px;" />
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(t.InfoUrl))
+                            {
+                                <div style="margin-top:2px;">
+                                    <a href="@t.InfoUrl" target="_blank" rel="noopener" style="font-size:0.75em;">more info ↗</a>
+                                </div>
+                            }
+                        </div>
+                    </label>
+                </div>
+            }
+        </div>
+    }
+    else if (!isLoading && string.IsNullOrEmpty(loadError) && !registryTools.Any())
+    {
+        <div style="color:#666; font-size:0.9em;">No remote MCP servers found from the registry (or all were stdio-only and filtered out).</div>
+    }
+
+    <!-- ==================== CUSTOM CONNECTORS SECTION ==================== -->
+    <div style="margin-top: 1.5rem;">
+        <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
+            <h3 style="margin:0; font-size:1.05rem;">Custom Connectors
+                <small style="color:#888; margin-left:auto;">  Add your own remote MCP servers (HTTP/SSE)</small>
+                </h3>
+            
+            <div><button @onclick="OpenAddCustomDialog" class="btn btn-outline-secondary btn-sm">
+                + Add Custom Connector
+            </button></div>
+        </div>
+
+        @if (customTools.Any())
+        {
+            <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                @foreach (var t in customTools)
+                {
+                    <div style="border:1px solid #e5e5e5; border-radius:6px; padding:0.55rem 0.75rem; background:#fafafa;">
+                        <div style="display:flex; gap:0.5rem; align-items:flex-start;">
+                            <input type="checkbox"
+                                   checked="@t.IsEnabled"
+                                   @onchange="(e) => ToggleEnabled(t, e)"
+                                   style="margin-top:0.25rem;" />
+
+                            <div style="flex:1; min-width:0; font-size:0.92em;">
+                                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                                    <strong>@t.Name</strong>
+                                    <span style="font-size:0.65em; background:#e0e0e0; padding:1px 5px; border-radius:3px; color:#444;">CUSTOM</span>
+                                    <button @onclick="() => RemoveCustom(t)" 
+                                            style="margin-left:auto; font-size:0.7em; border:none; background:transparent; color:#c33; cursor:pointer; padding:0 2px;"
+                                            title="Remove this custom connector">✕</button>
+                                </div>
+
+                                <div style="font-size:0.72em; color:#555; margin-top:1px; word-break:break-all;">
+                                    <span style="color:#888;">url:</span> @t.RemoteUrl
+                                </div>
+
+                                @if (t.IsEnabled)
+                                {
+                                    <div style="margin-top:5px; display:flex; gap:6px; align-items:center;">
+                                        <span style="font-size:0.7em; color:#555; white-space:nowrap;">Token / Key:</span>
+                                        <input type="password"
+                                               value="@t.Token"
+                                               @oninput="@(e => UpdateAndSaveToken(t, (e as ChangeEventArgs)?.Value?.ToString() ?? ""))"
+                                               placeholder="Paste token if the server requires auth"
+                                               style="font-family:monospace; font-size:0.75em; flex:1; max-width:320px; padding:2px 4px;" />
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div style="font-size:0.85em; color:#666; padding:0.25rem 0;">
+                No custom connectors yet. Click <strong>Add Custom Connector</strong> above to connect to your own MCP server.
+            </div>
+        }
+    </div>
+
+    <div style="margin-top: 1.5rem; display:flex; gap:0.5rem; align-items:center;">
+        <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+        <small style="color:#888;">Selections (including customs) are saved automatically in your browser.</small>
+    </div>
+
+</div>
+
+<!-- Simple Custom Connector Dialog (styled to match the provided example) -->
+@if (showAddCustomDialog)
+{
+    <div @onclick="CloseCustomDialog"
+         style="position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:10000; display:flex; align-items:center; justify-content:center;">
+        <div @onclick:stopPropagation
+             style="background:white; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.15); width:100%; max-width:420px; margin:1rem; padding:1.25rem 1.5rem; font-size:0.95rem;">
+            
+            <div style="font-size:1.15rem; font-weight:600; margin-bottom:0.15rem;">Custom Connector</div>
+            <div style="color:#666; font-size:0.85rem; margin-bottom:1rem;">
+                Enter a custom name and an MCP server URL
+            </div>
+
+            <div style="margin-bottom:0.75rem;">
+                <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:3px;">Name</label>
+                <input type="text" @bind="newCustomName" placeholder="My Connector"
+                       style="width:100%; padding:6px 10px; border:1px solid #ccc; border-radius:6px; font-size:0.95rem;" />
+            </div>
+
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:3px;">Server URL</label>
+                <input type="text" @bind="newCustomUrl" placeholder="https://mcp.example.com/sse or https://.../mcp"
+                       style="width:100%; padding:6px 10px; border:1px solid #ccc; border-radius:6px; font-size:0.95rem;" />
+            </div>
+
+            @if (!string.IsNullOrEmpty(customDialogError))
+            {
+                <div style="color:#c33; font-size:0.8rem; margin-bottom:0.6rem; background:#fff0f0; padding:4px 8px; border-radius:4px;">
+                    @customDialogError
+                </div>
+            }
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem;">
+                <button @onclick="CloseCustomDialog"
+                        class="btn btn-outline-secondary"
+                        style="padding:6px 16px; font-size:0.9rem;">Cancel</button>
+
+                <button @onclick="AddCustomConnector"
+                        class="btn btn-primary"
+                        style="padding:6px 18px; font-size:0.9rem; background:#333; border-color:#333; color:white;">
+                    Add Connector
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ManagedMcpTool> registryTools = new();
+    private List<ManagedMcpTool> customTools = new();
+    private bool isLoading = false;
+    private string? loadError = null;
+
+    private int enabledCount => registryTools.Count(t => t.IsEnabled) + customTools.Count(t => t.IsEnabled);
+
+    // --- Custom Connector dialog state ---
+    private bool showAddCustomDialog = false;
+    private string newCustomName = "";
+    private string newCustomUrl = "";
+    private string customDialogError = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await KeyStore.LoadAsync(JS);
+        await RefreshRegistry();
+        LoadCustomsFromStore();
+    }
+
+    private async Task RefreshRegistry()
+    {
+        isLoading = true;
+        loadError = null;
+        StateHasChanged();
+
+        try
+        {
+            // Go through our own backend proxy (avoids CORS + gives us filtered data).
+            var list = await Http.GetFromJsonAsync<List<RemoteMcpServer>>("/api/tools/mcp-registry");
+
+            var enabled = KeyStore.EnabledMcpServerNames;
+
+            registryTools = (list ?? new List<RemoteMcpServer>())
+                .Select(s => new ManagedMcpTool
+                {
+                    Name = s.Name,
+                    Description = s.Description,
+                    RemoteUrl = s.RemoteUrl,
+                    Transport = s.Transport,
+                    RequiresAuth = s.RequiresAuth,
+                    InfoUrl = s.InfoUrl,
+                    Version = s.Version,
+                    IsEnabled = enabled.Contains(s.Name),
+                    Token = KeyStore.GetMcpToken(s.Name),
+                    IsCustom = false
+                })
+                .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Kick off MCP tool discovery in the background so chat immediately sees fresh tools
+            _ = McpToolSource.RefreshFromKeyStoreAsync();
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Could not load registry: {ex.Message}";
+            Console.WriteLine($"[WasmTools] Registry fetch error: {ex}");
+            // Keep whatever we had (or empty)
+            if (!registryTools.Any())
+                registryTools = new();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void LoadCustomsFromStore()
+    {
+        var enabled = KeyStore.EnabledMcpServerNames;
+        var customs = KeyStore.GetCustomConnectors();
+
+        customTools = customs
+            .Select(c => new ManagedMcpTool
+            {
+                Name = c.Name,
+                Description = "Custom MCP connector",
+                RemoteUrl = c.ServerUrl,
+                Transport = "custom",
+                RequiresAuth = false,   // customs always show token field when enabled
+                InfoUrl = null,
+                Version = "",
+                IsEnabled = enabled.Contains(c.Name),
+                Token = KeyStore.GetMcpToken(c.Name),
+                IsCustom = true
+            })
+            .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        StateHasChanged();
+    }
+
+    private async Task ToggleEnabled(ManagedMcpTool tool, ChangeEventArgs e)
+    {
+        bool newValue = e.Value is bool b && b;
+        tool.IsEnabled = newValue;
+
+        await KeyStore.SetMcpServerEnabledAsync(JS, tool.Name, newValue);
+
+        // Rebuild the MCP AITool list for the chat loop
+        await McpToolSource.RefreshFromKeyStoreAsync();
+
+        StateHasChanged();
+    }
+
+    private async Task UpdateAndSaveToken(ManagedMcpTool tool, string newToken)
+    {
+        tool.Token = newToken ?? "";
+        await KeyStore.SetMcpTokenAsync(JS, tool.Name, tool.Token);
+
+        // If this server is enabled, refresh the callable tools so the new token is used on next chat turn
+        if (tool.IsEnabled)
+        {
+            await McpToolSource.RefreshFromKeyStoreAsync();
+        }
+    }
+
+    private void OpenAddCustomDialog()
+    {
+        newCustomName = "";
+        newCustomUrl = "";
+        customDialogError = "";
+        showAddCustomDialog = true;
+        StateHasChanged();
+    }
+
+    private void CloseCustomDialog()
+    {
+        showAddCustomDialog = false;
+        customDialogError = "";
+        StateHasChanged();
+    }
+
+    private async Task AddCustomConnector()
+    {
+        customDialogError = "";
+
+        var name = (newCustomName ?? "").Trim();
+        var url = (newCustomUrl ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            customDialogError = "Please enter a name for the connector.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(url) || !(url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+        {
+            customDialogError = "Please enter a valid HTTP or HTTPS Server URL.";
+            return;
+        }
+
+        // Prevent duplicate names (across registry + existing customs)
+        var allKnownNames = new HashSet<string>(registryTools.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
+        foreach (var c in KeyStore.GetCustomConnectors())
+            allKnownNames.Add(c.Name);
+
+        if (allKnownNames.Contains(name))
+        {
+            customDialogError = "A connector with this name already exists (registry or custom).";
+            return;
+        }
+
+        await KeyStore.AddCustomConnectorAsync(JS, name, url);
+
+        // Auto-enable the new custom so it is immediately available for chat
+        await KeyStore.SetMcpServerEnabledAsync(JS, name, true);
+
+        // Refresh the in-memory custom list for display
+        LoadCustomsFromStore();
+
+        // Tell the chat tool system about the new connector
+        await McpToolSource.RefreshFromKeyStoreAsync();
+
+        // Close and reset dialog
+        showAddCustomDialog = false;
+        newCustomName = "";
+        newCustomUrl = "";
+        customDialogError = "";
+        StateHasChanged();
+    }
+
+    private async Task RemoveCustom(ManagedMcpTool tool)
+    {
+        if (!tool.IsCustom) return;
+
+        if (!await JS.InvokeAsync<bool>("confirm", $"Remove custom connector \"{tool.Name}\"?"))
+            return;
+
+        await KeyStore.RemoveCustomConnectorAsync(JS, tool.Name);
+
+        LoadCustomsFromStore();
+        await McpToolSource.RefreshFromKeyStoreAsync();
+        StateHasChanged();
+    }
+
+    // Matches the shape returned by our /api/tools/mcp-registry proxy.
+    private record RemoteMcpServer(
+        string Name,
+        string Description,
+        string RemoteUrl,
+        string Transport,
+        bool RequiresAuth,
+        string? InfoUrl,
+        string Version
+    );
+
+    // Local mutable view model for the checkbox list (IsEnabled drives the UI + persistence).
+    private class ManagedMcpTool
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string RemoteUrl { get; set; } = string.Empty;
+        public string Transport { get; set; } = string.Empty;
+        public bool RequiresAuth { get; set; }
+        public string? InfoUrl { get; set; }
+        public string Version { get; set; } = string.Empty;
+        public bool IsEnabled { get; set; }
+        public string Token { get; set; } = string.Empty;
+        public bool IsCustom { get; set; }
+    }
+}
