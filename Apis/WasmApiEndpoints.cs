@@ -3,6 +3,7 @@ using ChatfishApp.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text.Json.Serialization;
 
 namespace ChatfishApp.Apis;
 
@@ -146,6 +147,79 @@ public static class WasmApiEndpoints
             return await ChatfishApp.Services.Tools.AppTools.GetCurrentWeather(req.Latitude, req.Longitude, req.Units ?? "celsius", req.ForecastDays ?? 0);
         });
 
+        // Public MCP registry proxy + filter.
+        // - Fetches from the official unauthenticated registry.
+        // - Filters to ONLY servers that expose streamable-http or sse remotes (no stdio-only entries, since a web client cannot launch local processes).
+        // - Deduplicates by server name, preferring the latest published version.
+        // - Returns a small clean list the WASM Tools page can render with checkboxes.
+        // Client (browser) calls this instead of hitting the registry directly to avoid CORS.
+        toolsGroup.MapGet("/mcp-registry", async () =>
+        {
+            try
+            {
+                using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                // Use a slightly higher limit to get a good selection after filtering + dedup.
+                var raw = await hc.GetFromJsonAsync<RegistryResponse>("https://registry.modelcontextprotocol.io/v0/servers?limit=50");
+
+                var results = new List<RemoteMcpServer>();
+
+                if (raw?.Servers != null)
+                {
+                    // Group by canonical name, pick best (latest) entry per name.
+                    var bestPerName = raw.Servers
+                        .Where(e => e?.Server != null && !string.IsNullOrWhiteSpace(e.Server.Name))
+                        .GroupBy(e => e.Server!.Name, StringComparer.OrdinalIgnoreCase)
+                        .Select(g =>
+                        {
+                            // Prefer entries explicitly marked isLatest, then highest version string (lexical is often fine for semver here).
+                            return g.OrderByDescending(x => IsLatest(x))
+                                    .ThenByDescending(x => x.Server!.Version ?? "")
+                                    .First();
+                        });
+
+                    foreach (var entry in bestPerName)
+                    {
+                        var sv = entry.Server!;
+                        // Only keep servers that publish at least one web-callable remote transport.
+                        var remote = sv.Remotes?.FirstOrDefault(r =>
+                            !string.IsNullOrWhiteSpace(r?.Url) &&
+                            (string.Equals(r.Type, "streamable-http", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(r.Type, "sse", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(r.Type, "http", StringComparison.OrdinalIgnoreCase)));
+
+                        if (remote == null) continue;
+
+                        bool requiresAuth = remote.Headers?.Any(h => h is { IsRequired: true }) ?? false;
+
+                        string? infoUrl = !string.IsNullOrWhiteSpace(sv.WebsiteUrl) ? sv.WebsiteUrl :
+                                          (sv.Repository?.Url);
+
+                        results.Add(new RemoteMcpServer(
+                            Name: sv.Name,
+                            Description: sv.Description ?? sv.Title ?? "",
+                            RemoteUrl: remote.Url!,
+                            Transport: remote.Type ?? "remote",
+                            RequiresAuth: requiresAuth,
+                            InfoUrl: infoUrl,
+                            Version: sv.Version ?? ""
+                        ));
+                    }
+                }
+
+                return Results.Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(detail: ex.Message, title: "Failed to fetch MCP registry");
+            }
+
+            static bool IsLatest(RegistryEntry e)
+            {
+                // The key in _meta contains slashes; our DTO maps it via JsonPropertyName.
+                return e?._meta?.Official?.IsLatest ?? false;
+            }
+        });
+
         return endpoints;
     }
 
@@ -156,4 +230,80 @@ public static class WasmApiEndpoints
 
     // Request for the public magic-link flow (used by the WASM landing page at /).
     public record RequestMagicLink(string Email);
+
+    // --- MCP Registry proxy models (clean output for the Tools page) ---
+
+    /// <summary>
+    /// Clean, filtered representation of a remote-capable MCP server for the Tools UI.
+    /// Only entries that have usable HTTP/SSE remotes are returned (stdio-only servers are dropped server-side).
+    /// </summary>
+    public record RemoteMcpServer(
+        string Name,
+        string Description,
+        string RemoteUrl,
+        string Transport,
+        bool RequiresAuth,
+        string? InfoUrl,
+        string Version
+    );
+
+    // --- Raw registry deserialization shapes (match https://registry.modelcontextprotocol.io/v0/servers) ---
+
+    public class RegistryResponse
+    {
+        public List<RegistryEntry> Servers { get; set; } = new();
+        public object? Metadata { get; set; }
+    }
+
+    public class RegistryEntry
+    {
+        public RegistryServer? Server { get; set; }
+
+        [JsonPropertyName("_meta")]
+        public RegistryMeta? _meta { get; set; }
+    }
+
+    public class RegistryServer
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string? Title { get; set; }
+        public string? Version { get; set; }
+        public string? WebsiteUrl { get; set; }
+
+        public RegistryRepository? Repository { get; set; }
+        public List<RegistryRemote>? Remotes { get; set; }
+        // packages (stdio etc.) are intentionally ignored for the web client list
+    }
+
+    public class RegistryRepository
+    {
+        public string? Url { get; set; }
+    }
+
+    public class RegistryRemote
+    {
+        public string Type { get; set; } = string.Empty;
+        public string? Url { get; set; }
+
+        public List<RegistryHeader>? Headers { get; set; }
+    }
+
+    public class RegistryHeader
+    {
+        public string Name { get; set; } = string.Empty;
+        public bool IsRequired { get; set; }
+        public bool IsSecret { get; set; }
+    }
+
+    public class RegistryMeta
+    {
+        [JsonPropertyName("io.modelcontextprotocol.registry/official")]
+        public OfficialMeta? Official { get; set; }
+    }
+
+    public class OfficialMeta
+    {
+        public bool IsLatest { get; set; }
+    }
 }

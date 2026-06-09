@@ -14,6 +14,8 @@ builder.Services.AddScoped<ChatfishApp.Client.Services.WasmAuthService>();
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmCryptoService>();
 
 // App-level tools for agentic / tool-calling support in WASM (same tools as server, executed in browser).
+// DefaultToolProvider now also pulls in remote MCP tools selected by the user on the Tools page.
+builder.Services.AddSingleton<ChatfishApp.Client.Services.Mcp.McpToolSource>();
 builder.Services.AddSingleton<ChatfishApp.Services.Tools.IToolProvider, ChatfishApp.Services.Tools.DefaultToolProvider>();
 
 // Configure the static HttpClient used by the WASM-side AppTools (for the proxied web-search and summarize-url).
