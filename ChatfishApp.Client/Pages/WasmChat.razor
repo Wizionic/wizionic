@@ -404,6 +404,9 @@
             // Add the current user turn (raw)
             chatHistory.Add(new AiChatMessage(ChatRole.User, userMsg));
 
+            // Always start with a clean trace for this turn (populated by native tools and/or MCP tools during execution).
+            ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
+
             // Get base client from our pluggable service (same as server).
             var baseClient = AiProviderService.GetChatClientForModel(selectedModel);
 
@@ -419,6 +422,13 @@
                     .UseFunctionInvocation()   // M.E.AI middleware: model emits tool call -> we execute -> feed result -> repeat
                     .Build();
 
+                // Make sure we have a fresh trace for this generation (native tools + any enabled remote MCP tools).
+                ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
+
+                // This now includes both the classic native tools AND any remote MCP servers the user enabled
+                // on the Tools page (with their tokens applied via McpToolSource).
+                // McpToolSource.GetCurrentMcpTools() (called inside) will auto-trigger a background refresh
+                // the first time it sees enabled servers.
                 chatOptions = new ChatOptions { Tools = ToolProvider.GetTools().ToList() };
             }
 
@@ -436,7 +446,51 @@
                     // Capture the tool / thinking trace that was recorded by the tools during this generation.
                     _pendingToolTrace = string.Join("\n", ChatfishApp.Services.Tools.ToolExecutionTrace.GetCurrentTrace());
 
-                    return response.Text ?? "No response.";
+                    string responseText = response.Text ?? string.Empty;
+
+                    // Many local reasoning models (e.g. LFM 2.5, certain Qwen, DeepSeek-R1 distilled, etc.)
+                    // when called via Ollama's OpenAI-compatible /v1 endpoint put the final answer in a
+                    // non-standard field ("reasoning", "reasoning_content", etc.) on the message instead of
+                    // the normal "content". ME.AI's response.Text only sees standard content.
+                    if (string.IsNullOrWhiteSpace(responseText))
+                    {
+                        var lastAssistant = response.Messages?
+                            .LastOrDefault(m => m.Role == ChatRole.Assistant);
+
+                        if (lastAssistant?.AdditionalProperties != null)
+                        {
+                            // Dump available keys into the trace so we can see exactly what this model/Ollama
+                            // is surfacing for this particular run.
+                            var availableKeys = string.Join(", ", lastAssistant.AdditionalProperties.Keys);
+                            ChatfishApp.Services.Tools.ToolExecutionTrace.Record($"[debug] AdditionalProperties keys on assistant message: [{availableKeys}]");
+
+                            // Try to find any key that looks like a reasoning field (case-insensitive contains "reason")
+                            foreach (var key in lastAssistant.AdditionalProperties.Keys)
+                            {
+                                if (key.Contains("reason", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var value = lastAssistant.AdditionalProperties[key];
+
+                                    string? reasonText = value as string;
+
+                                    // Some integrations leave it as JsonElement instead of a plain string
+                                    if (reasonText is null && value is System.Text.Json.JsonElement jsonEl && jsonEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                                    {
+                                        reasonText = jsonEl.GetString();
+                                    }
+
+                                    if (!string.IsNullOrWhiteSpace(reasonText))
+                                    {
+                                        responseText = reasonText!;
+                                        ChatfishApp.Services.Tools.ToolExecutionTrace.Record($"ℹ️ Extracted final response from non-standard field '{key}'.");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    return string.IsNullOrWhiteSpace(responseText) ? "No response." : responseText;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {
