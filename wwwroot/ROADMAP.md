@@ -70,6 +70,14 @@ Primary goals:
 - Implement conversation summarization (using the current model or a cheaper one)
 - Persist summary + recent messages when summarizing
 
+**Ideas **
+- Also, encrypted notes stored in the local storage (how much storage do browsers have)
+- mobile version does not run Ollama models, but perhaps possible to send chat messages back to connected browser on an local PC
+- One way hash for email login storage
+- One way hash for password storage for users that want more security in the browser
+- Add llama.cpp integration to the website as more flexible and higher performance then Ollam
+
+
 **Why important?** One of the biggest pain points with long chats is hitting the context wall unexpectedly. This feature will be very user-friendly and impressive on a resume. Token tracking matters for local models (varying context windows) as much as cloud ones.
 
 **Dependencies:** Phase 1 / Core multi-provider (need model metadata)  
@@ -218,6 +226,15 @@ Primary goals:
 - Reuse the existing components (Chat.razor UI, MainLayout + NavMenu, Settings, Roadmap renderer, CSS, model selector, streaming, markdown, services after abstraction) with only thin platform adapters.
 - More local and native abilities (direct filesystem for exports/attachments, SecureStorage, camera for vision, notifications, true offline, excellent LAN reach for Ollama, background tasks).
 - Use the WebView control to add web browsing with Agentic control + AI visibility into browser tabs (the killer feature that pure web or server targets can't match as cleanly or privately).
+- direct llama.cpp integration gives you more control, better optimization, smaller footprint, and easier bundling for a desktop/mobile app.
+
+**Options for .NET + llama.cpp:**
+
+- llama-cpp-python bindings (via Python.NET or process calls) — straightforward but adds a Python dependency.
+- Native C# bindings or wrappers (there are community projects like LLaMAMaui for MAUI examples). https://github.com/drasticactions/LLaMAMaui?tab=readme-ov-file
+- Run llama-server (from llama.cpp) as a background process and call its OpenAI-compatible API from your MAUI app — cleanest for cross-platform.
+- For MAUI specifically: Bundle a pre-built llama.cpp binary (Windows/macOS/Linux) and manage it via Process.Start() or embed via NuGet packages if available.
+
 
 **Key Tasks (new + mapped from prior roadmap)**
 
@@ -308,5 +325,16 @@ Primary goals:
 - Grok / xAI OAuth integration has been deprioritized for now. It may be revisited later once the product is more mature and after requesting an official client_id from xAI.
 - Focus is on reliable, useful multi-model support + excellent context awareness + building out the three delivery targets on a shared, local-first foundation.
 - The three parts let us deliver incremental value (the current server app keeps working and improving) while investing in the higher-privacy, higher-capability local and native experiences.
+
+MCP
+- First tool-using message in a fresh session may only see native tools (the background refresh started by GetCurrentMcpTools() finishes after the ChatOptions snapshot is taken). Subsequent turns / messages pick up the MCP tools. Easy to improve by awaiting a short refresh with timeout right before the first GetResponseAsync when MCPs are enabled.
+- Schema fidelity: we forward the MCP inputSchema when present. Models generally do the right thing from the name + description even on the permissive fallback.
+-  No server-side equivalent yet (for the non-WASM chat paths or a future /api/chat/orchestrate that takes ActiveMcpServers + tokens and runs the loop on the server).
+- Initialize handshake is best-effort (many hosted MCPs are lenient).
+- No advanced pagination / resource support / elicitation from the MCP spec — just the tools we need for agentic chat.
+- Token UI is basic (inline password field). You could later add a separate "MCP credentials" section, OAuth flows for the ones that support it, or server-side secret storage.
+- The core "checkboxes in Tools → real callable tools in the ME.AI loop with traces" loop is live.
+- iterate on (better first-turn waiting, server-side MCP support + orchestrate endpoint, nicer token UX, persisting the chosen remote URL alongside the name, more robust schema conversion, etc.).
+
 
 (End of roadmap.)
