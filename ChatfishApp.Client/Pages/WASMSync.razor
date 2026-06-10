@@ -1,0 +1,381 @@
+@page "/wasm-sync"
+@layout ChatfishApp.Client.Shared.WasmLayout
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@implements IDisposable
+
+@using DeviceInfo = ChatfishApp.Client.Services.WasmSyncService.DeviceInfo
+@using LocalConvo = ChatfishApp.Client.Services.WasmConversationStore.LocalConvo
+@using ChatMessage = ChatfishApp.Client.Services.WasmConversationStore.ChatMessage
+
+@inject ChatfishApp.Client.Services.WasmSyncService SyncService
+@inject ChatfishApp.Client.Services.WasmAuthService AuthService
+@inject ChatfishApp.Client.Services.WasmConversationStore ConversationStore
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
+
+    <p style="color: #666; font-size: 0.9em;">
+        Cross-device sync is only available after logging in with email. The server only helps devices find each other and exchange small signaling messages.
+        Your encrypted chat history never leaves your browsers and is transferred directly (Phase 2 will add the actual peer-to-peer transfer).
+    </p>
+
+    @if (!AuthService.IsAuthenticated)
+    {
+        <div style="margin: 2rem 0; padding: 1rem 1.25rem; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
+            <strong>Login required.</strong>
+            <div style="margin-top: 0.5rem;">
+                Sign in with your email on the <a href="/">landing page</a> (or via the account icon) to see your other devices and sync chats between browsers.
+            </div>
+            <div style="margin-top: 0.75rem;">
+                <button @onclick="@(() => Nav.NavigateTo("/"))" class="btn btn-outline-secondary btn-sm">Go to login / landing</button>
+                <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary btn-sm" style="margin-left: 0.5rem;">Back to Chat</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- DEVICES SECTION -->
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <h3 style="margin: 0;">Devices</h3>
+            <button @onclick="RefreshDevices" class="btn btn-outline-primary btn-sm" disabled="@isRefreshing">
+                @(isRefreshing ? "Refreshing..." : "Refresh")
+            </button>
+            <span style="font-size: 0.8em; color: #888; margin-left: auto;">
+                @(SyncService.IsConnected ? "Connected for live updates" : "Connecting…")
+            </span>
+        </div>
+
+        @if (devices.Any())
+        {
+            <div style="border: 1px solid #e5e5e5; border-radius: 6px; overflow: hidden; margin-bottom: 1rem;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.95em;">
+                    <thead>
+                        <tr style="background: #f8f9fa;">
+                            <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Device Name</th>
+                            <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var d in devices.OrderByDescending(x => x.IsOnline).ThenByDescending(x => x.LastActiveUtc))
+                        {
+                            bool isSelf = SyncService.IsSelf(d.DeviceId);
+                            <tr style="@(isSelf ? "background:#f0f7ff;" : "")">
+                                <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0;">
+                                    <span style="color: @(d.IsOnline ? "#22c55e" : "#888"); font-size: 0.9em; margin-right: 6px;">●</span>
+                                    <strong>@d.Name</strong>
+                                    @if (isSelf)
+                                    {
+                                        <span style="font-size: 0.7em; color: #1F7FCC; margin-left: 6px;">(this device)</span>
+                                    }
+                                    @if (d.IsOnline)
+                                    {
+                                        <span style="font-size: 0.7em; color: #22c55e; margin-left: 8px;">online</span>
+                                    }
+                                </td>
+                                <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; color: #555;">
+                                    @FormatLastActive(d.LastActiveUtc, d.IsOnline)
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Rename this device (simple inline control for Phase 1) -->
+            <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                <label style="font-size: 0.9em; color: #555;">Rename this device:</label>
+                <input type="text" @bind="newDeviceName" placeholder="@SyncService.MyDeviceName" style="flex: 1; min-width: 220px; max-width: 320px;" class="form-control form-control-sm" />
+                <button @onclick="SaveDeviceName" class="btn btn-outline-secondary btn-sm">Save</button>
+            </div>
+
+            <!-- TARGET DEVICES FOR SYNC (checkboxes) -->
+            <div style="margin: 1rem 0 0.5rem;">
+                <div style="font-weight: 600; margin-bottom: 0.35rem;">Sync to these devices</div>
+                @{
+                    var others = SyncService.GetOtherDevices().ToList();
+                }
+                @if (others.Any())
+                {
+                    <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                        @foreach (var d in others)
+                        {
+                            bool selected = selectedTargetDeviceIds.Contains(d.DeviceId);
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.92em;">
+                                <input type="checkbox"
+                                       checked="@selected"
+                                       @onchange="(e) => ToggleTarget(d.DeviceId, e)" />
+                                <span style="color: @(d.IsOnline ? "#22c55e" : "#888");">●</span>
+                                <span>@d.Name</span>
+                                @if (d.IsOnline)
+                                {
+                                    <span style="font-size: 0.7em; color: #22c55e;">(online now)</span>
+                                }
+                                else
+                                {
+                                    <span style="font-size: 0.7em; color: #888;">(last seen @FormatLastActive(d.LastActiveUtc, false))</span>
+                                }
+                            </label>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div style="color: #888; font-size: 0.9em;">No other devices are currently known for this account. Open Chatfish in another browser or device and log in with the same email.</div>
+                }
+            </div>
+
+            <!-- CHAT HISTORY LIST -->
+            <h3 style="margin-top: 1.25rem; margin-bottom: 0.4rem;">Chat history</h3>
+            <p style="color:#666; font-size:0.85em; margin-bottom:0.5rem;">
+                Select one or more target devices above, then click Sync on any conversation. This will send the encrypted history over the signaling connection (Phase 2 relay). The other browser will receive it and save it locally.
+            </p>
+
+            @if (localConvos.Any())
+            {
+                <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                    @foreach (var c in localConvos.OrderByDescending(x => x.LastUpdated))
+                    {
+                        <div style="display: flex; align-items: center; gap: 0.6rem; border: 1px solid #e5e5e5; border-radius: 6px; padding: 0.4rem 0.6rem; background: white;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-weight: 500;">@c.Title</div>
+                                <div style="font-size: 0.75em; color: #888;">@c.LastUpdated.ToLocalTime().ToString("MMM d, HH:mm")</div>
+                            </div>
+                            <button @onclick="() => SyncConversation(c)"
+                                    class="btn btn-outline-primary btn-sm"
+                                    disabled="@(!selectedTargetDeviceIds.Any())">
+                                Sync
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="color:#888; font-size:0.9em;">No conversations yet in this browser.</div>
+            }
+
+            @if (!string.IsNullOrEmpty(statusMessage))
+            {
+                <div style="margin-top: 1rem; padding: 0.5rem 0.75rem; background: #e6f2ff; border: 1px solid #b3d9ff; border-radius: 4px; font-size: 0.9em;">
+                    @statusMessage
+                </div>
+            }
+        }
+        else
+        {
+            <div style="color:#666; padding: 0.75rem 0;">
+                Loading device list…
+            </div>
+        }
+
+        <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem; align-items: center;">
+            <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+            <small style="color:#888;">Only your own devices (same email login) appear here. The server never stores your chat history.</small>
+        </div>
+    }
+
+</div>
+
+@code {
+    private List<DeviceInfo> devices = new();
+    private List<LocalConvo> localConvos = new();
+
+    private HashSet<string> selectedTargetDeviceIds = new(StringComparer.OrdinalIgnoreCase);
+
+    private string newDeviceName = "";
+    private string? statusMessage;
+    private bool isRefreshing;
+
+    private Action? _syncChangedHandler;
+    private Action? _authChangedHandler;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.LoadAsync();
+
+        // Prepare local device identity + load current convos for the list
+        await SyncService.InitializeAsync();
+        localConvos = await ConversationStore.LoadIndexAsync(JS);
+
+        // Subscribe to live updates from the presence service
+        _syncChangedHandler = () =>
+        {
+            devices = SyncService.Devices.ToList();
+            StateHasChanged();
+        };
+        SyncService.OnChanged += _syncChangedHandler;
+
+        _authChangedHandler = () => InvokeAsync(StateHasChanged);
+        AuthService.OnChanged += _authChangedHandler;
+
+        SyncService.OnSyncPayloadReceived += HandleIncomingSyncPayload;
+        SyncService.OnSyncAckReceived += HandleSyncAckReceived;
+
+        if (AuthService.IsAuthenticated)
+        {
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+            devices = SyncService.Devices.ToList();
+
+            // Seed a sensible default name in the rename box
+            newDeviceName = SyncService.MyDeviceName;
+        }
+    }
+
+    private async Task RefreshDevices()
+    {
+        isRefreshing = true;
+        StateHasChanged();
+
+        try
+        {
+            await SyncService.RefreshAsync();
+            devices = SyncService.Devices.ToList();
+        }
+        finally
+        {
+            isRefreshing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveDeviceName()
+    {
+        var name = (newDeviceName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        await SyncService.SetDeviceNameAsync(name);
+        newDeviceName = SyncService.MyDeviceName; // reflect any normalization
+        devices = SyncService.Devices.ToList();
+        StateHasChanged();
+    }
+
+    private void ToggleTarget(string deviceId, ChangeEventArgs e)
+    {
+        bool isChecked = e.Value is bool b && b;
+        if (isChecked)
+            selectedTargetDeviceIds.Add(deviceId);
+        else
+            selectedTargetDeviceIds.Remove(deviceId);
+
+        StateHasChanged();
+    }
+
+    private async Task SyncConversation(LocalConvo convo)
+    {
+        if (!selectedTargetDeviceIds.Any())
+        {
+            statusMessage = "Select at least one target device above first.";
+            StateHasChanged();
+            return;
+        }
+
+        var targetDevices = devices
+            .Where(d => selectedTargetDeviceIds.Contains(d.DeviceId))
+            .ToList();
+
+        // Load the full conversation (the store returns the decrypted list for us; 
+        // the underlying stored blob is encrypted with the user key).
+        var messages = await ConversationStore.LoadConversationAsync(JS, convo.Id);
+
+        // Start real WebRTC DataChannel transfer (signaling via hub, data P2P).
+        foreach (var targetId in selectedTargetDeviceIds)
+        {
+            await SyncService.StartWebRtcSyncAsync(targetId, convo.Id, messages);
+        }
+
+        var targetNames = targetDevices.Select(d => d.Name).ToList();
+
+        var serialized = System.Text.Json.JsonSerializer.Serialize(messages);
+        var payloadSize = System.Text.Encoding.UTF8.GetByteCount(serialized);
+
+        statusMessage = $"Initiated WebRTC DataChannel sync for \"{convo.Title}\" " +
+                        $"({messages.Count} messages, {payloadSize} bytes) to: {string.Join(", ", targetNames)}. " +
+                        $"Waiting for peer acknowledgement...";
+
+        Console.WriteLine($"[WASMSync] WebRTC sync started for convo {convo.Id} -> targets: {string.Join("|", selectedTargetDeviceIds)} | messages: {messages.Count}");
+
+        StateHasChanged();
+
+        // The status will be updated when we receive the ack via HandleSyncAckReceived.
+        // Fallback clear in case no ack arrives (network issue, peer closed, etc.)
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(15000);
+            await InvokeAsync(() =>
+            {
+                if (statusMessage != null && statusMessage.Contains("Waiting for peer acknowledgement"))
+                {
+                    statusMessage = "Sync initiated. No acknowledgement received (peer may have closed or network issue).";
+                    StateHasChanged();
+                }
+            });
+        });
+    }
+
+    private static string FormatLastActive(DateTime utc, bool isOnline)
+    {
+        if (isOnline)
+            return "Now";
+
+        var ago = DateTime.UtcNow - utc;
+        if (ago.TotalMinutes < 1) return "Just now";
+        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
+        if (ago.TotalDays < 7) return $"{(int)ago.TotalDays}d ago";
+        return utc.ToLocalTime().ToString("MMM d");
+    }
+
+    private async void HandleIncomingSyncPayload(string convoId, string json, string fromDeviceId)
+    {
+        try
+        {
+            var msgs = System.Text.Json.JsonSerializer.Deserialize<List<ChatMessage>>(json) ?? new();
+
+            await ConversationStore.SaveConversationAsync(JS, convoId, msgs);
+            await ConversationStore.UpdateIndexAfterSaveAsync(JS, convoId, msgs, localConvos);
+
+            // Refresh the index so the received convo appears in the list immediately
+            localConvos = await ConversationStore.LoadIndexAsync(JS);
+
+            statusMessage = $"Received sync for convo \"{convoId}\" from {fromDeviceId}. Saved {msgs.Count} messages locally.";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WASMSync] Failed to apply incoming sync payload: {ex.Message}");
+        }
+    }
+
+    private void HandleSyncAckReceived(string convoId, string fromPeerId)
+    {
+        // This fires on the *sender* side when the peer confirms receipt over the DataChannel
+        statusMessage = $"Peer confirmed receipt of convo \"{convoId}\".";
+        StateHasChanged();
+
+        // Auto-clear after a few seconds
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(4000);
+            await InvokeAsync(() =>
+            {
+                if (statusMessage != null && statusMessage.Contains("confirmed receipt"))
+                {
+                    statusMessage = null;
+                    StateHasChanged();
+                }
+            });
+        });
+    }
+
+    public void Dispose()
+    {
+        if (_syncChangedHandler != null)
+            SyncService.OnChanged -= _syncChangedHandler;
+        if (_authChangedHandler != null)
+            AuthService.OnChanged -= _authChangedHandler;
+
+        SyncService.OnSyncPayloadReceived -= HandleIncomingSyncPayload;
+        SyncService.OnSyncAckReceived -= HandleSyncAckReceived;
+    }
+}

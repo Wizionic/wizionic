@@ -18,6 +18,7 @@
 @inject ChatfishApp.Client.Services.WasmAiProviderService AiProviderService
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
 @inject ChatfishApp.Services.Tools.IToolProvider ToolProvider
+@inject ChatfishApp.Client.Services.WasmSyncService SyncService
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
     <!-- Sidebar toggle button is here (in WasmChat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
@@ -274,6 +275,10 @@
 
         _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
         SidebarState.OnChanged += _sidebarStateChangedHandler;
+
+        // Subscribe so the conversation sidebar auto-refreshes when a sync arrives
+        // while the user is on the chat page (even if they weren't on the sync page).
+        SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
     }
 
     public void Dispose()
@@ -282,6 +287,16 @@
         {
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
         }
+
+        SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
+    }
+
+    private async void OnConversationsChangedFromSync()
+    {
+        // A sync arrived (via WebRTC, while on this page or in background).
+        // Reload the conversation list so the sidebar automatically reflects the new/updated chat.
+        localConvos = await ConversationStore.LoadIndexAsync(JS);
+        StateHasChanged();
     }
 
     private async Task ToggleSidebar()
