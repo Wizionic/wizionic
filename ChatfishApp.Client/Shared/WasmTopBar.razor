@@ -13,6 +13,9 @@
         <a href="/wasm-tools" title="Tools (MCP Servers)">
             <i class="bi bi-tools"></i>
         </a>
+        <a href="/wasm-sync" title="Devices & Sync">
+            <i class="bi bi-arrow-repeat"></i>
+        </a>
         <a href="/account" title="Account / Login">
             <i class="bi bi-person-circle"></i>
         </a>
@@ -21,4 +24,8 @@
 
 @code {
     // Toggle button moved into WasmChat.razor per plan. Top-left now only brand icon.
+    // The sync icon is always shown (like Settings/Tools). The /wasm-sync page itself
+    // has a clear "login with email required" guard and only shows the device list + chat
+    // sync UI for authenticated users. This avoids pulling client-only services (WasmAuthService)
+    // into the server DI container used for the initial shell render of WasmLayout + topbar.
 }

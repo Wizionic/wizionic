@@ -289,6 +289,113 @@
             await window.idbPutSetting("guest-encryption-key", b64);
             return b64;
         };
+
+        // --------------------------------------------------------------------
+        // WebRTC helpers for Phase 2 real peer-to-peer chat history sync (DataChannel).
+        // Signaling (offer/answer/ICE + sync-start) goes through SyncHub.
+        // The actual (encrypted) history blob travels directly over the RTCDataChannel.
+        // --------------------------------------------------------------------
+        window._webrtcConnections = {};
+
+        window.webrtcCreatePeerConnection = async (dotnetRef, peerId) => {
+            const pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+            window._webrtcConnections[peerId] = { pc, dotnetRef, dataChannel: null };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    dotnetRef.invokeMethodAsync('OnIceCandidate', peerId, JSON.stringify(event.candidate));
+                }
+            };
+
+            pc.ondatachannel = (event) => {
+                const dc = event.channel;
+                window._webrtcConnections[peerId].dataChannel = dc;
+                dc.onopen = () => {
+                    console.log('[WebRTC] DataChannel open (receiver)');
+                    dotnetRef.invokeMethodAsync('OnDataChannelOpen', peerId);
+                };
+                dc.onmessage = (e) => {
+                    dotnetRef.invokeMethodAsync('OnDataReceived', peerId, e.data);
+                };
+                dc.onclose = () => {
+                    dotnetRef.invokeMethodAsync('OnDataChannelClose', peerId);
+                };
+            };
+
+            pc.onconnectionstatechange = () => {
+                console.log('[WebRTC] Connection state for', peerId, pc.connectionState);
+            };
+            return true;
+        };
+
+        window.webrtcCreateDataChannel = async (peerId, label) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return;
+            const dc = entry.pc.createDataChannel(label || 'chatfish-sync');
+            entry.dataChannel = dc;
+            dc.onopen = () => {
+                console.log('[WebRTC] DataChannel open (sender)');
+                entry.dotnetRef.invokeMethodAsync('OnDataChannelOpen', peerId);
+            };
+            dc.onmessage = (e) => {
+                entry.dotnetRef.invokeMethodAsync('OnDataReceived', peerId, e.data);
+            };
+            dc.onclose = () => {
+                entry.dotnetRef.invokeMethodAsync('OnDataChannelClose', peerId);
+            };
+        };
+
+        window.webrtcCreateOffer = async (peerId) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return null;
+            const offer = await entry.pc.createOffer();
+            await entry.pc.setLocalDescription(offer);
+            return JSON.stringify(offer);
+        };
+
+        window.webrtcSetRemoteDescription = async (peerId, sdpJson) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return;
+            const desc = JSON.parse(sdpJson);
+            await entry.pc.setRemoteDescription(new RTCSessionDescription(desc));
+        };
+
+        window.webrtcCreateAnswer = async (peerId) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return null;
+            const answer = await entry.pc.createAnswer();
+            await entry.pc.setLocalDescription(answer);
+            return JSON.stringify(answer);
+        };
+
+        window.webrtcAddIceCandidate = async (peerId, candidateJson) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return;
+            try {
+                const cand = JSON.parse(candidateJson);
+                await entry.pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) { console.warn('[WebRTC] addIceCandidate', e); }
+        };
+
+        window.webrtcSendData = async (peerId, data) => {
+            const entry = window._webrtcConnections[peerId];
+            if (entry && entry.dataChannel && entry.dataChannel.readyState === 'open') {
+                entry.dataChannel.send(data);
+                return true;
+            }
+            return false;
+        };
+
+        window.webrtcClose = (peerId) => {
+            const entry = window._webrtcConnections[peerId];
+            if (entry) {
+                if (entry.dataChannel) entry.dataChannel.close();
+                entry.pc.close();
+                delete window._webrtcConnections[peerId];
+            }
+        };
     </script>
 </body>
 
