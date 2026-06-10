@@ -29,6 +29,7 @@ builder.Services.AddDbContext<ChatfishDbContext>(options =>
 
 builder.Services.AddScoped<MagicLinkService>();
 builder.Services.AddScoped<ProviderKeyService>();
+builder.Services.AddSingleton<DevicePresenceService>();
 
 // Email sending (used for real magic link delivery).
 // Brevo HTTP API is now the primary sender (SMTP is blocked by some hosts e.g. Railway).
@@ -82,6 +83,8 @@ builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
 
 // HttpClient for WASM client components (e.g. WasmSettings) during any server-side rendering of the component tree (layout, topbar, etc.).
 // The actual interactive WASM runtime (in Client/Program.cs) provides its own configured instance (with BaseAddress).
+// Keep this registration minimal — do not register client-only services like WasmAuthService or WasmSyncService here,
+// otherwise they can interfere with WebAssembly bootstrap, render mode activation, and hot reload under `dotnet watch`.
 builder.Services.AddScoped<HttpClient>();
 
 // Data Protection for at-rest encryption of sensitive per-user values (e.g. the LocalEncryptionKey
@@ -108,6 +111,8 @@ builder.Services.AddAuthentication("ChatfishAuth")
 
 builder.Services.AddAuthorization();
 builder.Services.AddHttpContextAccessor();
+
+builder.Services.AddSignalR();
 
 
 var app = builder.Build();
@@ -229,13 +234,17 @@ app.MapGet("/logout", async (HttpContext ctx) =>
 // All under /api + cookie auth. See Apis/WasmApiEndpoints.cs for the implementations.
 app.MapWasmApis();
 
+// Live device presence + future WebRTC signaling hub for authenticated WASM clients.
+// The hub itself is marked [Authorize] and relies on the ChatfishAuth cookie
+// (same cookie the WASM client already sends for /api/auth/me etc.).
+// Clients connect from the same origin, so cookies are sent automatically.
+app.MapHub<ChatfishApp.Apis.SyncHub>("/sync-hub");
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .AddInteractiveWebAssemblyRenderMode()
     .AddAdditionalAssemblies(typeof(ChatfishApp.Client.WasmMarker).Assembly);
 
-
-//app.MapHub<ChatHub>("/chathub").RequireAuthorization();
 
 app.Run();
 

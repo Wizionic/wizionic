@@ -1,3 +1,4 @@
+using ChatfishApp.Client.Services;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -6,6 +7,12 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
 builder.Services.AddSingleton<ChatfishApp.Client.Services.WasmKeyStore>();
 builder.Services.AddSingleton<ChatfishApp.Client.Services.WasmAiProviderService>();
+// Live device presence + (future) sync signaling over SignalR.
+// Must be Scoped because it depends on HttpClient (Scoped) and WasmAuthService (Scoped).
+// In Blazor WASM there is effectively one scope for the lifetime of the app, so this is
+// still long-lived and appropriate for holding the SignalR HubConnection.
+// Using Singleton would cause a ScopedInSingletonException during service validation at startup.
+builder.Services.AddScoped<ChatfishApp.Client.Services.WasmSyncService>();
 
 // These must be Scoped because they depend on HttpClient (which is Scoped in Blazor WASM).
 // Using Scoped here is fine and common in WASM apps — they live for the lifetime of the WASM app.
@@ -27,4 +34,17 @@ ChatfishApp.Services.Tools.AppTools.HttpClient = new HttpClient
     Timeout = TimeSpan.FromSeconds(30)
 };
 
-await builder.Build().RunAsync();
+var host = builder.Build();
+
+// Eagerly resolve WasmSyncService (and its dependencies) at startup so that
+// it connects to the signaling hub and can receive incoming WebRTC sync
+// payloads even if the user never opens the /wasm-sync page.
+// As long as any WASM page is loaded and the user is authenticated, syncs
+// will be received in the background and persisted automatically.
+var authService = host.Services.GetRequiredService<WasmAuthService>();
+var syncService = host.Services.GetRequiredService<WasmSyncService>();
+
+await authService.LoadAsync();
+await syncService.InitializeAsync();
+
+await host.RunAsync();
