@@ -26,12 +26,17 @@ public class WasmSyncService : IAsyncDisposable
     private readonly HttpClient _http; // only used to resolve the base address for the hub
     private readonly WasmAuthService _auth;
     private readonly WasmConversationStore _conversationStore;
+    private readonly WasmAiProviderService _aiProvider;
+    private readonly WasmKeyStore _keyStore;
+    private readonly WasmChatCompletionService _chatCompletion;
 
     private HubConnection? _hub;
     private bool _initialized;
 
     private const string DeviceIdKey = "chatfish-device-id";
     private const string DeviceNameKey = "chatfish-device-name";
+    private const string AiServerDeviceIdKey = "chatfish-ai-server-device-id";
+    private const string AiProxyDataChannelLabel = "chatfish-ai-proxy";
 
     public string? MyDeviceId { get; private set; }
     public string MyDeviceName { get; private set; } = "This browser";
@@ -39,6 +44,16 @@ public class WasmSyncService : IAsyncDisposable
     public IReadOnlyList<DeviceInfo> Devices { get; private set; } = Array.Empty<DeviceInfo>();
 
     public bool IsConnected => _hub?.State == HubConnectionState.Connected;
+
+    /// <summary>Device ID of the peer browser that handles AI completions for this client.</summary>
+    public string? AiServerDeviceId { get; private set; }
+
+    /// <summary>Models available on the selected AI server device (populated over WebRTC).</summary>
+    public IReadOnlyList<WasmAiProviderService.ModelInfo> RemoteModels { get; private set; } = Array.Empty<WasmAiProviderService.ModelInfo>();
+
+    public bool IsAiProxyConnected { get; private set; }
+
+    public string? AiProxyError { get; private set; }
 
     public event Action? OnChanged;
 
@@ -48,12 +63,22 @@ public class WasmSyncService : IAsyncDisposable
     /// </summary>
     public event Action? OnConversationsChanged;
 
-    public WasmSyncService(IJSRuntime js, HttpClient http, WasmAuthService auth, WasmConversationStore conversationStore)
+    public WasmSyncService(
+        IJSRuntime js,
+        HttpClient http,
+        WasmAuthService auth,
+        WasmConversationStore conversationStore,
+        WasmAiProviderService aiProvider,
+        WasmKeyStore keyStore,
+        WasmChatCompletionService chatCompletion)
     {
         _js = js;
         _http = http;
         _auth = auth;
         _conversationStore = conversationStore;
+        _aiProvider = aiProvider;
+        _keyStore = keyStore;
+        _chatCompletion = chatCompletion;
 
         _auth.OnChanged += OnAuthChanged;
     }
@@ -131,6 +156,11 @@ public class WasmSyncService : IAsyncDisposable
                 MyDeviceName = "This browser";
             }
         }
+
+        // Restore persisted AI server preference (if any).
+        AiServerDeviceId = await _js.InvokeAsync<string?>("localStorage.getItem", AiServerDeviceIdKey);
+        if (string.IsNullOrWhiteSpace(AiServerDeviceId))
+            AiServerDeviceId = null;
 
         OnChanged?.Invoke();
     }
@@ -227,6 +257,27 @@ public class WasmSyncService : IAsyncDisposable
         }
 
         await SafeRegisterAsync();
+        await PublishAiCapabilitiesAsync();
+    }
+
+    /// <summary>
+    /// Reports how many AI models this browser can serve to peers (for the device list UI).
+    /// </summary>
+    public async Task PublishAiCapabilitiesAsync()
+    {
+        if (_hub?.State != HubConnectionState.Connected || string.IsNullOrEmpty(MyDeviceId))
+            return;
+
+        try
+        {
+            await _keyStore.LoadAsync(_js);
+            var count = _aiProvider.GetAvailableModels().Count;
+            await _hub.InvokeAsync("UpdateAiCapabilities", MyDeviceId, count);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] UpdateAiCapabilities failed: {ex.Message}");
+        }
     }
 
     private async Task SafeRegisterAsync()
@@ -316,6 +367,12 @@ public class WasmSyncService : IAsyncDisposable
 
     private readonly Dictionary<string, (string ConvoId, string DataJson)> _pendingSyncData = new();
 
+    // AI proxy: persistent WebRTC channel to a peer that runs local AI.
+    private readonly Dictionary<string, TaskCompletionSource<ChatResponsePayload>> _pendingChatRequests = new(StringComparer.OrdinalIgnoreCase);
+    private TaskCompletionSource<bool>? _modelsListTcs;
+    private bool _aiProxyConnecting;
+    private CancellationTokenSource? _aiProxyReconnectCts;
+
     private void WireSyncHandlers()
     {
         if (_hub == null) return;
@@ -341,12 +398,47 @@ public class WasmSyncService : IAsyncDisposable
                 await HandleWebRtcOffer(fromDeviceId, payload);
             else if (type == "webrtc-answer")
                 await HandleWebRtcAnswer(fromDeviceId, payload);
+            else if (type == "webrtc-offer-ai")
+                await HandleWebRtcOfferAi(fromDeviceId, payload);
+            else if (type == "webrtc-answer-ai")
+                await HandleWebRtcAnswerAi(fromDeviceId, payload);
             else if (type == "webrtc-ice")
             {
                 Console.WriteLine($"[WebRTC] Received ICE candidate from {fromDeviceId}");
-                await _js.InvokeVoidAsync("webrtcAddIceCandidate", fromDeviceId, payload);
+                if (TryUnwrapIcePayload(payload, out var senderPeerKey, out var iceJson))
+                {
+                    // AI proxy uses asymmetric local keys (client: ai:serverId, server: ai:clientId).
+                    // Always map incoming ICE to our local peer key for this session.
+                    var localPeerKey = IsAiProxyPeerKey(senderPeerKey)
+                        ? GetAiProxyPeerKey(fromDeviceId)
+                        : fromDeviceId;
+                    await _js.InvokeVoidAsync("webrtcAddIceCandidate", localPeerKey, iceJson);
+                }
+                else
+                {
+                    await _js.InvokeVoidAsync("webrtcAddIceCandidate", fromDeviceId, payload);
+                }
             }
         });
+    }
+
+    private static bool TryUnwrapIcePayload(string payload, out string peerKey, out string iceJson)
+    {
+        peerKey = "";
+        iceJson = payload;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("peerKey", out var pk) &&
+                doc.RootElement.TryGetProperty("ice", out var ice))
+            {
+                peerKey = pk.GetString() ?? "";
+                iceJson = ice.GetRawText();
+                return !string.IsNullOrEmpty(peerKey);
+            }
+        }
+        catch { }
+        return false;
     }
 
     // --- WebRTC DataChannel sync (Phase 2) ---
@@ -419,8 +511,16 @@ public class WasmSyncService : IAsyncDisposable
     {
         if (_hub is { State: HubConnectionState.Connected })
         {
-            Console.WriteLine($"[WebRTC] Sending ICE candidate to {peerId}");
-            await _hub.InvokeAsync("SendToDevice", peerId, "webrtc-ice", candidateJson);
+            var targetDeviceId = GetDeviceIdFromPeerKey(peerId);
+            Console.WriteLine($"[WebRTC] Sending ICE candidate to {targetDeviceId} (peer {peerId})");
+
+            var payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                peerKey = peerId,
+                ice = System.Text.Json.JsonDocument.Parse(candidateJson).RootElement
+            });
+
+            await _hub.InvokeAsync("SendToDevice", targetDeviceId, "webrtc-ice", payload);
         }
     }
 
@@ -428,16 +528,28 @@ public class WasmSyncService : IAsyncDisposable
     public void OnDataChannelOpen(string peerId)
     {
         Console.WriteLine($"[WasmSyncService] DataChannel open for peer {peerId}");
+
+        if (IsAiProxyPeerKey(peerId))
+        {
+            // Only the browser that selected a remote AI server acts as the client.
+            if (!string.IsNullOrEmpty(AiServerDeviceId))
+            {
+                _aiProxyConnecting = false;
+                IsAiProxyConnected = true;
+                AiProxyError = null;
+                OnChanged?.Invoke();
+                _ = RequestRemoteModelsAsync();
+            }
+            return;
+        }
+
         if (_pendingSyncData.TryGetValue(peerId, out var data))
         {
-            // Send typed message over the DataChannel
             var msg = new DataChannelMessage("sync-data", data.ConvoId, data.DataJson);
             var toSend = System.Text.Json.JsonSerializer.Serialize(msg);
             _ = _js.InvokeVoidAsync("webrtcSendData", peerId, toSend);
 
             Console.WriteLine($"[WasmSyncService] Sent sync-data over DataChannel to {peerId} for {data.ConvoId}");
-
-            // Do NOT remove yet — wait for ack before cleanup
         }
     }
 
@@ -446,6 +558,12 @@ public class WasmSyncService : IAsyncDisposable
     {
         try
         {
+            if (IsAiProxyPeerKey(peerId))
+            {
+                await HandleAiProxyDataReceived(peerId, data);
+                return;
+            }
+
             var msg = System.Text.Json.JsonSerializer.Deserialize<DataChannelMessage>(data);
             if (msg == null) return;
 
@@ -531,11 +649,319 @@ public class WasmSyncService : IAsyncDisposable
     public void OnDataChannelClose(string peerId)
     {
         Console.WriteLine($"[WasmSyncService] DataChannel closed for {peerId}");
+
+        if (IsAiProxyPeerKey(peerId))
+        {
+            if (!string.IsNullOrEmpty(AiServerDeviceId))
+            {
+                IsAiProxyConnected = false;
+                AiProxyError = "AI proxy connection closed.";
+                OnChanged?.Invoke();
+                _ = ScheduleAiProxyReconnectAsync();
+            }
+            return;
+        }
+
         _pendingSyncData.Remove(peerId);
         _ = _js.InvokeVoidAsync("webrtcClose", peerId);
     }
 
     private record DataChannelMessage(string type, string? convoId = null, string? content = null);
+
+    // --- AI proxy (remote chat via peer browser) ---
+
+    private static string GetAiProxyPeerKey(string deviceId) => $"ai:{deviceId}";
+
+    private static bool IsAiProxyPeerKey(string peerKey) =>
+        peerKey.StartsWith("ai:", StringComparison.Ordinal);
+
+    private static string GetDeviceIdFromPeerKey(string peerKey) =>
+        IsAiProxyPeerKey(peerKey) ? peerKey.Substring(3) : peerKey;
+
+    public string? GetAiServerDeviceName()
+    {
+        if (string.IsNullOrEmpty(AiServerDeviceId)) return null;
+        return Devices.FirstOrDefault(d => IsSelf(d.DeviceId) == false && string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase))?.Name
+               ?? Devices.FirstOrDefault(d => string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase))?.Name;
+    }
+
+    public async Task SetAiServerDeviceAsync(string? deviceId)
+    {
+        await InitializeAsync();
+
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            AiServerDeviceId = null;
+            await _js.InvokeVoidAsync("localStorage.removeItem", AiServerDeviceIdKey);
+            await CloseAiProxyConnectionAsync();
+            RemoteModels = Array.Empty<WasmAiProviderService.ModelInfo>();
+            OnChanged?.Invoke();
+            return;
+        }
+
+        if (IsSelf(deviceId))
+            return;
+
+        AiServerDeviceId = deviceId;
+        await _js.InvokeVoidAsync("localStorage.setItem", AiServerDeviceIdKey, deviceId);
+        RemoteModels = Array.Empty<WasmAiProviderService.ModelInfo>();
+        IsAiProxyConnected = false;
+        AiProxyError = null;
+        OnChanged?.Invoke();
+
+        await EnsureAiProxyConnectionAsync();
+    }
+
+    public async Task EnsureAiProxyConnectionAsync()
+    {
+        if (string.IsNullOrEmpty(AiServerDeviceId) || _hub?.State != HubConnectionState.Connected)
+            return;
+
+        if (IsAiProxyConnected || _aiProxyConnecting)
+            return;
+
+        _aiProxyConnecting = true;
+        _aiProxyReconnectCts?.Cancel();
+
+        try
+        {
+            var peerKey = GetAiProxyPeerKey(AiServerDeviceId);
+            await _js.InvokeVoidAsync("webrtcClose", peerKey);
+
+            var objRef = DotNetObjectReference.Create(this);
+            await _js.InvokeVoidAsync("webrtcCreatePeerConnection", objRef, peerKey);
+            await _js.InvokeVoidAsync("webrtcCreateDataChannel", peerKey, AiProxyDataChannelLabel);
+
+            var offerJson = await _js.InvokeAsync<string>("webrtcCreateOffer", peerKey);
+            await _hub.InvokeAsync("SendToDevice", AiServerDeviceId, "webrtc-offer-ai", offerJson);
+            Console.WriteLine($"[WasmSyncService] Sent AI proxy offer to {AiServerDeviceId}");
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(25));
+                    if (_aiProxyConnecting && !IsAiProxyConnected)
+                    {
+                        _aiProxyConnecting = false;
+                        AiProxyError = "Timed out connecting to AI server device.";
+                        OnChanged?.Invoke();
+                    }
+                }
+                catch { }
+            });
+        }
+        catch (Exception ex)
+        {
+            _aiProxyConnecting = false;
+            AiProxyError = $"Failed to connect AI proxy: {ex.Message}";
+            Console.WriteLine($"[WasmSyncService] AI proxy connect failed: {ex.Message}");
+            OnChanged?.Invoke();
+        }
+    }
+
+    private async Task CloseAiProxyConnectionAsync()
+    {
+        _aiProxyReconnectCts?.Cancel();
+        _aiProxyReconnectCts = null;
+
+        if (!string.IsNullOrEmpty(AiServerDeviceId))
+        {
+            try { await _js.InvokeVoidAsync("webrtcClose", GetAiProxyPeerKey(AiServerDeviceId)); } catch { }
+        }
+
+        IsAiProxyConnected = false;
+    }
+
+    private async Task ScheduleAiProxyReconnectAsync()
+    {
+        if (string.IsNullOrEmpty(AiServerDeviceId))
+            return;
+
+        _aiProxyReconnectCts?.Cancel();
+        _aiProxyReconnectCts = new CancellationTokenSource();
+        var token = _aiProxyReconnectCts.Token;
+
+        try
+        {
+            await Task.Delay(3000, token);
+            if (!token.IsCancellationRequested)
+                await EnsureAiProxyConnectionAsync();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task HandleWebRtcOfferAi(string fromDeviceId, string offerJson)
+    {
+        if (_hub == null) return;
+
+        try
+        {
+            var peerKey = GetAiProxyPeerKey(fromDeviceId);
+            var objRef = DotNetObjectReference.Create(this);
+            await _js.InvokeVoidAsync("webrtcCreatePeerConnection", objRef, peerKey);
+            await _js.InvokeVoidAsync("webrtcSetRemoteDescription", peerKey, offerJson);
+
+            var answerJson = await _js.InvokeAsync<string>("webrtcCreateAnswer", peerKey);
+            await _hub.InvokeAsync("SendToDevice", fromDeviceId, "webrtc-answer-ai", answerJson);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] Handle AI offer failed: {ex.Message}");
+        }
+    }
+
+    private async Task HandleWebRtcAnswerAi(string fromDeviceId, string answerJson)
+    {
+        try
+        {
+            var peerKey = GetAiProxyPeerKey(fromDeviceId);
+            await _js.InvokeVoidAsync("webrtcSetRemoteDescription", peerKey, answerJson);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] Handle AI answer failed: {ex.Message}");
+        }
+    }
+
+    public async Task RequestRemoteModelsAsync()
+    {
+        if (!IsAiProxyConnected || string.IsNullOrEmpty(AiServerDeviceId))
+            return;
+
+        _modelsListTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var peerKey = GetAiProxyPeerKey(AiServerDeviceId);
+        var msg = new DataChannelMessage("models-request");
+        await _js.InvokeVoidAsync("webrtcSendData", peerKey, System.Text.Json.JsonSerializer.Serialize(msg));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            await _modelsListTcs.Task.WaitAsync(cts.Token);
+        }
+        catch
+        {
+            AiProxyError = "Timed out waiting for remote model list.";
+            OnChanged?.Invoke();
+        }
+    }
+
+    public async Task<(string Text, string ToolTrace)> SendChatRequestAsync(
+        string modelId,
+        List<WasmConversationStore.ChatMessage> messages,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(AiServerDeviceId))
+            return ("", "");
+
+        if (!IsAiProxyConnected)
+        {
+            await EnsureAiProxyConnectionAsync();
+            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            waitCts.CancelAfter(TimeSpan.FromSeconds(20));
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            while (!IsAiProxyConnected && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(250, waitCts.Token);
+            }
+        }
+
+        if (!IsAiProxyConnected)
+            return ($"Not connected to AI server device. {AiProxyError ?? "Try again from the Sync page."}", "");
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<ChatResponsePayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingChatRequests[requestId] = tcs;
+
+        try
+        {
+            var payload = new ChatRequestPayload(requestId, modelId, messages);
+            var json = System.Text.Json.JsonSerializer.Serialize(new DataChannelMessage("chat-request", content: System.Text.Json.JsonSerializer.Serialize(payload)));
+            var byteCount = System.Text.Encoding.UTF8.GetByteCount(json);
+            if (byteCount > 2_000_000)
+                Console.WriteLine($"[WasmSyncService] Large chat-request payload: {byteCount} bytes");
+
+            var peerKey = GetAiProxyPeerKey(AiServerDeviceId);
+            await _js.InvokeVoidAsync("webrtcSendData", peerKey, json);
+
+            using var responseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            responseCts.CancelAfter(TimeSpan.FromMinutes(10));
+            var response = await tcs.Task.WaitAsync(responseCts.Token);
+
+            if (!string.IsNullOrEmpty(response.Error))
+                return ($"Remote AI error: {response.Error}", response.ToolTrace ?? "");
+
+            return (response.Text ?? "No response.", response.ToolTrace ?? "");
+        }
+        catch (Exception ex)
+        {
+            return ($"Remote AI request failed: {ex.Message}", "");
+        }
+        finally
+        {
+            _pendingChatRequests.Remove(requestId);
+        }
+    }
+
+    private async Task HandleAiProxyDataReceived(string peerKey, string data)
+    {
+        var msg = System.Text.Json.JsonSerializer.Deserialize<DataChannelMessage>(data);
+        if (msg == null) return;
+
+        if (msg.type == "models-request")
+        {
+            await _keyStore.LoadAsync(_js);
+            var models = _aiProvider.GetAvailableModels();
+            var listMsg = new DataChannelMessage("models-list", content: System.Text.Json.JsonSerializer.Serialize(models));
+            await _js.InvokeVoidAsync("webrtcSendData", peerKey, System.Text.Json.JsonSerializer.Serialize(listMsg));
+            return;
+        }
+
+        if (msg.type == "models-list" && msg.content != null)
+        {
+            var models = System.Text.Json.JsonSerializer.Deserialize<List<WasmAiProviderService.ModelInfo>>(msg.content)
+                         ?? new List<WasmAiProviderService.ModelInfo>();
+            var serverName = GetAiServerDeviceName() ?? "remote device";
+            RemoteModels = models
+                .Select(m => m with { Label = $"{m.Label} (via {serverName})" })
+                .ToList();
+            _modelsListTcs?.TrySetResult(true);
+            OnChanged?.Invoke();
+            return;
+        }
+
+        if (msg.type == "chat-request" && msg.content != null)
+        {
+            var request = System.Text.Json.JsonSerializer.Deserialize<ChatRequestPayload>(msg.content);
+            if (request == null) return;
+
+            var result = await _chatCompletion.CompleteAsync(
+                request.ModelId,
+                request.Messages,
+                currentUser: _auth.Email,
+                ct: default);
+
+            var response = new ChatResponsePayload(
+                request.RequestId,
+                result.Text,
+                result.ToolTrace,
+                result.Error);
+
+            var responseMsg = new DataChannelMessage("chat-response", content: System.Text.Json.JsonSerializer.Serialize(response));
+            await _js.InvokeVoidAsync("webrtcSendData", peerKey, System.Text.Json.JsonSerializer.Serialize(responseMsg));
+            return;
+        }
+
+        if (msg.type == "chat-response" && msg.content != null)
+        {
+            var response = System.Text.Json.JsonSerializer.Deserialize<ChatResponsePayload>(msg.content);
+            if (response?.RequestId != null && _pendingChatRequests.TryGetValue(response.RequestId, out var tcs))
+                tcs.TrySetResult(response);
+        }
+    }
+
+    private record ChatRequestPayload(string RequestId, string ModelId, List<WasmConversationStore.ChatMessage> Messages);
+    private record ChatResponsePayload(string RequestId, string? Text, string? ToolTrace, string? Error);
 
     /// <summary>
     /// Returns true if the given deviceId matches the one belonging to this browser instance.
@@ -563,5 +989,11 @@ public class WasmSyncService : IAsyncDisposable
     /// <summary>
     /// Lightweight public shape for UI binding (matches what the server broadcasts).
     /// </summary>
-    public record DeviceInfo(string DeviceId, string Name, DateTime LastActiveUtc, bool IsOnline);
+    public record DeviceInfo(
+        string DeviceId,
+        string Name,
+        DateTime LastActiveUtc,
+        bool IsOnline,
+        bool CanRelayAi = false,
+        int AiModelCount = 0);
 }
