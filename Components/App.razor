@@ -22,7 +22,7 @@
     <Routes />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
     <script>
-        // Helper functions for WASM chat pages (e.g. /wasm-chat) that run with InteractiveWebAssembly render mode.
+        // Helper functions for WASM chat pages (e.g. /chat) that run with InteractiveWebAssembly render mode.
         // These are defined here in the host shell so they are available when WASM components are active.
         // (The Client project's own index.html only applies when running the Client project standalone.)
         window.scrollChatToBottom = () => {
@@ -46,7 +46,7 @@
             el.style.height = '86px';
         };
 
-        // WASM sidebar toggle (for /wasm-chat page). Button + handler colocated in WasmChat.razor (owns the .page).
+        // WASM sidebar toggle (for /chat page). Button + handler colocated in Chat.razor (owns the .page).
         // JS receives desired collapsed state and *sets* the class on .page (plus clears inlines); Blazor binding also updates class attr.
         // CSS rules (.page.sidebar-collapsed .sidebar {display:none!important} etc) do the actual hide + margin shift.
         window.toggleWasmSidebar = function (collapsed) {

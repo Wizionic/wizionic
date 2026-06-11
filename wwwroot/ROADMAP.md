@@ -75,8 +75,8 @@ Primary goals:
 - mobile version does not run Ollama models, but perhaps possible to send chat messages back to connected browser on an local PC
 - One way hash for email login storage
 - One way hash for password storage for users that want more security in the browser
-- Add llama.cpp integration to the website as more flexible and higher performance then Ollam
-
+- Add llama.cpp integration to the website as more flexible and higher performance then Ollama
+- Linux support in Maui https://avaloniaui.net/blog/net-maui-is-coming-to-linux-and-the-browser-powered-by-avalonia
 
 **Why important?** One of the biggest pain points with long chats is hitting the context wall unexpectedly. This feature will be very user-friendly and impressive on a resume. Token tracking matters for local models (varying context windows) as much as cloud ones.
 

@@ -79,12 +79,12 @@ builder.Services.PostConfigure<EmailOptions>(opts =>
 // These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
 builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
 
-// Shared state for WASM sidebar toggle (used by WasmTopBar in WasmLayout for /wasm-chat etc.)
+// Shared state for WASM sidebar toggle (used by WasmTopBar in WasmLayout for /chat etc.)
 // Must be registered here (main app DI) so that server-side rendering of WASM pages (layout + topbar)
 // can provide the service. The Client's DI also registers it for the interactive WASM runtime.
 builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
 
-// HttpClient for WASM client components (e.g. WasmSettings) during any server-side rendering of the component tree (layout, topbar, etc.).
+// HttpClient for WASM client components (e.g. Settings) during any server-side rendering of the component tree (layout, topbar, etc.).
 // The actual interactive WASM runtime (in Client/Program.cs) provides its own configured instance (with BaseAddress).
 // Keep this registration minimal — do not register client-only services like WasmAuthService or WasmSyncService here,
 // otherwise they can interfere with WebAssembly bootstrap, render mode activation, and hot reload under `dotnet watch`.

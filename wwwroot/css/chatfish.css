@@ -445,7 +445,7 @@ a:hover {
     main { padding-bottom: 0 !important; }   /* prevents any extra push */
 }
 
-/* WASM full sidebar layout (for /wasm-chat) */
+/* WASM full sidebar layout (for /chat) */
 .wasm-page {
     display: flex;
     height: 100vh;

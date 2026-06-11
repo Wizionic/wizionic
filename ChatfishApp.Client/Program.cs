@@ -38,7 +38,7 @@ var host = builder.Build();
 
 // Eagerly resolve WasmSyncService (and its dependencies) at startup so that
 // it connects to the signaling hub and can receive incoming WebRTC sync
-// payloads even if the user never opens the /wasm-sync page.
+// payloads even if the user never opens the /sync page.
 // As long as any WASM page is loaded and the user is authenticated, syncs
 // will be received in the background and persisted automatically.
 var authService = host.Services.GetRequiredService<WasmAuthService>();

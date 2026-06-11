@@ -1,4 +1,4 @@
-@page "/wasm-settings"
+@page "/settings"
 @layout ChatfishApp.Client.Shared.WasmLayout
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
 @inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
@@ -120,7 +120,7 @@
     <button @onclick="SaveKeys" class="btn btn-primary" style="margin-top: 0.75rem;">Save Keys</button>
 
     <div style="margin-top: 1.5rem;">
-        <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
     </div>
 </div>
 
