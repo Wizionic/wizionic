@@ -8,9 +8,14 @@
 @using Microsoft.JSInterop
 @using ChatfishApp.Client.Services
 @using ChatMessage = ChatfishApp.Client.Services.WasmConversationStore.ChatMessage
+@using Attachment = ChatfishApp.Client.Services.WasmConversationStore.Attachment
 @using LocalConvo = ChatfishApp.Client.Services.WasmConversationStore.LocalConvo
 @using Microsoft.Extensions.AI
 @using AiChatMessage = Microsoft.Extensions.AI.ChatMessage
+@using AIContent = Microsoft.Extensions.AI.AIContent
+@using TextContent = Microsoft.Extensions.AI.TextContent
+@using DataContent = Microsoft.Extensions.AI.DataContent
+@using Microsoft.AspNetCore.Components.Forms
 
 @inject IJSRuntime JS
 @inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
@@ -86,6 +91,33 @@
                         {
                             <div class="message-me">
                                 @((MarkupString)FormatMessage(msg.Content ?? ""))
+                                @if (msg.Attachments != null && msg.Attachments.Any())
+                                {
+                                    <div class="message-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;">
+                                        @foreach (var att in msg.Attachments)
+                                        {
+                                            <div style="width:52px; height:52px; border:1px solid #ccc; border-radius:4px; overflow:hidden; background:#f8f8f8; position:relative; flex-shrink:0;">
+                                                @{
+                                                    var thumbSrc = att.DataUrl;
+                                                    if (thumbSrc == null && att.ContentType != null && att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(att.DataBase64))
+                                                    {
+                                                        thumbSrc = $"data:{att.ContentType};base64,{att.DataBase64}";
+                                                    }
+                                                }
+                                                @if (thumbSrc != null)
+                                                {
+                                                    <img src="@thumbSrc" alt="@att.Name" style="width:100%; height:100%; object-fit:cover;" title="@att.Name" />
+                                                }
+                                                else
+                                                {
+                                                    <div style="font-size:9px; display:flex; align-items:center; justify-content:center; height:100%; color:#555; text-align:center; padding:2px;">
+                                                        📄<br /><span style="font-size:6px; word-break:break-all; line-height:1;">@att.Name</span>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
                                 @if (msg.Timestamp.HasValue)
                                 {
                                     <div style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
@@ -129,11 +161,55 @@
             <!-- === COMPACT SEAMLESS INPUT BAR === -->
             <div class="input-area">
                 <div class="input-container">
-                    <button class="action-btn" @onclick="NewConversation" title="New Chat">
-                        <i class="bi bi-plus-circle"></i>
-                    </button>
+                    <!-- Plus menu replaced New Chat (new chat is in sidebar). Opens attach actions. -->
+                    <div style="position: relative; display: inline-block;">
+                        <button class="action-btn" @onclick:stopPropagation @onclick="ToggleAttachMenu" title="Attach file or more">
+                            <i class="bi bi-plus-circle"></i>
+                        </button>
+
+                        @if (showAttachMenu)
+                        {
+                            <div class="menu-popup" style="position: absolute; bottom: 100%; left: 0; margin-bottom: 4px; min-width: 160px;" @onclick:stopPropagation>
+                                <div @onclick="async () => { showAttachMenu = false; await TriggerFileUpload(); }">
+                                    <i class="bi bi-upload" style="margin-right:4px;"></i> Upload a file
+                                </div>
+                                <!-- Future items (e.g. from URL, camera) can go here -->
+                            </div>
+                            <div class="menu-overlay" @onclick="() => showAttachMenu = false"></div>
+                        }
+                    </div>
 
                     <div class="message-wrapper flex-grow-1">
+                        @if (pendingFiles.Any())
+                        {
+                            <div class="pending-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid #f0f0f0;">
+                                @foreach (var f in pendingFiles)
+                                {
+                                    <div style="position:relative; width:42px; height:42px; border:1px solid #ddd; border-radius:4px; overflow:hidden; background:#fafafa; flex-shrink:0;">
+                                        @{
+                                            var thumbSrc = f.DataUrl;
+                                            if (thumbSrc == null && f.ContentType != null && f.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(f.DataBase64))
+                                            {
+                                                thumbSrc = $"data:{f.ContentType};base64,{f.DataBase64}";
+                                            }
+                                        }
+                                        @if (thumbSrc != null)
+                                        {
+                                            <img src="@thumbSrc" alt="@f.Name" style="width:100%; height:100%; object-fit:cover;" />
+                                        }
+                                        else
+                                        {
+                                            <div style="font-size:9px; height:100%; display:flex; align-items:center; justify-content:center; color:#666; text-align:center; padding:1px; line-height:1.1;">
+                                                📄<br /><span style="font-size:7px; word-break:break-all;">@f.Name</span>
+                                            </div>
+                                        }
+                                        <button @onclick:stopPropagation @onclick="() => RemovePendingFile(f)" 
+                                                style="position:absolute; top:-1px; right:-1px; background:#e11d48; color:white; border:none; border-radius:50%; width:13px; height:13px; font-size:8px; line-height:11px; cursor:pointer;">×</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+
                         <textarea @ref="messageTextarea"
                                   @bind="message"
                                   @onkeydown="HandleKey"
@@ -159,11 +235,18 @@
                     {
                         <i class="bi bi-tools" style="font-size:0.9em; color:#888; margin-left:0.4rem; cursor:default;" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information."></i>
                     }
+                    @if (CurrentModelSupportsVision)
+                    {
+                        <i class="bi bi-image" style="font-size:0.9em; color:#888; margin-left:0.4rem; cursor:default;" title="This model supports vision (images and PDFs). Upload files using the + menu to have the model analyze them."></i>
+                    }
 
-                    <button class="send-btn" @onclick="Send" disabled="@(isSending || string.IsNullOrWhiteSpace(message))">
+                    <button class="send-btn" @onclick="Send" disabled="@(isSending || (string.IsNullOrWhiteSpace(message) && !pendingFiles.Any()))">
                         <i class="bi bi-arrow-up-circle-fill"></i>
                     </button>
                 </div>
+
+                <!-- Hidden file picker for attachments (triggered by the + menu) -->
+                <InputFile id="file-attach-input" style="display:none;" OnChange="OnFileSelected" />
             </div>
         </div>
     </main>
@@ -195,16 +278,28 @@
         get
         {
             if (string.IsNullOrEmpty(selectedModel)) return false;
-            if (selectedModel.StartsWith("ollama/")) return true;
-            var modelPart = selectedModel.Contains('/') ? selectedModel.Split('/', 2)[1] : selectedModel;
-            var entry = ProviderCatalog.GetModel(modelPart);
-            return entry?.Model.SupportsTools ?? true;
+            var mi = modelList.FirstOrDefault(m => m.Id == selectedModel);
+            if (mi != null) return mi.SupportsTools;
+            return false;
+        }
+    }
+
+    private bool CurrentModelSupportsVision
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(selectedModel)) return false;
+            var mi = modelList.FirstOrDefault(m => m.Id == selectedModel);
+            if (mi != null) return mi.SupportsVision;
+            return false;
         }
     }
 
     private ElementReference chatContainer;
     private ElementReference messageTextarea;
     private bool _hasRendered = false;
+
+    private DotNetObjectReference<object>? dotNetRef;
 
     List<ChatMessage> messages = new();
 
@@ -215,6 +310,9 @@
     string? activeConvoId;
 
     string? openMenuId;
+
+    private List<Attachment> pendingFiles = new();
+    private bool showAttachMenu = false;
 
     [Inject]
     public ChatfishApp.Client.Services.SidebarState SidebarState { get; set; } = default!;
@@ -289,6 +387,8 @@
         }
 
         SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
+
+        dotNetRef?.Dispose();
     }
 
     private async void OnConversationsChangedFromSync()
@@ -314,10 +414,99 @@
         }
     }
 
+    void ToggleAttachMenu()
+    {
+        showAttachMenu = !showAttachMenu;
+        StateHasChanged();
+    }
+
+    async Task TriggerFileUpload()
+    {
+        showAttachMenu = false;
+        StateHasChanged();
+        await Task.Delay(30); // allow menu to close in render
+        try
+        {
+            await JS.InvokeVoidAsync("eval", "document.getElementById('file-attach-input').click()");
+        }
+        catch { /* ignore */ }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        const long maxSize = 15 * 1024 * 1024; // 15 MB limit for attachments for now
+        if (file.Size > maxSize)
+        {
+            await JS.InvokeVoidAsync("alert", $"File is too large ({file.Size / 1024 / 1024}MB). Max 15MB supported for attachments currently.");
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: maxSize + 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            var base64 = Convert.ToBase64String(bytes);
+
+            var att = new Attachment(
+                Name: file.Name,
+                ContentType: string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                DataBase64: base64,
+                Size: file.Size
+            );
+
+            pendingFiles.Add(att);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", "Could not read file: " + ex.Message);
+        }
+    }
+
+    void RemovePendingFile(Attachment att)
+    {
+        pendingFiles.Remove(att);
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnImagePasted(string base64, string mimeType, string? fileName, long size)
+    {
+        if (string.IsNullOrWhiteSpace(base64)) return;
+
+        // Normalize to a proper image content type. Some paste sources (especially "copy image")
+        // can report odd types or the interop can be picky.
+        string contentType = mimeType;
+        if (string.IsNullOrWhiteSpace(contentType) || !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            contentType = "image/png";
+        }
+
+        var name = string.IsNullOrWhiteSpace(fileName)
+            ? $"pasted-image.{(contentType.Split('/').LastOrDefault() ?? "png")}"
+            : fileName;
+
+        var att = new Attachment(
+            Name: name,
+            ContentType: contentType,
+            DataBase64: base64,
+            Size: size > 0 ? size : (long)(base64.Length * 0.75)
+        );
+
+        pendingFiles.Add(att);
+        StateHasChanged();
+    }
+
     async Task LoadConversation(string id)
     {
         activeConvoId = id;
         messages = await ConversationStore.LoadConversationAsync(JS, id);
+        pendingFiles.Clear();
         StateHasChanged();
         await ScrollToBottom();
     }
@@ -338,13 +527,90 @@
     {
         await base.OnAfterRenderAsync(firstRender);
         _hasRendered = true;
+
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create<object>(this);
+
+            // Register helper (array buffer to base64)
+            await JS.InvokeVoidAsync("eval", @"
+                if (!window.__chatfishArrayBufferToBase64) {
+                    window.__chatfishArrayBufferToBase64 = function(buffer) {
+                        let binary = '';
+                        const bytes = new Uint8Array(buffer);
+                        const len = bytes.byteLength;
+                        for (let i = 0; i < len; i++) {
+                            binary += String.fromCharCode(bytes[i]);
+                        }
+                        return window.btoa(binary);
+                    };
+                }
+            ");
+
+            // Register the paste handler setup
+            await JS.InvokeVoidAsync("eval", @"
+                if (!window.__chatfishPasteHandlerInstalled) {
+                    window.__chatfishPasteHandlerInstalled = true;
+                    window.setupChatImagePaste = function (dotnetHelper, textareaEl) {
+                        if (!textareaEl || !dotnetHelper) return;
+                        textareaEl.addEventListener('paste', function (ev) {
+                            let processed = false;
+                            const dtFiles = ev.clipboardData && ev.clipboardData.files;
+                            if (dtFiles && dtFiles.length > 0) {
+                                for (let i = 0; i < dtFiles.length; i++) {
+                                    const file = dtFiles[i];
+                                    if (file && file.type && file.type.indexOf('image/') === 0) {
+                                        const reader = new FileReader();
+                                        reader.onload = function (e) {
+                                            const base64 = window.__chatfishArrayBufferToBase64(e.target.result);
+                                            const ext = (file.type.split('/')[1] || 'png');
+                                            const fileName = file.name || ('pasted-image-' + Date.now() + '.' + ext);
+                                            dotnetHelper.invokeMethodAsync('OnImagePasted', base64, file.type, fileName, file.size || 0);
+                                        };
+                                        reader.readAsArrayBuffer(file);
+                                        ev.preventDefault();
+                                        processed = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!processed) {
+                                const items = ev.clipboardData && ev.clipboardData.items;
+                                if (items) {
+                                    for (let i = 0; i < items.length; i++) {
+                                        const item = items[i];
+                                        if (item.kind === 'file' && item.type && item.type.indexOf('image/') === 0) {
+                                            const file = item.getAsFile();
+                                            if (!file) continue;
+                                            const reader = new FileReader();
+                                            reader.onload = function (e) {
+                                                const base64 = window.__chatfishArrayBufferToBase64(e.target.result);
+                                                const ext = (item.type.split('/')[1] || 'png');
+                                                const fileName = file.name || ('pasted-image-' + Date.now() + '.' + ext);
+                                                dotnetHelper.invokeMethodAsync('OnImagePasted', base64, item.type, fileName, file.size || 0);
+                                            };
+                                            reader.readAsArrayBuffer(file);
+                                            ev.preventDefault();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    };
+                }
+            ");
+
+            await JS.InvokeVoidAsync("setupChatImagePaste", dotNetRef, messageTextarea);
+        }
+
         if (firstRender || messages.Any() || isTyping)
             await ScrollToBottom();
     }
 
     async Task Send()
     {
-        if (isSending || string.IsNullOrWhiteSpace(message))
+        if (isSending || (string.IsNullOrWhiteSpace(message) && !pendingFiles.Any()))
             return;
 
         isSending = true;
@@ -361,7 +627,8 @@
         // Store *raw* text (markdown/plain) for persistence, LLM history, and tool use.
         // Rendering always applies FormatMessage for display.
         var rawUser = currentMessage;
-        messages.Add(new ChatMessage(Role: "user", Content: rawUser, ModelUsed: null, Timestamp: DateTime.UtcNow, User: currentUser));
+        var attachmentsForThisTurn = pendingFiles.Any() ? pendingFiles.ToList() : null;
+        messages.Add(new ChatMessage(Role: "user", Content: rawUser, ModelUsed: null, Timestamp: DateTime.UtcNow, User: currentUser, Attachments: attachmentsForThisTurn));
 
         var botIndex = messages.Count;
         messages.Add(new ChatMessage(Role: "assistant", Content: "", ModelUsed: selectedModel, Timestamp: DateTime.UtcNow));
@@ -373,7 +640,7 @@
 
         try
         {
-            accumulated = await CallProvider(currentMessage);
+            accumulated = await CallProvider();  // history (incl. attachments on the last user msg) is built from the messages list
             
             var currentModel = messages[botIndex].ModelUsed;
             var currentTs = messages[botIndex].Timestamp;
@@ -389,35 +656,73 @@
         {
             isTyping = false;
             isSending = false;
+            pendingFiles.Clear();   // attachments consumed into the saved user message
             try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
             await ScrollToBottom();
             StateHasChanged();
         }
     }
 
-    async Task<string> CallProvider(string userMsg)
+    async Task<string> CallProvider(string? userMsg = null)
     {
         if (string.IsNullOrEmpty(selectedModel))
             return "No model selected.";
 
         try
         {
-            // Build proper conversation history from our message list (raw Content).
-            // This enables context + tool calling (the model sees previous turns).
+            // Build proper conversation history from our message list.
+            // Supports text + multimodal (images/PDF) for vision-enabled models.
             var chatHistory = new List<AiChatMessage>();
             foreach (var m in messages)
             {
-                if (string.IsNullOrWhiteSpace(m.Content)) continue;
+                bool hasContent = !string.IsNullOrWhiteSpace(m.Content);
+                bool hasAttachments = m.Attachments != null && m.Attachments.Any();
+
+                if (!hasContent && !hasAttachments) continue;
 
                 var roleStr = m.Role ?? (m.User == currentUser ? "user" : "assistant");
                 var aiRole = roleStr.Equals("user", StringComparison.OrdinalIgnoreCase) ? ChatRole.User : ChatRole.Assistant;
 
-                // Send clean text to the LLM (strip any legacy HTML from old persisted messages).
-                string clean = CleanTextForLlm(m.Content);
-                chatHistory.Add(new AiChatMessage(aiRole, clean));
+                if (aiRole == ChatRole.User && hasAttachments && CurrentModelSupportsVision)
+                {
+                    // Multimodal turn: text (if any) + image/pdf data parts
+                    var contents = new List<AIContent>();
+                    if (hasContent)
+                    {
+                        string clean = CleanTextForLlm(m.Content);
+                        contents.Add(new TextContent(clean));
+                    }
+                    foreach (var att in m.Attachments!)
+                    {
+                        if (att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                            att.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                var bytes = Convert.FromBase64String(att.DataBase64);
+                                contents.Add(new DataContent(bytes, att.ContentType));
+                            }
+                            catch { /* skip bad attachment data */ }
+                        }
+                    }
+                    if (contents.Count > 0)
+                        chatHistory.Add(new AiChatMessage(aiRole, contents));
+                }
+                else if (hasContent)
+                {
+                    // Plain text (or non-vision model, or no attachments)
+                    string clean = CleanTextForLlm(m.Content);
+                    chatHistory.Add(new AiChatMessage(aiRole, clean));
+                }
             }
-            // Add the current user turn (raw)
-            chatHistory.Add(new AiChatMessage(ChatRole.User, userMsg));
+
+            // If for some reason the current turn text wasn't in messages yet (legacy call), append it.
+            // Normally the user message (with attachments) is already appended before calling.
+            if (!string.IsNullOrWhiteSpace(userMsg))
+            {
+                // Only append plain text here as fallback; attachments would already be on the message object.
+                chatHistory.Add(new AiChatMessage(ChatRole.User, userMsg));
+            }
 
             // Always start with a clean trace for this turn (populated by native tools and/or MCP tools during execution).
             ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
@@ -540,6 +845,7 @@
         activeConvoId = Guid.NewGuid().ToString();
         await ConversationStore.SetLastConvoIdAsync(JS, activeConvoId);
         messages.Clear();
+        pendingFiles.Clear();
         isTyping = false;
         message = "";
         try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
