@@ -832,6 +832,7 @@ public class WasmSyncService : IAsyncDisposable
         _modelsListTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var peerKey = GetAiProxyPeerKey(AiServerDeviceId);
         var msg = new DataChannelMessage("models-request");
+        Console.WriteLine($"[AI Proxy] Requesting model list from {AiServerDeviceId}");
         await _js.InvokeVoidAsync("webrtcSendData", peerKey, System.Text.Json.JsonSerializer.Serialize(msg));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -841,6 +842,7 @@ public class WasmSyncService : IAsyncDisposable
         }
         catch
         {
+            Console.WriteLine("[AI Proxy] Timed out waiting for remote model list.");
             AiProxyError = "Timed out waiting for remote model list.";
             OnChanged?.Invoke();
         }
@@ -882,6 +884,7 @@ public class WasmSyncService : IAsyncDisposable
                 Console.WriteLine($"[WasmSyncService] Large chat-request payload: {byteCount} bytes");
 
             var peerKey = GetAiProxyPeerKey(AiServerDeviceId);
+            Console.WriteLine($"[AI Proxy] → chat-request model={modelId} messages={messages.Count} id={requestId[..8]}");
             await _js.InvokeVoidAsync("webrtcSendData", peerKey, json);
 
             using var responseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -889,12 +892,18 @@ public class WasmSyncService : IAsyncDisposable
             var response = await tcs.Task.WaitAsync(responseCts.Token);
 
             if (!string.IsNullOrEmpty(response.Error))
+            {
+                Console.WriteLine($"[AI Proxy] ← chat-response id={requestId[..8]} error: {response.Error}");
                 return ($"Remote AI error: {response.Error}", response.ToolTrace ?? "");
+            }
 
+            var replyLen = response.Text?.Length ?? 0;
+            Console.WriteLine($"[AI Proxy] ← chat-response id={requestId[..8]} ok ({replyLen} chars)");
             return (response.Text ?? "No response.", response.ToolTrace ?? "");
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[AI Proxy] ← chat-request id={requestId[..8]} failed: {ex.Message}");
             return ($"Remote AI request failed: {ex.Message}", "");
         }
         finally
@@ -912,6 +921,7 @@ public class WasmSyncService : IAsyncDisposable
         {
             await _keyStore.LoadAsync(_js);
             var models = _aiProvider.GetAvailableModels();
+            Console.WriteLine($"[AI Proxy] Serving model list ({models.Count} models) to {GetDeviceIdFromPeerKey(peerKey)}");
             var listMsg = new DataChannelMessage("models-list", content: System.Text.Json.JsonSerializer.Serialize(models));
             await _js.InvokeVoidAsync("webrtcSendData", peerKey, System.Text.Json.JsonSerializer.Serialize(listMsg));
             return;
@@ -925,6 +935,7 @@ public class WasmSyncService : IAsyncDisposable
             RemoteModels = models
                 .Select(m => m with { Label = $"{m.Label} (via {serverName})" })
                 .ToList();
+            Console.WriteLine($"[AI Proxy] Received model list ({RemoteModels.Count} models via {serverName})");
             _modelsListTcs?.TrySetResult(true);
             OnChanged?.Invoke();
             return;
@@ -935,17 +946,27 @@ public class WasmSyncService : IAsyncDisposable
             var request = System.Text.Json.JsonSerializer.Deserialize<ChatRequestPayload>(msg.content);
             if (request == null) return;
 
+            var reqIdShort = request.RequestId.Length >= 8 ? request.RequestId[..8] : request.RequestId;
+            Console.WriteLine($"[AI Proxy] ← chat-request from {GetDeviceIdFromPeerKey(peerKey)} model={request.ModelId} messages={request.Messages.Count} id={reqIdShort}");
+            var started = DateTime.UtcNow;
+
             var result = await _chatCompletion.CompleteAsync(
                 request.ModelId,
                 request.Messages,
                 currentUser: _auth.Email,
                 ct: default);
 
+            var elapsed = (DateTime.UtcNow - started).TotalSeconds;
             var response = new ChatResponsePayload(
                 request.RequestId,
                 result.Text,
                 result.ToolTrace,
                 result.Error);
+
+            if (!string.IsNullOrEmpty(result.Error))
+                Console.WriteLine($"[AI Proxy] → chat-response id={reqIdShort} error ({elapsed:F1}s): {result.Error}");
+            else
+                Console.WriteLine($"[AI Proxy] → chat-response id={reqIdShort} ok ({result.Text?.Length ?? 0} chars, {elapsed:F1}s)");
 
             var responseMsg = new DataChannelMessage("chat-response", content: System.Text.Json.JsonSerializer.Serialize(response));
             await _js.InvokeVoidAsync("webrtcSendData", peerKey, System.Text.Json.JsonSerializer.Serialize(responseMsg));
