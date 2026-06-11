@@ -1,4 +1,4 @@
-@page "/wasm-sync"
+@page "/sync"
 @layout ChatfishApp.Client.Shared.WasmLayout
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
 @implements IDisposable
@@ -29,7 +29,7 @@
             </div>
             <div style="margin-top: 0.75rem;">
                 <button @onclick="@(() => Nav.NavigateTo("/"))" class="btn btn-outline-secondary btn-sm">Go to login / landing</button>
-                <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary btn-sm" style="margin-left: 0.5rem;">Back to Chat</button>
+                <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary btn-sm" style="margin-left: 0.5rem;">Back to Chat</button>
             </div>
         </div>
     }
@@ -170,7 +170,7 @@
         }
 
         <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem; align-items: center;">
-            <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+            <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
             <small style="color:#888;">Only your own devices (same email login) appear here. The server never stores your chat history.</small>
         </div>
     }
@@ -293,7 +293,7 @@
                         $"({messages.Count} messages, {payloadSize} bytes) to: {string.Join(", ", targetNames)}. " +
                         $"Waiting for peer acknowledgement...";
 
-        Console.WriteLine($"[WASMSync] WebRTC sync started for convo {convo.Id} -> targets: {string.Join("|", selectedTargetDeviceIds)} | messages: {messages.Count}");
+        Console.WriteLine($"[Sync] WebRTC sync started for convo {convo.Id} -> targets: {string.Join("|", selectedTargetDeviceIds)} | messages: {messages.Count}");
 
         StateHasChanged();
 
@@ -343,7 +343,7 @@
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[WASMSync] Failed to apply incoming sync payload: {ex.Message}");
+            Console.WriteLine($"[Sync] Failed to apply incoming sync payload: {ex.Message}");
         }
     }
 

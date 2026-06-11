@@ -1,4 +1,4 @@
-@page "/wasm-chat"
+@page "/chat"
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
 @layout ChatfishApp.Client.Shared.WasmLayout
 @implements IDisposable
@@ -21,9 +21,9 @@
 @inject ChatfishApp.Client.Services.WasmSyncService SyncService
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
-    <!-- Sidebar toggle button is here (in WasmChat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
+    <!-- Sidebar toggle button is here (in Chat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
          Positioned absolutely (via WasmLayout body container) to overlay the top bar near the fish logo (user's red box location).
-         See .sidebar-toggle rule in wasm-chat.css for the absolute top/left/z-index values. -->
+         See .sidebar-toggle rule in chatfish.css for the absolute top/left/z-index values. -->
     <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
         @if (SidebarState.IsCollapsed)
         {
@@ -310,7 +310,7 @@
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[WasmChat] toggleWasmSidebar failed: {ex.Message}");
+            Console.WriteLine($"[Chat] toggleSidebar failed: {ex.Message}");
         }
     }
 

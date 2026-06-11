@@ -34,7 +34,7 @@ public class WasmConversationStore
         _auth = auth;
         _crypto = crypto;
 
-        // When the user logs in (or out) the consumer (WasmChat) can decide to
+        // When the user logs in (or out) the consumer (Chat) can decide to
         // reload the list under the new namespace. We still notify.
         _auth.OnChanged += () => { /* consumer decides when to reload */ };
     }
