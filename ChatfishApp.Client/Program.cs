@@ -7,6 +7,7 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
 builder.Services.AddSingleton<ChatfishApp.Client.Services.WasmKeyStore>();
 builder.Services.AddSingleton<ChatfishApp.Client.Services.WasmAiProviderService>();
+builder.Services.AddScoped<ChatfishApp.Client.Services.WasmChatCompletionService>();
 // Live device presence + (future) sync signaling over SignalR.
 // Must be Scoped because it depends on HttpClient (Scoped) and WasmAuthService (Scoped).
 // In Blazor WASM there is effectively one scope for the lifetime of the app, so this is
@@ -46,5 +47,12 @@ var syncService = host.Services.GetRequiredService<WasmSyncService>();
 
 await authService.LoadAsync();
 await syncService.InitializeAsync();
+
+if (authService.IsAuthenticated)
+{
+    await syncService.EnsureConnectedAndRegisteredAsync();
+    if (!string.IsNullOrEmpty(syncService.AiServerDeviceId))
+        await syncService.EnsureAiProxyConnectionAsync();
+}
 
 await host.RunAsync();
