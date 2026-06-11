@@ -1,11 +1,22 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChatfishApp.Data;
 
-public class ChatfishDbContext : DbContext
+/// <summary>
+/// DbContext that also serves as the storage for ASP.NET Core DataProtection keys.
+/// This lets us keep the (small) DP key material in the same SQLite database as Users etc.
+/// No separate volume or filesystem persistence worries for the hosting provider.
+/// </summary>
+public class ChatfishDbContext : DbContext, IDataProtectionKeyContext
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<UserProviderKey> ProviderKeys => Set<UserProviderKey>();
+
+    /// <summary>
+    /// ASP.NET DataProtection stores its key rings (XML) here. The table is created by a migration.
+    /// </summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
     public ChatfishDbContext(DbContextOptions<ChatfishDbContext> options)
         : base(options)

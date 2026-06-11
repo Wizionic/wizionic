@@ -96,13 +96,31 @@ public static class WasmApiEndpoints
             if (string.IsNullOrEmpty(email))
                 return Results.Unauthorized();
 
-            var u = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Email == email);
-            if (u == null || string.IsNullOrEmpty(u.LocalEncryptionKey))
-                return Results.NotFound("No encryption key provisioned for this user yet.");
+            var u = await db.Users.FirstOrDefaultAsync(x => x.Email == email);
+            if (u == null)
+                return Results.Unauthorized();
 
-            var plaintextKey = protector.Unprotect(u.LocalEncryptionKey);
+            string? plaintextKey = null;
+
+            if (!string.IsNullOrEmpty(u.LocalEncryptionKey))
+            {
+                plaintextKey = protector.Unprotect(u.LocalEncryptionKey);
+            }
+
             if (string.IsNullOrEmpty(plaintextKey))
-                return Results.Problem("Failed to unprotect encryption key.");
+            {
+                // Either first time, or the previously protected value can no longer be unprotected
+                // (e.g. DataProtection key ring was lost during a transition, dev clean, or hosting restart before DB persistence).
+                // Re-provision a fresh key. This lets the login flow complete and the WASM client see an authenticated user.
+                // Note: any client-side IndexedDB history encrypted with the *old* key bytes will no longer decrypt on this device
+                // (or other devices that had the old key). For early users this is acceptable; they can re-login everywhere.
+                var rawKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+                u.LocalEncryptionKey = protector.Protect(rawKey);
+                await db.SaveChangesAsync();
+                plaintextKey = rawKey;
+
+                Console.WriteLine($"[Auth] Re-provisioned fresh LocalEncryptionKey for {email} (previous value could not be unprotected).");
+            }
 
             return Results.Ok(new { Key = plaintextKey });
         });

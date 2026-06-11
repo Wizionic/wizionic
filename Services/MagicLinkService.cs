@@ -80,8 +80,19 @@ public class MagicLinkService
         user.MagicLinkToken = null;
         user.MagicLinkExpiresAt = null;
 
-        // Backfill the WASM encryption key if this user was created before the field existed.
-        if (string.IsNullOrEmpty(user.LocalEncryptionKey))
+        // Ensure we have a usable (protectable under the *current* DataProtection key ring) per-user encryption key.
+        // This covers first-time users, users created before the field, *and* users whose previous protected value
+        // can no longer be unprotected (DP ring change, transition to DB storage, dev machine clean, etc.).
+        // If we have to overwrite, the client will get a fresh key on the subsequent /api/user/encryption-key call.
+        bool needsNewKey = string.IsNullOrEmpty(user.LocalEncryptionKey);
+        if (!needsNewKey)
+        {
+            var tryUnprotect = _keyProtector.Unprotect(user.LocalEncryptionKey!);
+            if (string.IsNullOrEmpty(tryUnprotect))
+                needsNewKey = true;
+        }
+
+        if (needsNewKey)
         {
             var rawKey = GenerateEncryptionKey();
             user.LocalEncryptionKey = _keyProtector.Protect(rawKey);

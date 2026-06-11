@@ -54,17 +54,24 @@
   </div>
 
   <p>
-    Once downloaded, click <strong>Refresh Models from Ollama</strong> above — 
+    Once downloaded, click <strong>Refresh Models from Ollama</strong> — 
     Chatfish will detect your models automatically. All of these models 
     support agentic tools like web search and summarization.
+  </p>
+  <p style="font-size:0.85em; color:#666; margin-top:0.25rem;">
+    <strong>On https://chatfish.me:</strong> Browser security blocks direct http:// calls to your local Ollama (mixed content).
+    Use manual "Add custom model tag" below, or expose Ollama over https (tunnel/proxy) + set <code>OLLAMA_ORIGINS=https://chatfish.me</code> (or <code>*</code>) and enter the https base URL.
+    Refresh works seamlessly when running the app locally over http.
   </p>
 </div>
 
 
         <label>Base URL</label>
         <input type="text" @bind="ollamaBaseUrl" placeholder="http://localhost:11434" class="form-control" />
+        <div style="font-size:0.75em; color:#888; margin:2px 0 4px;">For remote/network Ollama (with expose enabled), change to your LAN IP or https URL. http:// from this https site will be blocked by the browser.</div>
 
-        <button @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.5rem;">Refresh Models from Ollama</button>
+        <button @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.25rem;">Refresh Models from Ollama</button>
+        <div style="font-size:0.72em; color:#888; margin-top:2px;">If this fails with a network/CORS error, add models by name manually instead (works everywhere).</div>
 
         <div class="model-list">
             <label>Available Ollama Models (click to remove)</label>
@@ -81,7 +88,7 @@
             }
             else
             {
-                <div style="font-size: 0.8em; color: #888;">No models loaded. Click refresh above (Ollama must be running).</div>
+                <div style="font-size: 0.8em; color: #888;">No models loaded. Use refresh (local http only) or add model names manually below.</div>
             }
         </div>
 
@@ -154,7 +161,17 @@
         }
         catch (Exception ex)
         {
-            await JS.InvokeVoidAsync("alert", ex.Message);
+            var msg = ex.Message;
+            // Common browser blocks when using the hosted https site against a local http Ollama.
+            if (msg.Contains("CORS", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("fetch", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("Mixed Content", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("Failed to refresh", StringComparison.OrdinalIgnoreCase))
+            {
+                msg += "\n\nTip: On https://chatfish.me this is expected for http Ollama. Add the model name(s) manually in the box below instead, or configure your Ollama for https + OLLAMA_ORIGINS.";
+            }
+            await JS.InvokeVoidAsync("alert", msg);
         }
     }
 

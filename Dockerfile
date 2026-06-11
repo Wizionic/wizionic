@@ -28,5 +28,10 @@ WORKDIR /app
 # Copy the published output
 COPY --from=build /app/publish .
 
+# DataProtection keys are stored inside the SQLite database (chatfish.db) via EF Core.
+# No extra volume or keys directory is required for auth session durability.
+# As long as your hosting provider persists the chatfish.db file (or the working directory containing it),
+# logins will survive restarts/sleeps/deploys.
+
 # Railway will use this (or you can override the start command in the UI)
 ENTRYPOINT ["dotnet", "ChatfishApp.dll"]
