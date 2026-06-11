@@ -19,8 +19,8 @@
         </div>
 
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/wasm-chat")'>Continue to Chat</button>
-            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/wasm-settings")'>Settings</button>
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/chat")'>Continue to Chat</button>
+            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/settings")'>Settings</button>
             <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
         </div>
     }
@@ -49,18 +49,26 @@
             <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap;">
                 <div style="flex:1; min-width:220px;">
                     <label style="display:block; font-size:0.85rem; color:#555; margin-bottom:0.2rem;">Email address</label>
-                    <input type="email" @bind="email" placeholder="you@example.com" class="form-control" />
+                    <input type="email" 
+                           @bind-value="email" 
+                           @bind-value:event="oninput" 
+                           placeholder="you@example.com" 
+                           class="form-control" />
                 </div>
-                <button class="btn btn-primary" @onclick="SendMagic" disabled="@string.IsNullOrWhiteSpace(email)">Send Magic Login Link</button>
+                <button class="btn btn-primary" 
+                        @onclick="SendMagic" 
+                        disabled="@(!IsValidEmail(email))">
+                    Send Magic Login Link
+                </button>
             </div>
         }
 
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size:0.95em;">
             <strong>Continue without logging in</strong> (your chats and settings will stay only in <em>this</em> browser):
             <div style="margin-top:0.35rem;">
-                <a href="/wasm-chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Go to Chat</a>
+                <a href="/chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Go to Chat</a>
                 &nbsp;•&nbsp;
-                <a href="/wasm-settings" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Settings</a>
+                <a href="/settings" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Settings</a>
             </div>
         </div>
 
@@ -95,7 +103,7 @@
 
         if (AuthService.IsAuthenticated && !isExplicitAccountView)
         {
-            Nav.NavigateTo("/wasm-chat", replace: true);
+            Nav.NavigateTo("/chat", replace: true);
             return;
         }
     }
@@ -103,7 +111,7 @@
     async Task SendMagic()
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(email)) return;
+        if (!IsValidEmail(email)) return;
 
         try
         {
@@ -141,6 +149,32 @@
     {
         // Force load so the cookie is cleared by the server handler and we come back to a fresh "/"
         Nav.NavigateTo("/logout", forceLoad: true);
+    }
+
+    private bool IsValidEmail(string? e)
+    {
+        if (string.IsNullOrWhiteSpace(e))
+            return false;
+
+        var email = e.Trim();
+
+        // Basic but effective checks for real-world use:
+        // - Must contain exactly one @ (or at least one, but not starting/ending with it)
+        // - Must have a dot after the @
+        // - Local part and domain part must be non-empty
+        int atIndex = email.IndexOf('@');
+        if (atIndex <= 0 || atIndex == email.Length - 1)
+            return false;
+
+        int dotIndex = email.LastIndexOf('.');
+        if (dotIndex <= atIndex + 1 || dotIndex == email.Length - 1)
+            return false;
+
+        // Optional: very light additional sanity (no spaces, reasonable length)
+        if (email.Contains(' ') || email.Length < 5 || email.Length > 254)
+            return false;
+
+        return true;
     }
 
     private record MagicLinkResponse(bool Sent, string? Message);

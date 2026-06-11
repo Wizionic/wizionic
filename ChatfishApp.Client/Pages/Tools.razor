@@ -1,4 +1,4 @@
-@page "/wasm-tools"
+@page "/tools"
 @layout ChatfishApp.Client.Shared.WasmLayout
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
 @inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
@@ -171,7 +171,7 @@
     </div>
 
     <div style="margin-top: 1.5rem; display:flex; gap:0.5rem; align-items:center;">
-        <button @onclick="@(() => Nav.NavigateTo("/wasm-chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
         <small style="color:#888;">Selections (including customs) are saved automatically in your browser.</small>
     </div>
 
@@ -281,7 +281,7 @@
         catch (Exception ex)
         {
             loadError = $"Could not load registry: {ex.Message}";
-            Console.WriteLine($"[WasmTools] Registry fetch error: {ex}");
+            Console.WriteLine($"[Tools] Registry fetch error: {ex}");
             // Keep whatever we had (or empty)
             if (!registryTools.Any())
                 registryTools = new();
