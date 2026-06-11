@@ -127,6 +127,19 @@ public class SyncHub : Hub
     }
 
     /// <summary>
+    /// Client reports how many AI models it can serve (Ollama + configured cloud keys).
+    /// Used to show "Use this device for my chats" on peers that have local AI access.
+    /// </summary>
+    public async Task UpdateAiCapabilities(string deviceId, int modelCount)
+    {
+        var userId = GetUserId();
+        var email = GetEmail();
+
+        var list = _presence.UpdateAiCapabilities(userId, email, deviceId, modelCount);
+        await Clients.Group(GetUserGroup()).SendAsync("DevicesUpdated", list);
+    }
+
+    /// <summary>
     /// User renamed the device from the Sync page. Update server-side record and broadcast.
     /// </summary>
     public async Task UpdateDeviceName(string deviceId, string newName)
