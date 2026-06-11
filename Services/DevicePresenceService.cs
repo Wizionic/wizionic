@@ -27,12 +27,20 @@ public class DevicePresenceService
     // connectionId -> (userKey, deviceId) for fast removal on disconnect
     private readonly ConcurrentDictionary<string, (string UserKey, string DeviceId)> _connections = new();
 
-    public record DeviceInfo(string DeviceId, string Name, DateTime LastActiveUtc, bool IsOnline);
+    public record DeviceInfo(
+        string DeviceId,
+        string Name,
+        DateTime LastActiveUtc,
+        bool IsOnline,
+        bool CanRelayAi = false,
+        int AiModelCount = 0);
 
     private class DeviceEntry
     {
         public string Name { get; set; } = "Browser";
         public DateTime LastActiveUtc { get; set; } = DateTime.UtcNow;
+        public bool CanRelayAi { get; set; }
+        public int AiModelCount { get; set; }
         public HashSet<string> ConnectionIds { get; } = new(StringComparer.Ordinal);
     }
 
@@ -64,6 +72,22 @@ public class DevicePresenceService
 
         _connections[connectionId] = (userKey, deviceId);
 
+        return GetDevicesSnapshot(userKey);
+    }
+
+    /// <summary>
+    /// Update AI relay capability for a device (Ollama / API keys available on that browser).
+    /// </summary>
+    public IReadOnlyList<DeviceInfo> UpdateAiCapabilities(string? userId, string? email, string deviceId, int modelCount)
+    {
+        var userKey = GetUserKey(userId, email);
+        if (_users.TryGetValue(userKey, out var bucket) &&
+            bucket.TryGetValue(deviceId, out var entry))
+        {
+            entry.AiModelCount = Math.Max(0, modelCount);
+            entry.CanRelayAi = entry.AiModelCount > 0;
+            entry.LastActiveUtc = DateTime.UtcNow;
+        }
         return GetDevicesSnapshot(userKey);
     }
 
@@ -160,7 +184,9 @@ public class DevicePresenceService
                 DeviceId: deviceId,
                 Name: entry.Name,
                 LastActiveUtc: entry.LastActiveUtc,
-                IsOnline: isOnline
+                IsOnline: isOnline,
+                CanRelayAi: entry.CanRelayAi,
+                AiModelCount: entry.AiModelCount
             ));
         }
 

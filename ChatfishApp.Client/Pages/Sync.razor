@@ -54,6 +54,7 @@
                         <tr style="background: #f8f9fa;">
                             <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Device Name</th>
                             <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Last Active</th>
+                            <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">AI Server</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -76,11 +77,47 @@
                                 <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; color: #555;">
                                     @FormatLastActive(d.LastActiveUtc, d.IsOnline)
                                 </td>
+                                <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0;">
+                                    @if (!isSelf)
+                                    {
+                                        bool canUse = d.IsOnline && d.CanRelayAi && d.AiModelCount > 0;
+                                        bool isAiServer = string.Equals(SyncService.AiServerDeviceId, d.DeviceId, StringComparison.OrdinalIgnoreCase);
+                                        <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.85em; @(canUse ? "cursor:pointer;" : "color:#aaa;")" title="@(canUse ? "Route chat completions through this device's Ollama/API keys" : "Device must be online with AI models configured")">
+                                            <input type="checkbox"
+                                                   checked="@isAiServer"
+                                                   disabled="@(!canUse)"
+                                                   @onchange="(e) => ToggleAiServer(d.DeviceId, e)" />
+                                            <span>Use this device for my chats</span>
+                                        </label>
+                                        @if (isAiServer)
+                                        {
+                                            <div style="font-size:0.75em; color:#555; margin-top:2px;">
+                                                @(SyncService.IsAiProxyConnected ? "Connected" : "Connecting…")
+                                                @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
+                                                {
+                                                    <span style="color:#b45309;"> — @SyncService.AiProxyError</span>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
                 </table>
             </div>
+
+            @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+            {
+                var aiServer = devices.FirstOrDefault(d => string.Equals(d.DeviceId, SyncService.AiServerDeviceId, StringComparison.OrdinalIgnoreCase));
+                <div style="margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; font-size: 0.9em;">
+                    Chat AI is routed through <strong>@(aiServer?.Name ?? "selected device")</strong>.
+                    @if (SyncService.RemoteModels.Any())
+                    {
+                        <span> @SyncService.RemoteModels.Count model(s) available on Chat.</span>
+                    }
+                </div>
+            }
 
             <!-- Rename this device (simple inline control for Phase 1) -->
             <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
@@ -257,6 +294,17 @@
             selectedTargetDeviceIds.Add(deviceId);
         else
             selectedTargetDeviceIds.Remove(deviceId);
+
+        StateHasChanged();
+    }
+
+    private async Task ToggleAiServer(string deviceId, ChangeEventArgs e)
+    {
+        bool isChecked = e.Value is bool b && b;
+        if (isChecked)
+            await SyncService.SetAiServerDeviceAsync(deviceId);
+        else if (string.Equals(SyncService.AiServerDeviceId, deviceId, StringComparison.OrdinalIgnoreCase))
+            await SyncService.SetAiServerDeviceAsync(null);
 
         StateHasChanged();
     }

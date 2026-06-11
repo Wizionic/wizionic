@@ -298,10 +298,15 @@
         window._webrtcConnections = {};
 
         window.webrtcCreatePeerConnection = async (dotnetRef, peerId) => {
+            // Close any existing connection for this peer before starting a new handshake.
+            if (window._webrtcConnections[peerId]) {
+                window.webrtcClose(peerId);
+            }
+
             const pc = new RTCPeerConnection({
                 iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
             });
-            window._webrtcConnections[peerId] = { pc, dotnetRef, dataChannel: null };
+            window._webrtcConnections[peerId] = { pc, dotnetRef, dataChannel: null, iceQueue: [], remoteDescSet: false };
 
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
@@ -355,11 +360,25 @@
             return JSON.stringify(offer);
         };
 
+        window.webrtcFlushIceQueue = async (peerId) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry || !entry.iceQueue?.length) return;
+            const queued = entry.iceQueue.splice(0);
+            for (const candJson of queued) {
+                try {
+                    const cand = JSON.parse(candJson);
+                    await entry.pc.addIceCandidate(new RTCIceCandidate(cand));
+                } catch (e) { console.warn('[WebRTC] flush queued ICE', e); }
+            }
+        };
+
         window.webrtcSetRemoteDescription = async (peerId, sdpJson) => {
             const entry = window._webrtcConnections[peerId];
             if (!entry) return;
             const desc = JSON.parse(sdpJson);
             await entry.pc.setRemoteDescription(new RTCSessionDescription(desc));
+            entry.remoteDescSet = true;
+            await window.webrtcFlushIceQueue(peerId);
         };
 
         window.webrtcCreateAnswer = async (peerId) => {
@@ -372,7 +391,15 @@
 
         window.webrtcAddIceCandidate = async (peerId, candidateJson) => {
             const entry = window._webrtcConnections[peerId];
-            if (!entry) return;
+            if (!entry) {
+                console.warn('[WebRTC] addIceCandidate: no connection for', peerId);
+                return;
+            }
+            if (!entry.remoteDescSet) {
+                entry.iceQueue = entry.iceQueue || [];
+                entry.iceQueue.push(candidateJson);
+                return;
+            }
             try {
                 const cand = JSON.parse(candidateJson);
                 await entry.pc.addIceCandidate(new RTCIceCandidate(cand));

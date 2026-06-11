@@ -24,6 +24,7 @@
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
 @inject ChatfishApp.Services.Tools.IToolProvider ToolProvider
 @inject ChatfishApp.Client.Services.WasmSyncService SyncService
+@inject ChatfishApp.Client.Services.WasmChatCompletionService ChatCompletionService
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
     <!-- Sidebar toggle button is here (in Chat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
@@ -83,6 +84,24 @@
     <!-- Main content -->
     <main>
         <div class="chat-wrapper" style="flex: 1; display: flex; flex-direction: column;">
+            @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+            {
+                <div style="padding: 0.35rem 1rem; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; font-size: 0.85em; color: #166534;">
+                    AI via <strong>@(SyncService.GetAiServerDeviceName() ?? "remote device")</strong>
+                    @if (SyncService.IsAiProxyConnected)
+                    {
+                        <span> — connected</span>
+                    }
+                    else
+                    {
+                        <span> — connecting…</span>
+                    }
+                    @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
+                    {
+                        <span style="color:#b45309;"> (@SyncService.AiProxyError)</span>
+                    }
+                </div>
+            }
             <div class="chat-container" @ref="chatContainer" id="chat-container">
                 @foreach (var msg in messages)
                 {
@@ -326,6 +345,7 @@
     }
 
     private Action? _sidebarStateChangedHandler;
+    private Action? _syncChangedHandler;
 
     protected override async Task OnInitializedAsync()
     {
@@ -336,21 +356,13 @@
         if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
         {
             currentUser = AuthService.Email; // use real email instead of the old "LocalUser" sentinel
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+                await SyncService.EnsureAiProxyConnectionAsync();
         }
 
-        // Build model list from provider service (respects what keys/config are in the KeyStore)
-        var available = AiProviderService.GetAvailableModels();
-        modelList = available.ToList();  // already the service's ModelInfo
-
-        // Ensure we have a valid selectedModel that actually exists in the current available list.
-        // This prevents using stale defaults like "ollama/llama3" when the user only has gemma (or other models) configured in Settings.
-        bool hasValidSelection = !string.IsNullOrEmpty(selectedModel) &&
-                                 modelList.Any(m => m.Id == selectedModel);
-
-        if (!hasValidSelection && modelList.Any())
-        {
-            selectedModel = modelList.First().Id;
-        }
+        RefreshModelList();
+        EnsureValidModelSelection();
 
         // Load history via store (will be under the per-email encrypted bucket if authed)
         localConvos = await ConversationStore.LoadIndexAsync(JS);
@@ -377,6 +389,33 @@
         // Subscribe so the conversation sidebar auto-refreshes when a sync arrives
         // while the user is on the chat page (even if they weren't on the sync page).
         SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
+
+        _syncChangedHandler = () => InvokeAsync(() =>
+        {
+            RefreshModelList();
+            EnsureValidModelSelection();
+            StateHasChanged();
+        });
+        SyncService.OnChanged += _syncChangedHandler;
+    }
+
+    private void RefreshModelList()
+    {
+        if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
+            modelList = SyncService.RemoteModels.ToList();
+        else if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+            modelList = new List<WasmAiProviderService.ModelInfo>();
+        else
+            modelList = AiProviderService.GetAvailableModels().ToList();
+    }
+
+    private void EnsureValidModelSelection()
+    {
+        bool hasValidSelection = !string.IsNullOrEmpty(selectedModel) &&
+                                 modelList.Any(m => m.Id == selectedModel);
+
+        if (!hasValidSelection && modelList.Any())
+            selectedModel = modelList.First().Id;
     }
 
     public void Dispose()
@@ -387,6 +426,9 @@
         }
 
         SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
+
+        if (_syncChangedHandler != null)
+            SyncService.OnChanged -= _syncChangedHandler;
 
         dotNetRef?.Dispose();
     }
@@ -670,172 +712,30 @@
 
         try
         {
-            // Build proper conversation history from our message list.
-            // Supports text + multimodal (images/PDF) for vision-enabled models.
-            var chatHistory = new List<AiChatMessage>();
-            foreach (var m in messages)
+            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
-                bool hasContent = !string.IsNullOrWhiteSpace(m.Content);
-                bool hasAttachments = m.Attachments != null && m.Attachments.Any();
-
-                if (!hasContent && !hasAttachments) continue;
-
-                var roleStr = m.Role ?? (m.User == currentUser ? "user" : "assistant");
-                var aiRole = roleStr.Equals("user", StringComparison.OrdinalIgnoreCase) ? ChatRole.User : ChatRole.Assistant;
-
-                if (aiRole == ChatRole.User && hasAttachments && CurrentModelSupportsVision)
-                {
-                    // Multimodal turn: text (if any) + image/pdf data parts
-                    var contents = new List<AIContent>();
-                    if (hasContent)
-                    {
-                        string clean = CleanTextForLlm(m.Content);
-                        contents.Add(new TextContent(clean));
-                    }
-                    foreach (var att in m.Attachments!)
-                    {
-                        if (att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-                            att.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
-                        {
-                            try
-                            {
-                                var bytes = Convert.FromBase64String(att.DataBase64);
-                                contents.Add(new DataContent(bytes, att.ContentType));
-                            }
-                            catch { /* skip bad attachment data */ }
-                        }
-                    }
-                    if (contents.Count > 0)
-                        chatHistory.Add(new AiChatMessage(aiRole, contents));
-                }
-                else if (hasContent)
-                {
-                    // Plain text (or non-vision model, or no attachments)
-                    string clean = CleanTextForLlm(m.Content);
-                    chatHistory.Add(new AiChatMessage(aiRole, clean));
-                }
+                await SyncService.EnsureAiProxyConnectionAsync();
+                var (text, toolTrace) = await SyncService.SendChatRequestAsync(selectedModel, messages);
+                _pendingToolTrace = toolTrace;
+                return text;
             }
 
-            // If for some reason the current turn text wasn't in messages yet (legacy call), append it.
-            // Normally the user message (with attachments) is already appended before calling.
-            if (!string.IsNullOrWhiteSpace(userMsg))
+            var result = await ChatCompletionService.CompleteAsync(selectedModel, messages, currentUser);
+            _pendingToolTrace = result.ToolTrace;
+
+            if (!string.IsNullOrEmpty(result.Error))
             {
-                // Only append plain text here as fallback; attachments would already be on the message object.
-                chatHistory.Add(new AiChatMessage(ChatRole.User, userMsg));
+                _pendingToolTrace = string.IsNullOrEmpty(result.ToolTrace) ? "" : result.ToolTrace;
+                return result.Error.StartsWith("Error calling provider", StringComparison.OrdinalIgnoreCase)
+                    ? result.Error
+                    : $"Error calling provider: {result.Error}";
             }
 
-            // Always start with a clean trace for this turn (populated by native tools and/or MCP tools during execution).
-            ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
-
-            // Get base client from our pluggable service (same as server).
-            var baseClient = AiProviderService.GetChatClientForModel(selectedModel);
-
-            IChatClient client = baseClient;
-            ChatOptions? chatOptions = null;
-
-            // Wire agentic tool calling exactly like the interactive server version.
-            // Only for models that declare SupportsTools (or all Ollama, as local models are usually capable).
-            if (CurrentModelSupportsTools)
-            {
-                client = baseClient
-                    .AsBuilder()
-                    .UseFunctionInvocation()   // M.E.AI middleware: model emits tool call -> we execute -> feed result -> repeat
-                    .Build();
-
-                // Make sure we have a fresh trace for this generation (native tools + any enabled remote MCP tools).
-                ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
-
-                // This now includes both the classic native tools AND any remote MCP servers the user enabled
-                // on the Tools page (with their tokens applied via McpToolSource).
-                // McpToolSource.GetCurrentMcpTools() (called inside) will auto-trigger a background refresh
-                // the first time it sees enabled servers.
-                chatOptions = new ChatOptions { Tools = ToolProvider.GetTools().ToList() };
-            }
-
-            // Simple retry with backoff for transient provider rate limits (429) during the agentic loop.
-            // Each tool call can trigger multiple completions requests; cloud providers (Groq, Gemini, etc.) are rate-limited.
-            const int maxAttempts = 3;
-            Exception? lastEx = null;
-
-            for (int attempt = 1; attempt <= maxAttempts; attempt++)
-            {
-                try
-                {
-                    var response = await client.GetResponseAsync(chatHistory, chatOptions ?? new ChatOptions());
-
-                    // Capture the tool / thinking trace that was recorded by the tools during this generation.
-                    _pendingToolTrace = string.Join("\n", ChatfishApp.Services.Tools.ToolExecutionTrace.GetCurrentTrace());
-
-                    string responseText = response.Text ?? string.Empty;
-
-                    // Many local reasoning models (e.g. LFM 2.5, certain Qwen, DeepSeek-R1 distilled, etc.)
-                    // when called via Ollama's OpenAI-compatible /v1 endpoint put the final answer in a
-                    // non-standard field ("reasoning", "reasoning_content", etc.) on the message instead of
-                    // the normal "content". ME.AI's response.Text only sees standard content.
-                    if (string.IsNullOrWhiteSpace(responseText))
-                    {
-                        var lastAssistant = response.Messages?
-                            .LastOrDefault(m => m.Role == ChatRole.Assistant);
-
-                        if (lastAssistant?.AdditionalProperties != null)
-                        {
-                            // Dump available keys into the trace so we can see exactly what this model/Ollama
-                            // is surfacing for this particular run.
-                            var availableKeys = string.Join(", ", lastAssistant.AdditionalProperties.Keys);
-                            ChatfishApp.Services.Tools.ToolExecutionTrace.Record($"[debug] AdditionalProperties keys on assistant message: [{availableKeys}]");
-
-                            // Try to find any key that looks like a reasoning field (case-insensitive contains "reason")
-                            foreach (var key in lastAssistant.AdditionalProperties.Keys)
-                            {
-                                if (key.Contains("reason", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    var value = lastAssistant.AdditionalProperties[key];
-
-                                    string? reasonText = value as string;
-
-                                    // Some integrations leave it as JsonElement instead of a plain string
-                                    if (reasonText is null && value is System.Text.Json.JsonElement jsonEl && jsonEl.ValueKind == System.Text.Json.JsonValueKind.String)
-                                    {
-                                        reasonText = jsonEl.GetString();
-                                    }
-
-                                    if (!string.IsNullOrWhiteSpace(reasonText))
-                                    {
-                                        responseText = reasonText!;
-                                        ChatfishApp.Services.Tools.ToolExecutionTrace.Record($"ℹ️ Extracted final response from non-standard field '{key}'.");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    return string.IsNullOrWhiteSpace(responseText) ? "No response." : responseText;
-                }
-                catch (Exception ex) when (attempt < maxAttempts)
-                {
-                    lastEx = ex;
-                    string msg = ex.Message.ToLowerInvariant();
-                    if (msg.Contains("429") || msg.Contains("too many requests") || msg.Contains("rate limit"))
-                    {
-                        int delayMs = attempt * 1200; // 1.2s, 2.4s, ...
-                        ChatfishApp.Services.Tools.ToolExecutionTrace.Record($"⚠️ Provider rate limit (429) on attempt {attempt}. Waiting {delayMs}ms before retry...");
-                        await Task.Delay(delayMs);
-                        continue;
-                    }
-                    // non-rate-limit error → don't retry
-                    throw;
-                }
-            }
-
-            // If we exhausted retries
-            _pendingToolTrace = string.Join("\n", ChatfishApp.Services.Tools.ToolExecutionTrace.GetCurrentTrace());
-            return $"Error calling provider after retries: {lastEx?.Message ?? "unknown"}";
+            return result.Text;
         }
         catch (Exception ex)
         {
-            // Keep error messages actionable for the user (missing key, Ollama not running, CORS, rate limits, etc.)
-            _pendingToolTrace = ""; // clear on error
+            _pendingToolTrace = "";
             return $"Error calling provider: {ex.Message}";
         }
     }
@@ -950,12 +850,4 @@
         }
     }
 
-    // Strip any legacy HTML so we send clean text to the LLM (and tools).
-    private static string CleanTextForLlm(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return "";
-        if (!text.Contains('<')) return text;
-        var plain = System.Text.RegularExpressions.Regex.Replace(text, "<.*?>", string.Empty);
-        return System.Net.WebUtility.HtmlDecode(plain).Trim();
-    }
 }
