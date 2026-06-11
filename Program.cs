@@ -6,6 +6,9 @@ using ChatfishApp.Services;
 using ChatfishApp.Services.Tools;
 using ChatfishApp.Apis;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -94,7 +97,25 @@ builder.Services.AddScoped<HttpClient>();
 // perform client-side AES-GCM encryption of their local data and of blobs transferred during
 // live (both-devices-open) sync. The server never stores the WASM history content itself.
 // See User.LocalEncryptionKey and the Wasm*Store + WasmLiveSyncClient in the Client project.
-builder.Services.AddDataProtection();
+// Forwarded headers so that when deployed behind a TLS-terminating reverse proxy / load balancer
+// (Railway, Render, Cloudflare, nginx, etc.) we correctly see Scheme=https, the real Host, and client IP.
+// This fixes mixed-content redirect URLs (http://chatfish.me?ReturnUrl=...) for auth challenges on /api/*
+// and ensures magic links and cookies are generated with the proper https scheme.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+    // Cloud/container platforms set X-Forwarded-* from arbitrary edge IPs; trust them all for scheme/host.
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
+// Persist DataProtection keys *in the SQLite database* (via the existing ChatfishDbContext).
+// This is the user's explicit preference: avoid any filesystem/volume concerns for keys at the hosting provider.
+// Auth cookies (and the per-user LocalEncryptionKey protector) will survive restarts, deploys, and sleep/wake
+// as long as chatfish.db itself persists. The DP keys table is small.
+builder.Services.AddDataProtection()
+    .PersistKeysToDbContext<ChatfishDbContext>()
+    .SetApplicationName("Chatfish");
 builder.Services.AddSingleton<KeyProtectionService>();
 
 builder.Services.AddAuthentication("ChatfishAuth")
@@ -105,8 +126,17 @@ builder.Services.AddAuthentication("ChatfishAuth")
         // redirects unauthenticated users who hit a [Authorize] page to "/".
         options.LoginPath = "/";
         options.LogoutPath = "/logout";
-        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+
+        // Long-lived sessions (user request: stay logged in >=30 days, prefer longer).
+        // 90 days with sliding renewal. Persisted DP keys (above) prevent invalidation on restarts/sleeps.
+        options.ExpireTimeSpan = TimeSpan.FromDays(90);
         options.SlidingExpiration = true;
+
+        // Production hardening: always require Secure (https), and Lax SameSite so magic-link
+        // email clicks (cross-site top-level navigation) still work while protecting against CSRF on APIs.
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Lax;
     });
 
 builder.Services.AddAuthorization();
@@ -116,6 +146,10 @@ builder.Services.AddSignalR();
 
 
 var app = builder.Build();
+
+// Must be the first middleware to rewrite context from X-Forwarded-* headers before
+// HSTS, HTTPS redirection, authentication, or anything that inspects Scheme/Host.
+app.UseForwardedHeaders();
 
 // Diagnostic at startup so it's obvious whether Email__Smtp* env vars (or user-secrets)
 // were picked up for SMTP credentials. Never logs secret values.
