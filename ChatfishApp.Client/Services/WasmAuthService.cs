@@ -39,7 +39,7 @@ public class WasmAuthService
     }
 
     /// <summary>
-    /// Call this early (e.g. from WasmChat or a root component OnInitializedAsync).
+    /// Call this early (e.g. from Chat or a root component OnInitializedAsync).
     /// It will hit the server /api/auth/me and /api/user/encryption-key using the
     /// cookie that the browser already has from the server-side login.
     /// </summary>

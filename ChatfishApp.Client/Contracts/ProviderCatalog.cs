@@ -8,7 +8,63 @@ namespace ChatfishApp.Contracts;
 /// </summary>
 public static class ProviderCatalog
 {
-    public sealed record ModelDefinition(string Id, string Label, string Icon, bool SupportsTools = true);
+    public sealed record ModelDefinition(string Id, string Label, string Icon, bool SupportsTools = true, bool SupportsVision = false);
+
+    /// <summary>
+    /// Known local (Ollama and other local model runners) model name patterns and their capabilities.
+    /// Used for dynamic models (user can pull any tag) so we can still show correct tool + vision badges in the UI.
+    /// Matching is done with Contains (case-insensitive) against the model name after any "ollama/" prefix.
+    /// </summary>
+    public static readonly ImmutableArray<(string NamePattern, bool SupportsTools, bool SupportsVision)> LocalModelPatterns = ImmutableArray.Create(
+        ("llava", true, true),
+        ("bakllava", true, true),
+        ("moondream", false, true),
+        ("llama3.2-vision", true, true),
+        ("llama-3.2-vision", true, true),
+        ("vision", true, true),           // generic catch-all for vision models
+        ("llama3.2", true, false),        // text-only 3.2 by default; vision variants caught above
+        ("llama-3.2", true, false),
+        ("qwen2-vl", true, true),         // Qwen2-VL vision models
+        ("qwen2.5-vl", true, true)
+    );
+
+    /// <summary>
+    /// Returns tool + vision support for a model id.
+    /// For known catalog models this comes from the ModelDefinition.
+    /// For dynamic local models (ollama/...) we do name-based pattern matching above.
+    /// </summary>
+    public static (bool SupportsTools, bool SupportsVision) GetCapabilitiesForModel(string modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+            return (false, false);
+
+        // Try exact catalog match first (works for cloud providers and any explicitly listed local models)
+        var entry = GetModel(modelId);
+        if (entry.HasValue)
+        {
+            var m = entry.Value.Model;
+            return (m.SupportsTools, m.SupportsVision);
+        }
+
+        // Dynamic local model (e.g. ollama/llava:7b, ollama/phi3, etc.)
+        string name = modelId;
+        if (name.Contains('/'))
+            name = name.Split('/', 2)[1];
+
+        name = name.ToLowerInvariant();
+
+        foreach (var p in LocalModelPatterns)
+        {
+            if (name.Contains(p.NamePattern.ToLowerInvariant()))
+            {
+                return (p.SupportsTools, p.SupportsVision);
+            }
+        }
+
+        // Sensible default for unknown local models:
+        // Most Ollama models support tool calling (via the Ollama server), vision is rare/special.
+        return (true, false);
+    }
 
     public sealed record ProviderDefinition(
         string Id,
@@ -45,7 +101,7 @@ public static class ProviderCatalog
             "OpenAICompatible",
             "https://generativelanguage.googleapis.com/v1beta/openai/",
             ImmutableArray.Create(
-                new ModelDefinition("gemini-2.5-flash", "Gemini 2.5 Flash", "✨", SupportsTools: true)
+                new ModelDefinition("gemini-2.5-flash", "Gemini 2.5 Flash", "✨", SupportsTools: true, SupportsVision: true)
                 // Add "gemini-2.5-flash-lite" etc. if you want them available to users with keys.
             )),
 
@@ -60,16 +116,16 @@ public static class ProviderCatalog
             "OpenAICompatible",
             "https://openrouter.ai/api/v1/",
             ImmutableArray.Create(
-                new ModelDefinition("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (strong tools)", "🧠"),
-                new ModelDefinition("openai/gpt-4o", "GPT-4o", "🔧"),
-                new ModelDefinition("google/gemini-2.0-flash", "Gemini 2.0 Flash (via OR)", "✨"),
+                new ModelDefinition("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (strong tools)", "🧠", SupportsVision: true),
+                new ModelDefinition("openai/gpt-4o", "GPT-4o", "🔧", SupportsVision: true),
+                new ModelDefinition("google/gemini-2.0-flash", "Gemini 2.0 Flash (via OR)", "✨", SupportsVision: true),
                 new ModelDefinition("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B Instruct", "🦙"),
                 new ModelDefinition("mistralai/mistral-large", "Mistral Large", "🌪️"),
                 new ModelDefinition("qwen/qwen2.5-72b-instruct", "Qwen2.5 72B", "🐉"),
                 // Free / low-cost friendly examples on OpenRouter (availability and exact slugs can vary; check openrouter.ai/models)
                 // Note: free tier models often have limited tool support or rate limits
                 new ModelDefinition("meta-llama/llama-3.2-3b-instruct:free", "Llama 3.2 3B (free tier)", "🆓", SupportsTools: false),
-                new ModelDefinition("google/gemini-2.0-flash:free", "Gemini 2.0 Flash (free on OR)", "🆓", SupportsTools: true)
+                new ModelDefinition("google/gemini-2.0-flash:free", "Gemini 2.0 Flash (free on OR)", "🆓", SupportsTools: true, SupportsVision: true)
             ))
     );
 

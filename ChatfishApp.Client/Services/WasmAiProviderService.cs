@@ -86,7 +86,8 @@ public class WasmAiProviderService
         var ollamaModels = _keyStore.OllamaModels.Any() ? _keyStore.OllamaModels : new List<string> { "gemma2", "llama3.2" };
         foreach (var m in ollamaModels.Distinct())
         {
-            result.Add(new ModelInfo($"ollama/{m}", $"{m} (Ollama)", "🦙", "ollama", "Ollama"));
+            var caps = ProviderCatalog.GetCapabilitiesForModel($"ollama/{m}");
+            result.Add(new ModelInfo($"ollama/{m}", $"{m} (Ollama)", "🦙", "ollama", "Ollama", SupportsTools: caps.SupportsTools, SupportsVision: caps.SupportsVision));
         }
 
         foreach (var provider in ProviderCatalog.Providers)
@@ -96,7 +97,7 @@ public class WasmAiProviderService
             {
                 foreach (var m in provider.Models)
                 {
-                    result.Add(new ModelInfo(m.Id, m.Label, m.Icon, provider.Id, provider.DisplayName));
+                    result.Add(new ModelInfo(m.Id, m.Label, m.Icon, provider.Id, provider.DisplayName, SupportsTools: m.SupportsTools, SupportsVision: m.SupportsVision));
                 }
             }
         }
@@ -104,5 +105,5 @@ public class WasmAiProviderService
         return result;
     }
 
-    public record ModelInfo(string Id, string Label, string Icon, string ProviderId, string ProviderName);
+    public record ModelInfo(string Id, string Label, string Icon, string ProviderId, string ProviderName, bool SupportsTools = true, bool SupportsVision = false);
 }

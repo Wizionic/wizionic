@@ -12,7 +12,7 @@ namespace ChatfishApp.Client.Services;
 /// - Choose and persist a friendly DeviceName (user can rename later from the Sync page).
 /// - When the user is authenticated (email login), connect to /sync-hub and register.
 /// - Maintain a live list of other devices for the same user, with IsOnline + LastActive.
-/// - Raise OnChanged so pages (WASMSync.razor) can re-render.
+/// - Raise OnChanged so pages (Sync.razor) can re-render.
 /// 
 /// The same connection will later carry WebRTC signaling messages (Phase 2) without
 /// ever sending actual chat history blobs through the server.
@@ -44,7 +44,7 @@ public class WasmSyncService : IAsyncDisposable
 
     /// <summary>
     /// Fired whenever a conversation is added or updated via incoming sync (background or foreground).
-    /// Pages like WasmChat can subscribe to this to refresh their conversation list / sidebar.
+    /// Pages like Chat can subscribe to this to refresh their conversation list / sidebar.
     /// </summary>
     public event Action? OnConversationsChanged;
 
@@ -495,7 +495,7 @@ public class WasmSyncService : IAsyncDisposable
     /// <summary>
     /// Central handler for incoming sync payloads (from either the old relay or WebRTC DataChannel).
     /// Persists the conversation automatically so the user gets the data even if they
-    /// are not currently on the /wasm-sync page (as long as any WASM page is loaded).
+    /// are not currently on the /sync page (as long as any WASM page is loaded).
     /// </summary>
     private async Task HandleIncomingSyncPayload(string convoId, string json, string fromDeviceId)
     {
@@ -515,7 +515,7 @@ public class WasmSyncService : IAsyncDisposable
             // can refresh their lists and show a "new sync received" message.
             OnSyncPayloadReceived?.Invoke(convoId, json, fromDeviceId);
 
-            // Lightweight event so pages that show the conversation list (WasmChat sidebar, etc.)
+            // Lightweight event so pages that show the conversation list (Chat sidebar, etc.)
             // can automatically refresh when a sync arrives in the background.
             OnConversationsChanged?.Invoke();
 
