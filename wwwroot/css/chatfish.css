@@ -275,13 +275,34 @@ a:hover {
 }
 
 .message-bot {
+    position: relative;
     margin-right: auto;
     background: var(--bubble-ai-bg, #ffffff);
     padding: 0.6rem 1rem;
+    padding-top: 1.75rem;
     border-radius: 12px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     max-width: 100%;
     width: fit-content;
+}
+
+.message-bot-menu {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+    z-index: 2;
+}
+
+.message-bot:hover .message-bot-menu,
+.message-bot-menu:focus-within {
+    opacity: 1;
+}
+
+.bot-message-menu-popup {
+    min-width: 160px;
+    white-space: nowrap;
 }
 
 .chat-markdown { max-width: 100%; overflow-x: auto; }
@@ -1162,3 +1183,110 @@ body .message-bot,
     max-width: 100% !important;
     width: fit-content !important;
 }
+
+/* ========================================
+    Notes / NewNote styles
+    ======================================== */
+
+.newnote-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20000;
+}
+
+.newnote-modal {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    min-width: 380px;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.newnote-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--grey-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: white;
+    color: var(--text-dark);
+}
+
+.newnote-select:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    background: var(--grey-100);
+}
+
+.newnote-select:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.newnote-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--grey-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: white;
+    color: var(--text-dark);
+}
+
+.newnote-input:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.newnote-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    border: 1px solid var(--grey-300);
+    background: white;
+    color: var(--text-dark);
+    transition: background 0.2s ease;
+}
+
+.newnote-btn:hover:not(:disabled) {
+    background: var(--grey-100);
+}
+
+.newnote-btn-primary {
+    background: var(--primary-blue) !important;
+    color: white !important;
+    border-color: var(--primary-blue) !important;
+}
+
+.newnote-btn-primary:hover:not(:disabled) {
+    background: var(--primary-dark) !important;
+}
+
+.newnote-btn-secondary {
+    background: var(--grey-100) !important;
+    color: var(--text-dark) !important;
+    border-color: var(--grey-300) !important;
+}
+
+.newnote-btn-ghost {
+    background: transparent !important;
+    border-color: transparent !important;
+    color: #64748b !important;
+}
+
+.newnote-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+

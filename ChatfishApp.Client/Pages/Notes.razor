@@ -1,0 +1,267 @@
+@page "/notes"
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@layout ChatfishApp.Client.Shared.WasmLayout
+@implements IDisposable
+
+@using Markdig
+@using Microsoft.JSInterop
+@using ChatfishApp.Client.Services
+@using ChatMessage = ChatfishApp.Client.Services.WasmConversationStore.ChatMessage
+@using LocalNote = ChatfishApp.Client.Services.WasmNoteStore.LocalNote
+@using Microsoft.AspNetCore.Components.Forms
+
+@inject IJSRuntime JS
+@inject WasmNoteStore NoteStore
+@inject WasmConversationStore ConvStore
+@inject WasmAuthService AuthService
+@inject SidebarState SidebarState
+
+<div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+    <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
+        @if (SidebarState.IsCollapsed)
+        {
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
+            </svg>
+        }
+        else
+        {
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
+            </svg>
+        }
+    </button>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <nav class="cf-nav cf-column">
+            <!-- Notes header -->
+            <div class="cf-item">
+                <span class="cf-link small">
+                    Notes
+                    <button class="menu-button" @onclick="NewNote" title="New note">
+                        <i class="cf-icon bi bi-plus-circle"></i>
+                    </button>
+                </span>
+            </div>
+
+            <!-- Notes list -->
+            @foreach (var n in notes.OrderByDescending(x => x.LastUpdated))
+            {
+                var isActive = activeNoteId == n.Id;
+                <div class="conversation-item @(isActive ? "active" : "")" @onclick="() => SwitchNote(n.Id)">
+                    <div class="row-top">
+                        <div class="title">@n.Title</div>
+                        <div class="menu" @onclick:stopPropagation>
+                            <button id="menu-btn-@n.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(n.Id)">⋮</button>
+                        </div>
+                    </div>
+                    <div class="date">@n.LastUpdated.ToLocalTime().ToString("MMM d")</div>
+                </div>
+            }
+            @if (!notes.Any())
+            {
+                <div class="cf-item" style="font-size:0.75em; color:#888; padding-left:12px;">No notes yet.</div>
+            }
+        </nav>
+    </div>
+
+    <!-- Main content -->
+    <main>
+        <div class="chat-wrapper" style="flex: 1; display: flex; flex-direction: column;">
+            <div class="chat-container" @ref="chatContainer">
+                @foreach (var msg in currentNoteMessages)
+                {
+                    <div class="message-row">
+                        <div class="message-bot">
+                            <div class="chat-markdown">
+                                @((MarkupString)FormatMessage(msg.Content))
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(msg.ModelUsed))
+                            {
+                                <div class="model-label" style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
+                                    via @msg.ModelUsed
+                                </div>
+                            }
+                            @if (msg.Timestamp.HasValue)
+                            {
+                                <div style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
+                                    @(msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm"))
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </main>
+
+    @if (openMenuId != null)
+    {
+        <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
+            <div @onclick="async () => { await DeleteNote(openMenuId); CloseMenu(); }">
+                <button class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                Delete note
+            </div>
+        </div>
+        <div class="menu-overlay" @onclick="CloseMenu"></div>
+    }
+</div>
+
+@code {
+    private List<LocalNote> notes = new();
+    private string? activeNoteId;
+    private List<ChatMessage> currentNoteMessages = new();
+    private string? openMenuId;
+    private string activePopupStyle = "";
+    private ElementReference chatContainer;
+
+    private class PopupPosition
+    {
+        public double top { get; set; }
+        public double left { get; set; }
+    }
+
+    private Action? _sidebarStateChangedHandler;
+
+    protected override async Task OnInitializedAsync()
+    {
+        notes = await NoteStore.LoadIndexAsync(JS);
+
+        if (notes.Any())
+        {
+            activeNoteId = notes.OrderByDescending(n => n.LastUpdated).First().Id;
+            await LoadNote(activeNoteId);
+        }
+        else
+        {
+            await NewNote();
+        }
+
+        _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
+        SidebarState.OnChanged += _sidebarStateChangedHandler;
+    }
+
+    public void Dispose()
+    {
+        if (_sidebarStateChangedHandler != null)
+        {
+            SidebarState.OnChanged -= _sidebarStateChangedHandler;
+        }
+    }
+
+    private async Task ToggleSidebar()
+    {
+        SidebarState.Toggle();
+        StateHasChanged();
+        try
+        {
+            await JS.InvokeVoidAsync("toggleWasmSidebar", SidebarState.IsCollapsed);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notes] toggleSidebar failed: {ex.Message}");
+        }
+    }
+
+    private async Task NewNote()
+    {
+        var id = Guid.NewGuid().ToString();
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, id, "New note");
+        notes = await NoteStore.LoadIndexAsync(JS);
+        activeNoteId = id;
+        currentNoteMessages = new List<ChatMessage>();
+        StateHasChanged();
+    }
+
+    private async Task SwitchNote(string id)
+    {
+        if (activeNoteId != id)
+        {
+            await SaveCurrent();
+            await LoadNote(id);
+        }
+    }
+
+    private async Task LoadNote(string id)
+    {
+        activeNoteId = id;
+        currentNoteMessages = await NoteStore.LoadNoteAsync(JS, id);
+        StateHasChanged();
+    }
+
+    private async Task SaveCurrent()
+    {
+        if (string.IsNullOrEmpty(activeNoteId)) return;
+        var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
+        var title = note?.Title ?? "Untitled";
+        await NoteStore.SaveNoteAsync(JS, activeNoteId, currentNoteMessages);
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, activeNoteId, title);
+        notes = await NoteStore.LoadIndexAsync(JS);
+    }
+
+    private async Task DeleteNote(string id)
+    {
+        await NoteStore.DeleteNoteAsync(JS, id);
+        notes = await NoteStore.LoadIndexAsync(JS);
+
+        if (activeNoteId == id)
+        {
+            activeNoteId = null;
+            currentNoteMessages = new();
+            if (notes.Any())
+            {
+                activeNoteId = notes.OrderByDescending(n => n.LastUpdated).First().Id;
+                await LoadNote(activeNoteId);
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void ToggleMenu(string id)
+    {
+        if (openMenuId == id)
+        {
+            openMenuId = null;
+            activePopupStyle = "";
+        }
+        else
+        {
+            openMenuId = id;
+            _ = PositionPopup(id);
+        }
+    }
+
+    private void CloseMenu()
+    {
+        openMenuId = null;
+        activePopupStyle = "";
+    }
+
+    private async Task PositionPopup(string id)
+    {
+        try
+        {
+            var pos = await JS.InvokeAsync<PopupPosition>("getMenuPopupPosition", $"menu-btn-{id}");
+            activePopupStyle = $"position: fixed; top: {pos.top}px; left: {pos.left}px; z-index: 10000;";
+            StateHasChanged();
+        }
+        catch
+        {
+            activePopupStyle = "position: fixed; top: 120px; left: 260px; z-index: 10000;";
+            StateHasChanged();
+        }
+    }
+
+    string FormatMessage(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var pipeline = new Markdig.MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .UseEmojiAndSmiley()
+            .Build();
+        return Markdig.Markdown.ToHtml(raw, pipeline);
+    }
+}

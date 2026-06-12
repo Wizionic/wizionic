@@ -25,9 +25,11 @@
 @inject ChatfishApp.Services.Tools.IToolProvider ToolProvider
 @inject ChatfishApp.Client.Services.WasmSyncService SyncService
 @inject ChatfishApp.Client.Services.WasmChatCompletionService ChatCompletionService
+@inject ChatfishApp.Client.Services.WasmNoteStore NoteStore
+@using LocalNote = ChatfishApp.Client.Services.WasmNoteStore.LocalNote
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
-    <!-- Sidebar toggle button is here (in Chat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
+        <!-- Sidebar toggle button is here (in Chat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
          Positioned absolutely (via WasmLayout body container) to overlay the top bar near the fish logo (user's red box location).
          See .sidebar-toggle rule in chatfish.css for the absolute top/left/z-index values. -->
     <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
@@ -103,8 +105,10 @@
                 </div>
             }
             <div class="chat-container" @ref="chatContainer" id="chat-container">
-                @foreach (var msg in messages)
+                @for (var msgIndex = 0; msgIndex < messages.Count; msgIndex++)
                 {
+                    var capturedIndex = msgIndex;
+                    var msg = messages[capturedIndex];
                     <div class="message-row">
                         @if ((msg.User == currentUser) || msg.Role == "user")
                         {
@@ -148,6 +152,9 @@
                         else
                         {
                             <div class="message-bot">
+                                <div class="message-bot-menu" @onclick:stopPropagation>
+                                    <button id="bot-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleBotMenu(capturedIndex)" title="Message options">⋮</button>
+                                </div>
                                 @if (!string.IsNullOrWhiteSpace(msg.ToolTrace))
                                 {
                                     <details style="margin-bottom: 2px; font-size: 0.7em;">
@@ -273,14 +280,103 @@
     @if (openMenuId != null)
     {
         <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
-            <div @onclick="async () => { await DeleteConvo(openMenuId); CloseMenu(); }">
-                <button class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
-                Delete
-            </div>
+            @if (IsBotMenuOpen)
+            {
+                <div @onclick="async () => { await OpenAddToNotesFromMenu(openMenuId); CloseMenu(); }">
+                    <button type="button" class="menu-button"><i class="bi bi-journal-plus"></i></button>
+                    Add to notes
+                </div>
+            }
+            else
+            {
+                <div @onclick="async () => { await DeleteConvo(openMenuId); CloseMenu(); }">
+                    <button class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete
+                </div>
+            }
         </div>
-        <div class="menu-overlay" @onclick="CloseMenu"></div>
+        @if (!IsBotMenuOpen)
+        {
+            <div class="menu-overlay" @onclick="CloseMenu"></div>
+        }
     }
 </div>
+
+@if (showNewNote)
+{
+    <div class="newnote-overlay" @onclick="CloseNewNote">
+        <div class="newnote-modal" @onclick:stopPropagation>
+                @if (_noteShowExisting && _noteDialogNotes.Any())
+                {
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Add to Note</h4>
+                    <p style="font-size:0.85rem;color:#64748b;margin-bottom:12px;">Select an existing note or create a new one:</p>
+                    <select @bind="_noteSelectedId" class="newnote-select">
+                        <option value="">— New note —</option>
+                        @foreach (var n in _noteDialogNotes.OrderByDescending(x => x.LastUpdated))
+                        {
+                            <option value="@n.Id">@n.Title (@n.LastUpdated.ToLocalTime().ToString("MMM d"))</option>
+                        }
+                    </select>
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        @if (string.IsNullOrEmpty(_noteSelectedId))
+                        {
+                            <button class="newnote-btn newnote-btn-primary" @onclick="NoteShowNewInput">Create new note</button>
+                        }
+                        else
+                        {
+                            <button class="newnote-btn newnote-btn-primary" @onclick="NotePickExisting">Add to this note</button>
+                        }
+                    </div>
+                    <div style="margin-top:12px;text-align:right;">
+                        <button class="newnote-btn newnote-btn-ghost" @onclick="CloseNewNote">Cancel</button>
+                    </div>
+                }
+                else if (_noteShowNewInput)
+                {
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Create New Note</h4>
+                    <p style="font-size:0.85rem;color:#64748b;margin-bottom:12px;">
+                        @if (!_noteDialogNotes.Any())
+                        {
+                            <span>You don't have any notes yet. Enter a name for your first note:</span>
+                        }
+                        else
+                        {
+                            <span>Enter a name for the new note:</span>
+                        }
+                    </p>
+                    <input type="text" @bind="_newNoteName" @bind:event="oninput" placeholder="Note name..." class="newnote-input" @onkeydown="NoteNameKeyHandler" />
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        @if (_noteDialogNotes.Any())
+                        {
+                            <button class="newnote-btn newnote-btn-secondary" @onclick="NoteBackToPicker">Back</button>
+                        }
+                        <button class="newnote-btn newnote-btn-secondary" @onclick="CloseNewNote">Cancel</button>
+                        <button class="newnote-btn newnote-btn-primary" @onclick="NoteCreateAndSave" disabled="@(string.IsNullOrWhiteSpace(_newNoteName))">Create &amp; Save</button>
+                    </div>
+                }
+                else if (_noteConfirming)
+                {
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Add to Note</h4>
+                    <p style="font-size:0.85rem;color:#64748b;margin-bottom:12px;">Add this message to <strong>@_noteTargetName</strong>?</p>
+                    @if (_noteSourceMessage != null && !string.IsNullOrEmpty(_noteSourceMessage.Content))
+                    {
+                        <div style="background:#f1f5f9;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:0.8rem;color:#475569;max-height:120px;overflow-y:auto;">
+                            @_noteSourceMessage.Content.Substring(0, Math.Min(_noteSourceMessage.Content.Length, 200))
+                            @(_noteSourceMessage.Content.Length > 200 ? "..." : "")
+                        </div>
+                    }
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="newnote-btn newnote-btn-secondary" @onclick="CloseNewNote">Cancel</button>
+                        <button class="newnote-btn newnote-btn-primary" @onclick="NoteConfirmAdd">Yes, add</button>
+                    </div>
+                }
+                else
+                {
+                    <p style="margin:0;font-size:0.9rem;color:#64748b;">Loading notes...</p>
+                }
+            </div>
+        </div>
+}
 
 @code {
     string currentUser = "LocalUser";
@@ -329,6 +425,21 @@
     string? activeConvoId;
 
     string? openMenuId;
+    const string BotMenuPrefix = "bot-";
+    int? _botMenuMessageIndex;
+
+    bool IsBotMenuOpen => openMenuId != null && openMenuId.StartsWith(BotMenuPrefix, StringComparison.Ordinal);
+
+    bool showNewNote;
+    ChatMessage? _noteSourceMessage;
+    List<LocalNote> _noteDialogNotes = new();
+    bool _noteShowExisting;
+    bool _noteShowNewInput;
+    bool _noteConfirming;
+    string _noteSelectedId = "";
+    string _newNoteName = "";
+    string _noteTargetId = "";
+    string _noteTargetName = "";
 
     private List<Attachment> pendingFiles = new();
     private bool showAttachMenu = false;
@@ -819,27 +930,187 @@
     {
         if (openMenuId == id)
         {
-            openMenuId = null;
-            activePopupStyle = "";
+            CloseMenu();
         }
         else
         {
             openMenuId = id;
-            _ = PositionPopup(id);
+            _ = PositionPopupAtButton($"menu-btn-{id}");
         }
     }
 
     void CloseMenu()
     {
+        _ = NoteDebugLog("CloseMenu");
         openMenuId = null;
         activePopupStyle = "";
+        _botMenuMessageIndex = null;
     }
 
-    private async Task PositionPopup(string id)
+    void ToggleBotMenu(int index)
+    {
+        var menuKey = $"{BotMenuPrefix}{index}";
+        _ = NoteDebugLog($"ToggleBotMenu index={index} key={menuKey} openMenuId={openMenuId ?? "null"}");
+        if (openMenuId == menuKey)
+        {
+            CloseMenu();
+        }
+        else
+        {
+            openMenuId = menuKey;
+            _botMenuMessageIndex = index;
+            _ = PositionPopupAtButton($"bot-menu-btn-{index}");
+        }
+    }
+
+    async Task OpenAddToNotesFromMenu(string? menuKey)
+    {
+        await NoteDebugLog($"OpenAddToNotesFromMenu called menuKey={menuKey ?? "null"}");
+
+        if (string.IsNullOrEmpty(menuKey) || !menuKey.StartsWith(BotMenuPrefix, StringComparison.Ordinal))
+        {
+            await NoteDebugLog("ABORT: not a bot menu key");
+            return;
+        }
+
+        if (!int.TryParse(menuKey.AsSpan(BotMenuPrefix.Length), out var index))
+        {
+            await NoteDebugLog("ABORT: could not parse message index from menu key");
+            return;
+        }
+
+        if (index < 0 || index >= messages.Count)
+        {
+            await NoteDebugLog($"ABORT: index {index} out of range (messages.Count={messages.Count})");
+            return;
+        }
+
+        _noteSourceMessage = messages[index];
+        _noteSelectedId = "";
+        _newNoteName = "";
+        _noteTargetId = "";
+        _noteTargetName = "";
+        _noteConfirming = false;
+        _noteShowExisting = false;
+        _noteShowNewInput = false;
+        _noteDialogNotes = new();
+
+        showNewNote = true;
+        await NoteDebugLog($"showNewNote=true, message length={_noteSourceMessage.Content?.Length ?? 0}");
+        StateHasChanged();
+
+        _ = LoadNoteDialogAsync();
+    }
+
+    async Task NoteDebugLog(string message)
+    {
+        Console.WriteLine($"[Chat.AddToNotes] {message}");
+        try { await JS.InvokeVoidAsync("console.log", $"[Chat.AddToNotes] {message}"); } catch { }
+    }
+
+    async Task LoadNoteDialogAsync()
+    {
+        await NoteDebugLog("LoadNoteDialogAsync started");
+        try
+        {
+            _noteDialogNotes = await NoteStore.LoadIndexAsync(JS);
+            await NoteDebugLog($"LoadNoteDialogAsync loaded {_noteDialogNotes.Count} notes");
+        }
+        catch (Exception ex)
+        {
+            await NoteDebugLog($"LoadNoteDialogAsync FAILED: {ex.Message}");
+            _noteDialogNotes = new();
+        }
+
+        if (_noteDialogNotes.Any())
+        {
+            _noteSelectedId = "";
+            _noteShowNewInput = false;
+            _noteShowExisting = true;
+        }
+        else
+        {
+            _noteShowExisting = false;
+            _noteShowNewInput = true;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await NoteDebugLog($"LoadNoteDialogAsync done showExisting={_noteShowExisting} showNewInput={_noteShowNewInput}");
+    }
+
+    void NotePickExisting()
+    {
+        if (string.IsNullOrEmpty(_noteSelectedId)) return;
+        var note = _noteDialogNotes.FirstOrDefault(n => n.Id == _noteSelectedId);
+        _noteTargetId = _noteSelectedId;
+        _noteTargetName = note?.Title ?? "this note";
+        _noteShowExisting = false;
+        _noteConfirming = true;
+        StateHasChanged();
+    }
+
+    void NoteShowNewInput()
+    {
+        _noteShowExisting = false;
+        _noteShowNewInput = true;
+        StateHasChanged();
+    }
+
+    void NoteBackToPicker()
+    {
+        _noteSelectedId = "";
+        _newNoteName = "";
+        _noteShowNewInput = false;
+        _noteShowExisting = true;
+        StateHasChanged();
+    }
+
+    async Task NoteConfirmAdd()
+    {
+        if (_noteSourceMessage == null || string.IsNullOrEmpty(_noteTargetId)) return;
+        var entries = await NoteStore.LoadNoteAsync(JS, _noteTargetId);
+        entries.Add(_noteSourceMessage);
+        await NoteStore.SaveNoteAsync(JS, _noteTargetId, entries);
+        var note = _noteDialogNotes.FirstOrDefault(n => n.Id == _noteTargetId);
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, _noteTargetId, note?.Title ?? _noteTargetName);
+        CloseNewNote();
+    }
+
+    async Task NoteCreateAndSave()
+    {
+        if (_noteSourceMessage == null || string.IsNullOrWhiteSpace(_newNoteName)) return;
+        var id = Guid.NewGuid().ToString();
+        var title = _newNoteName.Trim();
+        await NoteStore.SaveNoteAsync(JS, id, new List<ChatMessage> { _noteSourceMessage });
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, id, title);
+        CloseNewNote();
+    }
+
+    async Task NoteNameKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_newNoteName))
+            await NoteCreateAndSave();
+    }
+
+    void CloseNewNote()
+    {
+        showNewNote = false;
+        _noteSourceMessage = null;
+        _noteShowExisting = false;
+        _noteShowNewInput = false;
+        _noteConfirming = false;
+        _noteSelectedId = "";
+        _newNoteName = "";
+        _noteTargetId = "";
+        _noteTargetName = "";
+        StateHasChanged();
+    }
+
+    private async Task PositionPopupAtButton(string buttonId)
     {
         try
         {
-            var pos = await JS.InvokeAsync<PopupPosition>("getMenuPopupPosition", $"menu-btn-{id}");
+            var pos = await JS.InvokeAsync<PopupPosition>("getMenuPopupPosition", buttonId);
             activePopupStyle = $"position: fixed; top: {pos.top}px; left: {pos.left}px; z-index: 10000;";
             StateHasChanged();
         }

@@ -89,6 +89,20 @@
             };
         };
 
+        // Align popup below the ⋮ button, right edges flush (for bot message menus).
+        window.getBotMenuPopupPosition = function (buttonId) {
+            const btn = document.getElementById(buttonId);
+            if (!btn) return { top: 120, left: 260 };
+            const rect = btn.getBoundingClientRect();
+            const popupWidth = 160;
+            let left = rect.right - popupWidth;
+            if (left < 8) left = 8;
+            return {
+                top: rect.bottom + 2,
+                left: left
+            };
+        };
+
         // --------------------------------------------------------------------
         // AES-GCM helpers for WASM localStorage / IndexedDB encryption and for
         // encrypting live-sync payloads (Brave-style: server does auth + signaling
@@ -175,7 +189,7 @@
         async function getChatfishDb() {
             if (_chatfishDbPromise) return _chatfishDbPromise;
             _chatfishDbPromise = new Promise((resolve, reject) => {
-                const req = indexedDB.open("chatfish-conversations", 1);
+                const req = indexedDB.open("chatfish-conversations", 2);
                 req.onupgradeneeded = (ev) => {
                     const db = ev.target.result;
                     if (!db.objectStoreNames.contains("convoMetas")) {
@@ -187,6 +201,13 @@
                     }
                     if (!db.objectStoreNames.contains("settings")) {
                         db.createObjectStore("settings", { keyPath: "key" });
+                    }
+                    if (!db.objectStoreNames.contains("noteMetas")) {
+                        const nmeta = db.createObjectStore("noteMetas", { keyPath: "key" });
+                        nmeta.createIndex("byNamespace", "namespace", { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains("noteContents")) {
+                        db.createObjectStore("noteContents", { keyPath: "key" });
                     }
                 };
                 req.onsuccess = () => resolve(req.result);
@@ -288,6 +309,73 @@
             const b64 = btoa(String.fromCharCode.apply(null, bytes));
             await window.idbPutSetting("guest-encryption-key", b64);
             return b64;
+        };
+
+        // --------------------------------------------------------------------
+        // IndexedDB helpers for Notes (noteMetas + noteContents stores)
+        // Parallel to convoMetas/convoContents but keyed with "n-" prefix.
+        // --------------------------------------------------------------------
+        window.idbGetNoteMetasByNamespace = async (namespace) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteMetas", "readonly");
+                const store = tx.objectStore("noteMetas");
+                const idx = store.index("byNamespace");
+                const req = idx.getAll(namespace || "");
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutNoteMeta = async (meta) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteMetas", "readwrite");
+                tx.objectStore("noteMetas").put(meta);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetNoteContent = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteContents", "readonly");
+                const req = tx.objectStore("noteContents").get(key);
+                req.onsuccess = () => resolve(req.result ? req.result.content : null);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutNoteContent = async (key, content) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteContents", "readwrite");
+                tx.objectStore("noteContents").put({ key, content });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteNoteByKey = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(["noteMetas", "noteContents"], "readwrite");
+                tx.objectStore("noteMetas").delete(key);
+                tx.objectStore("noteContents").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetAllNoteMetas = async () => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteMetas", "readonly");
+                const req = tx.objectStore("noteMetas").getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(tx.error);
+            });
         };
 
         // --------------------------------------------------------------------

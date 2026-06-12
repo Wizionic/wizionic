@@ -252,6 +252,21 @@ Primary goals:
   - Cloud providers still fully supported (keys in SecureStorage).
   - This pairs perfectly with the powerful local tools and browser context (fast, private, free, works offline for the model if the model is local).
 
+- Openshell Integration
+  - https://github.com/NVIDIA/OpenShell
+  - installer to optionally detect and use OpenShell if present — similar to how apps optionally use Windows Hello if available
+  - openshell-policy.yaml bundled with chatfish installer
+    - inference:
+      - local:
+      - provider: ollama
+      - endpoint: http://localhost:11434
+    - cloud:
+      - provider: openrouter
+      - pii_masking: true
+      - fallback_only: true
+  
+
+
 - **AI visibility into browser tabs + Agentic web browsing control (the exciting new capability; primary realization of old Phase 5 "browser awareness" + "MCP client + browser extension for tab awareness", made far more powerful and integrated):**
   - Build a `IBrowserContext` / platform bridge (injected into the shared tool provider or as additional context for the chat).
   - From the `BlazorWebView` (or the underlying platform WebView / WebView2), expose live state of the embedded browser: current URL, title, clean text content or HTML of the page, list of open tabs (if the hybrid shell supports multi-tab web browsing), etc.
@@ -297,7 +312,7 @@ Primary goals:
 ---
 
 ## Implementation Strategy & Cross-Cutting Work
-
+- Leverage Microsoft.Extensions.AI wherever possible
 - **Abstractions first (the key that unlocks everything):** Before heavy target-specific work, introduce `IUserContext` (replaces direct HttpContext/claims everywhere), `IChatHistoryStore` (client-local default impl for WASM/MAUI targets; the pure server target keeps server DB for chats), `IKeyStore`, `IBrowserContext` (stub/no-op in web targets, full WebView impl in MAUI), and make `IToolProvider` / tool registration easy to extend with target-specific tools. Refactor the existing services and pages to the interfaces. This makes adding WASM and MAUI clean instead of forks. (The server target may keep its current server chat persistence for hosted convenience.)
 - Recommended sequence (so hosted value continues while we build the future):
   1. Core multi-provider work (including groundwork for local models like Ollama) + server target 1 updates (abstractions for user context and keys; keep server-side chat history for hosted account convenience).
@@ -309,17 +324,6 @@ Primary goals:
 - Docs: This `ROADMAP.md` remains the single source (rendered by the web targets' `/roadmap`; MAUI app includes it too via the shared renderer or a native page). Possibly add target-specific "getting started" notes later.
 - ...
 
-## Phase Remapping Notes (for continuity)
-
-- Old Phases 1, 2, 3, 6 → moved into **Core Shared Capabilities** (full task lists preserved, delivered items stay strikethrough-marked, added notes on target differences for storage, Ollama ease, tool surface, vision capture).
-- Old Phase 4 (WASM + Encrypted LocalStorage + Cross-Device Sync) → primary detailed home in **part 2**, with clear applicability and reuse notes for part 3.
-- Old Phase 5 (MCP Client + Browser Awareness + MCP Servers) → high-level concepts in Core; the concrete, high-value implementation of browser tab awareness + agentic control lives in **part 3** (WebView). Lighter versions or extension ideas can still be noted for web targets.
-- All prior "Future extensions", "Why here?", efforts, and dependencies are carried forward under the appropriate new headings.
-- Delivered work (OpenRouter, Gemini, tool wiring, etc.) remains clearly marked as delivered in the Core section.
-
-**Last updated:** July 2026 (Restructured around the three parts; removed Ollama from pure Interactive Server target 1; clarified that full local chat history (never on server, LocalStorage/device storage) is delivered in the WASM phase (target 2) and MAUI (target 3), while the hosted server target keeps server-side chats for account convenience. All prior phase details correctly placed; local-only history and browser visibility emphasized for the client targets.)
-
-**Maintained in:** `ROADMAP.md` (the source of truth) + `Pages/Roadmap.razor` (for web targets 1 and 2); the MAUI app (target 3) will include the roadmap content (via the shared renderer or a dedicated page).
 
 **Notes:**
 - Grok / xAI OAuth integration has been deprioritized for now. It may be revisited later once the product is more mature and after requesting an official client_id from xAI.

@@ -18,6 +18,7 @@ builder.Services.AddScoped<ChatfishApp.Client.Services.WasmSyncService>();
 // These must be Scoped because they depend on HttpClient (which is Scoped in Blazor WASM).
 // Using Scoped here is fine and common in WASM apps — they live for the lifetime of the WASM app.
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmConversationStore>();
+builder.Services.AddScoped<ChatfishApp.Client.Services.WasmNoteStore>();
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmAuthService>();
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmCryptoService>();
 
