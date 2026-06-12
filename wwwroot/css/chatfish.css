@@ -684,6 +684,17 @@ a:hover {
     align-items: center;
 }
 
+.top-row-right a,
+.top-row > div:last-child a {
+    border-radius: var(--radius-md);
+    transition: background 0.2s ease;
+}
+
+.top-row-right a:hover,
+.top-row > div:last-child a:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
 .top-row-right a i,
 .top-row-right a .bi,
 .top-row > div:last-child a i,
@@ -941,6 +952,17 @@ body .top-left,
     text-decoration: none !important;
     display: flex !important;
     align-items: center !important;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    border-radius: var(--radius-md) !important;
+    transition: background 0.2s ease !important;
+}
+
+.top-row-right a:hover,
+.top-row > div:last-child a:hover {
+    background: rgba(0, 0, 0, 0.05) !important;
 }
 
 .top-row-right a i,
