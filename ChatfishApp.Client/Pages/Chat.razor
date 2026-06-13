@@ -187,24 +187,6 @@
             <!-- === COMPACT SEAMLESS INPUT BAR === -->
             <div class="input-area">
                 <div class="input-container">
-                    <!-- Plus menu replaced New Chat (new chat is in sidebar). Opens attach actions. -->
-                    <div style="position: relative; display: inline-block;">
-                        <button class="action-btn" @onclick:stopPropagation @onclick="ToggleAttachMenu" title="Attach file or more">
-                            <i class="bi bi-plus-circle"></i>
-                        </button>
-
-                        @if (showAttachMenu)
-                        {
-                            <div class="menu-popup" style="position: absolute; bottom: 100%; left: 0; margin-bottom: 4px; min-width: 160px;" @onclick:stopPropagation>
-                                <div @onclick="async () => { showAttachMenu = false; await TriggerFileUpload(); }">
-                                    <i class="bi bi-upload" style="margin-right:4px;"></i> Upload a file
-                                </div>
-                                <!-- Future items (e.g. from URL, camera) can go here -->
-                            </div>
-                            <div class="menu-overlay" @onclick="() => showAttachMenu = false"></div>
-                        }
-                    </div>
-
                     <div class="message-wrapper flex-grow-1">
                         @if (pendingFiles.Any())
                         {
@@ -237,38 +219,59 @@
                         }
 
                         <textarea @ref="messageTextarea"
-                                  @bind="message"
-                                  @onkeydown="HandleKey"
-                                  @oninput="ResizeTextarea"
+                                  id="chat-message-input"
                                   placeholder="Message ChatFish..."
                                   class="message-input"
-                                  rows="3" />
+                                  rows="3"></textarea>
                     </div>
 
-                    <select @bind="selectedModel" @bind:after="OnSelectedModelChanged" class="model-selector">
-                        @foreach (var group in modelList.GroupBy(m => m.ProviderName))
+                    <div class="input-toolbar">
+                        <!-- Plus menu replaced New Chat (new chat is in sidebar). Opens attach actions. -->
+                        <div class="attach-btn-wrap">
+                            <button class="action-btn" @onclick:stopPropagation @onclick="ToggleAttachMenu" title="Attach file or more">
+                                <i class="bi bi-plus-circle"></i>
+                            </button>
+
+                            @if (showAttachMenu)
+                            {
+                                <div class="menu-popup" style="position: absolute; bottom: 100%; left: 0; margin-bottom: 4px; min-width: 160px;" @onclick:stopPropagation>
+                                    <div @onclick="async () => { showAttachMenu = false; await TriggerFileUpload(); }">
+                                        <i class="bi bi-upload" style="margin-right:4px;"></i> Upload a file
+                                    </div>
+                                    <!-- Future items (e.g. from URL, camera) can go here -->
+                                </div>
+                                <div class="menu-overlay" @onclick="() => showAttachMenu = false"></div>
+                            }
+                        </div>
+
+                        <select @bind="selectedModel" @bind:after="OnSelectedModelChanged" class="model-selector">
+                            @foreach (var group in modelList.GroupBy(m => m.ProviderName))
+                            {
+                                <optgroup label="@group.Key">
+                                    @foreach (var m in group)
+                                    {
+                                        <option value="@m.Id">@m.Icon @m.Label</option>
+                                    }
+                                </optgroup>
+                            }
+                        </select>
+
+                        @if (CurrentModelSupportsTools)
                         {
-                            <optgroup label="@group.Key">
-                                @foreach (var m in group)
-                                {
-                                    <option value="@m.Id">@m.Icon @m.Label</option>
-                                }
-                            </optgroup>
+                            <i class="bi bi-tools capability-icon" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information."></i>
                         }
-                    </select>
+                        @if (CurrentModelSupportsVision)
+                        {
+                            <i class="bi bi-image capability-icon" title="This model supports vision (images and PDFs). Upload files using the + menu to have the model analyze them."></i>
+                        }
 
-                    @if (CurrentModelSupportsTools)
-                    {
-                        <i class="bi bi-tools" style="font-size:0.9em; color:#888; margin-left:0.4rem; cursor:default;" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information."></i>
-                    }
-                    @if (CurrentModelSupportsVision)
-                    {
-                        <i class="bi bi-image" style="font-size:0.9em; color:#888; margin-left:0.4rem; cursor:default;" title="This model supports vision (images and PDFs). Upload files using the + menu to have the model analyze them."></i>
-                    }
-
-                    <button class="send-btn" @onclick="Send" disabled="@(isSending || (string.IsNullOrWhiteSpace(message) && !pendingFiles.Any()))">
-                        <i class="bi bi-arrow-up-circle-fill"></i>
-                    </button>
+                        <button id="chat-send-btn"
+                                class="send-btn"
+                                @onclick="Send"
+                                disabled="@isSending">
+                            <i class="bi bi-arrow-up-circle-fill"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Hidden file picker for attachments (triggered by the + menu) -->
@@ -380,7 +383,6 @@
 
 @code {
     string currentUser = "LocalUser";
-    string message = "";
     string selectedModel = ""; // will be set to a valid model from the current list in OnInitializedAsync
     bool isTyping = false;
     bool isSending = false;
@@ -413,6 +415,7 @@
     private ElementReference chatContainer;
     private ElementReference messageTextarea;
     private bool _hasRendered = false;
+    private bool _pendingScroll = false;
 
     private DotNetObjectReference<object>? dotNetRef;
 
@@ -690,21 +693,11 @@
         activeConvoId = id;
         messages = await ConversationStore.LoadConversationAsync(JS, id);
         pendingFiles.Clear();
+        RequestScrollToBottom();
         StateHasChanged();
-        await ScrollToBottom();
     }
 
-    async Task HandleKey(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter" && !e.ShiftKey && !isSending)
-            await Send();
-    }
-
-    async Task ResizeTextarea()
-    {
-        try { await JS.InvokeVoidAsync("resizeChatTextarea", messageTextarea); }
-        catch { }
-    }
+    void RequestScrollToBottom() => _pendingScroll = true;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -713,6 +706,17 @@
 
         if (firstRender)
         {
+            try
+            {
+                var collapsedForMobile = await JS.InvokeAsync<bool>("initWasmSidebarForViewport");
+                if (collapsedForMobile)
+                {
+                    SidebarState.IsCollapsed = true;
+                    StateHasChanged();
+                }
+            }
+            catch { /* ignore if host script not ready */ }
+
             dotNetRef = DotNetObjectReference.Create<object>(this);
 
             // Register helper (array buffer to base64)
@@ -785,21 +789,27 @@
             ");
 
             await JS.InvokeVoidAsync("setupChatImagePaste", dotNetRef, messageTextarea);
+            await JS.InvokeVoidAsync("setupChatEnterToSend", messageTextarea);
         }
 
-        if (firstRender || messages.Any() || isTyping)
-            await ScrollToBottom();
+        if (_pendingScroll)
+        {
+            _pendingScroll = false;
+            await Task.Delay(80);
+            try { await JS.InvokeVoidAsync("scrollChatToBottom"); } catch { }
+        }
     }
 
     async Task Send()
     {
-        if (isSending || (string.IsNullOrWhiteSpace(message) && !pendingFiles.Any()))
+        string currentMessage = "";
+        try { currentMessage = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
+        catch { /* ignore */ }
+
+        if (isSending || (string.IsNullOrWhiteSpace(currentMessage) && !pendingFiles.Any()))
             return;
 
         isSending = true;
-
-        var currentMessage = message;
-        message = "";
 
         if (string.IsNullOrEmpty(activeConvoId))
         {
@@ -817,6 +827,7 @@
         messages.Add(new ChatMessage(Role: "assistant", Content: "", ModelUsed: selectedModel, Timestamp: DateTime.UtcNow));
 
         isTyping = true;
+        RequestScrollToBottom();
         StateHasChanged();
 
         await KeyStore.SetLastSelectedModelAsync(JS, selectedModel);
@@ -831,8 +842,8 @@
             var currentTs = messages[botIndex].Timestamp;
             messages[botIndex] = new ChatMessage(Role: "assistant", Content: accumulated, ModelUsed: currentModel, Timestamp: currentTs, ToolTrace: _pendingToolTrace);
             _pendingToolTrace = ""; // consumed
+            RequestScrollToBottom();
             StateHasChanged();
-            await ScrollToBottom();
 
             // Save to local
             await SaveCurrentConvo();
@@ -843,7 +854,7 @@
             isSending = false;
             pendingFiles.Clear();   // attachments consumed into the saved user message
             try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
-            await ScrollToBottom();
+            RequestScrollToBottom();
             StateHasChanged();
         }
     }
@@ -890,10 +901,9 @@
         messages.Clear();
         pendingFiles.Clear();
         isTyping = false;
-        message = "";
         try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        RequestScrollToBottom();
         StateHasChanged();
-        await ScrollToBottom();
         await SaveCurrentConvo();
     }
 
@@ -908,13 +918,9 @@
 
     async Task ScrollToBottom()
     {
-        if (!_hasRendered) return;
-        await Task.Delay(80);
-        try
-        {
-            await JS.InvokeVoidAsync("scrollChatToBottom");
-        }
-        catch { }
+        RequestScrollToBottom();
+        if (_hasRendered)
+            await InvokeAsync(StateHasChanged);
     }
 
     string FormatMessage(string raw)

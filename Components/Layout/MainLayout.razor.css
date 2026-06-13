@@ -101,6 +101,7 @@ main {
     display: flex;
     align-items: center;
     gap: var(--space-11); /* spacing between fish + toggle */
+    margin-left: 200px;
 }
 
 /* ----------------------------------------

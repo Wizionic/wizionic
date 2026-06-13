@@ -32,18 +32,33 @@
             }
         };
 
-        window.resizeChatTextarea = (el) => {
-            if (!el) return;
-            el.style.height = 'auto';
-            const minH = 86;
-            const maxH = 110;
-            const target = Math.max(minH, Math.min(el.scrollHeight, maxH));
-            el.style.height = target + 'px';
-        };
+        window.isMobileViewport = () => window.innerWidth <= 640.98;
+
+        window.getChatTextareaValue = (el) => (el && typeof el.value === 'string') ? el.value : '';
 
         window.resetChatTextarea = (el) => {
             if (!el) return;
-            el.style.height = '86px';
+            el.value = '';
+        };
+
+        // Enter sends; Shift+Enter adds a newline. No work on ordinary keystrokes.
+        window.setupChatEnterToSend = function (textareaEl) {
+            if (!textareaEl || textareaEl.__chatfishEnterBound) return;
+            textareaEl.__chatfishEnterBound = true;
+            textareaEl.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' && !ev.shiftKey) {
+                    ev.preventDefault();
+                    const btn = document.getElementById('chat-send-btn');
+                    if (btn) btn.click();
+                }
+            });
+        };
+
+        // On mobile, start with the conversation sidebar collapsed so chat content is full width.
+        window.initWasmSidebarForViewport = function () {
+            if (!window.isMobileViewport()) return false;
+            window.toggleWasmSidebar(true);
+            return true;
         };
 
         // WASM sidebar toggle (for /chat page). Button + handler colocated in Chat.razor (owns the .page).
