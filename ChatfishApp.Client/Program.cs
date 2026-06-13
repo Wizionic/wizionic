@@ -27,14 +27,16 @@ builder.Services.AddScoped<ChatfishApp.Client.Services.WasmCryptoService>();
 builder.Services.AddSingleton<ChatfishApp.Client.Services.Mcp.McpToolSource>();
 builder.Services.AddSingleton<ChatfishApp.Services.Tools.IToolProvider, ChatfishApp.Services.Tools.DefaultToolProvider>();
 
-// Configure the static HttpClient used by the WASM-side AppTools (for the proxied web-search and summarize-url).
-// Setting BaseAddress ensures relative calls like "/api/tools/..." resolve to the host server
-// (important for the tool proxy to work reliably from the browser).
-ChatfishApp.Services.Tools.AppTools.HttpClient = new HttpClient
+// Configure static HttpClients for same-origin server proxies (tools + AI providers).
+// Setting BaseAddress ensures relative calls like "/api/tools/..." and "/api/proxy/..." resolve
+// to the host server (important for the proxies to work reliably from the browser).
+var serverProxyHttp = new HttpClient
 {
     BaseAddress = new Uri(builder.HostEnvironment.BaseAddress),
-    Timeout = TimeSpan.FromSeconds(30)
+    Timeout = TimeSpan.FromMinutes(10)
 };
+ChatfishApp.Services.Tools.AppTools.HttpClient = serverProxyHttp;
+ChatfishApp.Client.Services.WasmAiProviderService.ProxyHttp = serverProxyHttp;
 
 var host = builder.Build();
 
@@ -45,8 +47,10 @@ var host = builder.Build();
 // will be received in the background and persisted automatically.
 var authService = host.Services.GetRequiredService<WasmAuthService>();
 var syncService = host.Services.GetRequiredService<WasmSyncService>();
+var aiProvider = host.Services.GetRequiredService<WasmAiProviderService>();
 
 await authService.LoadAsync();
+await aiProvider.RefreshProxiedProvidersAsync();
 await syncService.InitializeAsync();
 
 if (authService.IsAuthenticated)

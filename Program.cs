@@ -79,6 +79,14 @@ builder.Services.PostConfigure<EmailOptions>(opts =>
 // These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
 builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
 
+// CORS-restricted AI providers (e.g. Zyphra) — proxied through the backend using server-side keys.
+builder.Services.Configure<AiProviderProxyOptions>(builder.Configuration.GetSection(AiProviderProxyOptions.SectionName));
+builder.Services.AddHttpClient("ai-proxy", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(10);
+});
+builder.Services.AddSingleton<AiProviderProxyService>();
+
 // Shared state for WASM sidebar toggle (used by WasmTopBar in WasmLayout for /chat etc.)
 // Must be registered here (main app DI) so that server-side rendering of WASM pages (layout + topbar)
 // can provide the service. The Client's DI also registers it for the interactive WASM runtime.
@@ -201,6 +209,12 @@ app.UseForwardedHeaders();
     }
 }
 
+// Proxied AI provider diagnostics (keys are never logged).
+{
+    using var scope = app.Services.CreateScope();
+    scope.ServiceProvider.GetRequiredService<AiProviderProxyService>().LogStartupDiagnostics();
+}
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -267,6 +281,7 @@ app.MapGet("/logout", async (HttpContext ctx) =>
 // WASM client APIs (kept in WasmApiEndpoints.cs so Program.cs stays small).
 // All under /api + cookie auth. See Apis/WasmApiEndpoints.cs for the implementations.
 app.MapWasmApis();
+app.MapAiProxyApis();
 
 // Live device presence + future WebRTC signaling hub for authenticated WASM clients.
 // The hub itself is marked [Authorize] and relies on the ChatfishAuth cookie

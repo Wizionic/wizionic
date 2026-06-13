@@ -1,0 +1,61 @@
+---
+pid: 23512
+cwd: "C:\Users\danie\src\chatfish-local"
+command: "$env:ZYPHRA_API_KEY = \"test-key\"; dotnet run --project \"C:\\Users\\danie\\src\\chatfish-local\\ChatfishApp.csproj\" --no-build 2>&1"
+started_at: 2026-06-13T02:00:01.207Z
+running_for_ms: 5364990  
+---
+Using launch settings from C:\Users\danie\src\chatfish-local\Properties\launchSettings.json...
+[Email] SMTP configured: host=smtp-relay.brevo.com port=465 hasUser=True hasPass=True user="ad9c81001@smtp-brevo.com" from=no-reply@chatfish.me
+[Email] LIVE ENV AT STARTUP: Email__SmtpUser='ad9c81001@smtp-brevo.com' | Email__SmtpPass len=90 preview=xsmt...79Bb (fromEnv user:True pass:True)
+[Brevo] Configured: from=no-reply@chatfish.me senderName=Chatfish keyPresent=True keyLen=89 preview=xkey...pd85
+info: ChatfishApp.Services.AiProviderProxyService[0]
+      [AiProxy] Provider zyphra (Zyphra Cloud): baseUrl=https://api.zyphracloud.com/api/v1/ keyConfigured=True models=1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (8ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode=WAL;
+info: Microsoft.EntityFrameworkCore.Migrations[20411]
+      Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsLock' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (5ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      INSERT OR IGNORE INTO "__EFMigrationsLock"("Id", "Timestamp") VALUES(1, '2026-06-13 02:00:04.0542337+00:00');
+      SELECT changes();
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+          "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
+          "ProductVersion" TEXT NOT NULL
+      );
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsHistory' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "MigrationId", "ProductVersion"
+      FROM "__EFMigrationsHistory"
+      ORDER BY "MigrationId";
+info: Microsoft.EntityFrameworkCore.Migrations[20405]
+      No migrations were applied. The database is already up to date.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      DELETE FROM "__EFMigrationsLock";
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode=WAL;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "d"."Id", "d"."FriendlyName", "d"."Xml"
+      FROM "DataProtectionKeys" AS "d"
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5136
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\danie\src\chatfish-local
+warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+      Failed to determine the https port for redirect.

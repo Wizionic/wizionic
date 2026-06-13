@@ -135,10 +135,10 @@ public static class AppTools
     /// <summary>
     /// Get current weather or a short-term forecast using the free Open-Meteo API (no key required). Provide approximate lat/long for the place.
     /// </summary>
-    [Description("Get current weather or a forecast for a geographic location. Supports current conditions and daily forecasts up to 7 days. Call this when the user asks about the weather for today, tomorrow, or the next few days for a specific place.")]
+    [Description("Get real-time current weather or a forecast via the free Open-Meteo API. You HAVE live weather access when you call this tool — use it for weather questions instead of saying you cannot check. Provide latitude/longitude (approximate coords are fine for named cities, e.g. Santa Cruz, CA ≈ 36.97, -122.03; or SearchWeb first to find coordinates if unsure). Supports current conditions and daily forecasts up to 7 days.")]
     public static async Task<string> GetCurrentWeather(
-        [Description("Latitude, e.g. 27.34 for Englewood, Florida")] double latitude,
-        [Description("Longitude, e.g. -82.26 for Englewood, Florida")] double longitude,
+        [Description("Latitude, e.g. 36.97 for Santa Cruz, CA")] double latitude,
+        [Description("Longitude, e.g. -122.03 for Santa Cruz, CA")] double longitude,
         [Description("Temperature unit: 'celsius' (default) or 'fahrenheit'")] string units = "celsius",
         [Description("Number of forecast days (0 = current only, 1-7 for daily forecast including tomorrow). Default 0.")] int forecastDays = 0)
     {

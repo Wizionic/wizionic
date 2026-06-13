@@ -13,7 +13,7 @@ Core Goals
 4) Add the best tool use possible for the AI to use including MCP
 5) Low cost Cloud AI :  When cloud AI services are used, emphasize the ones that are free or low cost
 6) Keep Hosting costs down :  Store as little as possible on the server and use client technologies where possible
-7) Frictionless setup :  Some configuration is needed for setup but always make it is easy as possible to start using
+7) Frictionless setup :  Some configuration is needed for setup but always make it is easy as possible to start using.  Add free local hosted ollam on my server for better frictionless setup.
 
  It is delivered through three distinct parts:
 

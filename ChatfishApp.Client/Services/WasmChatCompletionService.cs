@@ -47,6 +47,7 @@ public class WasmChatCompletionService
         bool supportsTools = modelInfo?.SupportsTools ?? ProviderCatalog.GetCapabilitiesForModel(modelId).SupportsTools;
         bool supportsVision = modelInfo?.SupportsVision ?? ProviderCatalog.GetCapabilitiesForModel(modelId).SupportsVision;
 
+
         try
         {
             var chatHistory = BuildChatHistory(messages, currentUser, supportsVision);
@@ -79,14 +80,11 @@ public class WasmChatCompletionService
                 {
                     var response = await client.GetResponseAsync(chatHistory, chatOptions ?? new ChatOptions(), ct);
 
-                    var toolTrace = string.Join("\n", ChatfishApp.Services.Tools.ToolExecutionTrace.GetCurrentTrace());
-
-                    var responseText = response.Text ?? "";
+                    var reasoningTrace = CollectReasoningTrace(response);
+                    var responseText = ExtractFinalDisplayText(response);
                     string? extractSource = null;
 
-                    // Ollama reasoning models put answers in a "reasoning" JSON field the OpenAI SDK drops.
-                    // Query Ollama directly (raw JSON) before any heuristic JSON mining that can mis-read
-                    // fields like reasoning_effort: 0 as the literal answer "0".
+                    // Local Ollama only: raw JSON fallback when content is empty (proxied Ollama uses ServerProxyChatClient).
                     if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase) &&
                         (string.IsNullOrWhiteSpace(responseText) || IsBogusExtractedText(responseText)))
                     {
@@ -102,7 +100,7 @@ public class WasmChatCompletionService
 
                     if (string.IsNullOrWhiteSpace(responseText))
                     {
-                        var (extracted, source) = ExtractResponseText(response);
+                        var (extracted, source) = ExtractContentOnlyFromResponse(response);
                         if (!string.IsNullOrWhiteSpace(extracted) && !IsBogusExtractedText(extracted))
                         {
                             responseText = extracted;
@@ -113,7 +111,14 @@ public class WasmChatCompletionService
                     if (!string.IsNullOrWhiteSpace(extractSource))
                         ChatfishApp.Services.Tools.ToolExecutionTrace.Record($"ℹ️ Extracted final response from {extractSource}.");
 
-                    toolTrace = string.Join("\n", ChatfishApp.Services.Tools.ToolExecutionTrace.GetCurrentTrace());
+                    var toolTrace = string.Join("\n", ChatfishApp.Services.Tools.ToolExecutionTrace.GetCurrentTrace());
+                    if (!string.IsNullOrWhiteSpace(reasoningTrace))
+                    {
+                        toolTrace = string.IsNullOrWhiteSpace(toolTrace)
+                            ? $"💭 Model reasoning:\n{reasoningTrace}"
+                            : $"💭 Model reasoning:\n{reasoningTrace}\n\n{toolTrace}";
+                    }
+
                     var text = string.IsNullOrWhiteSpace(responseText) ? "No response." : responseText;
                     return new ChatCompletionResult(text, toolTrace, null);
                 }
@@ -201,47 +206,109 @@ public class WasmChatCompletionService
     }
 
     /// <summary>
-    /// Ollama reasoning models (e.g. LFM 2.5) often return an empty standard "content" field
-    /// and put the user-visible answer in "reasoning" / "reasoning_content". ME.AI's response.Text
-    /// only sees standard content, so we fall back through several extraction paths.
+    /// User-visible answer from the last assistant turn (no pending tool calls).
+    /// Prefers content; falls back to reasoning only on that final turn (thinking models like lfm2.5).
+    /// Intermediate tool-planning reasoning stays out of the bubble — see CollectReasoningTrace.
     /// </summary>
-    private static (string Text, string? Source) ExtractResponseText(ChatResponse response)
+    private static string ExtractFinalDisplayText(ChatResponse response)
     {
-        if (!string.IsNullOrWhiteSpace(response.Text))
-            return (response.Text, null);
-
         if (response.Messages != null)
         {
-            foreach (var msg in response.Messages.Where(m => m.Role == ChatRole.Assistant).Reverse())
+            var finalMsg = response.Messages
+                .Where(m => m.Role == ChatRole.Assistant)
+                .Reverse()
+                .FirstOrDefault(m => !m.Contents.OfType<FunctionCallContent>().Any());
+
+            if (finalMsg != null)
             {
-                var (text, source) = ExtractTextFromAssistantMessage(msg);
+                var text = string.Join("\n",
+                    finalMsg.Contents
+                        .OfType<TextContent>()
+                        .Select(t => t.Text)
+                        .Where(t => !string.IsNullOrWhiteSpace(t)));
+
                 if (!string.IsNullOrWhiteSpace(text))
-                    return (text, source);
+                    return text.Trim();
+
+                var reasoning = GetReasoningFromMessage(finalMsg);
+                if (!string.IsNullOrWhiteSpace(reasoning))
+                    return reasoning.Trim();
             }
         }
 
-        var fromRaw = TryExtractReasoningFieldFromObject(response.RawRepresentation);
+        var fromRaw = TryExtractContentFieldFromObject(response.RawRepresentation);
         if (!string.IsNullOrWhiteSpace(fromRaw))
-            return (fromRaw!, "raw response");
+            return fromRaw!;
 
-        var fromResponse = TryExtractReasoningFieldFromObject(response);
-        if (!string.IsNullOrWhiteSpace(fromResponse))
-            return (fromResponse!, "serialized response");
+        if (!ResponseRawHasToolCalls(response.RawRepresentation))
+        {
+            var fromRawReasoning = TryExtractReasoningFieldFromObject(response.RawRepresentation);
+            if (!string.IsNullOrWhiteSpace(fromRawReasoning))
+                return fromRawReasoning.Trim();
+        }
 
-        return ("", null);
+        var fallback = response.Text?.Trim();
+        return string.IsNullOrWhiteSpace(fallback) ? "" : fallback;
     }
 
-    private static (string Text, string? Source) ExtractTextFromAssistantMessage(AiChatMessage msg)
+    /// <summary>
+    /// Collects model chain-of-thought from all assistant turns for the collapsible trace (not main chat).
+    /// </summary>
+    private static string CollectReasoningTrace(ChatResponse response)
     {
-        var contentText = string.Join("\n",
-            msg.Contents
-                .OfType<TextContent>()
-                .Select(t => t.Text)
-                .Where(t => !string.IsNullOrWhiteSpace(t)));
+        var parts = new List<string>();
+        var displayText = ExtractFinalDisplayText(response);
 
-        if (!string.IsNullOrWhiteSpace(contentText))
-            return (contentText, "message content");
+        if (response.Messages != null)
+        {
+            var assistantMsgs = response.Messages.Where(m => m.Role == ChatRole.Assistant).ToList();
+            int step = 0;
 
+            for (int i = 0; i < assistantMsgs.Count; i++)
+            {
+                var msg = assistantMsgs[i];
+                bool isFinalTurn = i == assistantMsgs.Count - 1 && !msg.Contents.OfType<FunctionCallContent>().Any();
+
+                var reasoning = GetReasoningFromMessage(msg);
+                if (string.IsNullOrWhiteSpace(reasoning))
+                    continue;
+
+                // Final-turn reasoning is shown in the chat bubble when content is empty; skip duplicating it here.
+                if (isFinalTurn && string.Equals(reasoning.Trim(), displayText.Trim(), StringComparison.Ordinal))
+                    continue;
+
+                step++;
+                parts.Add(step > 1 ? $"[Step {step}]\n{reasoning}" : reasoning);
+            }
+        }
+
+        return string.Join("\n\n", parts);
+    }
+
+    private static bool ResponseRawHasToolCalls(object? raw)
+    {
+        if (raw == null) return false;
+        try
+        {
+            var json = JsonSerializer.Serialize(raw);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("choices", out var choices)) return false;
+            foreach (var choice in choices.EnumerateArray())
+            {
+                if (choice.TryGetProperty("message", out var message) &&
+                    message.TryGetProperty("tool_calls", out var tc) &&
+                    tc.ValueKind == JsonValueKind.Array &&
+                    tc.GetArrayLength() > 0)
+                    return true;
+            }
+        }
+        catch { /* ignore */ }
+
+        return false;
+    }
+
+    private static string? GetReasoningFromMessage(AiChatMessage msg)
+    {
         if (msg.AdditionalProperties != null)
         {
             foreach (var key in new[] { "reasoning", "reasoning_content", "reasoning_text" })
@@ -250,17 +317,91 @@ public class WasmChatCompletionService
                 {
                     var s = CoerceToString(val);
                     if (!string.IsNullOrWhiteSpace(s))
-                        return (s!, $"field '{key}'");
+                        return s;
+                }
+            }
+        }
+
+        return TryExtractReasoningFieldFromObject(msg.RawRepresentation);
+    }
+
+    /// <summary>
+    /// Fallback extraction using only the standard content field (never reasoning).
+    /// </summary>
+    private static (string Text, string? Source) ExtractContentOnlyFromResponse(ChatResponse response)
+    {
+        if (response.Messages != null)
+        {
+            foreach (var msg in response.Messages.Where(m => m.Role == ChatRole.Assistant).Reverse())
+            {
+                if (msg.Contents.OfType<FunctionCallContent>().Any())
+                    continue;
+
+                var contentText = string.Join("\n",
+                    msg.Contents
+                        .OfType<TextContent>()
+                        .Select(t => t.Text)
+                        .Where(t => !string.IsNullOrWhiteSpace(t)));
+
+                if (!string.IsNullOrWhiteSpace(contentText))
+                    return (contentText, "message content");
+            }
+        }
+
+        var fromRaw = TryExtractContentFieldFromObject(response.RawRepresentation);
+        if (!string.IsNullOrWhiteSpace(fromRaw))
+            return (fromRaw!, "raw response content");
+
+        return ("", null);
+    }
+
+    private static string? TryExtractContentFieldFromObject(object? raw)
+    {
+        if (raw == null) return null;
+
+        try
+        {
+            var json = JsonSerializer.Serialize(raw);
+            using var doc = JsonDocument.Parse(json);
+            return FindContentStringInJson(doc.RootElement);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? FindContentStringInJson(JsonElement element, int depth = 0)
+    {
+        if (depth > 12) return null;
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var choice in choices.EnumerateArray())
+                {
+                    if (!choice.TryGetProperty("message", out var message)) continue;
+                    if (message.TryGetProperty("content", out var contentEl) &&
+                        contentEl.ValueKind == JsonValueKind.String)
+                    {
+                        var s = contentEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(s))
+                            return s;
+                    }
                 }
             }
 
+            if (element.TryGetProperty("content", out var directContent) &&
+                directContent.ValueKind == JsonValueKind.String)
+            {
+                var s = directContent.GetString();
+                if (!string.IsNullOrWhiteSpace(s))
+                    return s;
+            }
         }
 
-        var fromRaw = TryExtractReasoningFieldFromObject(msg.RawRepresentation);
-        if (!string.IsNullOrWhiteSpace(fromRaw))
-            return (fromRaw!, "message raw representation");
-
-        return ("", null);
+        return null;
     }
 
     private static string? TryExtractReasoningFieldFromObject(object? raw)
