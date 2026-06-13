@@ -245,7 +245,7 @@
                                   rows="3" />
                     </div>
 
-                    <select @bind="selectedModel" class="model-selector">
+                    <select @bind="selectedModel" @bind:after="OnSelectedModelChanged" class="model-selector">
                         @foreach (var group in modelList.GroupBy(m => m.ProviderName))
                         {
                             <optgroup label="@group.Key">
@@ -522,11 +522,41 @@
 
     private void EnsureValidModelSelection()
     {
-        bool hasValidSelection = !string.IsNullOrEmpty(selectedModel) &&
-                                 modelList.Any(m => m.Id == selectedModel);
+        if (!modelList.Any())
+        {
+            selectedModel = "";
+            return;
+        }
 
-        if (!hasValidSelection && modelList.Any())
-            selectedModel = modelList.First().Id;
+        if (IsModelInList(selectedModel))
+            return;
+
+        var savedModel = KeyStore.LastSelectedModel;
+        if (IsModelInList(savedModel))
+        {
+            selectedModel = savedModel;
+            return;
+        }
+
+        var configuredDefault = AiProviderService.GetConfiguredDefaultModelId(modelList);
+        if (!string.IsNullOrEmpty(configuredDefault))
+        {
+            selectedModel = configuredDefault;
+            return;
+        }
+
+        selectedModel = modelList.First().Id;
+    }
+
+    private bool IsModelInList(string? modelId) =>
+        !string.IsNullOrEmpty(modelId) && modelList.Any(m => m.Id == modelId);
+
+    private async Task OnSelectedModelChanged()
+    {
+        if (string.IsNullOrEmpty(selectedModel))
+            return;
+
+        await KeyStore.SetLastSelectedModelAsync(JS, selectedModel);
     }
 
     public void Dispose()
@@ -788,6 +818,8 @@
 
         isTyping = true;
         StateHasChanged();
+
+        await KeyStore.SetLastSelectedModelAsync(JS, selectedModel);
 
         var accumulated = "";
 

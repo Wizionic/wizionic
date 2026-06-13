@@ -29,6 +29,18 @@ public class ProxiedProviderOptions
     /// </summary>
     public bool DiscoverModels { get; set; }
 
+    /// <summary>
+    /// When true, this provider and its models are omitted from the WASM model selector
+    /// (chat may still be routed through the proxy when configured).
+    /// </summary>
+    public bool HideFromModelList { get; set; }
+
+    /// <summary>
+    /// Model id to select when the user has no saved preference or their saved model
+    /// is no longer in the available list. Must match a <see cref="ProxiedModelOptions.Id"/>.
+    /// </summary>
+    public string? DefaultModel { get; set; }
+
     public List<ProxiedModelOptions> Models { get; set; } = new();
 }
 

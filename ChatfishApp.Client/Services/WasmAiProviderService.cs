@@ -110,8 +110,7 @@ public class WasmAiProviderService
     {
         var result = new List<ModelInfo>();
 
-        var ollamaModels = _keyStore.OllamaModels.Any() ? _keyStore.OllamaModels : new List<string> { "gemma2", "llama3.2" };
-        foreach (var m in ollamaModels.Distinct())
+        foreach (var m in _keyStore.OllamaModels.Distinct())
         {
             var caps = ProviderCatalog.GetCapabilitiesForModel($"ollama/{m}");
             result.Add(new ModelInfo($"ollama/{m}", $"{m} (Ollama)", "🦙", "ollama", "Ollama", SupportsTools: caps.SupportsTools, SupportsVision: caps.SupportsVision));
@@ -143,6 +142,25 @@ public class WasmAiProviderService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns the first configured default model id (from proxied provider appsettings)
+    /// that appears in <paramref name="availableModels"/>.
+    /// </summary>
+    public string? GetConfiguredDefaultModelId(IReadOnlyList<ModelInfo> availableModels)
+    {
+        foreach (var provider in _proxiedProviders)
+        {
+            if (string.IsNullOrWhiteSpace(provider.DefaultModel))
+                continue;
+
+            var defaultId = provider.DefaultModel.Trim();
+            if (availableModels.Any(m => string.Equals(m.Id, defaultId, StringComparison.OrdinalIgnoreCase)))
+                return defaultId;
+        }
+
+        return null;
     }
 
     public record ModelInfo(

@@ -16,8 +16,10 @@ public class WasmKeyStore
     private const string McpEnabledKey = "wasm-mcp-enabled-servers";
     private const string McpTokensKey = "wasm-mcp-tokens";
     private const string McpCustomConnectorsKey = "wasm-mcp-custom-connectors";
+    private const string LastSelectedModelKey = "wasm-last-selected-model";
 
     private Dictionary<string, string> _providerKeys = new();
+    private string _lastSelectedModel = "";
     private OllamaConfig _ollamaConfig = new();
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
@@ -77,6 +79,19 @@ public class WasmKeyStore
                 _customMcpConnectors = loaded;
             }
         }
+
+        _lastSelectedModel = await js.InvokeAsync<string?>("localStorage.getItem", LastSelectedModelKey) ?? "";
+    }
+
+    public string LastSelectedModel => _lastSelectedModel;
+
+    public async Task SetLastSelectedModelAsync(IJSRuntime js, string modelId)
+    {
+        _lastSelectedModel = (modelId ?? "").Trim();
+        if (string.IsNullOrEmpty(_lastSelectedModel))
+            await js.InvokeVoidAsync("localStorage.removeItem", LastSelectedModelKey);
+        else
+            await js.InvokeVoidAsync("localStorage.setItem", LastSelectedModelKey, _lastSelectedModel);
     }
 
     public string GetKey(string providerId) =>
