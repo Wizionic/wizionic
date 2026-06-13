@@ -433,6 +433,35 @@ a:hover {
 .send-btn:hover:not(:disabled) { background: var(--primary-dark); transform: scale(1.05); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.attach-btn-wrap {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+}
+
+.capability-icon {
+    font-size: 0.9em;
+    color: #888;
+    cursor: default;
+    flex-shrink: 0;
+}
+
+/* Desktop: toolbar children participate in the main input row (plus | textarea | model | icons | send) */
+@media (min-width: 641px) {
+    .input-toolbar {
+        display: contents;
+    }
+
+    .message-wrapper {
+        order: 2;
+    }
+
+    .attach-btn-wrap { order: 1; }
+    .model-selector { order: 3; }
+    .capability-icon { order: 4; }
+    .send-btn { order: 5; }
+}
+
 /* ====================== SIDEBAR ALIGNMENT (NO DOUBLE MARGIN!) ====================== */
 /* We rely 100% on MainLayout's existing main { margin-left: 250px } */
 @media (min-width: 641px) {
@@ -450,7 +479,98 @@ a:hover {
         margin-left: 0;
         width: 100%;
     }
+
+    /* Sidebar overlays content; main is never pushed sideways on small screens */
+    main,
+    body main {
+        margin-left: 0 !important;
+    }
+
+    .sidebar,
+    body .sidebar {
+        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.12);
+    }
+
     .chat-container { padding-bottom: 185px; }
+
+    /* Stack textarea above a single no-wrap toolbar row */
+    .input-area {
+        padding: 8px 12px 12px !important;
+    }
+
+    .input-container,
+    body .input-container {
+        flex-direction: column !important;
+        flex-wrap: nowrap !important;
+        align-items: stretch !important;
+        padding: 8px 10px !important;
+        gap: 6px !important;
+    }
+
+    .message-wrapper,
+    body .message-wrapper {
+        order: 0 !important;
+        flex: 0 0 auto !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .message-input,
+    body .message-input {
+        min-height: 44px !important;
+        max-height: 120px !important;
+    }
+
+    .input-toolbar,
+    body .input-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 4px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        flex-shrink: 0 !important;
+    }
+
+    .attach-btn-wrap,
+    body .attach-btn-wrap,
+    .action-btn,
+    body .action-btn,
+    .capability-icon,
+    body .capability-icon,
+    .input-toolbar .send-btn,
+    body .input-toolbar .send-btn {
+        flex-shrink: 0 !important;
+    }
+
+    .action-btn,
+    body .action-btn {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 1.1rem !important;
+    }
+
+    .input-toolbar .send-btn,
+    body .input-toolbar .send-btn {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 1.2rem !important;
+        margin-left: auto !important;
+    }
+
+    .model-selector,
+    body .model-selector {
+        flex: 1 1 0 !important;
+        width: 0 !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        font-size: 0.62rem !important;
+        padding: 1px 4px 1px 6px !important;
+        height: 26px !important;
+    }
 }
 
 /* Tiny cleanup - base for conversation items, detailed below */
@@ -686,6 +806,7 @@ a:hover {
     display: flex;
     align-items: center;
     gap: 1.5rem;
+    margin-left: 40px;
 }
 
 /* Right side icon group in WasmTopBar (and shell for WASM routes) - now class-based so CSS is single source */
@@ -716,6 +837,28 @@ a:hover {
     background: rgba(0, 0, 0, 0.05);
 }
 
+
+.top-left a,
+.top-row > div:last-child a {
+    color: var(--primary-dark);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+}
+
+.top-left a,
+.top-row > div:last-child a {
+    border-radius: var(--radius-md);
+    transition: background 0.2s ease;
+}
+
+
+
+.top-left a:hover,
+.top-row > div:last-child a:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
 .top-row-right a i,
 .top-row-right a .bi,
 .top-row > div:last-child a i,
@@ -732,7 +875,7 @@ a:hover {
     /* Absolute placement... (comments preserved for the WasmChat absolute toggle) */
     position: absolute;
     top: 8px;
-    left: 220px;
+    left: 0px;
     z-index: 1100;
 }
 
@@ -1120,7 +1263,7 @@ body .sidebar-toggle,
     color: black !important;
     position: absolute !important;
     top: 8px !important;
-    left: 220px !important;
+    left: 0cap !important;
     z-index: 1100 !important;
 }
 
@@ -1182,6 +1325,52 @@ body .message-bot,
     box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
     max-width: 100% !important;
     width: fit-content !important;
+}
+
+/* Mobile input toolbar — placed after WASM !important rules so narrow phones keep one toolbar row */
+@media (max-width: 640.98px) {
+    body .input-container,
+    .input-container {
+        flex-direction: column !important;
+        flex-wrap: nowrap !important;
+        align-items: stretch !important;
+    }
+
+    body .input-toolbar,
+    .input-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 4px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    body .attach-btn-wrap,
+    .attach-btn-wrap,
+    body .action-btn,
+    .action-btn,
+    body .capability-icon,
+    .capability-icon,
+    body .input-toolbar .send-btn,
+    .input-toolbar .send-btn {
+        flex-shrink: 0 !important;
+    }
+
+    body .model-selector,
+    .model-selector {
+        flex: 1 1 0 !important;
+        width: 0 !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    body .input-toolbar .send-btn,
+    .input-toolbar .send-btn {
+        margin-left: auto !important;
+    }
 }
 
 /* ========================================

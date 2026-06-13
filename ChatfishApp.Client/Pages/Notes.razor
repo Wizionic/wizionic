@@ -144,6 +144,23 @@
         SidebarState.OnChanged += _sidebarStateChangedHandler;
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var collapsedForMobile = await JS.InvokeAsync<bool>("initWasmSidebarForViewport");
+                if (collapsedForMobile)
+                {
+                    SidebarState.IsCollapsed = true;
+                    StateHasChanged();
+                }
+            }
+            catch { /* ignore if host script not ready */ }
+        }
+    }
+
     public void Dispose()
     {
         if (_sidebarStateChangedHandler != null)
