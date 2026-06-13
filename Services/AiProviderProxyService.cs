@@ -38,6 +38,12 @@ public class AiProviderProxyService
             if (string.IsNullOrWhiteSpace(provider.Id) || string.IsNullOrWhiteSpace(provider.BaseUrl))
                 continue;
 
+            if (provider.HideFromModelList)
+                continue;
+
+            if (!IsOllama(provider) && !TryResolveApiKey(provider, out _))
+                continue;
+
             var models = await ResolveProviderModelsAsync(provider, ct);
             if (models.Count == 0)
                 continue;
@@ -47,6 +53,7 @@ public class AiProviderProxyService
                 Id = provider.Id,
                 DisplayName = string.IsNullOrWhiteSpace(provider.DisplayName) ? provider.Id : provider.DisplayName,
                 Type = NormalizeType(provider.Type),
+                DefaultModel = string.IsNullOrWhiteSpace(provider.DefaultModel) ? null : provider.DefaultModel.Trim(),
                 Models = models
             });
         }

@@ -18,6 +18,9 @@ public static class ProxiedProviderContracts
         [JsonPropertyName("type")]
         public string Type { get; set; } = "OpenAICompatible";
 
+        [JsonPropertyName("defaultModel")]
+        public string? DefaultModel { get; set; }
+
         [JsonPropertyName("models")]
         public List<ProxiedModelDto> Models { get; set; } = new();
     }
