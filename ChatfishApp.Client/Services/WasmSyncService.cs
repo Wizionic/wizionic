@@ -271,6 +271,7 @@ public class WasmSyncService : IAsyncDisposable
         try
         {
             await _keyStore.LoadAsync(_js);
+            await _aiProvider.RefreshProxiedProvidersAsync();
             var count = _aiProvider.GetAvailableModels().Count;
             await _hub.InvokeAsync("UpdateAiCapabilities", MyDeviceId, count);
         }
@@ -920,6 +921,7 @@ public class WasmSyncService : IAsyncDisposable
         if (msg.type == "models-request")
         {
             await _keyStore.LoadAsync(_js);
+            await _aiProvider.RefreshProxiedProvidersAsync();
             var models = _aiProvider.GetAvailableModels();
             Console.WriteLine($"[AI Proxy] Serving model list ({models.Count} models) to {GetDeviceIdFromPeerKey(peerKey)}");
             var listMsg = new DataChannelMessage("models-list", content: System.Text.Json.JsonSerializer.Serialize(models));

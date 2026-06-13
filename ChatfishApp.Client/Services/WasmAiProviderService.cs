@@ -2,29 +2,64 @@ using ChatfishApp.Contracts;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using System.ClientModel;
+using System.Net.Http.Json;
 
 namespace ChatfishApp.Client.Services;
 
 /// <summary>
 /// WASM/client-side equivalent of the server's AiProviderService.
 /// Creates configured IChatClient instances using keys from local storage (via WasmKeyStore)
-/// and the shared ProviderCatalog.
-/// This lets the WASM chat use the same pluggable AI abstractions as the server
-/// for future agentic/tool-calling support.
+/// for CORS-friendly providers, or the server AI proxy for CORS-restricted providers.
 /// </summary>
 public class WasmAiProviderService
 {
+    /// <summary>
+    /// HTTP client for same-origin /api/proxy/* calls. Set from Client/Program.cs at startup.
+    /// </summary>
+    internal static HttpClient? ProxyHttp { get; set; }
+
     private readonly WasmKeyStore _keyStore;
+    private List<ProxiedProviderContracts.ProxiedProviderDto> _proxiedProviders = new();
 
     public WasmAiProviderService(WasmKeyStore keyStore)
     {
         _keyStore = keyStore;
     }
 
+    public IReadOnlyList<ProxiedProviderContracts.ProxiedProviderDto> ProxiedProviders => _proxiedProviders;
+
     /// <summary>
-    /// Returns a configured IChatClient for the given model using locally stored keys.
-    /// For Ollama: uses the configured base URL.
-    /// For cloud providers: uses the user's key + catalog base URL (OpenAI-compatible).
+    /// Loads proxied provider/model definitions from the server (configured in appsettings).
+    /// </summary>
+    public async Task RefreshProxiedProvidersAsync(CancellationToken ct = default)
+    {
+        var http = ProxyHttp;
+        if (http == null)
+        {
+            Console.WriteLine("[WasmAiProviderService] ProxyHttp is not configured.");
+            _proxiedProviders = new List<ProxiedProviderContracts.ProxiedProviderDto>();
+            return;
+        }
+
+        try
+        {
+            var response = await http.GetFromJsonAsync<ProxiedProviderContracts.ProxyProvidersResponse>(
+                "/api/proxy/providers", ct);
+            _proxiedProviders = response?.Providers ?? new List<ProxiedProviderContracts.ProxiedProviderDto>();
+            int modelCount = _proxiedProviders.Sum(p => p.Models.Count);
+            Console.WriteLine($"[WasmAiProviderService] Loaded {_proxiedProviders.Count} proxied provider(s), {modelCount} model(s).");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmAiProviderService] Failed to load proxied providers: {ex.Message}");
+            _proxiedProviders = new List<ProxiedProviderContracts.ProxiedProviderDto>();
+        }
+    }
+
+    /// <summary>
+    /// Returns a configured IChatClient for the given model.
+    /// Ollama and CORS-friendly cloud providers call the provider API directly.
+    /// CORS-restricted providers route through POST /api/proxy/chat on the backend.
     /// </summary>
     public IChatClient GetChatClientForModel(string modelId)
     {
@@ -35,54 +70,46 @@ public class WasmAiProviderService
         {
             var ollamaModel = modelId.Split('/', 2)[1];
             var baseUrl = _keyStore.OllamaBaseUrl.TrimEnd('/') + "/v1/";
-            // Use OpenAI-compatible client pointed at local Ollama (or remote if base URL changed)
-            var credential = new ApiKeyCredential("ollama"); // Ollama /v1 often ignores key or accepts any
+            var credential = new ApiKeyCredential("ollama");
             var options = new OpenAIClientOptions { Endpoint = new Uri(baseUrl) };
             var rootClient = new OpenAIClient(credential, options);
             var chatClient = rootClient.GetChatClient(ollamaModel);
             return chatClient.AsIChatClient();
         }
-        else
+
+        var proxied = TryGetProxiedModel(modelId);
+        if (proxied.HasValue)
         {
-            var entry = ProviderCatalog.GetModel(modelId);
+            var (provider, model) = proxied.Value;
+            return CreateProxyChatClient(provider.Id, model.Id);
+        }
+
+        var entry = ProviderCatalog.GetModel(modelId);
         if (entry == null)
-            throw new InvalidOperationException($"Unknown model '{modelId}' in ProviderCatalog.");
+            throw new InvalidOperationException($"Unknown model '{modelId}'.");
 
-        var (provider, modelDef) = entry.Value;
+        var (catalogProvider, modelDef) = entry.Value;
 
-        var apiKey = _keyStore.GetKey(provider.Id);
+        var apiKey = _keyStore.GetKey(catalogProvider.Id);
         if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException($"No API key configured for provider '{provider.DisplayName}'. Add one in Settings.");
+            throw new InvalidOperationException($"No API key configured for provider '{catalogProvider.DisplayName}'. Add one in Settings.");
 
-        var baseUrl = provider.BaseUrl?.TrimEnd('/') + "/";
-        var credential = new ApiKeyCredential(apiKey);
-        var options = new OpenAIClientOptions { Endpoint = new Uri(baseUrl) };
+        var providerBaseUrl = catalogProvider.BaseUrl?.TrimEnd('/') + "/";
+        var credential2 = new ApiKeyCredential(apiKey);
+        var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(providerBaseUrl) };
 
-        var rootClient = new OpenAIClient(credential, options);
-        var chatClient = rootClient.GetChatClient(modelDef.Id);  // use the catalog's model id
-
-        // OpenRouter attribution headers (recommended). In full M.E.AI pipeline this would be
-        // injected via custom transport/policy. For now we rely on the caller or SDK defaults.
-        // (The manual SendAsync path in older code added them explicitly.)
-        if (provider.Id == "openrouter")
-        {
-            // Note: When using the full IChatClient pipeline these headers should be added
-            // at the transport level. For the initial port we keep behavior similar.
-        }
-
-        return chatClient.AsIChatClient();
-        }
+        var rootClient2 = new OpenAIClient(credential2, clientOptions);
+        var directClient = rootClient2.GetChatClient(modelDef.Id);
+        return directClient.AsIChatClient();
     }
 
     /// <summary>
-    /// Models available based on what the user has configured locally (keys present for cloud, or any for Ollama).
+    /// Models available based on local keys (cloud), Ollama config, and server-proxied providers.
     /// </summary>
     public List<ModelInfo> GetAvailableModels()
     {
         var result = new List<ModelInfo>();
 
-        // Always offer Ollama models the user has configured (or a minimal safe default).
-        // The chat page will always coerce the initial selection to something that actually exists in this list.
         var ollamaModels = _keyStore.OllamaModels.Any() ? _keyStore.OllamaModels : new List<string> { "gemma2", "llama3.2" };
         foreach (var m in ollamaModels.Distinct())
         {
@@ -102,8 +129,44 @@ public class WasmAiProviderService
             }
         }
 
+        foreach (var provider in _proxiedProviders)
+        {
+            bool isOllamaBackend = string.Equals(provider.Type, "Ollama", StringComparison.OrdinalIgnoreCase);
+            foreach (var m in provider.Models)
+            {
+                result.Add(new ModelInfo(
+                    m.Id, m.Label, m.Icon, provider.Id, provider.DisplayName,
+                    SupportsTools: m.SupportsTools,
+                    SupportsVision: m.SupportsVision,
+                    IsOllamaBackend: isOllamaBackend));
+            }
+        }
+
         return result;
     }
 
-    public record ModelInfo(string Id, string Label, string Icon, string ProviderId, string ProviderName, bool SupportsTools = true, bool SupportsVision = false);
+    public record ModelInfo(
+        string Id,
+        string Label,
+        string Icon,
+        string ProviderId,
+        string ProviderName,
+        bool SupportsTools = true,
+        bool SupportsVision = false,
+        bool IsOllamaBackend = false);
+
+    private (ProxiedProviderContracts.ProxiedProviderDto Provider, ProxiedProviderContracts.ProxiedModelDto Model)? TryGetProxiedModel(string modelId)
+    {
+        foreach (var provider in _proxiedProviders)
+        {
+            var model = provider.Models.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
+            if (model != null)
+                return (provider, model);
+        }
+
+        return null;
+    }
+
+    private IChatClient CreateProxyChatClient(string providerId, string modelId) =>
+        new ServerProxyChatClient(providerId, modelId);
 }

@@ -158,7 +158,7 @@
                                 @if (!string.IsNullOrWhiteSpace(msg.ToolTrace))
                                 {
                                     <details style="margin-bottom: 2px; font-size: 0.7em;">
-                                        <summary style="cursor:pointer; color:#888;">Thinking / tool calls</summary>
+                                        <summary style="cursor:pointer; color:#888;">Model reasoning / tool calls</summary>
                                         <pre style="white-space:pre-wrap; font-size:0.85em; background:#f4f4f4; padding:4px; border-radius:3px; margin:2px 0;">@msg.ToolTrace</pre>
                                     </details>
                                 }
@@ -472,7 +472,7 @@
                 await SyncService.EnsureAiProxyConnectionAsync();
         }
 
-        RefreshModelList();
+        await RefreshModelListAsync();
         EnsureValidModelSelection();
 
         // Load history via store (will be under the per-email encrypted bucket if authed)
@@ -501,21 +501,21 @@
         // while the user is on the chat page (even if they weren't on the sync page).
         SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
 
-        _syncChangedHandler = () => InvokeAsync(() =>
+        _syncChangedHandler = () => InvokeAsync(async () =>
         {
-            RefreshModelList();
+            await RefreshModelListAsync();
             EnsureValidModelSelection();
             StateHasChanged();
         });
         SyncService.OnChanged += _syncChangedHandler;
     }
 
-    private void RefreshModelList()
+    private async Task RefreshModelListAsync()
     {
+        await AiProviderService.RefreshProxiedProvidersAsync();
+
         if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
             modelList = SyncService.RemoteModels.ToList();
-        else if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
-            modelList = new List<WasmAiProviderService.ModelInfo>();
         else
             modelList = AiProviderService.GetAvailableModels().ToList();
     }
