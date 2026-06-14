@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.JSInterop;
@@ -45,39 +46,40 @@ public class WasmAuthService
     /// </summary>
     public async Task LoadAsync()
     {
-        try
+        var result = await TryFetchAuthStateAsync();
+        if (result == AuthFetchResult.Success)
         {
-            var me = await _http.GetFromJsonAsync<UserMeResponse>("/api/auth/me");
-            if (me != null && !string.IsNullOrEmpty(me.Email))
-            {
-                Email = me.Email;
-                UserId = me.Id;
-
-                // Fetch the actual key bytes the client will use for AES-GCM.
-                var keyResp = await _http.GetFromJsonAsync<EncryptionKeyResponse>("/api/user/encryption-key");
-                LocalEncryptionKeyB64 = keyResp?.Key;
-
-                OnChanged?.Invoke();
-            }
-        }
-        catch (Exception)
-        {
-            // Not authenticated, or network error, or key not yet provisioned.
-            // Leave the properties null/empty — the rest of the WASM app falls back
-            // to pure local (unauthenticated) mode, which continues to work.
-            Email = null;
-            UserId = null;
-            LocalEncryptionKeyB64 = null;
             OnChanged?.Invoke();
+            return;
         }
+
+        if (result == AuthFetchResult.TransientError)
+        {
+            await Task.Delay(750);
+            result = await TryFetchAuthStateAsync();
+        }
+
+        switch (result)
+        {
+            case AuthFetchResult.Success:
+                break;
+            case AuthFetchResult.Unauthorized:
+                ClearAuthState();
+                break;
+            case AuthFetchResult.TransientError:
+                Console.WriteLine("[WasmAuth] Auth check failed after retry (server may be waking); keeping prior auth state if any.");
+                break;
+            case AuthFetchResult.Incomplete:
+                ClearAuthState();
+                break;
+        }
+
+        OnChanged?.Invoke();
     }
 
     public void SignOutLocal()
     {
-        Email = null;
-        UserId = null;
-        LocalEncryptionKeyB64 = null;
-        _guestKeyB64 = null;
+        ClearAuthState();
         OnChanged?.Invoke();
     }
 
@@ -115,6 +117,84 @@ public class WasmAuthService
     }
 
     private string? _guestKeyB64;
+
+    private enum AuthFetchResult
+    {
+        Success,
+        Unauthorized,
+        TransientError,
+        Incomplete
+    }
+
+    private async Task<AuthFetchResult> TryFetchAuthStateAsync()
+    {
+        try
+        {
+            using var meResponse = await _http.GetAsync("/api/auth/me");
+            if (meResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                return AuthFetchResult.Unauthorized;
+
+            if (!meResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"[WasmAuth] /api/auth/me returned {(int)meResponse.StatusCode}");
+                return AuthFetchResult.TransientError;
+            }
+
+            var me = await ReadJsonOrNullAsync<UserMeResponse>(meResponse);
+            if (me == null || string.IsNullOrEmpty(me.Email))
+                return AuthFetchResult.Unauthorized;
+
+            using var keyResponse = await _http.GetAsync("/api/user/encryption-key");
+            if (keyResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                return AuthFetchResult.Unauthorized;
+
+            if (!keyResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"[WasmAuth] /api/user/encryption-key returned {(int)keyResponse.StatusCode}");
+                return AuthFetchResult.TransientError;
+            }
+
+            var keyResp = await ReadJsonOrNullAsync<EncryptionKeyResponse>(keyResponse);
+            if (string.IsNullOrEmpty(keyResp?.Key))
+                return AuthFetchResult.Incomplete;
+
+            Email = me.Email;
+            UserId = me.Id;
+            LocalEncryptionKeyB64 = keyResp.Key;
+            return AuthFetchResult.Success;
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"[WasmAuth] Network error during auth check: {ex.Message}");
+            return AuthFetchResult.TransientError;
+        }
+        catch (TaskCanceledException)
+        {
+            Console.WriteLine("[WasmAuth] Auth check timed out.");
+            return AuthFetchResult.TransientError;
+        }
+        catch (JsonException ex)
+        {
+            Console.WriteLine($"[WasmAuth] Non-JSON auth response (likely login redirect HTML): {ex.Message}");
+            return AuthFetchResult.Unauthorized;
+        }
+    }
+
+    private static async Task<T?> ReadJsonOrNullAsync<T>(HttpResponseMessage response)
+    {
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        if (mediaType != null && !mediaType.Contains("json", StringComparison.OrdinalIgnoreCase))
+            return default;
+
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+
+    private void ClearAuthState()
+    {
+        Email = null;
+        UserId = null;
+        LocalEncryptionKeyB64 = null;
+    }
 
     private record UserMeResponse(string? Email, string? Id, bool HasLocalEncryptionKey);
     private record EncryptionKeyResponse(string? Key);

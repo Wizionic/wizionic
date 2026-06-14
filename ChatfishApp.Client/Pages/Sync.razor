@@ -14,10 +14,10 @@
 @inject NavigationManager Nav
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
-
+    <h4 style="margin: 0;">Sync</h4>
     <p style="color: #666; font-size: 0.9em;">
         Cross-device sync is only available after logging in with email. The server only helps devices find each other and exchange small signaling messages.
-        Your encrypted chat history never leaves your browsers and is transferred directly (Phase 2 will add the actual peer-to-peer transfer).
+        Your encrypted chat history never leaves your browsers and is transferred directly.
     </p>
 
     @if (!AuthService.IsAuthenticated)
@@ -165,7 +165,7 @@
             <!-- CHAT HISTORY LIST -->
             <h3 style="margin-top: 1.25rem; margin-bottom: 0.4rem;">Chat history</h3>
             <p style="color:#666; font-size:0.85em; margin-bottom:0.5rem;">
-                Select one or more target devices above, then click Sync on any conversation. This will send the encrypted history over the signaling connection (Phase 2 relay). The other browser will receive it and save it locally.
+                Select one or more target devices above, then click Sync on any conversation. 
             </p>
 
             @if (localConvos.Any())
@@ -208,7 +208,6 @@
 
         <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem; align-items: center;">
             <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
-            <small style="color:#888;">Only your own devices (same email login) appear here. The server never stores your chat history.</small>
         </div>
     }
 

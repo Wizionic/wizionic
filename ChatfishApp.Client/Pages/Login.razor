@@ -9,13 +9,21 @@
 
 <div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
     <h2>Chatfish</h2>
-    <p style="color:#555;">Chat history and settings are stored entirely in your browser (local-first). Log in with an email <em>only</em> if you want to sync your encrypted chat history and provider keys across browsers or devices.</p>
+            <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--bubble-blue); border: 1px solid var(--primary-dark); border-radius: 6px;">
+                Connect to local AI and keep all your data private!
+        </div>
+    <p style="color:#555;">Chat history and settings are stored entirely in your browser / on device. Log in with an email <em>only</em> if you want:
+        <ul style="margin:0.5rem 0 0.5rem 1.25rem; color:#555;">
+            <li>  to sync your encrypted chat history and settings across browsers or devices  </li>
+            <li>  one of your devices (connected to your local AI) to act as a chat server for your other devices  </li>
+        </ul>
+     </p>
 
     @if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
     {
-        <div style="margin: 1rem 0; padding: 0.75rem 1rem; background: #e6ffed; border: 1px solid #0a0; border-radius: 6px;">
+        <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--success); border: 1px solid #0a0; border-radius: 6px;">
             Logged in as <strong>@AuthService.Email</strong>.<br />
-            <span style="font-size:0.9em;">Your chats are now encrypted and stored locally.</span>
+            <span style="font-size:0.9em;">You can now sync your encrypted chat history across browsers or devices.</span>
         </div>
 
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
@@ -48,11 +56,10 @@
         {
             <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap;">
                 <div style="flex:1; min-width:220px;">
-                    <label style="display:block; font-size:0.85rem; color:#555; margin-bottom:0.2rem;">Email address</label>
                     <input type="email" 
                            @bind-value="email" 
                            @bind-value:event="oninput" 
-                           placeholder="you@example.com" 
+                           placeholder="email address" 
                            class="form-control" />
                 </div>
                 <button class="btn btn-primary" 
@@ -64,16 +71,16 @@
         }
 
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size:0.95em;">
-            <strong>Continue without logging in</strong> (your chats and settings will stay only in <em>this</em> browser):
+            You can also continue without logging in but all your chat history and settings will only be stored locally and encrypted on this device.
             <div style="margin-top:0.35rem;">
-                <a href="/chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Go to Chat</a>
+                <a href="/chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Chat Now</a>
                 &nbsp;•&nbsp;
-                <a href="/settings" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Settings</a>
+                <a href="/local-ai" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Setup your local AI</a>
             </div>
         </div>
 
         <p style="margin-top:1rem; font-size:0.8em; color:#666;">
-            Logging in with email is only needed when you want the same encrypted history and keys available on another browser or device.
+             All chat history is only stored locally on your device(s) and is never sent through a server.
         </p>
     }
 </div>

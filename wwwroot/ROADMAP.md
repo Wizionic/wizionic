@@ -208,6 +208,29 @@ Primary goals:
   - Add Ollama as a first-class, zero-config experience (auto-detect, prominent in selector, "local" indicators).
   - Bring core context management, tools, and later vision/multimodal over the local store.
 
+**Matter Integration**
+- Path A: Matter-Native MCP (Direct Device Control)
+ - https://www.youtube.com/watch?v=k1wj-ec1evE
+ - https://mattercoder.com/codelabs/how-to-install-matter-mcp-server/#0
+ - https://github.com/homeassistant-ai/ha-mcp?tab=readme-ov-file
+- Path B: Home Assistant as the Hub (Most Practical)
+ - https://www.home-assistant.io/
+ - https://github.com/homeassistant-ai/ha-mcp?tab=readme-ov-file
+ - https://www.home-assistant.io/integrations/mcp_server/
+- Path C LIFX Direct via Cloud API 
+ - There's a dedicated LIFX MCP server (furey/lifx-api-mcp-server) that talks directly to the LIFX Cloud HTTP API using a personal access token — no Matter, no Home Assistant neede
+  - Phase 1: LIFX via Cloud API (this week)
+   -  Prove the tool-calling pipeline works
+   - No LAN complexity yet
+  - Phase 2: LIFX via LAN UDP (next)
+    - True local, no LIFX cloud dependency
+    - Works even if LIFX shuts down their API
+ - Phase 3: Matter/Thread support (.NET Matter SDK)
+  - Opens up thousands of devices
+  - Full local, full privacy
+
+
+
 **Dependencies:** Core shared (multi-provider incl. Ollama work, context, tools, vision) + the abstraction + server-decoupling work from target 1 (so the WASM impl can be a clean alternative store rather than a second full rewrite). **Estimated effort:** 6–10 days.
 
 **Reuse (excellent after extraction):** `ProviderCatalog.cs` (source of truth, just add Ollama), `AiProviderService` patterns (client-friendly overloads), the tool system (`DefaultToolProvider`, AppTools — web tools work great from browser), markdown + Markdig, chat UI/selector/streaming presentation, CSS, layout, JS interop (expand it), `Roadmap.razor` loader. After RCL extraction, the same components power targets 1 (hosted) and 3 (MAUI).
