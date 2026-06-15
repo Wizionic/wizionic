@@ -97,8 +97,7 @@ public class AiProviderProxyService
 
         var client = _httpClientFactory.CreateClient("ai-proxy");
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
-        if (!string.IsNullOrWhiteSpace(apiKey))
-            httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        ApplyOutgoingHeaders(httpRequest, provider, apiKey);
         httpRequest.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
         using var response = await client.SendAsync(httpRequest, ct);
@@ -124,15 +123,17 @@ public class AiProviderProxyService
         foreach (var provider in _options.Proxied)
         {
             bool hasKey = TryResolveApiKey(provider, out _);
+            bool hasSecretHeader = TryResolveSecretHeader(provider, out _);
             int modelCount = provider.Models?.Count ?? 0;
             bool discover = provider.DiscoverModels && IsOllama(provider);
             _logger.LogInformation(
-                "[AiProxy] Provider {Id} ({Name}): type={Type} baseUrl={BaseUrl} keyConfigured={HasKey} staticModels={ModelCount} discoverModels={Discover}",
+                "[AiProxy] Provider {Id} ({Name}): type={Type} baseUrl={BaseUrl} keyConfigured={HasKey} secretHeaderConfigured={HasSecretHeader} staticModels={ModelCount} discoverModels={Discover}",
                 provider.Id,
                 provider.DisplayName,
                 NormalizeType(provider.Type),
                 provider.BaseUrl,
                 hasKey,
+                hasSecretHeader,
                 modelCount,
                 discover);
 
@@ -142,6 +143,15 @@ public class AiProviderProxyService
                     "[AiProxy] Provider {Id} has no API key. Set env var {EnvVar} to enable it.",
                     provider.Id,
                     provider.ApiKeyEnvVar);
+            }
+
+            if (!string.IsNullOrWhiteSpace(provider.SecretHeaderName) && !hasSecretHeader)
+            {
+                _logger.LogWarning(
+                    "[AiProxy] Provider {Id} requires secret header {HeaderName} but no value is configured. Set env var {EnvVar} to enable it.",
+                    provider.Id,
+                    provider.SecretHeaderName,
+                    provider.SecretHeaderValueEnvVar ?? "(SecretHeaderValueEnvVar not set)");
             }
         }
     }
@@ -178,7 +188,12 @@ public class AiProviderProxyService
         var tagsUrl = $"{origin}/api/tags";
 
         var client = _httpClientFactory.CreateClient("ai-proxy");
-        var resp = await client.GetFromJsonAsync<OllamaTagsResponse>(tagsUrl, ct);
+        using var tagsRequest = new HttpRequestMessage(HttpMethod.Get, tagsUrl);
+        TryResolveApiKey(provider, out var apiKey);
+        ApplyOutgoingHeaders(tagsRequest, provider, apiKey);
+        using var tagsResponse = await client.SendAsync(tagsRequest, ct);
+        tagsResponse.EnsureSuccessStatusCode();
+        var resp = await tagsResponse.Content.ReadFromJsonAsync<OllamaTagsResponse>(ct);
         if (resp?.Models == null)
             return new List<ProxiedProviderContracts.ProxiedModelDto>();
 
@@ -242,6 +257,47 @@ public class AiProviderProxyService
             SupportsTools = m.SupportsTools,
             SupportsVision = m.SupportsVision
         };
+
+    private static void ApplyOutgoingHeaders(
+        HttpRequestMessage request,
+        ProxiedProviderOptions provider,
+        string apiKey)
+    {
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+        if (TryResolveSecretHeader(provider, out var secretValue))
+            request.Headers.TryAddWithoutValidation(provider.SecretHeaderName!.Trim(), secretValue);
+    }
+
+    private static bool TryResolveSecretHeader(ProxiedProviderOptions provider, out string secretValue)
+    {
+        secretValue = "";
+
+        if (string.IsNullOrWhiteSpace(provider.SecretHeaderName))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(provider.SecretHeaderValue))
+        {
+            secretValue = provider.SecretHeaderValue.Trim();
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(provider.SecretHeaderValueEnvVar))
+        {
+            var fromEnv = Environment.GetEnvironmentVariable(provider.SecretHeaderValueEnvVar)
+                       ?? Environment.GetEnvironmentVariable(provider.SecretHeaderValueEnvVar, EnvironmentVariableTarget.User)
+                       ?? Environment.GetEnvironmentVariable(provider.SecretHeaderValueEnvVar.Replace("__", ":"));
+
+            if (!string.IsNullOrWhiteSpace(fromEnv))
+            {
+                secretValue = fromEnv.Trim();
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static bool TryResolveApiKey(ProxiedProviderOptions provider, out string apiKey)
     {
