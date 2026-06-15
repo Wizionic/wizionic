@@ -23,6 +23,15 @@ public class ProxiedProviderOptions
     public string? ApiKey { get; set; }
 
     /// <summary>
+    /// Optional custom header name sent on every proxied request (e.g. for Cloudflare access rules).
+    /// The header value is read from <see cref="SecretHeaderValueEnvVar"/> or direct config/env binding.
+    /// </summary>
+    public string? SecretHeaderName { get; set; }
+
+    public string? SecretHeaderValueEnvVar { get; set; }
+    public string? SecretHeaderValue { get; set; }
+
+    /// <summary>
     /// When true and Type is Ollama, models are fetched live from {origin}/api/tags.
     /// Only tags whose name exactly matches a <see cref="ProxiedModelOptions.Id"/> in
     /// <see cref="Models"/> are exposed to end users (Models is the allowlist).

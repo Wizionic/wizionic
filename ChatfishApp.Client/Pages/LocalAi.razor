@@ -8,6 +8,8 @@
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
+    
+    <h4>Ollama - Local AI </h4>
 
     <p style="color: #666; font-size: 0.9em;">Ollama configuration is stored only in your browser. Conversation history is stored in IndexedDB (encrypted at rest for both guest and logged-in sessions).</p>
 
@@ -32,19 +34,19 @@
 
   <div class="model-commands">
     <div class="model-command">
-      <span class="model-desc">Fast and lightweight — great for most computers (2.5GB)</span>
-      <pre><code>ollama pull qwen3:4b</code></pre>
+      <span class="model-desc">Fast and lightweight — great for most computers (3.0GB)</span>
+      <pre><code>ollama pull ministral-3:3b</code></pre>
     </div>
     <div class="model-command">
-      <span class="model-desc">Google's efficient model — excellent quality for the size (3GB)</span>
-      <pre><code>ollama pull gemma3:4b</code></pre>
+      <span class="model-desc">Google's efficient model — excellent quality for the size (7.2GB)</span>
+      <pre><code>ollama pull gemma4:e2b</code></pre>
     </div>
     <div class="model-command">
-      <span class="model-desc">Very fast, minimal hardware requirements (2GB)</span>
-      <pre><code>ollama pull llama3.2:3b</code></pre>
+      <span class="model-desc">Very fast, minimal hardware requirements (6.6GB)</span>
+      <pre><code>ollama pull qwen3.5:9b</code></pre>
     </div>
     <div class="model-command">
-      <span class="model-desc">Liquid AI's efficient architecture — strong tool use (5GB)</span>
+      <span class="model-desc">Liquid AI's efficient architecture — strong tool use (5.2GB)</span>
       <pre><code>ollama pull lfm2.5</code></pre>
     </div>
   </div>

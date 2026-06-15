@@ -6,6 +6,7 @@ using ChatfishApp.Services;
 using ChatfishApp.Services.Tools;
 using ChatfishApp.Apis;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -135,9 +136,10 @@ builder.Services.AddAuthentication("ChatfishAuth")
         options.LoginPath = "/";
         options.LogoutPath = "/logout";
 
-        // Long-lived sessions (user request: stay logged in >=30 days, prefer longer).
-        // 90 days with sliding renewal. Persisted DP keys (above) prevent invalidation on restarts/sleeps.
-        options.ExpireTimeSpan = TimeSpan.FromDays(90);
+        // Long-lived sessions (30 days with sliding renewal).
+        // Sign-in must pass IsPersistent=true or the browser stores a session cookie (cleared on quit).
+        // Persisted DP keys (above) prevent invalidation on restarts/sleeps.
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = true;
 
         // Production hardening: always require Secure (https), and Lax SameSite so magic-link
@@ -145,6 +147,34 @@ builder.Services.AddAuthentication("ChatfishAuth")
         options.Cookie.HttpOnly = true;
         options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         options.Cookie.SameSite = SameSiteMode.Lax;
+
+        // WASM HttpClient calls /api/* with fetch; a 302 to "/" is followed and returns HTML,
+        // which then crashes JSON parsing during WASM startup. APIs get 401/403 instead.
+        options.Events = new CookieAuthenticationEvents
+        {
+            OnRedirectToLogin = ctx =>
+            {
+                if (ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/hubs"))
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return Task.CompletedTask;
+                }
+
+                ctx.Response.Redirect(ctx.RedirectUri);
+                return Task.CompletedTask;
+            },
+            OnRedirectToAccessDenied = ctx =>
+            {
+                if (ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/hubs"))
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return Task.CompletedTask;
+                }
+
+                ctx.Response.Redirect(ctx.RedirectUri);
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
@@ -222,6 +252,15 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ChatfishDbContext>();
     db.Database.Migrate();
+
+    var dbPath = Path.GetFullPath("chatfish.db");
+    long dbSizeBytes = File.Exists(dbPath) ? new FileInfo(dbPath).Length : -1;
+    int dpKeyCount = db.DataProtectionKeys.Count();
+    Console.WriteLine($"[Auth] Persistence: chatfish.db path={dbPath} sizeBytes={dbSizeBytes} dataProtectionKeyCount={dpKeyCount}");
+    if (dpKeyCount == 0)
+    {
+        Console.WriteLine("[Auth] WARNING: No DataProtection keys in DB. Auth cookies will not survive server restarts until keys are generated.");
+    }
 }
 
 // Configure the HTTP request pipeline.
@@ -261,7 +300,13 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
     var identity = new ClaimsIdentity(claims, "ChatfishAuth");
     var principal = new ClaimsPrincipal(identity);
 
-    await ctx.SignInAsync("ChatfishAuth", principal);
+    var authProps = new AuthenticationProperties
+    {
+        IsPersistent = true,
+        ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30),
+        AllowRefresh = true
+    };
+    await ctx.SignInAsync("ChatfishAuth", principal, authProps);
 
     // After successful magic-link sign-in, land on "/" so the WASM landing page can
     // immediately show the "Logged in as ..." state (with buttons to chat/settings).
