@@ -3,7 +3,6 @@
 @layout ChatfishApp.Client.Shared.WasmLayout
 @implements IDisposable
 
-@using Markdig
 @using Microsoft.JSInterop
 @using ChatfishApp.Client.Services
 @using ChatMessage = ChatfishApp.Client.Services.WasmConversationStore.ChatMessage
@@ -14,6 +13,7 @@
 @inject WasmNoteStore NoteStore
 @inject WasmConversationStore ConvStore
 @inject WasmAuthService AuthService
+@inject WasmSyncService SyncService
 @inject SidebarState SidebarState
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
@@ -40,9 +40,9 @@
             <!-- Notes header -->
             <div class="cf-item">
                 <span class="cf-link small">
-                    Notes
+                   <h4>Notes</h4>
                     <button class="menu-button" @onclick="NewNote" title="New note">
-                        <i class="cf-icon bi bi-plus-circle"></i>
+                        <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
                     </button>
                 </span>
             </div>
@@ -72,14 +72,54 @@
     <main>
         <div class="chat-wrapper" style="flex: 1; display: flex; flex-direction: column;">
             <div class="chat-container" @ref="chatContainer">
-                @foreach (var msg in currentNoteMessages)
+                @for (var i = 0; i < currentNoteMessages.Count; i++)
                 {
+                    var msg = currentNoteMessages[i];
+                    var capturedIndex = i;
+                    var isEditing = editingMessageIndex == capturedIndex;
+
                     <div class="message-row">
-                        <div class="message-bot">
-                            <div class="chat-markdown">
-                                @((MarkupString)FormatMessage(msg.Content))
+                        <div class="message-bot @(isEditing ? "note-editing" : "")">
+                            <div class="note-response-actions">
+                                @if (isEditing)
+                                {
+                                    <button type="button" class="menu-button note-action-btn" @onclick="() => SaveEdit(capturedIndex)" title="Save">
+                                        <i class="cf-icon bi bi-check-lg"></i>
+                                    </button>
+                                    <button type="button" class="menu-button note-action-btn" @onclick="CancelEdit" title="Cancel">
+                                        <i class="cf-icon bi bi-x-lg"></i>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="menu-button note-action-btn" @onclick="() => StartEdit(capturedIndex)" title="Edit">
+                                        <i class="cf-icon bi bi-pencil"></i>
+                                    </button>
+                                }
                             </div>
-                            @if (!string.IsNullOrWhiteSpace(msg.ModelUsed))
+
+                            @if (isEditing)
+                            {
+                                <QuillEditor @ref="quillEditor"
+                                             @key="@($"note-edit-{activeNoteId}-{capturedIndex}-{editSessionKey}")"
+                                             InitialHtml="@editingInitialHtml" />
+                            }
+                            else if (NoteContentFormatter.IsHtml(msg.ContentFormat))
+                            {
+                                <div class="ql-snow note-quill-display">
+                                    <div class="ql-editor">
+                                        @((MarkupString)msg.Content)
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="chat-markdown">
+                                    @((MarkupString)NoteContentFormatter.ToDisplayHtml(msg.Content, msg.ContentFormat))
+                                </div>
+                            }
+
+                            @if (!IsUserNoteEntry(msg) && !string.IsNullOrWhiteSpace(msg.ModelUsed))
                             {
                                 <div class="model-label" style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
                                     via @msg.ModelUsed
@@ -101,12 +141,41 @@
     @if (openMenuId != null)
     {
         <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
+            <div @onclick="async () => { await AddNoteEntry(openMenuId); }">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-plus-lg"></i></button>
+                Add
+            </div>
+            <div @onclick="() => OpenRenameDialog(openMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
+                Rename
+            </div>
             <div @onclick="async () => { await DeleteNote(openMenuId); CloseMenu(); }">
-                <button class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
                 Delete note
             </div>
         </div>
         <div class="menu-overlay" @onclick="CloseMenu"></div>
+    }
+
+    @if (renameNoteId is not null)
+    {
+        <div class="newnote-overlay" @onclick="CancelRename">
+            <div class="newnote-modal" @onclick:stopPropagation>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Rename Note</h4>
+                <input type="text"
+                       @bind="renameNoteTitle"
+                       @bind:event="oninput"
+                       placeholder="Note name..."
+                       class="newnote-input"
+                       @onkeydown="RenameKeyHandler" />
+                <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelRename">Cancel</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmRename" disabled="@(string.IsNullOrWhiteSpace(renameNoteTitle))">
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
     }
 </div>
 
@@ -118,6 +187,14 @@
     private string activePopupStyle = "";
     private ElementReference chatContainer;
 
+    private int? editingMessageIndex;
+    private string editingInitialHtml = "";
+    private int editSessionKey;
+    private QuillEditor? quillEditor;
+
+    private string? renameNoteId;
+    private string renameNoteTitle = "";
+
     private class PopupPosition
     {
         public double top { get; set; }
@@ -125,6 +202,7 @@
     }
 
     private Action? _sidebarStateChangedHandler;
+    private Action? _notesSyncChangedHandler;
 
     protected override async Task OnInitializedAsync()
     {
@@ -142,6 +220,19 @@
 
         _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
         SidebarState.OnChanged += _sidebarStateChangedHandler;
+
+        _notesSyncChangedHandler = () => _ = RefreshNotesFromSyncAsync();
+        SyncService.OnNotesChanged += _notesSyncChangedHandler;
+    }
+
+    private async Task RefreshNotesFromSyncAsync()
+    {
+        notes = await NoteStore.LoadIndexAsync(JS);
+
+        if (!string.IsNullOrEmpty(activeNoteId) && notes.Any(n => n.Id == activeNoteId))
+            currentNoteMessages = await NoteStore.LoadNoteAsync(JS, activeNoteId);
+
+        await InvokeAsync(StateHasChanged);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -164,9 +255,10 @@
     public void Dispose()
     {
         if (_sidebarStateChangedHandler != null)
-        {
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
-        }
+
+        if (_notesSyncChangedHandler != null)
+            SyncService.OnNotesChanged -= _notesSyncChangedHandler;
     }
 
     private async Task ToggleSidebar()
@@ -183,8 +275,49 @@
         }
     }
 
+    private void CancelEdit()
+    {
+        editingMessageIndex = null;
+        editingInitialHtml = "";
+        quillEditor = null;
+        editSessionKey++;
+    }
+
+    private void StartEdit(int index)
+    {
+        if (index < 0 || index >= currentNoteMessages.Count)
+            return;
+
+        CancelEdit();
+
+        var msg = currentNoteMessages[index];
+        editingMessageIndex = index;
+        editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
+        editSessionKey++;
+    }
+
+    private async Task SaveEdit(int index)
+    {
+        if (editingMessageIndex != index || quillEditor is null)
+            return;
+
+        var html = await quillEditor.GetHTML();
+        if (string.IsNullOrWhiteSpace(html) || html == "<p><br></p>")
+            html = "";
+
+        currentNoteMessages[index] = currentNoteMessages[index] with
+        {
+            Content = html,
+            ContentFormat = NoteContentFormatter.FormatHtml
+        };
+
+        CancelEdit();
+        await SaveCurrent();
+    }
+
     private async Task NewNote()
     {
+        CancelEdit();
         var id = Guid.NewGuid().ToString();
         await NoteStore.UpdateIndexAfterSaveAsync(JS, id, "New note");
         notes = await NoteStore.LoadIndexAsync(JS);
@@ -197,6 +330,7 @@
     {
         if (activeNoteId != id)
         {
+            CancelEdit();
             await SaveCurrent();
             await LoadNote(id);
         }
@@ -204,6 +338,7 @@
 
     private async Task LoadNote(string id)
     {
+        CancelEdit();
         activeNoteId = id;
         currentNoteMessages = await NoteStore.LoadNoteAsync(JS, id);
         StateHasChanged();
@@ -217,6 +352,7 @@
         await NoteStore.SaveNoteAsync(JS, activeNoteId, currentNoteMessages);
         await NoteStore.UpdateIndexAfterSaveAsync(JS, activeNoteId, title);
         notes = await NoteStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
     }
 
     private async Task DeleteNote(string id)
@@ -236,6 +372,66 @@
         }
         StateHasChanged();
     }
+
+    private async Task AddNoteEntry(string noteId)
+    {
+        CloseMenu();
+        CancelEdit();
+
+        if (activeNoteId != noteId)
+        {
+            await SaveCurrent();
+            await LoadNote(noteId);
+        }
+
+        var newEntry = new ChatMessage(
+            Role: "user",
+            Content: "<p><br></p>",
+            Timestamp: DateTime.UtcNow,
+            ContentFormat: NoteContentFormatter.FormatHtml);
+
+        currentNoteMessages.Add(newEntry);
+        await SaveCurrent();
+        StartEdit(currentNoteMessages.Count - 1);
+        StateHasChanged();
+    }
+
+    private void OpenRenameDialog(string noteId)
+    {
+        CloseMenu();
+        renameNoteId = noteId;
+        var note = notes.FirstOrDefault(n => n.Id == noteId);
+        renameNoteTitle = note?.Title ?? "";
+    }
+
+    private void CancelRename()
+    {
+        renameNoteId = null;
+        renameNoteTitle = "";
+    }
+
+    private async Task ConfirmRename()
+    {
+        if (renameNoteId is null || string.IsNullOrWhiteSpace(renameNoteTitle))
+            return;
+
+        var title = renameNoteTitle.Trim();
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, renameNoteId, title);
+        notes = await NoteStore.LoadIndexAsync(JS);
+        CancelRename();
+        StateHasChanged();
+    }
+
+    private async Task RenameKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(renameNoteTitle))
+            await ConfirmRename();
+        else if (e.Key == "Escape")
+            CancelRename();
+    }
+
+    private static bool IsUserNoteEntry(ChatMessage msg) =>
+        string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
 
     private void ToggleMenu(string id)
     {
@@ -272,13 +468,4 @@
         }
     }
 
-    string FormatMessage(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return "";
-        var pipeline = new Markdig.MarkdownPipelineBuilder()
-            .UseAdvancedExtensions()
-            .UseEmojiAndSmiley()
-            .Build();
-        return Markdig.Markdown.ToHtml(raw, pipeline);
-    }
 }

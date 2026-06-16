@@ -303,5 +303,5 @@ public class WasmConversationStore
     // New code (and the live sync path) should prefer Role + raw Content (matching the
     // server Message entity) so that cross-device sync and the main hosted chat can
     // eventually share the same logical format.
-    public record ChatMessage(string? Role = null, string Content = "", string? ModelUsed = null, DateTime? Timestamp = null, string? User = null, string? ToolTrace = null, List<Attachment>? Attachments = null);
+    public record ChatMessage(string? Role = null, string Content = "", string? ModelUsed = null, DateTime? Timestamp = null, string? User = null, string? ToolTrace = null, List<Attachment>? Attachments = null, string? ContentFormat = null);
 }

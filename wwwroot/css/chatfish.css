@@ -1679,3 +1679,92 @@ body .message-bot,
     cursor: not-allowed;
 }
 
+/* ====================== NOTES QUILL EDITOR ====================== */
+.note-response-actions {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    gap: 2px;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+    z-index: 2;
+}
+
+.message-bot:hover .note-response-actions,
+.message-bot.note-editing .note-response-actions,
+.note-response-actions:focus-within {
+    opacity: 1;
+}
+
+.note-action-btn {
+    padding: 2px 6px;
+}
+
+.message-bot.note-editing {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+}
+
+.message-bot.note-editing .quill-editor-host {
+    overflow: visible;
+}
+
+.message-bot.note-editing #editor-resizer {
+    z-index: 5;
+}
+
+.quill-editor-host {
+    width: 100%;
+    min-width: 280px;
+}
+
+.quill-editor-host .ql-toolbar.ql-snow {
+    border: 1px solid #d0d7de;
+    border-radius: 8px 8px 0 0;
+    background: var(--bubble-ai-bg, #ffffff);
+    font-family: inherit;
+}
+
+.quill-editor-host .ql-container.ql-snow {
+    border: 1px solid #d0d7de;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    background: var(--bubble-ai-bg, #ffffff);
+    color: var(--text-dark);
+    font-family: inherit;
+    font-size: 0.95rem;
+    min-height: 120px;
+}
+
+.quill-editor-host .ql-editor {
+    min-height: 120px;
+    line-height: 1.5;
+}
+
+.quill-editor-host .ql-editor.ql-blank::before {
+    color: #94a3b8;
+    font-style: normal;
+}
+
+/* Read-only saved HTML notes: match Quill editor typography, not .chat-markdown / Bootstrap p margins */
+.note-quill-display {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.note-quill-display.ql-snow {
+    border: none;
+}
+
+.note-quill-display .ql-editor {
+    padding: 0;
+    min-height: 0;
+    overflow: visible;
+    line-height: 1.5;
+    font-size: 0.95rem;
+    color: var(--text-dark);
+    font-family: inherit;
+}
+
