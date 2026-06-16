@@ -60,4 +60,15 @@ public class ProxiedModelOptions
     public string Icon { get; set; } = "🤖";
     public bool SupportsTools { get; set; } = true;
     public bool SupportsVision { get; set; }
+
+    /// <summary>
+    /// When true, non-vision models in the same provider route image uploads through this model first.
+    /// Only one model per provider should be marked as the vision proxy.
+    /// </summary>
+    public bool IsVisionProxy { get; set; }
+
+    /// <summary>
+    /// Omit from the WASM model selector (e.g. infrastructure-only vision proxy models).
+    /// </summary>
+    public bool HideFromModelList { get; set; }
 }

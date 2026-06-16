@@ -21,6 +21,12 @@ public static class ProxiedProviderContracts
         [JsonPropertyName("defaultModel")]
         public string? DefaultModel { get; set; }
 
+        /// <summary>
+        /// Model id in this provider used to describe images for non-vision chat models.
+        /// </summary>
+        [JsonPropertyName("visionProxyModelId")]
+        public string? VisionProxyModelId { get; set; }
+
         [JsonPropertyName("models")]
         public List<ProxiedModelDto> Models { get; set; } = new();
     }
@@ -41,6 +47,9 @@ public static class ProxiedProviderContracts
 
         [JsonPropertyName("supportsVision")]
         public bool SupportsVision { get; set; }
+
+        [JsonPropertyName("isVisionProxy")]
+        public bool IsVisionProxy { get; set; }
     }
 
     public sealed record ProxyChatRequest(

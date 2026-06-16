@@ -773,6 +773,206 @@ a:hover {
     margin-top: 0.5rem;
 }
 
+.settings-content .ollama-model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    overflow: hidden;
+    background: white;
+}
+
+.settings-content .ollama-model-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--grey-200);
+}
+
+.settings-content .ollama-model-row:last-child {
+    border-bottom: none;
+}
+
+.settings-content .ollama-model-row.is-active {
+    background: var(--light-blue-1);
+}
+
+.settings-content .ollama-model-row-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+.settings-content .ollama-model-row-subtitle {
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 0.1rem;
+}
+
+.settings-content .ollama-model-row-meta {
+    font-size: 0.8rem;
+    color: #888;
+    white-space: nowrap;
+}
+
+.settings-content .ollama-model-edit-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.25rem 0.35rem;
+    border-radius: 4px;
+    line-height: 1;
+}
+
+.settings-content .ollama-model-edit-btn:hover {
+    background: var(--grey-100);
+}
+
+.settings-content .ollama-model-editor {
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.settings-content .ollama-model-editor h4 {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+    color: var(--text-dark);
+}
+
+.settings-content .ollama-model-editor label {
+    margin-top: 0.65rem;
+}
+
+.settings-content .ollama-field-hint {
+    font-size: 0.75rem;
+    color: #888;
+    margin: 0.15rem 0 0.35rem;
+}
+
+.settings-content .ollama-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.85rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--grey-200);
+}
+
+.settings-content .ollama-toggle-label {
+    margin: 0;
+    font-weight: 600;
+}
+
+.settings-content .ollama-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.settings-content .ollama-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.settings-content .ollama-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: #ccc;
+    border-radius: 24px;
+    transition: background 0.2s ease;
+}
+
+.settings-content .ollama-toggle-slider::before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+
+.settings-content .ollama-toggle input:checked + .ollama-toggle-slider {
+    background: var(--primary-blue);
+}
+
+.settings-content .ollama-toggle input:checked + .ollama-toggle-slider::before {
+    transform: translateX(20px);
+}
+
+.settings-content .ollama-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.settings-content .btn-link-style {
+    border: none;
+    background: transparent;
+    color: var(--primary-blue);
+    padding: 0.5rem 0.25rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.settings-content .btn-link-style:hover {
+    text-decoration: underline;
+}
+
+.settings-content .ollama-remove-btn {
+    margin-left: auto;
+}
+
+.settings-content .ollama-vision-proxy-badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.settings-content .ollama-toggle-row.is-disabled {
+    opacity: 0.65;
+}
+
+.settings-content .ollama-save-feedback {
+    margin-top: 0.85rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+
+.settings-content .ollama-save-feedback.is-success {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #047857;
+}
+
+.settings-content .ollama-save-feedback.is-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+}
+
 /* Top bar / page / sidebar structure (previously copied; now in unified global so WASM + any server pages share) */
 .top-row {
     background: var(--light-blue-2);

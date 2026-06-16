@@ -110,10 +110,18 @@ public class WasmAiProviderService
     {
         var result = new List<ModelInfo>();
 
-        foreach (var m in _keyStore.OllamaModels.Distinct())
+        foreach (var settings in _keyStore.OllamaModelSettingsList)
         {
-            var caps = ProviderCatalog.GetCapabilitiesForModel($"ollama/{m}");
-            result.Add(new ModelInfo($"ollama/{m}", $"{m} (Ollama)", "🦙", "ollama", "Ollama", SupportsTools: caps.SupportsTools, SupportsVision: caps.SupportsVision));
+            var label = string.IsNullOrWhiteSpace(settings.Label) ? settings.Name : settings.Label;
+            result.Add(new ModelInfo(
+                $"ollama/{settings.Name}",
+                $"{label} (Ollama)",
+                "🦙",
+                "ollama",
+                "Ollama",
+                SupportsTools: settings.SupportsTools,
+                SupportsVision: settings.SupportsVision,
+                ContextSize: settings.ContextSize));
         }
 
         foreach (var provider in ProviderCatalog.Providers)
@@ -137,7 +145,8 @@ public class WasmAiProviderService
                     m.Id, m.Label, m.Icon, provider.Id, provider.DisplayName,
                     SupportsTools: m.SupportsTools,
                     SupportsVision: m.SupportsVision,
-                    IsOllamaBackend: isOllamaBackend));
+                    IsOllamaBackend: isOllamaBackend,
+                    VisionProxyModelId: provider.VisionProxyModelId));
             }
         }
 
@@ -171,7 +180,17 @@ public class WasmAiProviderService
         string ProviderName,
         bool SupportsTools = true,
         bool SupportsVision = false,
-        bool IsOllamaBackend = false);
+        bool IsOllamaBackend = false,
+        int ContextSize = 0,
+        string? VisionProxyModelId = null);
+
+    public bool IsProxiedModel(string modelId) => TryGetProxiedModel(modelId).HasValue;
+
+    public string? GetProxiedVisionProxyModelId(string modelId)
+    {
+        var match = TryGetProxiedModel(modelId);
+        return match?.Provider.VisionProxyModelId;
+    }
 
     private (ProxiedProviderContracts.ProxiedProviderDto Provider, ProxiedProviderContracts.ProxiedModelDto Model)? TryGetProxiedModel(string modelId)
     {
