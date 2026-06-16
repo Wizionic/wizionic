@@ -262,7 +262,10 @@
                         }
                         @if (CurrentModelSupportsVision)
                         {
-                            <i class="bi bi-image capability-icon" title="This model supports vision (images and PDFs). Upload files using the + menu to have the model analyze them."></i>
+                            var visionTitle = modelList.FirstOrDefault(m => m.Id == selectedModel) is { SupportsVision: true }
+                                ? "This model supports vision (images and PDFs). Upload files using the + menu to have the model analyze them."
+                                : $"This model uses the vision proxy ({CurrentVisionProxyModelName}) to describe images before answering.";
+                            <i class="bi bi-image capability-icon" title="@visionTitle"></i>
                         }
 
                         <button id="chat-send-btn"
@@ -401,14 +404,30 @@
         }
     }
 
+    private bool HasVisionProxyConfigured =>
+        !string.IsNullOrWhiteSpace(KeyStore.GetVisionProxyModelName()) ||
+        modelList.Any(m => !string.IsNullOrWhiteSpace(m.VisionProxyModelId));
+
+    private string? CurrentVisionProxyModelName
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(selectedModel)) return null;
+            var mi = modelList.FirstOrDefault(m => m.Id == selectedModel);
+            if (mi != null && !mi.SupportsVision && !string.IsNullOrWhiteSpace(mi.VisionProxyModelId))
+                return mi.VisionProxyModelId;
+            return KeyStore.GetVisionProxyModelName();
+        }
+    }
+
     private bool CurrentModelSupportsVision
     {
         get
         {
             if (string.IsNullOrEmpty(selectedModel)) return false;
             var mi = modelList.FirstOrDefault(m => m.Id == selectedModel);
-            if (mi != null) return mi.SupportsVision;
-            return false;
+            if (mi != null && mi.SupportsVision) return true;
+            return !string.IsNullOrWhiteSpace(CurrentVisionProxyModelName);
         }
     }
 
@@ -827,6 +846,8 @@
         messages.Add(new ChatMessage(Role: "assistant", Content: "", ModelUsed: selectedModel, Timestamp: DateTime.UtcNow));
 
         isTyping = true;
+        pendingFiles.Clear();
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
         RequestScrollToBottom();
         StateHasChanged();
 
@@ -852,8 +873,6 @@
         {
             isTyping = false;
             isSending = false;
-            pendingFiles.Clear();   // attachments consumed into the saved user message
-            try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
             RequestScrollToBottom();
             StateHasChanged();
         }

@@ -16,7 +16,7 @@ public static class ProviderCatalog
     /// Matching is done with Contains (case-insensitive) against the model name after any "ollama/" prefix.
     /// </summary>
     public static readonly ImmutableArray<(string NamePattern, bool SupportsTools, bool SupportsVision)> LocalModelPatterns = ImmutableArray.Create(
-        ("llava", true, true),
+        ("llava", false, true),
         ("bakllava", true, true),
         ("moondream", false, true),
         ("llama3.2-vision", true, true),
@@ -25,8 +25,32 @@ public static class ProviderCatalog
         ("llama3.2", true, false),        // text-only 3.2 by default; vision variants caught above
         ("llama-3.2", true, false),
         ("qwen2-vl", true, true),         // Qwen2-VL vision models
-        ("qwen2.5-vl", true, true)
+        ("qwen2.5-vl", true, true),
+        ("minicpm", false, true)
     );
+    /// <summary>
+    /// Returns tool + vision support from <see cref="LocalModelPatterns"/> when the model name matches.
+    /// <paramref name="matched"/> is true when a pattern matched (caller should prefer these over Ollama metadata).
+    /// </summary>
+    public static (bool Matched, bool SupportsTools, bool SupportsVision) GetLocalPatternCapabilities(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+            return (false, true, false);
+
+        string name = modelName;
+        if (name.Contains('/'))
+            name = name.Split('/', 2)[1];
+
+        name = name.ToLowerInvariant();
+
+        foreach (var p in LocalModelPatterns)
+        {
+            if (name.Contains(p.NamePattern.ToLowerInvariant()))
+                return (true, p.SupportsTools, p.SupportsVision);
+        }
+
+        return (false, true, false);
+    }
 
     /// <summary>
     /// Returns tool + vision support for a model id.
@@ -47,19 +71,9 @@ public static class ProviderCatalog
         }
 
         // Dynamic local model (e.g. ollama/llava:7b, ollama/phi3, etc.)
-        string name = modelId;
-        if (name.Contains('/'))
-            name = name.Split('/', 2)[1];
-
-        name = name.ToLowerInvariant();
-
-        foreach (var p in LocalModelPatterns)
-        {
-            if (name.Contains(p.NamePattern.ToLowerInvariant()))
-            {
-                return (p.SupportsTools, p.SupportsVision);
-            }
-        }
+        var (matched, supportsTools, supportsVision) = GetLocalPatternCapabilities(modelId);
+        if (matched)
+            return (supportsTools, supportsVision);
 
         // Sensible default for unknown local models:
         // Most Ollama models support tool calling (via the Ollama server), vision is rare/special.

@@ -2,6 +2,7 @@ using ChatfishApp.Contracts;
 using Microsoft.Extensions.AI;
 using System.Net.Http.Json;
 using System.Text.Json;
+using StoreAttachment = ChatfishApp.Client.Services.WasmConversationStore.Attachment;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIContent = Microsoft.Extensions.AI.AIContent;
 using TextContent = Microsoft.Extensions.AI.TextContent;
@@ -44,15 +45,29 @@ public class WasmChatCompletionService
             return new ChatCompletionResult("", "", "No model selected.");
 
         var modelInfo = _aiProvider.GetAvailableModels().FirstOrDefault(m => m.Id == modelId);
-        bool supportsTools = modelInfo?.SupportsTools ?? ProviderCatalog.GetCapabilitiesForModel(modelId).SupportsTools;
-        bool supportsVision = modelInfo?.SupportsVision ?? ProviderCatalog.GetCapabilitiesForModel(modelId).SupportsVision;
+        bool supportsTools = modelInfo?.SupportsTools ?? ResolveOllamaCapability(modelId, tools: true);
+        bool supportsVision = modelInfo?.SupportsVision ?? ResolveOllamaCapability(modelId, tools: false);
+        int contextSize = modelInfo?.ContextSize ?? ResolveOllamaContextSize(modelId);
+        bool serverVisionProxy = !supportsVision &&
+            !string.IsNullOrWhiteSpace(modelInfo?.VisionProxyModelId ?? _aiProvider.GetProxiedVisionProxyModelId(modelId));
+        bool includeImagesInHistory = supportsVision || serverVisionProxy;
 
 
         try
         {
-            var chatHistory = BuildChatHistory(messages, currentUser, supportsVision);
+            var (effectiveMessages, visionProxyTrace) = await ApplyVisionProxyAsync(
+                modelId, messages, currentUser, supportsVision, ct);
+            var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory);
 
             ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
+            if (!string.IsNullOrWhiteSpace(visionProxyTrace))
+                ChatfishApp.Services.Tools.ToolExecutionTrace.Record(visionProxyTrace);
+            else if (serverVisionProxy && MessagesContainVisionAttachments(effectiveMessages, currentUser))
+            {
+                var proxyId = modelInfo?.VisionProxyModelId ?? _aiProvider.GetProxiedVisionProxyModelId(modelId);
+                ChatfishApp.Services.Tools.ToolExecutionTrace.Record(
+                    $"👁️ Routing image(s) through server vision proxy ({proxyId})...");
+            }
 
             var baseClient = _aiProvider.GetChatClientForModel(modelId);
             IChatClient client = baseClient;
@@ -90,7 +105,7 @@ public class WasmChatCompletionService
                     {
                         var historyForFallback = BuildFallbackHistory(chatHistory, response.Messages);
                         var (fallbackText, fallbackSource) = await TryOllamaRawCompletionAsync(
-                            modelId, historyForFallback, supportsTools, ct);
+                            modelId, historyForFallback, supportsTools, contextSize, ct);
                         if (!string.IsNullOrWhiteSpace(fallbackText))
                         {
                             responseText = fallbackText;
@@ -146,6 +161,209 @@ public class WasmChatCompletionService
         catch (Exception ex)
         {
             return new ChatCompletionResult("", "", $"Error calling provider: {ex.Message}");
+        }
+    }
+
+    private async Task<(List<StoreChatMessage> Messages, string? Trace)> ApplyVisionProxyAsync(
+        string modelId,
+        IReadOnlyList<StoreChatMessage> messages,
+        string? currentUser,
+        bool supportsVision,
+        CancellationToken ct)
+    {
+        // Server-proxied providers (e.g. free-chat) handle vision proxying in AiProviderProxyService.
+        if (_aiProvider.IsProxiedModel(modelId))
+            return (messages.ToList(), null);
+
+        if (supportsVision || !MessagesContainVisionAttachments(messages, currentUser))
+            return (messages.ToList(), null);
+
+        var proxyName = _keyStore.GetVisionProxyModelName();
+        if (string.IsNullOrWhiteSpace(proxyName))
+            return (messages.ToList(), null);
+
+        var proxyModelId = $"ollama/{proxyName}";
+        var enriched = new List<StoreChatMessage>();
+        int describedCount = 0;
+        int lastUserVisionIndex = -1;
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (IsUserVisionMessage(messages[i], currentUser, out _))
+            {
+                lastUserVisionIndex = i;
+                break;
+            }
+        }
+
+        for (int index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            if (index != lastUserVisionIndex || !IsUserVisionMessage(message, currentUser, out var visionAttachments))
+            {
+                enriched.Add(message);
+                continue;
+            }
+
+            var descriptions = new List<string>();
+            foreach (var attachment in visionAttachments)
+            {
+                var description = await DescribeAttachmentViaVisionProxyAsync(proxyModelId, attachment, ct);
+                if (!string.IsNullOrWhiteSpace(description))
+                {
+                    var label = string.IsNullOrWhiteSpace(attachment.Name) ? "attachment" : attachment.Name;
+                    descriptions.Add($"[{label}]: {description.Trim()}");
+                    describedCount++;
+                }
+            }
+
+            if (descriptions.Count == 0)
+            {
+                enriched.Add(message);
+                continue;
+            }
+
+            var prefix = string.IsNullOrWhiteSpace(message.Content) ? "" : CleanTextForLlm(message.Content) + "\n\n";
+            var injected = prefix +
+                "[Image context — described by vision proxy model '" + proxyName + "']\n" +
+                string.Join("\n\n", descriptions);
+
+            enriched.Add(message with { Content = injected.Trim(), Attachments = null });
+        }
+
+        if (describedCount == 0)
+            return (messages.ToList(), null);
+
+        var trace = $"👁️ Vision proxy ({proxyName}) described {describedCount} attachment(s) for the text-only model.";
+        return (enriched, trace);
+    }
+
+    private static bool MessagesContainVisionAttachments(IReadOnlyList<StoreChatMessage> messages, string? currentUser) =>
+        messages.Any(m => IsUserVisionMessage(m, currentUser, out _));
+
+    private static bool IsUserVisionMessage(
+        StoreChatMessage message,
+        string? currentUser,
+        out List<StoreAttachment> visionAttachments)
+    {
+        visionAttachments = new List<StoreAttachment>();
+        if (message.Attachments is not { Count: > 0 })
+            return false;
+
+        var roleStr = message.Role ?? (message.User == currentUser ? "user" : "assistant");
+        if (!roleStr.Equals("user", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        visionAttachments = message.Attachments
+            .Where(a =>
+                a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                a.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return visionAttachments.Count > 0;
+    }
+
+    private async Task<string?> DescribeAttachmentViaVisionProxyAsync(
+        string proxyModelId,
+        StoreAttachment attachment,
+        CancellationToken ct)
+    {
+        bool isPdf = attachment.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase);
+        var prompt = isPdf
+            ? "Summarize this document in detail for use as context in a follow-up text-only conversation. Include key facts, structure, and any visible text."
+            : "Describe this image in detail for use as context in a follow-up text-only conversation. Include objects, text, colors, layout, and anything relevant to answering questions about it.";
+
+        try
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(attachment.DataBase64);
+            }
+            catch
+            {
+                return null;
+            }
+
+            var contents = new List<AIContent>
+            {
+                new TextContent(prompt),
+                new DataContent(bytes, attachment.ContentType)
+            };
+
+            var client = _aiProvider.GetChatClientForModel(proxyModelId);
+            var response = await client.GetResponseAsync(
+                [new AiChatMessage(ChatRole.User, contents)],
+                new ChatOptions(),
+                ct);
+
+            var text = ExtractFinalDisplayText(response);
+            if (!string.IsNullOrWhiteSpace(text))
+                return text;
+
+            if (proxyModelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+            {
+                var (rawText, _) = await TryOllamaVisionDescriptionAsync(proxyModelId, prompt, bytes, attachment.ContentType, ct);
+                return rawText;
+            }
+        }
+        catch (Exception ex)
+        {
+            return $"[Vision proxy could not describe this attachment: {ex.Message}]";
+        }
+
+        return null;
+    }
+
+    private async Task<(string? Text, string? Source)> TryOllamaVisionDescriptionAsync(
+        string proxyModelId,
+        string prompt,
+        byte[] bytes,
+        string contentType,
+        CancellationToken ct)
+    {
+        try
+        {
+            var ollamaModel = proxyModelId.Split('/', 2)[1];
+            var baseUrl = _keyStore.OllamaBaseUrl.TrimEnd('/') + "/v1/chat/completions";
+            var contextSize = ResolveOllamaContextSize(proxyModelId);
+            var dataUrl = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+
+            var body = new Dictionary<string, object?>
+            {
+                ["model"] = ollamaModel,
+                ["stream"] = false,
+                ["messages"] = new List<Dictionary<string, object?>>
+                {
+                    new()
+                    {
+                        ["role"] = "user",
+                        ["content"] = new List<Dictionary<string, object?>>
+                        {
+                            new() { ["type"] = "text", ["text"] = prompt },
+                            new()
+                            {
+                                ["type"] = "image_url",
+                                ["image_url"] = new Dictionary<string, object?> { ["url"] = dataUrl }
+                            }
+                        }
+                    }
+                }
+            };
+
+            if (contextSize > 0)
+                body["options"] = new Dictionary<string, object?> { ["num_ctx"] = contextSize };
+
+            using var resp = await OllamaHttp.PostAsJsonAsync(baseUrl, body, ct);
+            if (!resp.IsSuccessStatusCode)
+                return (null, null);
+
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            var (text, _) = ParseOllamaCompletionFull(json);
+            return (text, "Ollama vision proxy");
+        }
+        catch
+        {
+            return (null, null);
         }
     }
 
@@ -505,10 +723,34 @@ public class WasmChatCompletionService
     /// Direct Ollama /v1/chat/completions call to read raw JSON (content + reasoning fields).
     /// The OpenAI SDK used by ME.AI drops Ollama's "reasoning" field during deserialization.
     /// </summary>
+    private bool ResolveOllamaCapability(string modelId, bool tools)
+    {
+        if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = modelId.Split('/', 2)[1];
+            var settings = _keyStore.GetOllamaModelSettings(name);
+            if (settings != null)
+                return tools ? settings.SupportsTools : settings.SupportsVision;
+        }
+
+        var caps = ProviderCatalog.GetCapabilitiesForModel(modelId);
+        return tools ? caps.SupportsTools : caps.SupportsVision;
+    }
+
+    private int ResolveOllamaContextSize(string modelId)
+    {
+        if (!modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        var name = modelId.Split('/', 2)[1];
+        return _keyStore.GetOllamaModelSettings(name)?.ContextSize ?? 0;
+    }
+
     private async Task<(string Text, string? Source)> TryOllamaRawCompletionAsync(
         string modelId,
         IList<AiChatMessage> messages,
         bool supportsTools,
+        int contextSize,
         CancellationToken ct)
     {
         try
@@ -530,6 +772,8 @@ public class WasmChatCompletionService
                     ["messages"] = ollamaMessages,
                     ["stream"] = false
                 };
+                if (contextSize > 0)
+                    body["options"] = new Dictionary<string, object?> { ["num_ctx"] = contextSize };
                 if (toolDefs is { Count: > 0 })
                     body["tools"] = toolDefs;
 

@@ -25,7 +25,10 @@ public class WasmKeyStore
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
 
-    public record OllamaConfig(string BaseUrl = "http://localhost:11434", List<string>? Models = null);
+    public record OllamaConfig(
+        string BaseUrl = "http://localhost:11434",
+        List<string>? Models = null,
+        Dictionary<string, OllamaModelSettings>? ModelSettings = null);
 
     public async Task LoadAsync(IJSRuntime js)
     {
@@ -43,7 +46,7 @@ public class WasmKeyStore
             var loaded = JsonSerializer.Deserialize<OllamaConfig>(ollamaJson);
             if (loaded != null)
             {
-                _ollamaConfig = loaded;
+                _ollamaConfig = MigrateOllamaConfig(loaded);
             }
         }
 
@@ -120,35 +123,141 @@ public class WasmKeyStore
 
     public string OllamaBaseUrl => _ollamaConfig.BaseUrl ?? "http://localhost:11434";
 
-    public List<string> OllamaModels => _ollamaConfig.Models ?? new List<string>();
+    public string OllamaChatEndpoint => OllamaBaseUrl.TrimEnd('/') + "/v1/chat/completions";
+
+    public List<string> OllamaModels => GetModelSettingsMap().Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+
+    public IReadOnlyList<OllamaModelSettings> OllamaModelSettingsList =>
+        GetModelSettingsMap().Values
+            .OrderBy(m => m.Label, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    public OllamaModelSettings? GetOllamaModelSettings(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+            return null;
+
+        return GetModelSettingsMap().TryGetValue(modelName.Trim(), out var settings)
+            ? settings.Clone()
+            : null;
+    }
+
+    /// <summary>
+    /// Ollama model name marked as the vision proxy (must also have <see cref="OllamaModelSettings.SupportsVision"/>).
+    /// </summary>
+    public string? GetVisionProxyModelName() =>
+        GetModelSettingsMap().Values
+            .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision)
+            ?.Name;
+
+    public OllamaModelSettings GetOrCreateOllamaModelSettings(string modelName)
+    {
+        modelName = modelName.Trim();
+        var map = GetModelSettingsMap();
+        if (map.TryGetValue(modelName, out var existing))
+            return existing.Clone();
+
+        return OllamaCapabilitiesResolver.CreateDefaultSettings(modelName);
+    }
 
     public async Task SetOllamaBaseUrlAsync(IJSRuntime js, string baseUrl)
     {
-        _ollamaConfig = new OllamaConfig(baseUrl.Trim(), _ollamaConfig.Models);
+        _ollamaConfig = _ollamaConfig with { BaseUrl = baseUrl.Trim() };
         await SaveOllamaConfigAsync(js);
     }
 
     public async Task SetOllamaModelsAsync(IJSRuntime js, List<string> models)
     {
-        _ollamaConfig = new OllamaConfig(_ollamaConfig.BaseUrl, models.Distinct().ToList());
+        var map = GetModelSettingsMap();
+        var distinct = models.Where(m => !string.IsNullOrWhiteSpace(m)).Select(m => m.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var next = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in distinct)
+        {
+            if (map.TryGetValue(name, out var existing))
+                next[name] = existing;
+            else
+                next[name] = OllamaCapabilitiesResolver.CreateDefaultSettings(name);
+        }
+
+        _ollamaConfig = _ollamaConfig with { Models = distinct, ModelSettings = next };
         await SaveOllamaConfigAsync(js);
     }
 
-    public async Task AddOllamaModelAsync(IJSRuntime js, string model)
+    public async Task AddOllamaModelAsync(IJSRuntime js, string model, HttpClient? http = null)
     {
-        var models = new List<string>(OllamaModels);
-        if (!string.IsNullOrWhiteSpace(model) && !models.Contains(model.Trim()))
+        model = (model ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        var map = GetModelSettingsMap();
+        if (map.ContainsKey(model))
+            return;
+
+        OllamaModelSettings settings;
+        if (http != null)
         {
-            models.Add(model.Trim());
-            await SetOllamaModelsAsync(js, models);
+            var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, OllamaBaseUrl, model);
+            settings = OllamaCapabilitiesResolver.ResolveSettings(model, live);
         }
+        else
+        {
+            settings = OllamaCapabilitiesResolver.CreateDefaultSettings(model);
+        }
+
+        map[model] = settings;
+        _ollamaConfig = _ollamaConfig with
+        {
+            Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelSettings = map
+        };
+        await SaveOllamaConfigAsync(js);
     }
 
     public async Task RemoveOllamaModelAsync(IJSRuntime js, string model)
     {
-        var models = new List<string>(OllamaModels);
-        models.Remove(model);
-        await SetOllamaModelsAsync(js, models);
+        var map = GetModelSettingsMap();
+        map.Remove(model);
+        _ollamaConfig = _ollamaConfig with
+        {
+            Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelSettings = map
+        };
+        await SaveOllamaConfigAsync(js);
+    }
+
+    public async Task SaveOllamaModelSettingsAsync(IJSRuntime js, OllamaModelSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.Name))
+            return;
+
+        var map = GetModelSettingsMap();
+        settings.Name = settings.Name.Trim();
+        settings.Label = string.IsNullOrWhiteSpace(settings.Label) ? settings.Name : settings.Label.Trim();
+        settings.UserOverrideTools = true;
+        settings.UserOverrideVision = true;
+        settings.UserOverrideContext = true;
+
+        if (!settings.SupportsVision)
+            settings.IsVisionProxy = false;
+
+        if (settings.IsVisionProxy)
+        {
+            foreach (var key in map.Keys.ToList())
+            {
+                if (!key.Equals(settings.Name, StringComparison.OrdinalIgnoreCase) && map[key].IsVisionProxy)
+                    map[key].IsVisionProxy = false;
+            }
+        }
+
+        map[settings.Name] = settings;
+        _ollamaConfig = _ollamaConfig with
+        {
+            Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelSettings = map
+        };
+        await SaveOllamaConfigAsync(js);
     }
 
     private async Task SaveOllamaConfigAsync(IJSRuntime js)
@@ -157,23 +266,75 @@ public class WasmKeyStore
         await js.InvokeVoidAsync("localStorage.setItem", OllamaConfigKey, json);
     }
 
-    public async Task RefreshOllamaModelsFromServerAsync(IJSRuntime js, HttpClient http)
+    public async Task RefreshOllamaModelsFromServerAsync(IJSRuntime js, HttpClient http, string? baseUrl = null)
     {
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+            _ollamaConfig = _ollamaConfig with { BaseUrl = baseUrl.Trim() };
+
         try
         {
-            var url = OllamaBaseUrl.TrimEnd('/') + "/api/tags";
-            var resp = await http.GetFromJsonAsync<OllamaTagsResponse>(url);
-            if (resp?.models != null)
+            var origin = OllamaBaseUrl.TrimEnd('/');
+            var tagsUrl = origin + "/api/tags";
+            var resp = await http.GetFromJsonAsync<OllamaTagsResponse>(tagsUrl);
+            if (resp?.models == null)
+                return;
+
+            var existingMap = GetModelSettingsMap();
+            var next = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var tag in resp.models.Where(m => !string.IsNullOrWhiteSpace(m.name)).Select(m => m.name!).Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var models = resp.models.Select(m => m.name).Distinct().ToList();
-                await SetOllamaModelsAsync(js, models);
+                existingMap.TryGetValue(tag, out var existing);
+                var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag);
+                next[tag] = OllamaCapabilitiesResolver.ResolveSettings(tag, live, existing);
             }
+
+            _ollamaConfig = _ollamaConfig with
+            {
+                Models = next.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+                ModelSettings = next
+            };
+            await SaveOllamaConfigAsync(js);
         }
         catch (Exception ex)
         {
-            // Let caller handle (e.g. show alert in UI)
             throw new InvalidOperationException($"Failed to refresh Ollama models from {OllamaBaseUrl}: {ex.Message}", ex);
         }
+    }
+
+    private Dictionary<string, OllamaModelSettings> GetModelSettingsMap()
+    {
+        if (_ollamaConfig.ModelSettings is { Count: > 0 })
+            return new Dictionary<string, OllamaModelSettings>(_ollamaConfig.ModelSettings, StringComparer.OrdinalIgnoreCase);
+
+        var map = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in _ollamaConfig.Models ?? new List<string>())
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            map[name.Trim()] = OllamaCapabilitiesResolver.CreateDefaultSettings(name.Trim());
+        }
+
+        return map;
+    }
+
+    private static OllamaConfig MigrateOllamaConfig(OllamaConfig loaded)
+    {
+        if (loaded.ModelSettings is { Count: > 0 })
+            return loaded;
+
+        if (loaded.Models is not { Count: > 0 })
+            return loaded with { ModelSettings = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase) };
+
+        var map = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in loaded.Models.Where(m => !string.IsNullOrWhiteSpace(m)))
+        {
+            var trimmed = name.Trim();
+            map[trimmed] = OllamaCapabilitiesResolver.CreateDefaultSettings(trimmed);
+        }
+
+        return loaded with { ModelSettings = map };
     }
 
     // Internal response types (kept here to avoid polluting UI)
@@ -279,7 +440,7 @@ public class WasmKeyStore
 
             await SaveCustomConnectorsAsync(js);
             await SaveMcpEnabledAsync(js);
-            await SaveMcpTokensAsync(js);  // small helper we'll add
+            await SaveMcpTokensAsync(js);
         }
     }
 
