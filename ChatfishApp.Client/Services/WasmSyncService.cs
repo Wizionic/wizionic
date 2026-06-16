@@ -26,6 +26,7 @@ public class WasmSyncService : IAsyncDisposable
     private readonly HttpClient _http; // only used to resolve the base address for the hub
     private readonly WasmAuthService _auth;
     private readonly WasmConversationStore _conversationStore;
+    private readonly WasmNoteStore _noteStore;
     private readonly WasmAiProviderService _aiProvider;
     private readonly WasmKeyStore _keyStore;
     private readonly WasmChatCompletionService _chatCompletion;
@@ -36,6 +37,9 @@ public class WasmSyncService : IAsyncDisposable
     private const string DeviceIdKey = "chatfish-device-id";
     private const string DeviceNameKey = "chatfish-device-name";
     private const string AiServerDeviceIdKey = "chatfish-ai-server-device-id";
+    private const string SyncTargetDevicesKey = "chatfish-sync-target-devices";
+    private const string AutoSyncChatKey = "chatfish-auto-sync-chat";
+    private const string AutoSyncNotesKey = "chatfish-auto-sync-notes";
     private const string AiProxyDataChannelLabel = "chatfish-ai-proxy";
 
     public string? MyDeviceId { get; private set; }
@@ -55,6 +59,10 @@ public class WasmSyncService : IAsyncDisposable
 
     public string? AiProxyError { get; private set; }
 
+    public bool AutoSyncChatHistory { get; private set; }
+    public bool AutoSyncNotes { get; private set; }
+    public IReadOnlyCollection<string> SyncTargetDeviceIds => _syncTargetDeviceIds;
+
     public event Action? OnChanged;
 
     /// <summary>
@@ -63,11 +71,17 @@ public class WasmSyncService : IAsyncDisposable
     /// </summary>
     public event Action? OnConversationsChanged;
 
+    /// <summary>
+    /// Fired when a note is added or updated via incoming sync (background or foreground).
+    /// </summary>
+    public event Action? OnNotesChanged;
+
     public WasmSyncService(
         IJSRuntime js,
         HttpClient http,
         WasmAuthService auth,
         WasmConversationStore conversationStore,
+        WasmNoteStore noteStore,
         WasmAiProviderService aiProvider,
         WasmKeyStore keyStore,
         WasmChatCompletionService chatCompletion)
@@ -76,6 +90,7 @@ public class WasmSyncService : IAsyncDisposable
         _http = http;
         _auth = auth;
         _conversationStore = conversationStore;
+        _noteStore = noteStore;
         _aiProvider = aiProvider;
         _keyStore = keyStore;
         _chatCompletion = chatCompletion;
@@ -162,6 +177,66 @@ public class WasmSyncService : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(AiServerDeviceId))
             AiServerDeviceId = null;
 
+        await LoadSyncPreferencesAsync();
+
+        OnChanged?.Invoke();
+    }
+
+    private async Task LoadSyncPreferencesAsync()
+    {
+        try
+        {
+            _syncTargetDeviceIds.Clear();
+            var targetsJson = await _js.InvokeAsync<string?>("localStorage.getItem", SyncTargetDevicesKey);
+            if (!string.IsNullOrWhiteSpace(targetsJson))
+            {
+                var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(targetsJson);
+                if (ids != null)
+                {
+                    foreach (var id in ids.Where(id => !string.IsNullOrWhiteSpace(id)))
+                        _syncTargetDeviceIds.Add(id);
+                }
+            }
+
+            AutoSyncChatHistory = string.Equals(
+                await _js.InvokeAsync<string?>("localStorage.getItem", AutoSyncChatKey),
+                "true",
+                StringComparison.Ordinal);
+            AutoSyncNotes = string.Equals(
+                await _js.InvokeAsync<string?>("localStorage.getItem", AutoSyncNotesKey),
+                "true",
+                StringComparison.Ordinal);
+        }
+        catch
+        {
+            // Ignore preference load errors.
+        }
+    }
+
+    public async Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds)
+    {
+        _syncTargetDeviceIds.Clear();
+        foreach (var id in deviceIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+            _syncTargetDeviceIds.Add(id);
+
+        await _js.InvokeVoidAsync(
+            "localStorage.setItem",
+            SyncTargetDevicesKey,
+            System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
+        OnChanged?.Invoke();
+    }
+
+    public async Task SetAutoSyncChatHistoryAsync(bool enabled)
+    {
+        AutoSyncChatHistory = enabled;
+        await _js.InvokeVoidAsync("localStorage.setItem", AutoSyncChatKey, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+    }
+
+    public async Task SetAutoSyncNotesAsync(bool enabled)
+    {
+        AutoSyncNotes = enabled;
+        await _js.InvokeVoidAsync("localStorage.setItem", AutoSyncNotesKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
     }
 
@@ -215,7 +290,19 @@ public class WasmSyncService : IAsyncDisposable
 
             _hub.On<IReadOnlyList<DeviceInfo>>("DevicesUpdated", list =>
             {
+                var prevOnline = Devices
+                    .Where(d => d.IsOnline)
+                    .Select(d => d.DeviceId)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
                 Devices = list ?? Array.Empty<DeviceInfo>();
+
+                foreach (var d in Devices)
+                {
+                    if (d.IsOnline && !IsSelf(d.DeviceId) && !prevOnline.Contains(d.DeviceId))
+                        _ = MaybeAutoSyncPeerAsync(d.DeviceId);
+                }
+
                 OnChanged?.Invoke();
             });
 
@@ -366,7 +453,31 @@ public class WasmSyncService : IAsyncDisposable
     /// </summary>
     public event Action<string, string, string>? OnSyncPayloadReceived; // convoId, encryptedJson, fromDeviceId
 
-    private readonly Dictionary<string, (string ConvoId, string DataJson)> _pendingSyncData = new();
+    private readonly HashSet<string> _syncTargetDeviceIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Queue<SyncQueueItem>> _syncQueues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SyncQueueItem> _activeSyncByPeer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CancellationTokenSource> _syncTimeoutByPeer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CancellationTokenSource> _autoSyncDebounce = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ChunkAssembly> _chunkAssemblies = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan SyncItemTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan AutoSyncDebounce = TimeSpan.FromSeconds(2);
+
+    private sealed class ChunkAssembly
+    {
+        public required bool IsNote { get; init; }
+        public required string ItemId { get; init; }
+        public required int ChunkCount { get; init; }
+        public required string[] Parts { get; init; }
+        public int PartsReceived { get; set; }
+    }
+
+    private sealed class SyncQueueItem
+    {
+        public required bool IsNote { get; init; }
+        public required string ItemId { get; init; }
+        public string? NoteTitle { get; init; }
+        public required string DataJson { get; init; }
+    }
 
     // AI proxy: persistent WebRTC channel to a peer that runs local AI.
     private readonly Dictionary<string, TaskCompletionSource<ChatResponsePayload>> _pendingChatRequests = new(StringComparer.OrdinalIgnoreCase);
@@ -444,29 +555,441 @@ public class WasmSyncService : IAsyncDisposable
 
     // --- WebRTC DataChannel sync (Phase 2) ---
 
-    public async Task StartWebRtcSyncAsync(string targetDeviceId, string convoId, List<ChatMessage> messages)
+    public Task StartWebRtcSyncAsync(string targetDeviceId, string convoId, List<ChatMessage> messages) =>
+        EnqueueConvoSyncAsync(targetDeviceId, convoId, messages);
+
+    public Task StartWebRtcNoteSyncAsync(string targetDeviceId, string noteId, string title, List<ChatMessage> entries) =>
+        EnqueueNoteSyncAsync(targetDeviceId, noteId, title, entries);
+
+    public async Task EnqueueConvoSyncAsync(string targetDeviceId, string convoId, List<ChatMessage> messages)
     {
-        if (string.IsNullOrEmpty(targetDeviceId) || _hub?.State != HubConnectionState.Connected)
+        if (string.IsNullOrEmpty(targetDeviceId))
             return;
 
-        var dataJson = System.Text.Json.JsonSerializer.Serialize(messages);
-        _pendingSyncData[targetDeviceId] = (convoId, dataJson);
+        if (_hub?.State != HubConnectionState.Connected)
+        {
+            Console.WriteLine($"[WasmSyncService] Cannot enqueue convo {convoId}: hub not connected.");
+            return;
+        }
+
+        var item = new SyncQueueItem
+        {
+            IsNote = false,
+            ItemId = convoId,
+            DataJson = System.Text.Json.JsonSerializer.Serialize(messages)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueNoteSyncAsync(string targetDeviceId, string noteId, string title, List<ChatMessage> entries)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId))
+            return;
+
+        if (_hub?.State != HubConnectionState.Connected)
+        {
+            Console.WriteLine($"[WasmSyncService] Cannot enqueue note {noteId}: hub not connected.");
+            return;
+        }
+
+        var payload = new NoteSyncPayload(noteId, title, entries);
+        var item = new SyncQueueItem
+        {
+            IsNote = true,
+            ItemId = noteId,
+            NoteTitle = title,
+            DataJson = System.Text.Json.JsonSerializer.Serialize(payload)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task<int> SyncAllConversationsToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        var targets = targetDeviceIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (targets.Count == 0 || _hub?.State != HubConnectionState.Connected)
+            return 0;
+
+        var index = await _conversationStore.LoadIndexAsync(_js);
+        var queued = 0;
+
+        foreach (var targetId in targets)
+        {
+            foreach (var convo in index)
+            {
+                var messages = await _conversationStore.LoadConversationAsync(_js, convo.Id);
+                var item = new SyncQueueItem
+                {
+                    IsNote = false,
+                    ItemId = convo.Id,
+                    DataJson = System.Text.Json.JsonSerializer.Serialize(messages)
+                };
+                if (!IsAlreadyQueuedOrActive(targetId, item))
+                {
+                    await EnqueueSyncAsync(targetId, item, allowDuplicate: true);
+                    queued++;
+                }
+            }
+        }
+
+        return queued;
+    }
+
+    public async Task<int> SyncAllNotesToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        var targets = targetDeviceIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (targets.Count == 0 || _hub?.State != HubConnectionState.Connected)
+            return 0;
+
+        var index = await _noteStore.LoadIndexAsync(_js);
+        var queued = 0;
+
+        foreach (var targetId in targets)
+        {
+            foreach (var note in index)
+            {
+                var entries = await _noteStore.LoadNoteAsync(_js, note.Id);
+                var payload = new NoteSyncPayload(note.Id, note.Title, entries);
+                var item = new SyncQueueItem
+                {
+                    IsNote = true,
+                    ItemId = note.Id,
+                    NoteTitle = note.Title,
+                    DataJson = System.Text.Json.JsonSerializer.Serialize(payload)
+                };
+                if (!IsAlreadyQueuedOrActive(targetId, item))
+                {
+                    await EnqueueSyncAsync(targetId, item, allowDuplicate: true);
+                    queued++;
+                }
+            }
+        }
+
+        return queued;
+    }
+
+    private async Task EnqueueSyncAsync(string targetDeviceId, SyncQueueItem item, bool allowDuplicate = false)
+    {
+        if (!allowDuplicate && IsAlreadyQueuedOrActive(targetDeviceId, item))
+        {
+            Console.WriteLine(
+                $"[WasmSyncService] Skipping duplicate {(item.IsNote ? "note" : "convo")} " +
+                $"{item.ItemId} for {targetDeviceId}");
+            return;
+        }
+
+        if (!_syncQueues.TryGetValue(targetDeviceId, out var queue))
+        {
+            queue = new Queue<SyncQueueItem>();
+            _syncQueues[targetDeviceId] = queue;
+        }
+
+        queue.Enqueue(item);
+        Console.WriteLine(
+            $"[WasmSyncService] Enqueued {(item.IsNote ? "note" : "convo")} {item.ItemId} " +
+            $"for {targetDeviceId} (queue depth: {queue.Count})");
+        await ProcessSyncQueueAsync(targetDeviceId);
+    }
+
+    private async Task ProcessSyncQueueAsync(string targetDeviceId)
+    {
+        if (_activeSyncByPeer.TryGetValue(targetDeviceId, out var active))
+        {
+            var pending = _syncQueues.TryGetValue(targetDeviceId, out var q) ? q.Count : 0;
+            Console.WriteLine(
+                $"[WasmSyncService] Sync queue for {targetDeviceId} waiting " +
+                $"({pending} pending, active: {(active.IsNote ? "note" : "convo")} {active.ItemId})");
+            return;
+        }
+
+        if (!_syncQueues.TryGetValue(targetDeviceId, out var queue) || queue.Count == 0)
+            return;
+
+        var item = queue.Dequeue();
+        _activeSyncByPeer[targetDeviceId] = item;
+        StartSyncTimeout(targetDeviceId);
 
         try
         {
-            var objRef = DotNetObjectReference.Create(this);
-            await _js.InvokeVoidAsync("webrtcCreatePeerConnection", objRef, targetDeviceId);
-            await _js.InvokeVoidAsync("webrtcCreateDataChannel", targetDeviceId, "chatfish-sync");
-
-            var offerJson = await _js.InvokeAsync<string>("webrtcCreateOffer", targetDeviceId);
-            Console.WriteLine($"[WebRTC] Sending offer to {targetDeviceId}");
-            await _hub.InvokeAsync("SendToDevice", targetDeviceId, "webrtc-offer", offerJson);
+            var channelLabel = item.IsNote ? "chatfish-note-sync" : "chatfish-sync";
+            Console.WriteLine(
+                $"[WasmSyncService] Starting WebRTC sync for {targetDeviceId}: " +
+                $"{(item.IsNote ? "note" : "convo")} {item.ItemId}");
+            await StartWebRtcDataChannelAsync(targetDeviceId, channelLabel);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[WasmSyncService] WebRTC sync start failed: {ex.Message}");
-            _pendingSyncData.Remove(targetDeviceId);
+            await FailActiveSyncAsync(targetDeviceId, ex.Message);
         }
+    }
+
+    private void StartSyncTimeout(string peerId)
+    {
+        CancelSyncTimeout(peerId);
+        var cts = new CancellationTokenSource();
+        _syncTimeoutByPeer[peerId] = cts;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(SyncItemTimeout, cts.Token);
+                if (!cts.Token.IsCancellationRequested && _activeSyncByPeer.ContainsKey(peerId))
+                {
+                    Console.WriteLine($"[WasmSyncService] Sync timed out for peer {peerId} after {SyncItemTimeout.TotalSeconds}s");
+                    await FailActiveSyncAsync(peerId, "timed out waiting for peer acknowledgement");
+                }
+            }
+            catch (TaskCanceledException) { }
+        });
+    }
+
+    private void CancelSyncTimeout(string peerId)
+    {
+        if (_syncTimeoutByPeer.Remove(peerId, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+    }
+
+    private async Task FailActiveSyncAsync(string peerId, string reason)
+    {
+        if (!_activeSyncByPeer.Remove(peerId))
+            return;
+
+        CancelSyncTimeout(peerId);
+        ClearChunkAssembliesForPeer(peerId);
+        Console.WriteLine($"[WasmSyncService] Active sync failed for {peerId}: {reason}");
+        try { await CloseWebRtcPeerAsync(peerId); } catch { }
+        await ProcessSyncQueueAsync(peerId);
+    }
+
+    private bool IsAlreadyQueuedOrActive(string targetDeviceId, SyncQueueItem item)
+    {
+        if (_activeSyncByPeer.TryGetValue(targetDeviceId, out var active)
+            && active.IsNote == item.IsNote
+            && string.Equals(active.ItemId, item.ItemId, StringComparison.Ordinal))
+            return true;
+
+        return _syncQueues.TryGetValue(targetDeviceId, out var queue)
+               && queue.Any(i => i.IsNote == item.IsNote
+                                 && string.Equals(i.ItemId, item.ItemId, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// After a local conversation save, push updates to online sync targets when auto-sync is enabled.
+    /// </summary>
+    public void ScheduleAutoSyncConvoAfterLocalSave(string convoId)
+    {
+        if (!AutoSyncChatHistory || _syncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"convo:{convoId}", async () =>
+        {
+            await EnsureConnectedAndRegisteredAsync();
+            if (_hub?.State != HubConnectionState.Connected)
+                return;
+
+            var messages = await _conversationStore.LoadConversationAsync(_js, convoId);
+            foreach (var targetId in GetOnlineSyncTargetIds())
+                await EnqueueConvoSyncAsync(targetId, convoId, messages);
+        });
+    }
+
+    /// <summary>
+    /// After a local note save, push updates to online sync targets when auto-sync is enabled.
+    /// </summary>
+    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title)
+    {
+        if (!AutoSyncNotes || _syncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"note:{noteId}", async () =>
+        {
+            await EnsureConnectedAndRegisteredAsync();
+            if (_hub?.State != HubConnectionState.Connected)
+                return;
+
+            var entries = await _noteStore.LoadNoteAsync(_js, noteId);
+            foreach (var targetId in GetOnlineSyncTargetIds())
+                await EnqueueNoteSyncAsync(targetId, noteId, title, entries);
+        });
+    }
+
+    private IEnumerable<string> GetOnlineSyncTargetIds() =>
+        Devices
+            .Where(d => d.IsOnline && !IsSelf(d.DeviceId) && _syncTargetDeviceIds.Contains(d.DeviceId))
+            .Select(d => d.DeviceId);
+
+    private async Task DebouncedAutoSyncAsync(string key, Func<Task> action)
+    {
+        if (_autoSyncDebounce.TryGetValue(key, out var existing))
+        {
+            existing.Cancel();
+            existing.Dispose();
+        }
+
+        var cts = new CancellationTokenSource();
+        _autoSyncDebounce[key] = cts;
+
+        try
+        {
+            await Task.Delay(AutoSyncDebounce, cts.Token);
+            await action();
+        }
+        catch (TaskCanceledException) { }
+        finally
+        {
+            if (_autoSyncDebounce.TryGetValue(key, out var current) && current == cts)
+                _autoSyncDebounce.Remove(key);
+            cts.Dispose();
+        }
+    }
+
+    private async Task MaybeAutoSyncPeerAsync(string deviceId)
+    {
+        if (!_auth.IsAuthenticated || IsSelf(deviceId) || !_syncTargetDeviceIds.Contains(deviceId))
+            return;
+
+        try
+        {
+            if (AutoSyncChatHistory)
+            {
+                var chatQueued = await SyncAllConversationsToDevicesAsync(new[] { deviceId });
+                Console.WriteLine($"[WasmSyncService] Auto-sync queued {chatQueued} conversation(s) to {deviceId}");
+            }
+
+            if (AutoSyncNotes)
+            {
+                var noteQueued = await SyncAllNotesToDevicesAsync(new[] { deviceId });
+                Console.WriteLine($"[WasmSyncService] Auto-sync queued {noteQueued} note(s) to {deviceId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] Auto-sync failed for {deviceId}: {ex.Message}");
+        }
+    }
+
+    private async Task CompleteActiveSyncAsync(string peerId)
+    {
+        if (!_activeSyncByPeer.Remove(peerId))
+            return;
+
+        CancelSyncTimeout(peerId);
+        ClearChunkAssembliesForPeer(peerId);
+        try { await CloseWebRtcPeerAsync(peerId); } catch { }
+        await ProcessSyncQueueAsync(peerId);
+    }
+
+    private async Task CloseWebRtcPeerAsync(string peerId)
+    {
+        await _js.InvokeVoidAsync("webrtcClose", peerId, new { suppressDotNetCallbacks = true });
+    }
+
+    private void ClearChunkAssembliesForPeer(string peerId)
+    {
+        var prefix = $"{peerId}:";
+        foreach (var key in _chunkAssemblies.Keys.Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
+            _chunkAssemblies.Remove(key);
+    }
+
+    private async Task<bool> SendSyncPayloadAsync(string peerId, bool isNote, string itemId, string contentJson)
+    {
+        var maxMessageSize = await _js.InvokeAsync<int>("webrtcGetMaxMessageSize", peerId);
+        var chunkPayloadBytes = Math.Max(4096, (int)(maxMessageSize * 0.7) - 256);
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes(contentJson);
+
+        if (contentBytes.Length <= chunkPayloadBytes)
+        {
+            var msg = isNote
+                ? new DataChannelMessage("note-sync-data", content: contentJson)
+                : new DataChannelMessage("sync-data", itemId, contentJson);
+            return await _js.InvokeAsync<bool>("webrtcSendData", peerId, SerializeDataChannelMessage(msg));
+        }
+
+        var chunkCount = (contentBytes.Length + chunkPayloadBytes - 1) / chunkPayloadBytes;
+        var chunkType = isNote ? "note-sync-chunk" : "sync-chunk";
+        Console.WriteLine(
+            $"[WasmSyncService] Chunking sync payload for {itemId}: {contentBytes.Length} bytes -> {chunkCount} chunk(s)");
+
+        for (var i = 0; i < chunkCount; i++)
+        {
+            var offset = i * chunkPayloadBytes;
+            var length = Math.Min(chunkPayloadBytes, contentBytes.Length - offset);
+            var slice = System.Text.Encoding.UTF8.GetString(contentBytes, offset, length);
+
+            var chunkMsg = new DataChannelMessage(
+                chunkType,
+                convoId: isNote ? null : itemId,
+                noteId: isNote ? itemId : null,
+                chunkIndex: i,
+                chunkCount: chunkCount,
+                chunkData: slice);
+
+            var sent = await _js.InvokeAsync<bool>("webrtcSendData", peerId, SerializeDataChannelMessage(chunkMsg));
+            if (!sent)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string SerializeDataChannelMessage(DataChannelMessage msg) =>
+        System.Text.Json.JsonSerializer.Serialize(msg);
+
+    private bool TryAddChunk(
+        string peerId,
+        string itemId,
+        bool isNote,
+        int? chunkIndex,
+        int? chunkCount,
+        string? chunkData,
+        out string? completeJson)
+    {
+        completeJson = null;
+        if (chunkIndex is null or < 0 || chunkCount is null or < 1 || string.IsNullOrEmpty(chunkData))
+            return false;
+
+        var key = $"{peerId}:{(isNote ? "note" : "convo")}:{itemId}";
+        if (!_chunkAssemblies.TryGetValue(key, out var assembly))
+        {
+            assembly = new ChunkAssembly
+            {
+                IsNote = isNote,
+                ItemId = itemId,
+                ChunkCount = chunkCount.Value,
+                Parts = new string[chunkCount.Value]
+            };
+            _chunkAssemblies[key] = assembly;
+        }
+
+        if (assembly.ChunkCount != chunkCount.Value)
+            return false;
+
+        if (assembly.Parts[chunkIndex.Value] is null)
+            assembly.PartsReceived++;
+
+        assembly.Parts[chunkIndex.Value] = chunkData;
+
+        if (assembly.PartsReceived < assembly.ChunkCount || assembly.Parts.Any(p => p is null))
+            return false;
+
+        _chunkAssemblies.Remove(key);
+        completeJson = string.Concat(assembly.Parts);
+        return true;
+    }
+
+    private async Task StartWebRtcDataChannelAsync(string targetDeviceId, string channelLabel)
+    {
+        var objRef = DotNetObjectReference.Create(this);
+        await _js.InvokeVoidAsync("webrtcCreatePeerConnection", objRef, targetDeviceId);
+        await _js.InvokeVoidAsync("webrtcCreateDataChannel", targetDeviceId, channelLabel);
+
+        var offerJson = await _js.InvokeAsync<string>("webrtcCreateOffer", targetDeviceId);
+        Console.WriteLine($"[WebRTC] Sending offer to {targetDeviceId}");
+        await _hub!.InvokeAsync("SendToDevice", targetDeviceId, "webrtc-offer", offerJson);
     }
 
     private async Task HandleWebRtcOffer(string fromDeviceId, string offerJson)
@@ -526,7 +1049,7 @@ public class WasmSyncService : IAsyncDisposable
     }
 
     [JSInvokable]
-    public void OnDataChannelOpen(string peerId)
+    public async Task OnDataChannelOpen(string peerId)
     {
         Console.WriteLine($"[WasmSyncService] DataChannel open for peer {peerId}");
 
@@ -544,14 +1067,46 @@ public class WasmSyncService : IAsyncDisposable
             return;
         }
 
-        if (_pendingSyncData.TryGetValue(peerId, out var data))
-        {
-            var msg = new DataChannelMessage("sync-data", data.ConvoId, data.DataJson);
-            var toSend = System.Text.Json.JsonSerializer.Serialize(msg);
-            _ = _js.InvokeVoidAsync("webrtcSendData", peerId, toSend);
+        if (!_activeSyncByPeer.TryGetValue(peerId, out var item))
+            return;
 
-            Console.WriteLine($"[WasmSyncService] Sent sync-data over DataChannel to {peerId} for {data.ConvoId}");
+        var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(item.DataJson);
+        Console.WriteLine(
+            $"[WasmSyncService] Preparing {(item.IsNote ? "note" : "convo")} sync payload " +
+            $"for {item.ItemId} ({payloadBytes} bytes)");
+
+        try
+        {
+            var sent = await SendSyncPayloadAsync(peerId, item.IsNote, item.ItemId, item.DataJson);
+            if (!sent)
+            {
+                Console.WriteLine($"[WasmSyncService] webrtcSendData failed (channel not ready) for {peerId}");
+                await FailActiveSyncAsync(peerId, "data channel not ready for send");
+                return;
+            }
+
+            Console.WriteLine(
+                $"[WasmSyncService] Sent {(item.IsNote ? "note-sync-data" : "sync-data")} " +
+                $"over DataChannel to {peerId} for {item.ItemId}");
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] DataChannel send failed for {peerId}: {ex.Message}");
+            await FailActiveSyncAsync(peerId, ex.Message);
+        }
+    }
+
+    [JSInvokable]
+    public void OnWebRtcConnectionStateChange(string peerId, string state)
+    {
+        if (IsAiProxyPeerKey(peerId))
+            return;
+
+        if (!_activeSyncByPeer.ContainsKey(peerId))
+            return;
+
+        if (state is "failed" or "disconnected" or "closed")
+            _ = FailActiveSyncAsync(peerId, $"WebRTC connection {state}");
     }
 
     [JSInvokable]
@@ -568,23 +1123,58 @@ public class WasmSyncService : IAsyncDisposable
             var msg = System.Text.Json.JsonSerializer.Deserialize<DataChannelMessage>(data);
             if (msg == null) return;
 
-            if (msg.type == "sync-data" && msg.convoId != null && msg.content != null)
+            if ((msg.type == "sync-data" || msg.type == "sync-chunk")
+                && msg.convoId != null)
             {
-                // This will save the data (even in background) and fire the event
-                await HandleIncomingSyncPayload(msg.convoId, msg.content, peerId);
+                var contentJson = msg.content;
+                if (msg.type == "sync-chunk")
+                {
+                    if (!TryAddChunk(peerId, msg.convoId, isNote: false, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
 
-                // Send acknowledgement back over the same DataChannel
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingSyncPayload(msg.convoId, contentJson, peerId);
+
                 var ack = new DataChannelMessage("sync-ack", msg.convoId);
-                var ackJson = System.Text.Json.JsonSerializer.Serialize(ack);
-                _ = _js.InvokeVoidAsync("webrtcSendData", peerId, ackJson);
-
-                // Close after a short delay to let the ack go through
-                _ = Task.Delay(300).ContinueWith(_ =>
-                    _js.InvokeVoidAsync("webrtcClose", peerId));
+                await _js.InvokeAsync<bool>("webrtcSendData", peerId, SerializeDataChannelMessage(ack));
+                _ = Task.Delay(300).ContinueWith(_ => CloseWebRtcPeerAsync(peerId));
             }
             else if (msg.type == "sync-ack" && msg.convoId != null)
             {
                 HandleSyncAck(msg.convoId, peerId);
+            }
+            else if ((msg.type == "note-sync-data" || msg.type == "note-sync-chunk")
+                     && (msg.content != null || msg.noteId != null))
+            {
+                var contentJson = msg.content;
+                var noteId = msg.noteId;
+
+                if (msg.type == "note-sync-chunk")
+                {
+                    if (noteId == null
+                        || !TryAddChunk(peerId, noteId, isNote: true, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingNoteSyncPayload(contentJson, peerId);
+
+                var payload = System.Text.Json.JsonSerializer.Deserialize<NoteSyncPayload>(contentJson);
+                if (payload?.NoteId != null)
+                {
+                    var ack = new DataChannelMessage("note-sync-ack", noteId: payload.NoteId);
+                    await _js.InvokeAsync<bool>("webrtcSendData", peerId, SerializeDataChannelMessage(ack));
+                    _ = Task.Delay(300).ContinueWith(_ => CloseWebRtcPeerAsync(peerId));
+                }
+            }
+            else if (msg.type == "note-sync-ack" && msg.noteId != null)
+            {
+                HandleNoteSyncAck(msg.noteId, peerId);
             }
         }
         catch (Exception ex)
@@ -596,20 +1186,53 @@ public class WasmSyncService : IAsyncDisposable
     private void HandleSyncAck(string convoId, string peerId)
     {
         Console.WriteLine($"[WasmSyncService] Received sync-ack for convo {convoId} from peer {peerId}");
-
-        _pendingSyncData.Remove(peerId);
-
-        // Close the connection now that we have confirmation
-        _ = _js.InvokeVoidAsync("webrtcClose", peerId);
-
-        // Notify listeners (page can update status if it wants)
         OnSyncAckReceived?.Invoke(convoId, peerId);
+        _ = CompleteActiveSyncAsync(peerId);
+    }
+
+    private void HandleNoteSyncAck(string noteId, string peerId)
+    {
+        Console.WriteLine($"[WasmSyncService] Received note-sync-ack for note {noteId} from peer {peerId}");
+        OnNoteSyncAckReceived?.Invoke(noteId, peerId);
+        _ = CompleteActiveSyncAsync(peerId);
+    }
+
+    private async Task HandleIncomingNoteSyncPayload(string json, string fromDeviceId)
+    {
+        try
+        {
+            var payload = System.Text.Json.JsonSerializer.Deserialize<NoteSyncPayload>(json);
+            if (payload == null || string.IsNullOrEmpty(payload.NoteId))
+                return;
+
+            await _noteStore.SaveNoteAsync(_js, payload.NoteId, payload.Entries);
+            await _noteStore.UpdateIndexAfterSaveAsync(_js, payload.NoteId, payload.Title);
+
+            OnNoteSyncPayloadReceived?.Invoke(payload.NoteId, json, fromDeviceId);
+            OnNotesChanged?.Invoke();
+
+            Console.WriteLine($"[WasmSyncService] Auto-saved incoming note sync for {payload.NoteId} from {fromDeviceId} ({payload.Entries.Count} entries)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] Failed to persist incoming note sync payload: {ex.Message}");
+        }
     }
 
     /// <summary>
     /// Fired when we (as the initiator) receive a sync-ack over the DataChannel.
     /// </summary>
     public event Action<string, string>? OnSyncAckReceived; // convoId, fromPeerId
+
+    /// <summary>
+    /// Raised when this device receives a note sync payload from a peer.
+    /// </summary>
+    public event Action<string, string, string>? OnNoteSyncPayloadReceived; // noteId, json, fromDeviceId
+
+    /// <summary>
+    /// Fired when we (as the initiator) receive a note-sync-ack over the DataChannel.
+    /// </summary>
+    public event Action<string, string>? OnNoteSyncAckReceived; // noteId, fromPeerId
 
     /// <summary>
     /// Central handler for incoming sync payloads (from either the old relay or WebRTC DataChannel).
@@ -663,11 +1286,21 @@ public class WasmSyncService : IAsyncDisposable
             return;
         }
 
-        _pendingSyncData.Remove(peerId);
-        _ = _js.InvokeVoidAsync("webrtcClose", peerId);
+        // Queue progression is owned by CompleteActiveSyncAsync / FailActiveSyncAsync.
+        // Only treat a close as failure when a sync transfer is still marked active.
+        if (_activeSyncByPeer.ContainsKey(peerId))
+            _ = FailActiveSyncAsync(peerId, "data channel closed before acknowledgement");
     }
 
-    private record DataChannelMessage(string type, string? convoId = null, string? content = null);
+    private record DataChannelMessage(
+        string type,
+        string? convoId = null,
+        string? content = null,
+        string? noteId = null,
+        int? chunkIndex = null,
+        int? chunkCount = null,
+        string? chunkData = null);
+    private record NoteSyncPayload(string NoteId, string Title, List<ChatMessage> Entries);
 
     // --- AI proxy (remote chat via peer browser) ---
 

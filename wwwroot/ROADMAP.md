@@ -69,6 +69,9 @@ Primary goals:
   - Suggest starting a new conversation
 - Implement conversation summarization (using the current model or a cheaper one)
 - Persist summary + recent messages when summarizing
+- Add System prompt and About user setting
+- When switching to email logged in version, history notes and settings should persist
+- connect to home assistant local server
 
 **Ideas **
 - Also, encrypted notes stored in the local storage (how much storage do browsers have)
