@@ -7,6 +7,7 @@
 @using LocalConvo = ChatfishApp.Client.Services.WasmConversationStore.LocalConvo
 @using LocalNote = ChatfishApp.Client.Services.WasmNoteStore.LocalNote
 @using ChatMessage = ChatfishApp.Client.Services.WasmConversationStore.ChatMessage
+@using ChatfishApp.Client.Services
 
 @inject ChatfishApp.Client.Services.WasmSyncService SyncService
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
@@ -405,7 +406,7 @@
                 .Select(d => d.Name)
                 .ToList();
 
-            statusMessage = $"Queued {queued} conversation sync(s) to {string.Join(", ", targetNames)}. Items transfer one at a time over WebRTC.";
+            statusMessage = $"Checking {queued} device(s) for conversations that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
         }
         finally
         {
@@ -441,7 +442,7 @@
                 .Select(d => d.Name)
                 .ToList();
 
-            statusMessage = $"Queued {queued} note sync(s) to {string.Join(", ", targetNames)}. Items transfer one at a time over WebRTC.";
+            statusMessage = $"Checking {queued} device(s) for notes that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
         }
         finally
         {
@@ -592,20 +593,13 @@
     {
         try
         {
-            var msgs = System.Text.Json.JsonSerializer.Deserialize<List<ChatMessage>>(json) ?? new();
-
-            await ConversationStore.SaveConversationAsync(JS, convoId, msgs);
-            await ConversationStore.UpdateIndexAfterSaveAsync(JS, convoId, msgs, localConvos);
-
-            // Refresh the index so the received convo appears in the list immediately
             localConvos = await ConversationStore.LoadIndexAsync(JS);
-
-            statusMessage = $"Received sync for convo \"{convoId}\" from {fromDeviceId}. Saved {msgs.Count} messages locally.";
+            statusMessage = $"Received sync for convo \"{GetConvoTitle(convoId)}\" from {fromDeviceId}.";
             StateHasChanged();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Sync] Failed to apply incoming sync payload: {ex.Message}");
+            Console.WriteLine($"[Sync] Failed to refresh after incoming sync payload: {ex.Message}");
         }
     }
 
@@ -624,8 +618,12 @@
             if (payload == null)
                 return;
 
-            await NoteStore.SaveNoteAsync(JS, payload.NoteId, payload.Entries);
-            await NoteStore.UpdateIndexAfterSaveAsync(JS, payload.NoteId, payload.Title);
+            var entries = ChatMessageHelper.NormalizeAll(payload.Entries);
+            var localTitle = await NoteStore.GetMetaTitleAsync(JS, payload.NoteId);
+            var title = ChatMessageHelper.ResolveIncomingNoteTitle(payload.Title, localTitle);
+
+            await NoteStore.SaveNoteAsync(JS, payload.NoteId, entries);
+            await NoteStore.UpdateIndexAfterSaveAsync(JS, payload.NoteId, title, entries);
 
             localNotes = await NoteStore.LoadIndexAsync(JS);
 

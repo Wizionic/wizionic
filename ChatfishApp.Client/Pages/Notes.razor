@@ -78,6 +78,8 @@
                     var capturedIndex = i;
                     var isEditing = editingMessageIndex == capturedIndex;
 
+                    @if (msg.DeletedAt is null)
+                    {
                     <div class="message-row">
                         <div class="message-bot @(isEditing ? "note-editing" : "")">
                             <div class="note-response-actions">
@@ -94,6 +96,9 @@
                                 {
                                     <button type="button" class="menu-button note-action-btn" @onclick="() => StartEdit(capturedIndex)" title="Edit">
                                         <i class="cf-icon bi bi-pencil"></i>
+                                    </button>
+                                    <button type="button" class="menu-button note-action-btn" @onclick="() => PromptDeleteNoteEntry(capturedIndex)" title="Delete entry">
+                                        <i class="cf-icon bi bi-trash3-fill"></i>
                                     </button>
                                 }
                             </div>
@@ -133,6 +138,7 @@
                             }
                         </div>
                     </div>
+                    }
                 }
             </div>
         </div>
@@ -149,13 +155,19 @@
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
                 Rename
             </div>
-            <div @onclick="async () => { await DeleteNote(openMenuId); CloseMenu(); }">
+            <div @onclick="() => PromptDeleteNote(openMenuId)">
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
                 Delete note
             </div>
         </div>
         <div class="menu-overlay" @onclick="CloseMenu"></div>
     }
+
+    <ConfirmDialog IsVisible="showDeleteConfirm"
+                   Title="@deleteConfirmTitle"
+                   Message="@deleteConfirmMessage"
+                   OnConfirm="ConfirmPendingDelete"
+                   OnCancel="CancelPendingDelete" />
 
     @if (renameNoteId is not null)
     {
@@ -194,6 +206,12 @@
 
     private string? renameNoteId;
     private string renameNoteTitle = "";
+
+    private bool showDeleteConfirm;
+    private string deleteConfirmTitle = "";
+    private string deleteConfirmMessage = "";
+    private string? pendingDeleteNoteId;
+    private int? pendingDeleteEntryIndex;
 
     private class PopupPosition
     {
@@ -305,14 +323,67 @@
         if (string.IsNullOrWhiteSpace(html) || html == "<p><br></p>")
             html = "";
 
-        currentNoteMessages[index] = currentNoteMessages[index] with
-        {
-            Content = html,
-            ContentFormat = NoteContentFormatter.FormatHtml
-        };
+        currentNoteMessages[index] = ChatMessageHelper.TouchModified(
+            currentNoteMessages[index],
+            content: html,
+            contentFormat: NoteContentFormatter.FormatHtml);
 
         CancelEdit();
         await SaveCurrent();
+    }
+
+    private void PromptDeleteNoteEntry(int index)
+    {
+        if (index < 0 || index >= currentNoteMessages.Count)
+            return;
+
+        pendingDeleteNoteId = null;
+        pendingDeleteEntryIndex = index;
+        deleteConfirmTitle = "Delete note entry?";
+        deleteConfirmMessage = "This entry will be removed from the note and the change will sync to your other devices.";
+        showDeleteConfirm = true;
+    }
+
+    private void PromptDeleteNote(string? noteId)
+    {
+        if (string.IsNullOrEmpty(noteId))
+            return;
+
+        CloseMenu();
+        pendingDeleteNoteId = noteId;
+        pendingDeleteEntryIndex = null;
+        var note = notes.FirstOrDefault(n => n.Id == noteId);
+        deleteConfirmTitle = "Delete note?";
+        deleteConfirmMessage = $"This permanently removes \"{note?.Title ?? "this note"}\" and all its entries on this device, and syncs the delete to your other devices.";
+        showDeleteConfirm = true;
+    }
+
+    private void CancelPendingDelete()
+    {
+        showDeleteConfirm = false;
+        pendingDeleteNoteId = null;
+        pendingDeleteEntryIndex = null;
+    }
+
+    private async Task ConfirmPendingDelete()
+    {
+        if (!string.IsNullOrEmpty(pendingDeleteNoteId))
+            await DeleteNote(pendingDeleteNoteId);
+        else if (pendingDeleteEntryIndex is int index)
+            await DeleteNoteEntry(index);
+
+        CancelPendingDelete();
+    }
+
+    private async Task DeleteNoteEntry(int index)
+    {
+        if (index < 0 || index >= currentNoteMessages.Count)
+            return;
+
+        CancelEdit();
+        currentNoteMessages[index] = ChatMessageHelper.SoftDelete(currentNoteMessages[index]);
+        await SaveCurrent();
+        StateHasChanged();
     }
 
     private async Task NewNote()
@@ -350,15 +421,16 @@
         var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
         var title = note?.Title ?? "Untitled";
         await NoteStore.SaveNoteAsync(JS, activeNoteId, currentNoteMessages);
-        await NoteStore.UpdateIndexAfterSaveAsync(JS, activeNoteId, title);
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, activeNoteId, title, currentNoteMessages);
         notes = await NoteStore.LoadIndexAsync(JS);
         SyncService.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
     }
 
     private async Task DeleteNote(string id)
     {
-        await NoteStore.DeleteNoteAsync(JS, id);
+        var deletedAt = await NoteStore.DeleteNoteAsync(JS, id);
         notes = await NoteStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncNoteDeleteAfterLocalDelete(id, deletedAt);
 
         if (activeNoteId == id)
         {
@@ -384,10 +456,13 @@
             await LoadNote(noteId);
         }
 
+        var now = DateTime.UtcNow;
         var newEntry = new ChatMessage(
             Role: "user",
             Content: "<p><br></p>",
-            Timestamp: DateTime.UtcNow,
+            Timestamp: now,
+            ModifiedAt: now,
+            ItemId: Guid.NewGuid().ToString("N"),
             ContentFormat: NoteContentFormatter.FormatHtml);
 
         currentNoteMessages.Add(newEntry);
@@ -418,6 +493,7 @@
         var title = renameNoteTitle.Trim();
         await NoteStore.UpdateIndexAfterSaveAsync(JS, renameNoteId, title);
         notes = await NoteStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncNoteAfterLocalSave(renameNoteId, title);
         CancelRename();
         StateHasChanged();
     }

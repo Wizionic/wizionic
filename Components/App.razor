@@ -284,6 +284,16 @@
             });
         };
 
+        window.idbDeleteConvoContent = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("convoContents", "readwrite");
+                tx.objectStore("convoContents").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
         window.idbGetSetting = async (key) => {
             const db = await getChatfishDb();
             return new Promise((resolve, reject) => {
@@ -377,6 +387,16 @@
             return new Promise((resolve, reject) => {
                 const tx = db.transaction(["noteMetas", "noteContents"], "readwrite");
                 tx.objectStore("noteMetas").delete(key);
+                tx.objectStore("noteContents").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteNoteContent = async (key) => {
+            const db = await getChatfishDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteContents", "readwrite");
                 tx.objectStore("noteContents").delete(key);
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
@@ -482,11 +502,20 @@
 
         window.webrtcSetRemoteDescription = async (peerId, sdpJson) => {
             const entry = window._webrtcConnections[peerId];
-            if (!entry) return;
+            if (!entry) return false;
             const desc = JSON.parse(sdpJson);
+            if (desc.type === 'answer' && entry.pc.signalingState === 'stable' && entry.remoteDescSet) {
+                return false;
+            }
             await entry.pc.setRemoteDescription(new RTCSessionDescription(desc));
             entry.remoteDescSet = true;
             await window.webrtcFlushIceQueue(peerId);
+            return true;
+        };
+
+        window.webrtcIsDataChannelOpen = (peerId) => {
+            const entry = window._webrtcConnections[peerId];
+            return !!(entry?.dataChannel && entry.dataChannel.readyState === 'open');
         };
 
         window.webrtcCreateAnswer = async (peerId) => {

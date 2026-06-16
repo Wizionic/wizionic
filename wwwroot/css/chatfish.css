@@ -1668,6 +1668,17 @@ body .message-bot,
     border-color: var(--grey-300) !important;
 }
 
+.newnote-btn-danger {
+    background: #dc2626 !important;
+    color: white !important;
+    border-color: #dc2626 !important;
+}
+
+.newnote-btn-danger:hover:not(:disabled) {
+    background: #b91c1c !important;
+    border-color: #b91c1c !important;
+}
+
 .newnote-btn-ghost {
     background: transparent !important;
     border-color: transparent !important;
