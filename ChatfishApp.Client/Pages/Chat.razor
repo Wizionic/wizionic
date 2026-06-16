@@ -109,10 +109,15 @@
                 {
                     var capturedIndex = msgIndex;
                     var msg = messages[capturedIndex];
+                    @if (msg.DeletedAt is null)
+                    {
                     <div class="message-row">
                         @if ((msg.User == currentUser) || msg.Role == "user")
                         {
                             <div class="message-me">
+                                <div class="message-bot-menu" @onclick:stopPropagation>
+                                    <button id="user-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleUserMenu(capturedIndex)" title="Message options">⋮</button>
+                                </div>
                                 @((MarkupString)FormatMessage(msg.Content ?? ""))
                                 @if (msg.Attachments != null && msg.Attachments.Any())
                                 {
@@ -174,6 +179,7 @@
                             </div>
                         }
                     </div>
+                    }
                 }
 
                 @if (isTyping)
@@ -292,21 +298,60 @@
                     <button type="button" class="menu-button"><i class="bi bi-journal-plus"></i></button>
                     Add to notes
                 </div>
+                <div @onclick="() => PromptDeleteMessage(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete message
+                </div>
+            }
+            else if (IsUserMenuOpen)
+            {
+                <div @onclick="() => PromptDeleteMessage(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete message
+                </div>
             }
             else
             {
-                <div @onclick="async () => { await DeleteConvo(openMenuId); CloseMenu(); }">
+                <div @onclick="() => OpenRenameConvoDialog(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
+                    Rename
+                </div>
+                <div @onclick="() => PromptDeleteConvo(openMenuId)">
                     <button class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
                     Delete
                 </div>
             }
         </div>
-        @if (!IsBotMenuOpen)
-        {
-            <div class="menu-overlay" @onclick="CloseMenu"></div>
-        }
+        <div class="menu-overlay" @onclick="CloseMenu"></div>
     }
 </div>
+
+<ConfirmDialog IsVisible="showDeleteConfirm"
+               Title="@deleteConfirmTitle"
+               Message="@deleteConfirmMessage"
+               OnConfirm="ConfirmPendingDelete"
+               OnCancel="CancelPendingDelete" />
+
+@if (renameConvoId is not null)
+{
+    <div class="newnote-overlay" @onclick="CancelRenameConvo">
+        <div class="newnote-modal" @onclick:stopPropagation>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Rename Chat</h4>
+            <input type="text"
+                   @bind="renameConvoTitle"
+                   @bind:event="oninput"
+                   placeholder="Chat name..."
+                   class="newnote-input"
+                   @onkeydown="RenameConvoKeyHandler" />
+            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelRenameConvo">Cancel</button>
+                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmRenameConvo" disabled="@(string.IsNullOrWhiteSpace(renameConvoTitle))">
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 @if (showNewNote)
 {
@@ -447,10 +492,20 @@
     string? activeConvoId;
 
     string? openMenuId;
+    string? renameConvoId;
+    string renameConvoTitle = "";
+    bool showDeleteConfirm;
+    string deleteConfirmTitle = "";
+    string deleteConfirmMessage = "";
+    string? pendingDeleteConvoId;
+    string? pendingDeleteMessageMenuKey;
     const string BotMenuPrefix = "bot-";
+    const string UserMenuPrefix = "user-";
     int? _botMenuMessageIndex;
+    int? _userMenuMessageIndex;
 
     bool IsBotMenuOpen => openMenuId != null && openMenuId.StartsWith(BotMenuPrefix, StringComparison.Ordinal);
+    bool IsUserMenuOpen => openMenuId != null && openMenuId.StartsWith(UserMenuPrefix, StringComparison.Ordinal);
 
     bool showNewNote;
     ChatMessage? _noteSourceMessage;
@@ -845,10 +900,15 @@
         // Rendering always applies FormatMessage for display.
         var rawUser = currentMessage;
         var attachmentsForThisTurn = pendingFiles.Any() ? pendingFiles.ToList() : null;
-        messages.Add(new ChatMessage(Role: "user", Content: rawUser, ModelUsed: null, Timestamp: DateTime.UtcNow, User: currentUser, Attachments: attachmentsForThisTurn));
+        var now = DateTime.UtcNow;
+        messages.Add(new ChatMessage(
+            Role: "user", Content: rawUser, ModelUsed: null, Timestamp: now, User: currentUser,
+            Attachments: attachmentsForThisTurn, ItemId: Guid.NewGuid().ToString("N"), ModifiedAt: now));
 
         var botIndex = messages.Count;
-        messages.Add(new ChatMessage(Role: "assistant", Content: "", ModelUsed: selectedModel, Timestamp: DateTime.UtcNow));
+        messages.Add(new ChatMessage(
+            Role: "assistant", Content: "", ModelUsed: selectedModel, Timestamp: now,
+            ItemId: Guid.NewGuid().ToString("N"), ModifiedAt: now));
 
         isTyping = true;
         pendingFiles.Clear();
@@ -865,8 +925,8 @@
             accumulated = await CallProvider();  // history (incl. attachments on the last user msg) is built from the messages list
             
             var currentModel = messages[botIndex].ModelUsed;
-            var currentTs = messages[botIndex].Timestamp;
-            messages[botIndex] = new ChatMessage(Role: "assistant", Content: accumulated, ModelUsed: currentModel, Timestamp: currentTs, ToolTrace: _pendingToolTrace);
+            var touched = ChatMessageHelper.TouchModified(messages[botIndex], content: accumulated);
+            messages[botIndex] = touched with { ModelUsed = currentModel, ToolTrace = _pendingToolTrace };
             _pendingToolTrace = ""; // consumed
             RequestScrollToBottom();
             StateHasChanged();
@@ -969,10 +1029,92 @@
         SyncService.ScheduleAutoSyncConvoAfterLocalSave(activeConvoId);
     }
 
+    void OpenRenameConvoDialog(string? convoId)
+    {
+        if (string.IsNullOrEmpty(convoId))
+            return;
+
+        CloseMenu();
+        renameConvoId = convoId;
+        var convo = localConvos.FirstOrDefault(c => c.Id == convoId);
+        renameConvoTitle = convo?.Title ?? "";
+    }
+
+    void CancelRenameConvo()
+    {
+        renameConvoId = null;
+        renameConvoTitle = "";
+    }
+
+    async Task ConfirmRenameConvo()
+    {
+        if (renameConvoId is null || string.IsNullOrWhiteSpace(renameConvoTitle))
+            return;
+
+        var title = renameConvoTitle.Trim();
+        await ConversationStore.SetConversationTitleAsync(JS, renameConvoId, title);
+        localConvos = await ConversationStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncConvoAfterLocalSave(renameConvoId, title);
+        CancelRenameConvo();
+        StateHasChanged();
+    }
+
+    async Task RenameConvoKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(renameConvoTitle))
+            await ConfirmRenameConvo();
+        else if (e.Key == "Escape")
+            CancelRenameConvo();
+    }
+
+    void PromptDeleteConvo(string? convoId)
+    {
+        if (string.IsNullOrEmpty(convoId))
+            return;
+
+        CloseMenu();
+        pendingDeleteConvoId = convoId;
+        pendingDeleteMessageMenuKey = null;
+        deleteConfirmTitle = "Delete conversation?";
+        deleteConfirmMessage = "This permanently removes the entire chat history on this device and syncs the delete to your other devices.";
+        showDeleteConfirm = true;
+    }
+
+    void PromptDeleteMessage(string? menuKey)
+    {
+        if (string.IsNullOrEmpty(menuKey))
+            return;
+
+        CloseMenu();
+        pendingDeleteMessageMenuKey = menuKey;
+        pendingDeleteConvoId = null;
+        deleteConfirmTitle = "Delete message?";
+        deleteConfirmMessage = "This message will be removed from the conversation and the change will sync to your other devices.";
+        showDeleteConfirm = true;
+    }
+
+    void CancelPendingDelete()
+    {
+        showDeleteConfirm = false;
+        pendingDeleteConvoId = null;
+        pendingDeleteMessageMenuKey = null;
+    }
+
+    async Task ConfirmPendingDelete()
+    {
+        if (!string.IsNullOrEmpty(pendingDeleteConvoId))
+            await DeleteConvo(pendingDeleteConvoId);
+        else if (!string.IsNullOrEmpty(pendingDeleteMessageMenuKey))
+            await DeleteMessageFromMenu(pendingDeleteMessageMenuKey);
+
+        CancelPendingDelete();
+    }
+
     async Task DeleteConvo(string id)
     {
-        await ConversationStore.DeleteConversationAsync(JS, id);
+        var deletedAt = await ConversationStore.DeleteConversationAsync(JS, id);
         localConvos = await ConversationStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncConvoDeleteAfterLocalDelete(id, deletedAt);
 
         if (activeConvoId == id)
         {
@@ -1008,6 +1150,22 @@
         openMenuId = null;
         activePopupStyle = "";
         _botMenuMessageIndex = null;
+        _userMenuMessageIndex = null;
+    }
+
+    void ToggleUserMenu(int index)
+    {
+        var menuKey = $"{UserMenuPrefix}{index}";
+        if (openMenuId == menuKey)
+        {
+            CloseMenu();
+        }
+        else
+        {
+            openMenuId = menuKey;
+            _userMenuMessageIndex = index;
+            _ = PositionPopupAtButton($"user-menu-btn-{index}");
+        }
     }
 
     void ToggleBotMenu(int index)
@@ -1024,6 +1182,26 @@
             _botMenuMessageIndex = index;
             _ = PositionPopupAtButton($"bot-menu-btn-{index}");
         }
+    }
+
+    async Task DeleteMessageFromMenu(string? menuKey)
+    {
+        if (string.IsNullOrEmpty(menuKey))
+            return;
+
+        int? index = null;
+        if (menuKey.StartsWith(BotMenuPrefix, StringComparison.Ordinal))
+            index = int.TryParse(menuKey.Substring(BotMenuPrefix.Length), out var botIdx) ? botIdx : null;
+        else if (menuKey.StartsWith(UserMenuPrefix, StringComparison.Ordinal))
+            index = int.TryParse(menuKey.Substring(UserMenuPrefix.Length), out var userIdx) ? userIdx : null;
+
+        if (index is null || index < 0 || index >= messages.Count)
+            return;
+
+        var i = index.Value;
+        messages[i] = ChatMessageHelper.SoftDelete(messages[i]);
+        await SaveCurrentConvo();
+        StateHasChanged();
     }
 
     async Task OpenAddToNotesFromMenu(string? menuKey)

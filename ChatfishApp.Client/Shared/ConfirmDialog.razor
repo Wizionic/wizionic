@@ -1,0 +1,29 @@
+@if (IsVisible)
+{
+    <div class="newnote-overlay" @onclick="Cancel">
+        <div class="newnote-modal" @onclick:stopPropagation>
+            <h4 style="margin:0 0 8px 0;font-size:1.1rem;color:#1F2A37;">@Title</h4>
+            @if (!string.IsNullOrWhiteSpace(Message))
+            {
+                <p style="margin:0 0 16px 0;font-size:0.9rem;color:#64748b;line-height:1.45;">@Message</p>
+            }
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="Cancel">@CancelText</button>
+                <button type="button" class="newnote-btn newnote-btn-danger" @onclick="Confirm">@ConfirmText</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public string Title { get; set; } = "Confirm";
+    [Parameter] public string Message { get; set; } = "";
+    [Parameter] public string ConfirmText { get; set; } = "Delete";
+    [Parameter] public string CancelText { get; set; } = "Cancel";
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private Task Confirm() => OnConfirm.InvokeAsync();
+    private Task Cancel() => OnCancel.InvokeAsync();
+}
