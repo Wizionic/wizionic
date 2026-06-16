@@ -13,7 +13,7 @@
     <ImportMap />
     <link rel="icon" type="image/png" href="/images/favicon.png" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-
+    <link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet" />
 
     <HeadOutlet />
 </head>
@@ -402,8 +402,9 @@
 
         window.webrtcCreatePeerConnection = async (dotnetRef, peerId) => {
             // Close any existing connection for this peer before starting a new handshake.
+            // Suppress .NET callbacks so the teardown does not clear the newly queued sync item.
             if (window._webrtcConnections[peerId]) {
-                window.webrtcClose(peerId);
+                window.webrtcClose(peerId, { suppressDotNetCallbacks: true });
             }
 
             const pc = new RTCPeerConnection({
@@ -434,6 +435,10 @@
 
             pc.onconnectionstatechange = () => {
                 console.log('[WebRTC] Connection state for', peerId, pc.connectionState);
+                const state = pc.connectionState;
+                if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                    dotnetRef.invokeMethodAsync('OnWebRtcConnectionStateChange', peerId, state);
+                }
             };
             return true;
         };
@@ -509,24 +514,42 @@
             } catch (e) { console.warn('[WebRTC] addIceCandidate', e); }
         };
 
-        window.webrtcSendData = async (peerId, data) => {
+        window.webrtcGetMaxMessageSize = (peerId) => {
             const entry = window._webrtcConnections[peerId];
-            if (entry && entry.dataChannel && entry.dataChannel.readyState === 'open') {
-                entry.dataChannel.send(data);
-                return true;
-            }
-            return false;
+            const max = entry?.dataChannel?.maxMessageSize;
+            if (max && max > 0) return max;
+            return 256 * 1024;
         };
 
-        window.webrtcClose = (peerId) => {
+        window.webrtcSendData = async (peerId, data) => {
             const entry = window._webrtcConnections[peerId];
-            if (entry) {
-                if (entry.dataChannel) entry.dataChannel.close();
-                entry.pc.close();
-                delete window._webrtcConnections[peerId];
+            if (!entry?.dataChannel || entry.dataChannel.readyState !== 'open') return false;
+            try {
+                entry.dataChannel.send(data);
+                return true;
+            } catch (e) {
+                console.warn('[WebRTC] send failed:', e?.message || e);
+                return false;
             }
         };
+
+        window.webrtcClose = (peerId, options) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return;
+
+            const suppress = options?.suppressDotNetCallbacks;
+            if (entry.dataChannel) {
+                if (suppress) entry.dataChannel.onclose = null;
+                entry.dataChannel.close();
+            }
+            if (suppress) entry.pc.onconnectionstatechange = null;
+            entry.pc.close();
+            delete window._webrtcConnections[peerId];
+        };
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quill-resize-image@1.0.11/dist/quill-resize-image.min.js"></script>
+    <script src="js/quillInterop.js"></script>
 </body>
 
 </html>

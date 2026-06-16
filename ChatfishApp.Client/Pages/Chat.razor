@@ -596,12 +596,17 @@
         dotNetRef?.Dispose();
     }
 
-    private async void OnConversationsChangedFromSync()
+    private void OnConversationsChangedFromSync()
+    {
+        _ = RefreshConversationsFromSyncAsync();
+    }
+
+    private async Task RefreshConversationsFromSyncAsync()
     {
         // A sync arrived (via WebRTC, while on this page or in background).
         // Reload the conversation list so the sidebar automatically reflects the new/updated chat.
         localConvos = await ConversationStore.LoadIndexAsync(JS);
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task ToggleSidebar()
@@ -961,6 +966,7 @@
         await ConversationStore.SaveConversationAsync(JS, activeConvoId, messages);
         await ConversationStore.UpdateIndexAfterSaveAsync(JS, activeConvoId, messages, localConvos);
         localConvos = await ConversationStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncConvoAfterLocalSave(activeConvoId);
     }
 
     async Task DeleteConvo(string id)
