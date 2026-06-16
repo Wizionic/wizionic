@@ -54,6 +54,7 @@ public class AiProviderProxyService
                 DisplayName = string.IsNullOrWhiteSpace(provider.DisplayName) ? provider.Id : provider.DisplayName,
                 Type = NormalizeType(provider.Type),
                 DefaultModel = string.IsNullOrWhiteSpace(provider.DefaultModel) ? null : provider.DefaultModel.Trim(),
+                VisionProxyModelId = GetVisionProxyModelId(provider),
                 Models = models
             });
         }
@@ -79,21 +80,34 @@ public class AiProviderProxyService
         if (!TryResolveApiKey(provider, out var apiKey))
             throw new InvalidOperationException($"No API key configured for proxied provider '{request.ProviderId}'.");
 
+        var messages = await ApplyVisionProxyAsync(provider, request.Model, request.Messages, ct);
+        return await SendChatCompletionAsync(provider, request.Model, messages, request.Tools, request.ToolChoice, apiKey, ct);
+    }
+
+    private async Task<string> SendChatCompletionAsync(
+        ProxiedProviderOptions provider,
+        string model,
+        List<Dictionary<string, object?>> messages,
+        List<Dictionary<string, object?>>? tools,
+        object? toolChoice,
+        string apiKey,
+        CancellationToken ct)
+    {
         var baseUrl = provider.BaseUrl.TrimEnd('/');
         var url = $"{baseUrl}/chat/completions";
 
         var body = new Dictionary<string, object?>
         {
-            ["model"] = request.Model,
-            ["messages"] = request.Messages,
+            ["model"] = model,
+            ["messages"] = messages,
             ["stream"] = false
         };
 
-        if (request.Tools is { Count: > 0 })
-            body["tools"] = request.Tools;
+        if (tools is { Count: > 0 })
+            body["tools"] = tools;
 
-        if (request.ToolChoice != null)
-            body["tool_choice"] = request.ToolChoice;
+        if (toolChoice != null)
+            body["tool_choice"] = toolChoice;
 
         var client = _httpClientFactory.CreateClient("ai-proxy");
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
@@ -107,15 +121,98 @@ public class AiProviderProxyService
         {
             _logger.LogWarning(
                 "Proxied provider {ProviderId} returned {StatusCode}: {Body}",
-                request.ProviderId,
+                provider.Id,
                 (int)response.StatusCode,
                 Truncate(responseText, 500));
 
             throw new HttpRequestException(
-                $"Provider '{request.ProviderId}' returned {(int)response.StatusCode}: {Truncate(responseText, 300)}");
+                $"Provider '{provider.Id}' returned {(int)response.StatusCode}: {Truncate(responseText, 300)}");
         }
 
         return responseText;
+    }
+
+    private async Task<List<Dictionary<string, object?>>> ApplyVisionProxyAsync(
+        ProxiedProviderOptions provider,
+        string targetModelId,
+        List<Dictionary<string, object?>> messages,
+        CancellationToken ct)
+    {
+        var targetModel = ResolveConfiguredModel(provider, targetModelId);
+        if (targetModel?.SupportsVision == true)
+            return messages;
+
+        var proxyModelId = GetVisionProxyModelId(provider);
+        if (string.IsNullOrWhiteSpace(proxyModelId))
+            return messages;
+
+        if (!TryFindLastUserMessageWithImages(messages, out int messageIndex, out var imageUrls, out var existingText))
+            return messages;
+
+        if (!TryResolveApiKey(provider, out var apiKey))
+            return messages;
+
+        var descriptions = new List<string>();
+        for (int i = 0; i < imageUrls.Count; i++)
+        {
+            var isPdf = imageUrls[i].Contains("application/pdf", StringComparison.OrdinalIgnoreCase);
+            var prompt = isPdf
+                ? "Summarize this document in detail for use as context in a follow-up text-only conversation. Include key facts, structure, and any visible text."
+                : "Describe this image in detail for use as context in a follow-up text-only conversation. Include objects, text, colors, layout, and anything relevant to answering questions about it.";
+
+            var visionMessages = new List<Dictionary<string, object?>>
+            {
+                new()
+                {
+                    ["role"] = "user",
+                    ["content"] = new List<Dictionary<string, object?>>
+                    {
+                        new() { ["type"] = "text", ["text"] = prompt },
+                        new()
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new Dictionary<string, object?> { ["url"] = imageUrls[i] }
+                        }
+                    }
+                }
+            };
+
+            try
+            {
+                var json = await SendChatCompletionAsync(provider, proxyModelId, visionMessages, tools: null, toolChoice: null, apiKey, ct);
+                var description = ExtractAssistantContent(json);
+                if (!string.IsNullOrWhiteSpace(description))
+                    descriptions.Add($"[attachment {i + 1}]: {description.Trim()}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AiProxy] Vision proxy model {ProxyModel} failed for provider {ProviderId}", proxyModelId, provider.Id);
+            }
+        }
+
+        if (descriptions.Count == 0)
+            return messages;
+
+        _logger.LogInformation(
+            "[AiProxy] Vision proxy ({ProxyModel}) described {Count} attachment(s) for {TargetModel} on provider {ProviderId}",
+            proxyModelId,
+            descriptions.Count,
+            targetModelId,
+            provider.Id);
+
+        var prefix = string.IsNullOrWhiteSpace(existingText) ? "" : existingText.Trim() + "\n\n";
+        var enrichedText = prefix +
+            "[Image context — described by vision proxy model '" + proxyModelId + "']\n" +
+            string.Join("\n\n", descriptions);
+
+        var enriched = messages.Select(m => new Dictionary<string, object?>(m)).ToList();
+        enriched[messageIndex] = new Dictionary<string, object?>
+        {
+            ["role"] = "user",
+            ["content"] = enrichedText.Trim()
+        };
+
+        return enriched;
     }
 
     public void LogStartupDiagnostics()
@@ -174,7 +271,7 @@ public class AiProviderProxyService
             }
         }
 
-        foreach (var m in provider.Models.Where(m => !string.IsNullOrWhiteSpace(m.Id)))
+        foreach (var m in provider.Models.Where(m => !string.IsNullOrWhiteSpace(m.Id) && !m.HideFromModelList))
             models.Add(ToModelDto(m));
 
         return models;
@@ -227,12 +324,12 @@ public class AiProviderProxyService
 
                 if (configured != null)
                 {
-                    if (!configured.SupportsTools && !configured.SupportsVision)
-                    {
-                        supportsTools = configured.SupportsTools;
-                        supportsVision = configured.SupportsVision;
-                    }
+                    supportsTools = configured.SupportsTools;
+                    supportsVision = configured.SupportsVision;
                 }
+
+                if (configured?.HideFromModelList == true)
+                    return null;
 
                 return new ProxiedProviderContracts.ProxiedModelDto
                 {
@@ -240,9 +337,12 @@ public class AiProviderProxyService
                     Label = string.IsNullOrWhiteSpace(configured?.Label) ? m.Name! : configured!.Label,
                     Icon = string.IsNullOrWhiteSpace(configured?.Icon) ? "🦙" : configured!.Icon,
                     SupportsTools = supportsTools,
-                    SupportsVision = supportsVision
+                    SupportsVision = supportsVision,
+                    IsVisionProxy = configured?.IsVisionProxy ?? false
                 };
             })
+            .Where(dto => dto != null)
+            .Select(dto => dto!)
             .OrderBy(m => allowlistOrder.FindIndex(k => string.Equals(k, m.Id, StringComparison.OrdinalIgnoreCase)))
             .ThenBy(m => m.Label, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -255,8 +355,172 @@ public class AiProviderProxyService
             Label = string.IsNullOrWhiteSpace(m.Label) ? m.Id : m.Label,
             Icon = string.IsNullOrWhiteSpace(m.Icon) ? "🤖" : m.Icon,
             SupportsTools = m.SupportsTools,
-            SupportsVision = m.SupportsVision
+            SupportsVision = m.SupportsVision,
+            IsVisionProxy = m.IsVisionProxy
         };
+
+    private static ProxiedModelOptions? ResolveConfiguredModel(ProxiedProviderOptions provider, string modelId) =>
+        provider.Models.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
+
+    private static string? GetVisionProxyModelId(ProxiedProviderOptions provider) =>
+        provider.Models.FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision)?.Id;
+
+    private static bool TryFindLastUserMessageWithImages(
+        List<Dictionary<string, object?>> messages,
+        out int messageIndex,
+        out List<string> imageUrls,
+        out string existingText)
+    {
+        messageIndex = -1;
+        imageUrls = new List<string>();
+        existingText = "";
+
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (!messages[i].TryGetValue("role", out var roleObj) ||
+                !string.Equals(roleObj?.ToString(), "user", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (!TryExtractUserMessageContent(messages[i], out existingText, out var urls) || urls.Count == 0)
+                continue;
+
+            messageIndex = i;
+            imageUrls = urls;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractUserMessageContent(
+        Dictionary<string, object?> message,
+        out string text,
+        out List<string> imageUrls)
+    {
+        text = "";
+        imageUrls = new List<string>();
+
+        if (!message.TryGetValue("content", out var contentObj) || contentObj == null)
+            return false;
+
+        if (contentObj is string s)
+        {
+            text = s;
+            return false;
+        }
+
+        if (contentObj is JsonElement jsonEl)
+            return TryExtractFromContentElement(jsonEl, out text, out imageUrls);
+
+        if (contentObj is IEnumerable<object?> parts)
+        {
+            foreach (var part in parts)
+            {
+                if (part is Dictionary<string, object?> dict)
+                    AccumulateContentPart(dict, ref text, imageUrls);
+                else if (part is JsonElement el)
+                    AccumulateContentPart(el, ref text, imageUrls);
+            }
+            return imageUrls.Count > 0;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractFromContentElement(JsonElement contentEl, out string text, out List<string> imageUrls)
+    {
+        text = "";
+        imageUrls = new List<string>();
+
+        if (contentEl.ValueKind == JsonValueKind.String)
+        {
+            text = contentEl.GetString() ?? "";
+            return false;
+        }
+
+        if (contentEl.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var part in contentEl.EnumerateArray())
+            AccumulateContentPart(part, ref text, imageUrls);
+
+        return imageUrls.Count > 0;
+    }
+
+    private static void AccumulateContentPart(JsonElement part, ref string text, List<string> imageUrls)
+    {
+        if (!part.TryGetProperty("type", out var typeEl))
+            return;
+
+        var type = typeEl.GetString() ?? "";
+        if (type.Equals("text", StringComparison.OrdinalIgnoreCase) &&
+            part.TryGetProperty("text", out var textEl))
+        {
+            var piece = textEl.GetString();
+            if (!string.IsNullOrWhiteSpace(piece))
+                text = string.IsNullOrWhiteSpace(text) ? piece : text + "\n" + piece;
+            return;
+        }
+
+        if (type.Equals("image_url", StringComparison.OrdinalIgnoreCase) &&
+            part.TryGetProperty("image_url", out var imageUrlEl))
+        {
+            string? url = null;
+            if (imageUrlEl.ValueKind == JsonValueKind.String)
+                url = imageUrlEl.GetString();
+            else if (imageUrlEl.TryGetProperty("url", out var urlEl))
+                url = urlEl.GetString();
+
+            if (!string.IsNullOrWhiteSpace(url))
+                imageUrls.Add(url);
+        }
+    }
+
+    private static void AccumulateContentPart(Dictionary<string, object?> part, ref string text, List<string> imageUrls)
+    {
+        if (!part.TryGetValue("type", out var typeObj))
+            return;
+
+        var type = typeObj?.ToString() ?? "";
+        if (type.Equals("text", StringComparison.OrdinalIgnoreCase) &&
+            part.TryGetValue("text", out var textObj))
+        {
+            var piece = textObj?.ToString();
+            if (!string.IsNullOrWhiteSpace(piece))
+                text = string.IsNullOrWhiteSpace(text) ? piece : text + "\n" + piece;
+            return;
+        }
+
+        if (type.Equals("image_url", StringComparison.OrdinalIgnoreCase) &&
+            part.TryGetValue("image_url", out var imageUrlObj))
+        {
+            string? url = imageUrlObj switch
+            {
+                string s => s,
+                Dictionary<string, object?> dict when dict.TryGetValue("url", out var urlObj) => urlObj?.ToString(),
+                JsonElement el when el.ValueKind == JsonValueKind.String => el.GetString(),
+                JsonElement el when el.TryGetProperty("url", out var urlEl) => urlEl.GetString(),
+                _ => null
+            };
+
+            if (!string.IsNullOrWhiteSpace(url))
+                imageUrls.Add(url);
+        }
+    }
+
+    private static string? ExtractAssistantContent(string openAiJson)
+    {
+        using var doc = JsonDocument.Parse(openAiJson);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+            return null;
+
+        var message = choices[0].GetProperty("message");
+        if (message.TryGetProperty("content", out var contentEl) && contentEl.ValueKind == JsonValueKind.String)
+            return contentEl.GetString();
+
+        return null;
+    }
 
     private static void ApplyOutgoingHeaders(
         HttpRequestMessage request,

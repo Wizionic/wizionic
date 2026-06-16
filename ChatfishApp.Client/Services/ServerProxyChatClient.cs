@@ -6,6 +6,7 @@ using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using TextContent = Microsoft.Extensions.AI.TextContent;
 using FunctionCallContent = Microsoft.Extensions.AI.FunctionCallContent;
 using FunctionResultContent = Microsoft.Extensions.AI.FunctionResultContent;
+using DataContent = Microsoft.Extensions.AI.DataContent;
 
 namespace ChatfishApp.Client.Services;
 
@@ -69,6 +70,7 @@ internal sealed class ServerProxyChatClient : IChatClient
             var entry = new Dictionary<string, object?> { ["role"] = role };
 
             var textParts = new List<string>();
+            var imageParts = new List<Dictionary<string, object?>>();
             List<Dictionary<string, object?>>? toolCalls = null;
             string? toolCallId = null;
 
@@ -78,6 +80,15 @@ internal sealed class ServerProxyChatClient : IChatClient
                 {
                     case TextContent tc when !string.IsNullOrWhiteSpace(tc.Text):
                         textParts.Add(tc.Text);
+                        break;
+                    case DataContent dc:
+                        var mime = string.IsNullOrWhiteSpace(dc.MediaType) ? "application/octet-stream" : dc.MediaType;
+                        var dataUrl = $"data:{mime};base64,{Convert.ToBase64String(dc.Data.ToArray())}";
+                        imageParts.Add(new Dictionary<string, object?>
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new Dictionary<string, object?> { ["url"] = dataUrl }
+                        });
                         break;
                     case FunctionCallContent fcc:
                         toolCalls ??= new List<Dictionary<string, object?>>();
@@ -106,7 +117,25 @@ internal sealed class ServerProxyChatClient : IChatClient
             }
             else
             {
-                entry["content"] = string.Join("\n", textParts);
+                if (imageParts.Count > 0)
+                {
+                    var parts = new List<Dictionary<string, object?>>();
+                    if (textParts.Count > 0)
+                    {
+                        parts.Add(new Dictionary<string, object?>
+                        {
+                            ["type"] = "text",
+                            ["text"] = string.Join("\n", textParts)
+                        });
+                    }
+                    parts.AddRange(imageParts);
+                    entry["content"] = parts;
+                }
+                else
+                {
+                    entry["content"] = string.Join("\n", textParts);
+                }
+
                 if (toolCalls is { Count: > 0 })
                     entry["tool_calls"] = toolCalls;
             }
