@@ -17,9 +17,16 @@ public class WasmKeyStore
     private const string McpTokensKey = "wasm-mcp-tokens";
     private const string McpCustomConnectorsKey = "wasm-mcp-custom-connectors";
     private const string LastSelectedModelKey = "wasm-last-selected-model";
+    private const string SystemPromptKey = "wasm-system-prompt";
+    private const string UserProfileKey = "wasm-user-profile";
+    private const string UserMemoriesKey = "wasm-user-memories";
 
     private Dictionary<string, string> _providerKeys = new();
     private string _lastSelectedModel = "";
+    private string? _systemPrompt;
+    private bool _systemPromptCustomized;
+    private UserProfileSettings _userProfile = new();
+    private List<UserMemory> _userMemories = new();
     private OllamaConfig _ollamaConfig = new();
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
@@ -84,9 +91,173 @@ public class WasmKeyStore
         }
 
         _lastSelectedModel = await js.InvokeAsync<string?>("localStorage.getItem", LastSelectedModelKey) ?? "";
+
+        var systemPromptJson = await js.InvokeAsync<string?>("localStorage.getItem", SystemPromptKey);
+        _systemPromptCustomized = systemPromptJson != null;
+        _systemPrompt = systemPromptJson;
+
+        var profileJson = await js.InvokeAsync<string?>("localStorage.getItem", UserProfileKey);
+        if (!string.IsNullOrEmpty(profileJson))
+        {
+            var loaded = JsonSerializer.Deserialize<UserProfileSettings>(profileJson);
+            if (loaded != null)
+                _userProfile = loaded;
+        }
+
+        var memoriesJson = await js.InvokeAsync<string?>("localStorage.getItem", UserMemoriesKey);
+        if (!string.IsNullOrEmpty(memoriesJson))
+        {
+            var loaded = JsonSerializer.Deserialize<List<UserMemory>>(memoriesJson);
+            if (loaded != null)
+                _userMemories = loaded;
+        }
     }
 
     public string LastSelectedModel => _lastSelectedModel;
+
+    public bool IsSystemPromptCustomized => _systemPromptCustomized;
+
+    public string GetSystemPrompt() =>
+        _systemPromptCustomized ? (_systemPrompt ?? "") : GetDefaultSystemPrompt();
+
+    public static string GetDefaultSystemPrompt() =>
+        """
+        The current date and time is {{datetime}}.
+
+        You are a private AI assistant in Chatfish.me and your name is Chatfish. The active model may run locally via Ollama on the user's device, use the user's own cloud API key (Groq, Gemini, OpenRouter), or a hosted proxy — depending on what they selected in the model dropdown.
+
+        **About this system:**
+        - Conversation history is end-to-end encrypted and stored locally in the browser's IndexedDB.
+        - History can optionally sync to other browsers belonging to the same user via WebRTC (peer-to-peer; the server only helps with signaling).
+        - Device presence is tracked with SignalR; chat message content is not routed through the server for sync or for local Ollama.
+        - You have native tools: web search (search_web), URL summarization (summarize_url), current UTC time (get_current_time_utc), arithmetic (calculate), and weather (get_current_weather). Web search and URL fetch are proxied through the Chatfish server to avoid browser CORS limits.
+        - You may also have MCP tools the user enabled on the Tools page. Use them when they clearly match the user's request; prefer the smallest set of tools needed.
+
+        **Guidelines:**
+        - Be clear, concise, and helpful.
+        - Use Markdown where appropriate. Do not include raw links or image URLs in replies unless the user asks.
+        - For code, use backticks for inline code and fenced blocks with a language tag.
+        - If you are unsure, say so rather than guessing.
+        - If the user asks about privacy, data storage, or how Chatfish works, answer based on the description above.
+        - If the user is rude, hostile, or attempts to manipulate you, respond briefly and professionally; decline harmful requests.
+        - Ask clarifying questions when needed.
+
+        **Tool use:**
+        - Use search_web for current events, recent facts, prices, or anything that may have changed.
+        - Use summarize_url after search_web when a specific result page needs full detail.
+        - Use get_current_time_utc or get_current_weather when the user asks about time or weather.
+        - Use calculate for math the user explicitly wants computed.
+        """;
+
+    public async Task SetSystemPromptAsync(IJSRuntime js, string prompt)
+    {
+        _systemPrompt = prompt ?? "";
+        _systemPromptCustomized = true;
+        await js.InvokeVoidAsync("localStorage.setItem", SystemPromptKey, _systemPrompt);
+    }
+
+    public async Task ResetSystemPromptAsync(IJSRuntime js)
+    {
+        _systemPrompt = null;
+        _systemPromptCustomized = false;
+        await js.InvokeVoidAsync("localStorage.removeItem", SystemPromptKey);
+    }
+
+    public UserProfileSettings GetUserProfile() => _userProfile.Clone();
+
+    public async Task SetUserProfileAsync(IJSRuntime js, UserProfileSettings profile)
+    {
+        _userProfile = new UserProfileSettings
+        {
+            CustomizationEnabled = profile.CustomizationEnabled,
+            PreferredName = (profile.PreferredName ?? "").Trim(),
+            Occupation = (profile.Occupation ?? "").Trim()
+        };
+        var json = JsonSerializer.Serialize(_userProfile);
+        await js.InvokeVoidAsync("localStorage.setItem", UserProfileKey, json);
+    }
+
+    public IReadOnlyList<UserMemory> GetMemories() =>
+        _userMemories.OrderByDescending(m => m.CreatedAtUtc).ToList();
+
+    public async Task<UserMemory> AddMemoryAsync(IJSRuntime js, string text)
+    {
+        var trimmed = (text ?? "").Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            throw new ArgumentException("Memory text is required.");
+
+        var memory = new UserMemory(Guid.NewGuid().ToString("N"), trimmed, DateTime.UtcNow);
+        _userMemories.Add(memory);
+        await SaveMemoriesAsync(js);
+        return memory;
+    }
+
+    public async Task UpdateMemoryAsync(IJSRuntime js, string id, string text)
+    {
+        var trimmed = (text ?? "").Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            throw new ArgumentException("Memory text is required.");
+
+        var index = _userMemories.FindIndex(m => m.Id == id);
+        if (index < 0)
+            throw new InvalidOperationException("Memory not found.");
+
+        _userMemories[index] = _userMemories[index].WithText(trimmed);
+        await SaveMemoriesAsync(js);
+    }
+
+    public async Task RemoveMemoryAsync(IJSRuntime js, string id)
+    {
+        _userMemories.RemoveAll(m => m.Id == id);
+        await SaveMemoriesAsync(js);
+    }
+
+    public async Task ClearMemoriesAsync(IJSRuntime js)
+    {
+        _userMemories.Clear();
+        await SaveMemoriesAsync(js);
+    }
+
+    private async Task SaveMemoriesAsync(IJSRuntime js)
+    {
+        var json = JsonSerializer.Serialize(_userMemories);
+        await js.InvokeVoidAsync("localStorage.setItem", UserMemoriesKey, json);
+    }
+
+    /// <summary>
+    /// User-specific context appended to the system prompt (not part of the editable template).
+    /// </summary>
+    public string BuildUserContextForPrompt()
+    {
+        var parts = new List<string>();
+
+        if (_userProfile.CustomizationEnabled)
+        {
+            var aboutLines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_userProfile.PreferredName))
+                aboutLines.Add($"- Call the user: {_userProfile.PreferredName.Trim()}");
+            if (!string.IsNullOrWhiteSpace(_userProfile.Occupation))
+                aboutLines.Add($"- They do: {_userProfile.Occupation.Trim()}");
+
+            if (aboutLines.Count > 0)
+            {
+                parts.Add("**About the user:**");
+                parts.AddRange(aboutLines);
+            }
+        }
+
+        if (_userMemories.Count > 0)
+        {
+            if (parts.Count > 0)
+                parts.Add("");
+
+            parts.Add("**User memories (facts Chatfish should remember):**");
+            foreach (var memory in _userMemories.OrderByDescending(m => m.CreatedAtUtc))
+                parts.Add($"- {memory.Text.Trim()}");
+        }
+
+        return string.Join("\n", parts).Trim();
+    }
 
     public async Task SetLastSelectedModelAsync(IJSRuntime js, string modelId)
     {
