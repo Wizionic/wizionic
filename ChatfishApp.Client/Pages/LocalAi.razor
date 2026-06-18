@@ -11,13 +11,8 @@
     
     <h4>Ollama - Local AI </h4>
 
-    <p style="color: #666; font-size: 0.9em;">Ollama configuration is stored only in your browser. Conversation history is stored in IndexedDB (encrypted at rest for both guest and logged-in sessions).</p>
+    <p style="color: #666; font-size: 0.9em;">Ollama configuration is stored only in your browser. </p>
 
-    <div style="margin: 1rem 0; padding: 0.75rem 1rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 0.9em;">
-        <strong>Free Chat (hosted Ollama):</strong> On <a href="https://chatfish.me" target="_blank" rel="noopener">chatfish.me</a>, models under
-        <strong>Free Chat</strong> in the chat dropdown are served through the server proxy (no setup here).
-        This page is only for Ollama running on <em>your own</em> computer.
-    </div>
 
     <h3>Ollama - Local AI on your computer</h3>
     <div style="max-width: 500px;">
@@ -51,15 +46,31 @@
     </div>
   </div>
 
+
+    <div style="color:#8a0101;margin: 1rem 0; padding: 0.75rem 1rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 0.9em;">
+    <strong>On https://chatfish.me:</strong> Browser security blocks direct http:// calls to your local Ollama (mixed content).
+    Use must add set OLLAMA_ORIGINS to https://chatfish.me or *
+    
+    <div class="model-command">
+      <span class="model-desc">Windows Powershell</span>
+      <pre><code>[System.Environment]::SetEnvironmentVariable("OLLAMA_ORIGINS","https://chatfish.me","User")</code></pre>
+    </div>
+    
+    
+    <div class="model-command">
+      <span class="model-desc">macOS / Linux</span>
+      <pre><code>sudo systemctl edit ollama
+# Add: Environment="OLLAMA_ORIGINS=https://chatfish.me"</code></pre>
+    </div>
+    
+</div>
+
   <p>
     Once downloaded, click <strong>Refresh Models from Ollama</strong> — 
     Chatfish will detect your models automatically. All of these models 
     support agentic tools like web search and summarization.
   </p>
-  <p style=" color:#8a0101; margin-top:0.25rem;">
-    <strong>On https://chatfish.me:</strong> Browser security blocks direct http:// calls to your local Ollama (mixed content).
-    Use must add set environmental variable <code>OLLAMA_ORIGINS=https://chatfish.me</code> (or <code>*</code>) 
-  </p>
+
 </div>
 
 

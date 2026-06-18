@@ -21,6 +21,7 @@ builder.Services.AddScoped<ChatfishApp.Client.Services.WasmConversationStore>();
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmNoteStore>();
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmAuthService>();
 builder.Services.AddScoped<ChatfishApp.Client.Services.WasmCryptoService>();
+builder.Services.AddScoped<ChatfishApp.Client.Services.WasmGuestDataMigrationService>();
 
 // App-level tools for agentic / tool-calling support in WASM (same tools as server, executed in browser).
 // DefaultToolProvider now also pulls in remote MCP tools selected by the user on the Tools page.
@@ -46,10 +47,12 @@ var host = builder.Build();
 // As long as any WASM page is loaded and the user is authenticated, syncs
 // will be received in the background and persisted automatically.
 var authService = host.Services.GetRequiredService<WasmAuthService>();
+var guestMigration = host.Services.GetRequiredService<WasmGuestDataMigrationService>();
 var syncService = host.Services.GetRequiredService<WasmSyncService>();
 var aiProvider = host.Services.GetRequiredService<WasmAiProviderService>();
 
 await authService.LoadAsync();
+await guestMigration.MigrateIfNeededAsync();
 await aiProvider.RefreshProxiedProvidersAsync();
 await syncService.InitializeAsync();
 

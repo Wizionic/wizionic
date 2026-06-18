@@ -1,0 +1,47 @@
+@page "/architecture"
+@using Markdig
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using System.IO
+
+<PageTitle>Architecture - Chatfish.me</PageTitle>
+
+<div class="roadmap-page" style="height: calc(100vh - 4rem); overflow-y: auto; max-height: 1000px; padding: 0 1rem;">
+
+    <div class="roadmap-content architecture-content" style="line-height: 1.7; max-width: 960px; margin: 0 auto;">
+        @((MarkupString)RenderedMarkdown)
+    </div>
+</div>
+
+@code {
+    private string RenderedMarkdown { get; set; } = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .Build();
+
+        string markdown = "# Architecture file not found";
+
+        var candidates = new[]
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "ARCHITECTURE.md"),
+            Path.Combine(Directory.GetCurrentDirectory(), "ARCHITECTURE.md"),
+            Path.Combine(Directory.GetCurrentDirectory(), "..", "ARCHITECTURE.md"),
+            Path.Combine(AppContext.BaseDirectory, "wwwroot", "ARCHITECTURE.md"),
+            Path.Combine(AppContext.BaseDirectory, "ARCHITECTURE.md")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                markdown = File.ReadAllText(candidate);
+                break;
+            }
+        }
+
+        RenderedMarkdown = Markdown.ToHtml(markdown, pipeline);
+    }
+}
