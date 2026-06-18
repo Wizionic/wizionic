@@ -1,0 +1,384 @@
+@page "/settings"
+@layout ChatfishApp.Client.Shared.WasmLayout
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+
+@inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
+    <h4 style="margin: 0;">Settings</h4>
+    <p style="color: #666; font-size: 0.9em;">
+        These preferences are stored only in your browser. About-you details and memories are included in every chat request.
+    </p>
+
+    <!-- About you -->
+    <div class="settings-card">
+        <h3 style="margin: 0 0 0.25rem;">About you</h3>
+        <p style="color: #666; font-size: 0.85em; margin: 0 0 1rem;">
+            Tell Chatfish about yourself to get more personalized answers.
+        </p>
+
+        <div class="ollama-toggle-row" style="border-top: none; margin-top: 0; padding-top: 0;">
+            <div>
+                <label class="ollama-toggle-label">Enable Chatfish Customization about you</label>
+            </div>
+            <label class="ollama-toggle">
+                <input type="checkbox" @bind="profileDraft.CustomizationEnabled" />
+                <span class="ollama-toggle-slider"></span>
+            </label>
+        </div>
+
+        @if (profileDraft.CustomizationEnabled)
+        {
+            <div style="margin-top: 1rem;">
+                <label>What should Chatfish call you?</label>
+                <input type="text"
+                       @bind="profileDraft.PreferredName"
+                       class="form-control"
+                       />
+
+                <label style="margin-top: 0.75rem;">What do you do?</label>
+                <input type="text"
+                       @bind="profileDraft.Occupation"
+                       class="form-control"
+                        />
+            </div>
+        }
+
+        <div style="margin-top: 1rem;">
+            <button @onclick="SaveProfile" class="btn btn-outline-secondary btn-sm">Save changes</button>
+        </div>
+    </div>
+
+    <!-- Memories -->
+    <div class="settings-card">
+        <h3 style="margin: 0 0 0.25rem;">Memories</h3>
+        <p style="color: #666; font-size: 0.85em; margin: 0 0 1rem;">
+            Facts Chatfish should remember across conversations. Each memory is sent with your system prompt.
+        </p>
+
+        <div class="memory-search-wrap">
+            <i class="bi bi-search memory-search-icon"></i>
+            <input type="text"
+                   @bind="memorySearch"
+                   @bind:event="oninput"
+                   class="form-control memory-search-input"
+                   placeholder="Search for a memory" />
+        </div>
+
+        @if (FilteredMemories.Any())
+        {
+            <div class="memory-list">
+                @foreach (var memory in FilteredMemories)
+                {
+                    <div class="memory-row">
+                        @if (editingMemoryId == memory.Id)
+                        {
+                            <input type="text"
+                                   @bind="editingMemoryText"
+                                   class="form-control"
+                                   @onkeydown="(e) => HandleMemoryEditKey(e, memory.Id)" />
+                            <div class="memory-row-actions">
+                                <button type="button" class="memory-icon-btn" title="Save" @onclick="() => SaveMemoryEdit(memory.Id)">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button type="button" class="memory-icon-btn" title="Cancel" @onclick="CancelMemoryEdit">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="memory-text">@memory.Text</span>
+                            <div class="memory-row-actions">
+                                <button type="button" class="memory-icon-btn" title="Edit" @onclick="() => StartMemoryEdit(memory)">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button" class="memory-icon-btn memory-icon-btn-danger" title="Delete" @onclick="() => DeleteMemory(memory.Id)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else if (!string.IsNullOrWhiteSpace(memorySearch))
+        {
+            <div style="color: #888; font-size: 0.9em; padding: 0.75rem 0;">No memories match your search.</div>
+        }
+        else
+        {
+            <div style="color: #888; font-size: 0.9em; padding: 0.75rem 0;">No memories yet. Add one below.</div>
+        }
+
+        @if (showAddMemory)
+        {
+            <div style="margin-top: 0.75rem;">
+                <input type="text"
+                       @bind="newMemoryText"
+                       class="form-control"
+                      
+                       @onkeydown="HandleNewMemoryKey" />
+                <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+                    <button @onclick="AddMemory" class="btn btn-primary btn-sm">Save memory</button>
+                    <button @onclick="CancelAddMemory" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                </div>
+            </div>
+        }
+
+        <div class="memory-footer-actions">
+            <button @onclick="ShowAddMemoryForm" class="btn btn-outline-primary btn-sm" disabled="@showAddMemory">Add new memory</button>
+            <button @onclick="ConfirmDeleteAllMemories"
+                    class="btn btn-outline-danger btn-sm"
+                    disabled="@(!memories.Any())">
+                Delete all memories
+            </button>
+        </div>
+    </div>
+
+    <!-- System prompt -->
+    <h3 style="margin: 1.25rem 0 0.5rem;">System prompt</h3>
+    <p style="color: #666; font-size: 0.85em; margin-bottom: 0.5rem;">
+        Sent as a system message at the start of each chat request. It is not saved in conversation history or synced to other devices.
+        Use <code>{{datetime}}</code> to insert the current local date and time when a message is sent.
+    </p>
+
+    <textarea @bind="systemPromptDraft"
+              rows="18"
+              class="form-control"
+              style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em; line-height: 1.45;"
+              placeholder="Enter a system prompt for the model..."></textarea>
+
+    <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+        <button @onclick="SavePrompt" class="btn btn-primary btn-sm">Save</button>
+        <button @onclick="ResetPrompt" class="btn btn-outline-secondary btn-sm">Reset to default</button>
+        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary btn-sm">Back to Chat</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(saveFeedback))
+    {
+        <div style="margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
+                    background: @(saveFeedbackIsError ? "#fff0f0" : "#e6f2ff");
+                    border: 1px solid @(saveFeedbackIsError ? "#f5c2c7" : "#b3d9ff");
+                    color: @(saveFeedbackIsError ? "#c00" : "inherit");">
+            @saveFeedback
+        </div>
+    }
+</div>
+
+<ConfirmDialog IsVisible="@showDeleteAllConfirm"
+               Title="Delete all memories?"
+               Message="This permanently removes every saved memory from this browser. This cannot be undone."
+               ConfirmText="Delete all"
+               OnConfirm="DeleteAllMemories"
+               OnCancel="() => showDeleteAllConfirm = false" />
+
+@code {
+    private string systemPromptDraft = "";
+    private UserProfileSettings profileDraft = new();
+    private List<UserMemory> memories = new();
+    private string memorySearch = "";
+    private string? editingMemoryId;
+    private string editingMemoryText = "";
+    private bool showAddMemory;
+    private string newMemoryText = "";
+    private bool showDeleteAllConfirm;
+
+    private string? saveFeedback;
+    private bool saveFeedbackIsError;
+    private CancellationTokenSource? _saveFeedbackCts;
+
+    private IEnumerable<UserMemory> FilteredMemories =>
+        string.IsNullOrWhiteSpace(memorySearch)
+            ? memories
+            : memories.Where(m => m.Text.Contains(memorySearch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await KeyStore.LoadAsync(JS);
+        systemPromptDraft = KeyStore.GetSystemPrompt();
+        profileDraft = KeyStore.GetUserProfile();
+        ReloadMemories();
+    }
+
+    private void ReloadMemories() => memories = KeyStore.GetMemories().ToList();
+
+    private async Task SaveProfile()
+    {
+        try
+        {
+            await KeyStore.SetUserProfileAsync(JS, profileDraft);
+            await ShowSaveFeedbackAsync("About-you settings saved.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not save profile: {ex.Message}", isError: true);
+        }
+    }
+
+    private void ShowAddMemoryForm()
+    {
+        showAddMemory = true;
+        newMemoryText = "";
+        editingMemoryId = null;
+    }
+
+    private void CancelAddMemory()
+    {
+        showAddMemory = false;
+        newMemoryText = "";
+    }
+
+    private async Task AddMemory()
+    {
+        var text = newMemoryText.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            await ShowSaveFeedbackAsync("Enter some text for the memory.", isError: true);
+            return;
+        }
+
+        try
+        {
+            await KeyStore.AddMemoryAsync(JS, text);
+            ReloadMemories();
+            showAddMemory = false;
+            newMemoryText = "";
+            await ShowSaveFeedbackAsync("Memory added.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not add memory: {ex.Message}", isError: true);
+        }
+    }
+
+    private void StartMemoryEdit(UserMemory memory)
+    {
+        editingMemoryId = memory.Id;
+        editingMemoryText = memory.Text;
+        showAddMemory = false;
+    }
+
+    private void CancelMemoryEdit()
+    {
+        editingMemoryId = null;
+        editingMemoryText = "";
+    }
+
+    private async Task SaveMemoryEdit(string id)
+    {
+        try
+        {
+            await KeyStore.UpdateMemoryAsync(JS, id, editingMemoryText);
+            ReloadMemories();
+            CancelMemoryEdit();
+            await ShowSaveFeedbackAsync("Memory updated.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not update memory: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task DeleteMemory(string id)
+    {
+        try
+        {
+            await KeyStore.RemoveMemoryAsync(JS, id);
+            ReloadMemories();
+            if (editingMemoryId == id)
+                CancelMemoryEdit();
+            await ShowSaveFeedbackAsync("Memory deleted.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not delete memory: {ex.Message}", isError: true);
+        }
+    }
+
+    private void ConfirmDeleteAllMemories() => showDeleteAllConfirm = true;
+
+    private async Task DeleteAllMemories()
+    {
+        showDeleteAllConfirm = false;
+        try
+        {
+            await KeyStore.ClearMemoriesAsync(JS);
+            ReloadMemories();
+            CancelMemoryEdit();
+            CancelAddMemory();
+            await ShowSaveFeedbackAsync("All memories deleted.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not delete memories: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task HandleNewMemoryKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await AddMemory();
+        else if (e.Key == "Escape")
+            CancelAddMemory();
+    }
+
+    private async Task HandleMemoryEditKey(KeyboardEventArgs e, string id)
+    {
+        if (e.Key == "Enter")
+            await SaveMemoryEdit(id);
+        else if (e.Key == "Escape")
+            CancelMemoryEdit();
+    }
+
+    private async Task SavePrompt()
+    {
+        try
+        {
+            await KeyStore.SetSystemPromptAsync(JS, systemPromptDraft);
+            await ShowSaveFeedbackAsync("System prompt saved to your browser.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not save system prompt: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task ResetPrompt()
+    {
+        try
+        {
+            await KeyStore.ResetSystemPromptAsync(JS);
+            systemPromptDraft = WasmKeyStore.GetDefaultSystemPrompt();
+            await ShowSaveFeedbackAsync("System prompt reset to default.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not reset system prompt: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task ShowSaveFeedbackAsync(string message, bool isError)
+    {
+        _saveFeedbackCts?.Cancel();
+        _saveFeedbackCts?.Dispose();
+        _saveFeedbackCts = new CancellationTokenSource();
+        var token = _saveFeedbackCts.Token;
+
+        saveFeedback = message;
+        saveFeedbackIsError = isError;
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(4000, token);
+            saveFeedback = null;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+}

@@ -1,5 +1,6 @@
 using ChatfishApp.Contracts;
 using Microsoft.Extensions.AI;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using StoreAttachment = ChatfishApp.Client.Services.WasmConversationStore.Attachment;
@@ -58,6 +59,7 @@ public class WasmChatCompletionService
             var (effectiveMessages, visionProxyTrace) = await ApplyVisionProxyAsync(
                 modelId, messages, currentUser, supportsVision, ct);
             var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory);
+            PrependSystemPrompt(chatHistory);
 
             ChatfishApp.Services.Tools.ToolExecutionTrace.Clear();
             if (!string.IsNullOrWhiteSpace(visionProxyTrace))
@@ -365,6 +367,32 @@ public class WasmChatCompletionService
         {
             return (null, null);
         }
+    }
+
+    private void PrependSystemPrompt(List<AiChatMessage> chatHistory)
+    {
+        var systemText = ResolveSystemPrompt();
+        if (string.IsNullOrWhiteSpace(systemText))
+            return;
+
+        chatHistory.Insert(0, new AiChatMessage(ChatRole.System, systemText));
+    }
+
+    private string ResolveSystemPrompt()
+    {
+        var template = _keyStore.GetSystemPrompt();
+        if (string.IsNullOrWhiteSpace(template))
+            return "";
+
+        var now = DateTime.Now;
+        var formatted = now.ToString("dddd, MMMM d, yyyy h:mm tt", CultureInfo.CurrentCulture) + " (local)";
+        var text = template.Replace("{{datetime}}", formatted, StringComparison.OrdinalIgnoreCase).Trim();
+
+        var userContext = _keyStore.BuildUserContextForPrompt();
+        if (!string.IsNullOrWhiteSpace(userContext))
+            text = string.IsNullOrWhiteSpace(text) ? userContext : $"{text}\n\n{userContext}";
+
+        return text.Trim();
     }
 
     private static List<AiChatMessage> BuildChatHistory(
