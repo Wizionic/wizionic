@@ -950,6 +950,108 @@ a:hover {
     font-weight: 600;
 }
 
+.settings-content .settings-card {
+    border: 1px solid var(--grey-200);
+    border-radius: 10px;
+    background: white;
+    padding: 1.25rem 1.5rem;
+    margin-top: 1.25rem;
+}
+
+.settings-content .memory-search-wrap {
+    position: relative;
+    margin-bottom: 0.75rem;
+}
+
+.settings-content .memory-search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #888;
+    font-size: 0.9rem;
+    pointer-events: none;
+}
+
+.settings-content .memory-search-input {
+    padding-left: 2.25rem;
+}
+
+.settings-content .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.settings-content .memory-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    padding: 0.65rem 0.75rem;
+    background: #fafafa;
+}
+
+.settings-content .memory-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.92rem;
+    color: var(--text-dark);
+    line-height: 1.4;
+}
+
+.settings-content .memory-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.settings-content .memory-icon-btn {
+    border: none;
+    background: transparent;
+    color: #666;
+    padding: 0.25rem 0.35rem;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.settings-content .memory-icon-btn:hover {
+    background: var(--grey-100);
+    color: var(--text-dark);
+}
+
+.settings-content .memory-icon-btn-danger:hover {
+    background: #fff0f0;
+    color: #c00;
+}
+
+.settings-content .memory-footer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.settings-content .btn-outline-danger {
+    background: transparent;
+    color: #dc3545;
+    border-color: #dc3545;
+}
+
+.settings-content .btn-outline-danger:hover {
+    background: #fff0f0;
+}
+
+.settings-content .btn-outline-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .settings-content .ollama-toggle-row.is-disabled {
     opacity: 0.65;
 }
