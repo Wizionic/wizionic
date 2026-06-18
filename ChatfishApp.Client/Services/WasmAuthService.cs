@@ -19,7 +19,7 @@ namespace ChatfishApp.Client.Services;
 /// - *Always* encrypting history content at rest in IndexedDB (guest chats use a
 ///   device-local key; authenticated chats use the server key so other devices of
 ///   the same user can decrypt for sync).
-/// - Live cross-device sync only while both WASM instances are open (Brave-style).
+/// - Live cross-device sync only while both WASM instances are open .
 /// </summary>
 public class WasmAuthService
 {

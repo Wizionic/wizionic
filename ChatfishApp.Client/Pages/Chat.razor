@@ -22,6 +22,7 @@
 @inject ChatfishApp.Client.Services.WasmConversationStore ConversationStore
 @inject ChatfishApp.Client.Services.WasmAiProviderService AiProviderService
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
+@inject ChatfishApp.Client.Services.WasmGuestDataMigrationService GuestMigration
 @inject ChatfishApp.Services.Tools.IToolProvider ToolProvider
 @inject ChatfishApp.Client.Services.WasmSyncService SyncService
 @inject ChatfishApp.Client.Services.WasmChatCompletionService ChatCompletionService
@@ -539,6 +540,8 @@
     {
         await KeyStore.LoadAsync(JS);
         await AuthService.LoadAsync();               // fetch email + encryption key from server (if cookie present)
+        if (AuthService.IsAuthenticated)
+            await GuestMigration.MigrateIfNeededAsync();
         await ConversationStore.LoadIndexAsync(JS);  // triggers any legacy cleaning (now respects auth for prefix/encryption)
 
         if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
@@ -989,6 +992,7 @@
         RequestScrollToBottom();
         StateHasChanged();
         await SaveCurrentConvo();
+        await SidebarState.CollapseIfMobileAsync(JS);
     }
 
     async Task SwitchConvo(string id)
@@ -998,6 +1002,7 @@
             await SaveCurrentConvo(); // save current first
             await LoadConversation(id);
         }
+        await SidebarState.CollapseIfMobileAsync(JS);
     }
 
     async Task ScrollToBottom()
