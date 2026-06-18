@@ -1,4 +1,5 @@
 using System;
+using Microsoft.JSInterop;
 
 namespace ChatfishApp.Client.Services;
 
@@ -25,4 +26,25 @@ public class SidebarState
     public event Action? OnChanged;
 
     public void Toggle() => IsCollapsed = !IsCollapsed;
+
+    /// <summary>
+    /// On narrow viewports the sidebar overlays content; collapse it after the user picks
+    /// a conversation/note or taps the header plus button so they return to full-width content.
+    /// </summary>
+    public async Task CollapseIfMobileAsync(IJSRuntime js)
+    {
+        try
+        {
+            var isMobile = await js.InvokeAsync<bool>("eval", "window.isMobileViewport()");
+            if (!isMobile || IsCollapsed)
+                return;
+
+            IsCollapsed = true;
+            await js.InvokeVoidAsync("toggleWasmSidebar", true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SidebarState] CollapseIfMobile failed: {ex.Message}");
+        }
+    }
 }

@@ -1471,6 +1471,33 @@ body .page.sidebar-collapsed main,
     margin-left: 0 !important;
 }
 
+/* Mobile: sidebar overlays content at full width (never pushes main sideways) */
+@media (max-width: 640.98px) {
+    body main,
+    main {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+
+    .page:not(.sidebar-collapsed) .sidebar,
+    body .page:not(.sidebar-collapsed) .sidebar {
+        display: block !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        z-index: 1200 !important;
+        box-shadow: none !important;
+    }
+
+    body .sidebar-toggle,
+    .sidebar-toggle {
+        z-index: 1300 !important;
+    }
+
+    .notes-fab {
+        z-index: 800;
+    }
+}
+
 /* Chat area */
 body .chat-wrapper,
 .chat-wrapper {
@@ -1814,6 +1841,34 @@ body .message-bot,
     padding: 2px 6px;
 }
 
+.notes-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 900;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--bubble-blue, #e8f4fd);
+    border: 1px solid var(--primary-dark, #3BA7FF);
+    box-shadow: 0 4px 12px rgba(31, 42, 55, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.notes-fab:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(31, 42, 55, 0.2);
+}
+
+.notes-fab .cf-icon {
+    font-size: 30px;
+    color: var(--primary-dark, #3BA7FF);
+}
+
 .message-bot.note-editing {
     width: 100%;
     max-width: 100%;
@@ -1879,5 +1934,110 @@ body .message-bot,
     font-size: 0.95rem;
     color: var(--text-dark);
     font-family: inherit;
+}
+
+/* Roadmap + Architecture markdown pages */
+.roadmap-content h1,
+.architecture-content h1 {
+    font-size: 1.75rem;
+    margin: 1.5rem 0 1rem;
+    color: var(--text-dark);
+}
+
+.roadmap-content h2,
+.architecture-content h2 {
+    font-size: 1.35rem;
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--grey-200);
+    color: var(--text-dark);
+}
+
+.roadmap-content h3,
+.architecture-content h3 {
+    font-size: 1.1rem;
+    margin: 1.25rem 0 0.5rem;
+    color: var(--text-dark);
+}
+
+.roadmap-content table,
+.architecture-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.9rem;
+}
+
+.roadmap-content th,
+.architecture-content th,
+.roadmap-content td,
+.architecture-content td {
+    border: 1px solid var(--grey-200);
+    padding: 0.5rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+.roadmap-content th,
+.architecture-content th {
+    background: var(--light-blue-2);
+    font-weight: 600;
+}
+
+.roadmap-content tr:nth-child(even) td,
+.architecture-content tr:nth-child(even) td {
+    background: #fafbfc;
+}
+
+.roadmap-content img,
+.architecture-content img {
+    max-width: 100%;
+    height: auto;
+    margin: 1rem 0;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.roadmap-content code,
+.architecture-content code {
+    background: #f1f5f9;
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.88em;
+}
+
+.roadmap-content pre,
+.architecture-content pre {
+    background: #f8fafc;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+}
+
+.roadmap-content pre code,
+.architecture-content pre code {
+    background: none;
+    padding: 0;
+}
+
+.roadmap-content hr,
+.architecture-content hr {
+    border: none;
+    border-top: 1px solid var(--grey-200);
+    margin: 2rem 0;
+}
+
+.roadmap-content ul,
+.architecture-content ul {
+    margin: 0.5rem 0 1rem;
+    padding-left: 1.5rem;
+}
+
+.roadmap-content li,
+.architecture-content li {
+    margin: 0.35rem 0;
 }
 

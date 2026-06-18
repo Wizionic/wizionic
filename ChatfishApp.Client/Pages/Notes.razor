@@ -13,6 +13,7 @@
 @inject WasmNoteStore NoteStore
 @inject WasmConversationStore ConvStore
 @inject WasmAuthService AuthService
+@inject WasmGuestDataMigrationService GuestMigration
 @inject WasmSyncService SyncService
 @inject SidebarState SidebarState
 
@@ -40,8 +41,8 @@
             <!-- Notes header -->
             <div class="cf-item">
                 <span class="cf-link small">
-                   <h4>Notes</h4>
-                    <button class="menu-button" @onclick="NewNote" title="New note">
+                   <h4>Notebooks</h4>
+                    <button class="menu-button" @onclick="OpenCreateNoteDialog" title="New notebook">
                         <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
                     </button>
                 </span>
@@ -144,6 +145,16 @@
         </div>
     </main>
 
+    @if (!string.IsNullOrEmpty(activeNoteId) && nameDialogMode == NoteNameDialogMode.None)
+    {
+        <button type="button"
+                class="menu-button notes-fab"
+                title="Add note entry"
+                @onclick="AddEntryToCurrentNote">
+            <i class="cf-icon bi bi-plus-circle"></i>
+        </button>
+    }
+
     @if (openMenuId != null)
     {
         <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
@@ -169,21 +180,27 @@
                    OnConfirm="ConfirmPendingDelete"
                    OnCancel="CancelPendingDelete" />
 
-    @if (renameNoteId is not null)
+    @if (nameDialogMode != NoteNameDialogMode.None)
     {
-        <div class="newnote-overlay" @onclick="CancelRename">
+        <div class="newnote-overlay" @onclick="CancelNameDialog">
             <div class="newnote-modal" @onclick:stopPropagation>
-                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Rename Note</h4>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">
+                    @(nameDialogMode == NoteNameDialogMode.Create ? "New Notebook" : "Rename Note")
+                </h4>
+                @if (nameDialogMode == NoteNameDialogMode.Create)
+                {
+                    <p style="font-size:0.85rem;color:#64748b;margin:0 0 12px 0;">Enter a name for your notebook. A first note entry will be added automatically.</p>
+                }
                 <input type="text"
-                       @bind="renameNoteTitle"
+                       @bind="nameDialogTitle"
                        @bind:event="oninput"
-                       placeholder="Note name..."
+                       placeholder="Notebook name..."
                        class="newnote-input"
-                       @onkeydown="RenameKeyHandler" />
+                       @onkeydown="NameDialogKeyHandler" />
                 <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelRename">Cancel</button>
-                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmRename" disabled="@(string.IsNullOrWhiteSpace(renameNoteTitle))">
-                        Save
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelNameDialog">Cancel</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmNameDialog" disabled="@(string.IsNullOrWhiteSpace(nameDialogTitle))">
+                        @(nameDialogMode == NoteNameDialogMode.Create ? "Create" : "Save")
                     </button>
                 </div>
             </div>
@@ -204,8 +221,11 @@
     private int editSessionKey;
     private QuillEditor? quillEditor;
 
-    private string? renameNoteId;
-    private string renameNoteTitle = "";
+    private enum NoteNameDialogMode { None, Create, Rename }
+
+    private NoteNameDialogMode nameDialogMode = NoteNameDialogMode.None;
+    private string? nameDialogNoteId;
+    private string nameDialogTitle = "";
 
     private bool showDeleteConfirm;
     private string deleteConfirmTitle = "";
@@ -224,6 +244,10 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await AuthService.LoadAsync();
+        if (AuthService.IsAuthenticated)
+            await GuestMigration.MigrateIfNeededAsync();
+
         notes = await NoteStore.LoadIndexAsync(JS);
 
         if (notes.Any())
@@ -233,7 +257,7 @@
         }
         else
         {
-            await NewNote();
+            await OpenCreateNoteDialog();
         }
 
         _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
@@ -386,14 +410,42 @@
         StateHasChanged();
     }
 
-    private async Task NewNote()
+    private async Task OpenCreateNoteDialog()
     {
         CancelEdit();
+        CloseMenu();
+        nameDialogMode = NoteNameDialogMode.Create;
+        nameDialogNoteId = null;
+        nameDialogTitle = "";
+        await SidebarState.CollapseIfMobileAsync(JS);
+    }
+
+    private async Task ConfirmCreateNote()
+    {
+        if (string.IsNullOrWhiteSpace(nameDialogTitle))
+            return;
+
+        CancelEdit();
+        var title = nameDialogTitle.Trim();
         var id = Guid.NewGuid().ToString();
-        await NoteStore.UpdateIndexAfterSaveAsync(JS, id, "New note");
-        notes = await NoteStore.LoadIndexAsync(JS);
+        var now = DateTime.UtcNow;
+        var firstEntry = new ChatMessage(
+            Role: "user",
+            Content: "<p><br></p>",
+            Timestamp: now,
+            ModifiedAt: now,
+            ItemId: Guid.NewGuid().ToString("N"),
+            ContentFormat: NoteContentFormatter.FormatHtml);
+
         activeNoteId = id;
-        currentNoteMessages = new List<ChatMessage>();
+        currentNoteMessages = new List<ChatMessage> { firstEntry };
+        await NoteStore.SaveNoteAsync(JS, id, currentNoteMessages);
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, id, title, currentNoteMessages);
+        notes = await NoteStore.LoadIndexAsync(JS);
+        SyncService.ScheduleAutoSyncNoteAfterLocalSave(id, title);
+
+        CancelNameDialog();
+        StartEdit(0);
         StateHasChanged();
     }
 
@@ -405,6 +457,7 @@
             await SaveCurrent();
             await LoadNote(id);
         }
+        await SidebarState.CollapseIfMobileAsync(JS);
     }
 
     private async Task LoadNote(string id)
@@ -445,6 +498,14 @@
         StateHasChanged();
     }
 
+    private async Task AddEntryToCurrentNote()
+    {
+        if (string.IsNullOrEmpty(activeNoteId))
+            return;
+
+        await AddNoteEntry(activeNoteId);
+    }
+
     private async Task AddNoteEntry(string noteId)
     {
         CloseMenu();
@@ -474,36 +535,46 @@
     private void OpenRenameDialog(string noteId)
     {
         CloseMenu();
-        renameNoteId = noteId;
+        nameDialogMode = NoteNameDialogMode.Rename;
+        nameDialogNoteId = noteId;
         var note = notes.FirstOrDefault(n => n.Id == noteId);
-        renameNoteTitle = note?.Title ?? "";
+        nameDialogTitle = note?.Title ?? "";
     }
 
-    private void CancelRename()
+    private void CancelNameDialog()
     {
-        renameNoteId = null;
-        renameNoteTitle = "";
+        nameDialogMode = NoteNameDialogMode.None;
+        nameDialogNoteId = null;
+        nameDialogTitle = "";
+    }
+
+    private async Task ConfirmNameDialog()
+    {
+        if (nameDialogMode == NoteNameDialogMode.Create)
+            await ConfirmCreateNote();
+        else
+            await ConfirmRename();
     }
 
     private async Task ConfirmRename()
     {
-        if (renameNoteId is null || string.IsNullOrWhiteSpace(renameNoteTitle))
+        if (nameDialogNoteId is null || string.IsNullOrWhiteSpace(nameDialogTitle))
             return;
 
-        var title = renameNoteTitle.Trim();
-        await NoteStore.UpdateIndexAfterSaveAsync(JS, renameNoteId, title);
+        var title = nameDialogTitle.Trim();
+        await NoteStore.UpdateIndexAfterSaveAsync(JS, nameDialogNoteId, title);
         notes = await NoteStore.LoadIndexAsync(JS);
-        SyncService.ScheduleAutoSyncNoteAfterLocalSave(renameNoteId, title);
-        CancelRename();
+        SyncService.ScheduleAutoSyncNoteAfterLocalSave(nameDialogNoteId, title);
+        CancelNameDialog();
         StateHasChanged();
     }
 
-    private async Task RenameKeyHandler(KeyboardEventArgs e)
+    private async Task NameDialogKeyHandler(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(renameNoteTitle))
-            await ConfirmRename();
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(nameDialogTitle))
+            await ConfirmNameDialog();
         else if (e.Key == "Escape")
-            CancelRename();
+            CancelNameDialog();
     }
 
     private static bool IsUserNoteEntry(ChatMessage msg) =>

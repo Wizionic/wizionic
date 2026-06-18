@@ -136,10 +136,11 @@ builder.Services.AddAuthentication("ChatfishAuth")
         options.LoginPath = "/";
         options.LogoutPath = "/logout";
 
-        // Long-lived sessions (30 days with sliding renewal).
+        // Persistent login: cookie survives browser restarts until explicit sign-out.
         // Sign-in must pass IsPersistent=true or the browser stores a session cookie (cleared on quit).
-        // Persisted DP keys (above) prevent invalidation on restarts/sleeps.
-        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        // Sliding renewal extends the expiry on each authenticated request so active users stay logged in.
+        // Persisted DP keys (above) prevent invalidation on server restarts/sleeps.
+        options.ExpireTimeSpan = TimeSpan.FromDays(365 * 10);
         options.SlidingExpiration = true;
 
         // Production hardening: always require Secure (https), and Lax SameSite so magic-link
@@ -303,7 +304,6 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
     var authProps = new AuthenticationProperties
     {
         IsPersistent = true,
-        ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30),
         AllowRefresh = true
     };
     await ctx.SignInAsync("ChatfishAuth", principal, authProps);

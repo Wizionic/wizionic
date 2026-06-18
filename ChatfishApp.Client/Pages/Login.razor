@@ -4,6 +4,7 @@
 @layout ChatfishApp.Client.Shared.WasmLayout
 
 @inject ChatfishApp.Client.Services.WasmAuthService AuthService
+@inject ChatfishApp.Client.Services.WasmGuestDataMigrationService GuestMigration
 @inject HttpClient Http
 @inject NavigationManager Nav
 
@@ -93,6 +94,8 @@
     protected override async Task OnInitializedAsync()
     {
         await AuthService.LoadAsync();
+        if (AuthService.IsAuthenticated)
+            await GuestMigration.MigrateIfNeededAsync();
 
         // Determine if the user explicitly navigated to the account view (e.g. via the profile icon).
         // When on /account (or /account/), we want to show the "Logged in as ... Sign out" UI
