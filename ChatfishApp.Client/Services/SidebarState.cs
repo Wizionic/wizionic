@@ -1,12 +1,12 @@
-using System;
+using ChatfishApp.Core.UI;
 using Microsoft.JSInterop;
 
 namespace ChatfishApp.Client.Services;
 
 /// <summary>
-/// Simple state service for sidebar collapsed state (used by Chat.razor for the toggle button + .page class binding).
+/// Sidebar collapsed state for WASM chat/notes pages.
 /// </summary>
-public class SidebarState
+public class SidebarState : ISidebarState
 {
     private bool _isCollapsed;
 
@@ -27,20 +27,19 @@ public class SidebarState
 
     public void Toggle() => IsCollapsed = !IsCollapsed;
 
-    /// <summary>
-    /// On narrow viewports the sidebar overlays content; collapse it after the user picks
-    /// a conversation/note or taps the header plus button so they return to full-width content.
-    /// </summary>
-    public async Task CollapseIfMobileAsync(IJSRuntime js)
+    public async Task CollapseIfMobileAsync(IJSRuntime? js = null, CancellationToken ct = default)
     {
+        if (js is null)
+            return;
+
         try
         {
-            var isMobile = await js.InvokeAsync<bool>("eval", "window.isMobileViewport()");
+            var isMobile = await js.InvokeAsync<bool>("eval", ct, "window.isMobileViewport()");
             if (!isMobile || IsCollapsed)
                 return;
 
             IsCollapsed = true;
-            await js.InvokeVoidAsync("toggleWasmSidebar", true);
+            await js.InvokeVoidAsync("toggleWasmSidebar", ct, true);
         }
         catch (Exception ex)
         {

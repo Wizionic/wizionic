@@ -12,13 +12,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.8" />
     <PackageReference Include="Markdig" Version="1.2.0" />
-    <!-- For pluggable AI clients in WASM (same as server) -->
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.6.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
-    <!-- For OpenAIClient, ApiKeyCredential, etc. in client-side provider creation -->
     <PackageReference Include="OpenAI" Version="2.10.0" />
-    <!-- SignalR client for live device presence + future WebRTC signaling for cross-browser sync (authenticated users only). -->
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.8" />
+    <ProjectReference Include="..\ChatfishApp.Core\ChatfishApp.Core.csproj" />
+    <ProjectReference Include="..\ChatfishApp.Shared\ChatfishApp.Shared.csproj" />
   </ItemGroup>
 
 </Project>

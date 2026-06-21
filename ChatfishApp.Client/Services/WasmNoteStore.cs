@@ -1,41 +1,47 @@
+using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Storage;
 using Microsoft.JSInterop;
-using System.Text;
 using System.Text.Json;
-using static ChatfishApp.Client.Services.WasmConversationStore;
 
 namespace ChatfishApp.Client.Services;
 
 /// <summary>
-/// Client-side storage for notes (parallel to WasmConversationStore but for user notes).
+/// Client-side storage for notes (parallel to WasmConversationStore).
 /// Uses noteMetas + noteContents IDB object stores with AES-256-GCM encryption.
-/// Each note contains a list of messages stored identically to conversation ChatMessage records.
 /// </summary>
-public class WasmNoteStore
+public class WasmNoteStore : INoteStore
 {
     private const string NotePrefix = "n-wasmchat-note-";
 
-    private readonly WasmAuthService _auth;
-    private readonly WasmCryptoService _crypto;
+    private readonly IAuthService _auth;
+    private readonly ICryptoService _crypto;
+    private readonly IJSRuntime _js;
 
-    public WasmNoteStore(WasmAuthService auth, WasmCryptoService crypto)
+    public WasmNoteStore(IAuthService auth, ICryptoService crypto, IJSRuntime js)
     {
         _auth = auth;
         _crypto = crypto;
-    }
-
-    public record LocalNote(string Id, string Title, DateTime LastUpdated);
-
-    public record SyncManifestEntry(string Id, string Title, long LastUpdatedTicks, string ContentFingerprint, long? DeletedAtTicks = null)
-    {
-        public bool IsDeleted => DeletedAtTicks.HasValue;
+        _js = js;
     }
 
     private record StoredMeta(string key, string id, string @namespace, string title, string lastUpdated, bool syncEnabled, string? contentFingerprint, string? deletedAt);
 
-    public async Task<List<SyncManifestEntry>> LoadManifestEntriesAsync(IJSRuntime js, bool backfillMissingFingerprints = false)
+    private string GetPrefix() => StorageNamespace.GetPrefix(_auth);
+
+    private async Task<string> GetNoteKeyAsync() =>
+        await _auth.GetOrCreateHistoryEncryptionKeyAsync();
+
+    private async Task<StoredMeta?> GetMetaByIdAsync(string id)
     {
         var ns = GetPrefix();
-        var metas = await js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
+        return metas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public async Task<List<SyncManifestEntry>> LoadManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default)
+    {
+        var ns = GetPrefix();
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
         var entries = new List<SyncManifestEntry>();
 
         foreach (var m in metas)
@@ -51,9 +57,9 @@ public class WasmNoteStore
 
             if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
             {
-                var noteEntries = await LoadNoteAsync(js, m.id);
+                var noteEntries = await LoadNoteAsync(m.id, ct);
                 fingerprint = SyncFingerprint.ForNote(m.id, title, noteEntries);
-                await PersistContentFingerprintAsync(js, m, title, fingerprint, deletedAt: null);
+                await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
             }
 
             entries.Add(new SyncManifestEntry(
@@ -67,9 +73,9 @@ public class WasmNoteStore
         return entries;
     }
 
-    private async Task PersistContentFingerprintAsync(IJSRuntime js, StoredMeta meta, string title, string fingerprint, string? deletedAt)
+    private async Task PersistContentFingerprintAsync(StoredMeta meta, string title, string fingerprint, string? deletedAt)
     {
-        await js.InvokeVoidAsync("idbPutNoteMeta", new
+        await _js.InvokeVoidAsync("idbPutNoteMeta", new
         {
             key = meta.key,
             id = meta.id,
@@ -82,32 +88,10 @@ public class WasmNoteStore
         });
     }
 
-    private static string GetStableHash(string input) => 
-        string.IsNullOrEmpty(input) ? "00000000" : BitConverter.ToString(System.Security.Cryptography.SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes(input)), 0, 4).Replace("-", "").ToLowerInvariant();
-
-    private string GetPrefix()
-    {
-        if (_auth.IsAuthenticated)
-        {
-            if (!string.IsNullOrEmpty(_auth.UserId)) return $"u-{_auth.UserId}-";
-            if (!string.IsNullOrEmpty(_auth.Email)) return $"e-{GetStableHash(_auth.Email)}-";
-        }
-        return "wasmchat-";
-    }
-
-    private async Task<string> GetNoteKeyAsync(IJSRuntime js) => await _auth.GetOrCreateHistoryEncryptionKeyAsync(js);
-
-    private async Task<StoredMeta?> GetMetaByIdAsync(IJSRuntime js, string id)
+    public async Task<List<LocalNote>> LoadIndexAsync(CancellationToken ct = default)
     {
         var ns = GetPrefix();
-        var metas = await js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
-        return metas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
-    }
-
-    public async Task<List<LocalNote>> LoadIndexAsync(IJSRuntime js)
-    {
-        var ns = GetPrefix();
-        var metas = await js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
         return metas
             .Where(m => string.IsNullOrEmpty(m.deletedAt))
             .OrderByDescending(m => m.lastUpdated)
@@ -115,15 +99,15 @@ public class WasmNoteStore
             .ToList();
     }
 
-    public async Task<List<ChatMessage>> LoadNoteAsync(IJSRuntime js, string id)
+    public async Task<List<ChatMessage>> LoadNoteAsync(string id, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var fullKey = ns + NotePrefix + id;
-        var encrypted = await js.InvokeAsync<string>("idbGetNoteContent", fullKey);
+        var encrypted = await _js.InvokeAsync<string>("idbGetNoteContent", fullKey);
         if (string.IsNullOrEmpty(encrypted)) return new List<ChatMessage>();
 
-        var keyB64 = await GetNoteKeyAsync(js);
-        string json = encrypted;
+        var keyB64 = await GetNoteKeyAsync();
+        var json = encrypted;
         if (!string.IsNullOrEmpty(keyB64))
             json = await _crypto.DecryptAsync(keyB64, encrypted);
 
@@ -133,59 +117,61 @@ public class WasmNoteStore
         return ChatMessageHelper.NormalizeAll(messages);
     }
 
-    public async Task<string?> GetMetaTitleAsync(IJSRuntime js, string id)
+    public async Task<string?> GetMetaTitleAsync(string id, CancellationToken ct = default)
     {
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         return meta?.title;
     }
 
-    public async Task SaveNoteAsync(IJSRuntime js, string id, List<ChatMessage> entries)
+    public async Task SaveNoteAsync(string id, List<ChatMessage> entries, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var fullKey = ns + NotePrefix + id;
         var json = JsonSerializer.Serialize(entries);
-        var keyB64 = await GetNoteKeyAsync(js);
-        string toStore = json;
+        var keyB64 = await GetNoteKeyAsync();
+        var toStore = json;
         if (!string.IsNullOrEmpty(keyB64))
             toStore = await _crypto.EncryptAsync(keyB64, json);
-        await js.InvokeVoidAsync("idbPutNoteContent", fullKey, toStore);
+        await _js.InvokeVoidAsync("idbPutNoteContent", fullKey, toStore);
     }
 
-    public async Task UpdateIndexAfterSaveAsync(IJSRuntime js, string id, string title, List<ChatMessage>? entriesForFingerprint = null)
+    public async Task UpdateIndexAfterSaveAsync(string id, string title, List<ChatMessage>? entriesForFingerprint = null, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var metaKey = ns + NotePrefix + id;
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
         var normalizedTitle = string.IsNullOrWhiteSpace(title) ? "(empty)" : title;
 
-        var entries = entriesForFingerprint ?? await LoadNoteAsync(js, id);
+        var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
         var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries);
 
-        var existingTitle = (await GetMetaByIdAsync(js, id))?.title;
+        var existingTitle = (await GetMetaByIdAsync(id))?.title;
         var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle);
 
-        await js.InvokeVoidAsync("idbPutNoteMeta", new {
-            key = metaKey, id, @namespace = ns,
+        await _js.InvokeVoidAsync("idbPutNoteMeta", new
+        {
+            key = metaKey,
+            id,
+            @namespace = ns,
             title = resolvedTitle,
-            lastUpdated = DateTime.UtcNow.ToString("o"), syncEnabled,
+            lastUpdated = DateTime.UtcNow.ToString("o"),
+            syncEnabled,
             contentFingerprint,
-            deletedAt = "" });
+            deletedAt = ""
+        });
     }
 
-    /// <summary>
-    /// Soft-delete: keep tombstone meta, remove content blob. Returns UTC delete time for sync.
-    /// </summary>
-    public async Task<DateTime> TombstoneDeleteNoteAsync(IJSRuntime js, string id, DateTime? deletedAtUtc = null)
+    private async Task<DateTime> TombstoneDeleteNoteAsync(string id, DateTime? deletedAtUtc = null)
     {
         var deletedAt = deletedAtUtc ?? DateTime.UtcNow;
         var deletedAtIso = deletedAt.ToString("o");
         var ns = GetPrefix();
         var metaKey = ns + NotePrefix + id;
-        var existing = await GetMetaByIdAsync(js, id);
+        var existing = await GetMetaByIdAsync(id);
         var title = existing?.title ?? "(deleted)";
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
 
-        await js.InvokeVoidAsync("idbPutNoteMeta", new
+        await _js.InvokeVoidAsync("idbPutNoteMeta", new
         {
             key = existing?.key ?? metaKey,
             id,
@@ -197,19 +183,16 @@ public class WasmNoteStore
             deletedAt = deletedAtIso
         });
 
-        await js.InvokeVoidAsync("idbDeleteNoteContent", existing?.key ?? metaKey);
+        await _js.InvokeVoidAsync("idbDeleteNoteContent", existing?.key ?? metaKey);
         return deletedAt;
     }
 
-    public Task<DateTime> DeleteNoteAsync(IJSRuntime js, string id) =>
-        TombstoneDeleteNoteAsync(js, id);
+    public Task<DateTime> DeleteNoteAsync(string id, CancellationToken ct = default) =>
+        TombstoneDeleteNoteAsync(id);
 
-    /// <summary>
-    /// Apply a remote delete if the tombstone is newer than local content (or local is already deleted).
-    /// </summary>
-    public async Task<bool> ShouldAcceptIncomingContentAsync(IJSRuntime js, string id, List<ChatMessage> entries)
+    public async Task<bool> ShouldAcceptIncomingContentAsync(string id, List<ChatMessage> entries, CancellationToken ct = default)
     {
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         if (meta == null || string.IsNullOrEmpty(meta.deletedAt))
             return true;
 
@@ -217,10 +200,10 @@ public class WasmNoteStore
         return ChatMessageHelper.GetLatestContentTicks(entries) > deletedAtTicks;
     }
 
-    public async Task<bool> TryApplyRemoteDeleteAsync(IJSRuntime js, string id, long deletedAtTicks)
+    public async Task<bool> TryApplyRemoteDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default)
     {
         var remoteDeletedAt = new DateTime(deletedAtTicks, DateTimeKind.Utc);
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         if (meta == null)
             return false;
 
@@ -232,12 +215,12 @@ public class WasmNoteStore
         }
         else
         {
-            var contentTicks = ChatMessageHelper.GetLatestContentTicks(await LoadNoteAsync(js, id));
+            var contentTicks = ChatMessageHelper.GetLatestContentTicks(await LoadNoteAsync(id, ct));
             if (contentTicks > deletedAtTicks || DateTime.Parse(meta.lastUpdated).Ticks > deletedAtTicks)
                 return false;
         }
 
-        await TombstoneDeleteNoteAsync(js, id, remoteDeletedAt);
+        await TombstoneDeleteNoteAsync(id, remoteDeletedAt);
         return true;
     }
 }

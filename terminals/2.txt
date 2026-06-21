@@ -1,0 +1,68 @@
+---
+pid: 19480
+cwd: "C:\Users\danie\src\addmauiproject"
+command: "Set-Location C:\\Users\\danie\\src\\addmauiproject; dotnet run --project ChatfishApp.csproj --launch-profile https --no-build"
+started_at: 2026-06-20T19:08:21.754Z
+running_for_ms: 69945008 
+---
+Using launch settings from Properties\launchSettings.json...
+[Email] SMTP configured: host=smtp-relay.brevo.com port=465 hasUser=True hasPass=True user="ad9c81001@smtp-brevo.com" from=no-reply@chatfish.me
+[Email] LIVE ENV AT STARTUP: Email__SmtpUser='ad9c81001@smtp-brevo.com' | Email__SmtpPass len=90 preview=xsmt...79Bb (fromEnv user:True pass:True)
+[Brevo] Configured: from=no-reply@chatfish.me senderName=Chatfish keyPresent=True keyLen=89 preview=xkey...pd85
+info: ChatfishApp.Services.AiProviderProxyService[0]
+      [AiProxy] Provider zyphra (Zyphra Cloud): type=OpenAICompatible baseUrl=https://api.zyphracloud.com/api/v1/ keyConfigured=True secretHeaderConfigured=False staticModels=1 discoverModels=False
+info: ChatfishApp.Services.AiProviderProxyService[0]
+      [AiProxy] Provider free-chat (Free Chat): type=Ollama baseUrl=https://relay.chatfish.me/v1/ keyConfigured=True secretHeaderConfigured=True staticModels=3 discoverModels=True
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (9ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode=WAL;
+info: Microsoft.EntityFrameworkCore.Migrations[20411]
+      Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (3ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsLock' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (10ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      INSERT OR IGNORE INTO "__EFMigrationsLock"("Id", "Timestamp") VALUES(1, '2026-06-20 19:08:27.5625316+00:00');
+      SELECT changes();
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+          "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
+          "ProductVersion" TEXT NOT NULL
+      );
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsHistory' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "MigrationId", "ProductVersion"
+      FROM "__EFMigrationsHistory"
+      ORDER BY "MigrationId";
+info: Microsoft.EntityFrameworkCore.Migrations[20405]
+      No migrations were applied. The database is already up to date.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      DELETE FROM "__EFMigrationsLock";
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*)
+      FROM "DataProtectionKeys" AS "d"
+[Auth] Persistence: chatfish.db path=C:\Users\danie\src\addmauiproject\chatfish.db sizeBytes=69632 dataProtectionKeyCount=1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode=WAL;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "d"."Id", "d"."FriendlyName", "d"."Xml"
+      FROM "DataProtectionKeys" AS "d"
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: https://localhost:7163
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5136
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\danie\src\addmauiproject

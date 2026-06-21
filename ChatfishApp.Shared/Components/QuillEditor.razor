@@ -1,0 +1,96 @@
+@using ChatfishApp.Shared.Services
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="quill-editor-host">
+    <div @ref="_toolbarElement" class="quill-toolbar">
+        @if (ToolbarContent is not null)
+        {
+            @ToolbarContent
+        }
+        else
+        {
+            <select class="ql-header">
+                <option selected=""></option>
+                <option value="1"></option>
+                <option value="2"></option>
+                <option value="3"></option>
+            </select>
+            <span class="ql-formats">
+                <button type="button" class="ql-bold"></button>
+                <button type="button" class="ql-italic"></button>
+                <button type="button" class="ql-underline"></button>
+                <button type="button" class="ql-strike"></button>
+            </span>
+            <span class="ql-formats">
+                <select class="ql-color"></select>
+                <select class="ql-background"></select>
+            </span>
+            <span class="ql-formats">
+                <button type="button" class="ql-list" value="ordered"></button>
+                <button type="button" class="ql-list" value="bullet"></button>
+            </span>
+            <span class="ql-formats">
+                <button type="button" class="ql-link"></button>
+                <button type="button" class="ql-image"></button>
+            </span>
+        }
+    </div>
+
+    <div @ref="_editorElement" class="quill-editor">
+        @((MarkupString)(InitialHtml ?? ""))
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? InitialHtml { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Edit note...";
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public string Theme { get; set; } = "snow";
+    [Parameter] public RenderFragment? ToolbarContent { get; set; }
+
+    private ElementReference _editorElement;
+    private ElementReference _toolbarElement;
+    private bool _initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_initialized)
+        {
+            try
+            {
+                await QuillInterop.CreateQuillAsync(
+                    JS,
+                    _editorElement,
+                    _toolbarElement,
+                    ReadOnly,
+                    Placeholder,
+                    Theme);
+                _initialized = true;
+            }
+            catch (JSException ex)
+            {
+                Console.WriteLine($"[QuillEditor] Failed to initialize: {ex.Message}");
+            }
+        }
+    }
+
+    public Task<string> GetHTML() => QuillInterop.GetHtmlAsync(JS, _editorElement).AsTask();
+
+    public Task<string> GetText() => QuillInterop.GetTextAsync(JS, _editorElement).AsTask();
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_initialized)
+        {
+            try
+            {
+                await QuillInterop.DestroyQuillAsync(JS, _editorElement);
+            }
+            catch
+            {
+                // Component may already be torn down during navigation.
+            }
+        }
+    }
+}

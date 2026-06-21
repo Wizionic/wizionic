@@ -1,57 +1,5 @@
 @page "/cloud-providers"
-@layout ChatfishApp.Client.Shared.WasmLayout
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
-@inject ChatfishApp.Client.Services.WasmKeyStore KeyStore
-@inject IJSRuntime JS
-@inject NavigationManager Nav
-@inject HttpClient Http
-@inject ChatfishApp.Client.Services.WasmAuthService AuthService
+@layout ChatfishApp.Shared.Layout.AppLayout
 
-<div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
-
-        <h4>Cloud Provider</h4>
-
-    <p style="color: #666; font-size: 0.9em;">Provider keys are stored only in your browser and conversation history is stored is still stored encrypted locally in your browser but if you use cloud provider keys, of course mesages are sent to the cloud.</p>
-
-    <h3>Cloud Provider Keys with a generous Free Tier</h3>
-    <div style="display: grid; gap: 0.75rem; max-width: 500px;">
-        <div>
-            <label>Groq API Key</label>
-            <input type="text" @bind="groqKey" placeholder="Get an API key from https://console.groq.com/ for access to multiple free models" class="form-control" />
-        </div>
-        <div>
-            <label>Gemini API Key</label>
-            <input type="text" @bind="geminiKey" placeholder="Get an API key from https://aistudio.google.com/" class="form-control" />
-        </div>
-        <div>
-            <label>OpenRouter API Key</label>
-            <input type="text" @bind="openrouterKey" placeholder="Get an API key from https://openrouter.ai/ for access to multiple free models" class="form-control" />
-        </div>
-    </div>
-    <button @onclick="SaveKeys" class="btn btn-primary" style="margin-top: 0.75rem;">Save Keys</button>
-
-    <div style="margin-top: 1.5rem;">
-        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
-    </div>
-</div>
-
-@code {
-    string groqKey = "";
-    string geminiKey = "";
-    string openrouterKey = "";
-
-    protected override async Task OnInitializedAsync()
-    {
-        await KeyStore.LoadAsync(JS);
-        await AuthService.LoadAsync();
-
-        groqKey = KeyStore.GetKey("groq");
-        geminiKey = KeyStore.GetKey("gemini");
-        openrouterKey = KeyStore.GetKey("openrouter");
-    }
-
-    async Task SaveKeys()
-    {
-        await KeyStore.SaveAllKeysAsync(JS, groqKey, geminiKey, openrouterKey);
-    }
-}
+<CloudProvidersPage />
