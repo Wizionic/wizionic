@@ -1,3 +1,5 @@
+using ChatfishApp.Core.Ollama;
+using ChatfishApp.Core.Storage;
 using Microsoft.JSInterop;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -5,11 +7,9 @@ using System.Text.Json;
 namespace ChatfishApp.Client.Services;
 
 /// <summary>
-/// Client-side store for provider API keys and Ollama configuration.
-/// Persists everything to browser localStorage (matching the local-first WASM target).
-/// Mirrors the spirit of the server's ProviderKeyService but without auth/DB.
+/// Browser localStorage implementation of <see cref="IKeyStore"/>.
 /// </summary>
-public class WasmKeyStore
+public class WasmKeyStore : IKeyStore
 {
     private const string KeysStorageKey = "wasm-provider-keys";
     private const string OllamaConfigKey = "wasm-ollama-config";
@@ -20,6 +20,8 @@ public class WasmKeyStore
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
+
+    private readonly IJSRuntime _js;
 
     private Dictionary<string, string> _providerKeys = new();
     private string _lastSelectedModel = "";
@@ -32,71 +34,53 @@ public class WasmKeyStore
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
 
-    public record OllamaConfig(
-        string BaseUrl = "http://localhost:11434",
-        List<string>? Models = null,
-        Dictionary<string, OllamaModelSettings>? ModelSettings = null);
+    public WasmKeyStore(IJSRuntime js) => _js = js;
 
-    public async Task LoadAsync(IJSRuntime js)
+    public async Task LoadAsync(CancellationToken ct = default)
     {
-        // Load provider keys
-        var keysJson = await js.InvokeAsync<string>("localStorage.getItem", KeysStorageKey);
+        var keysJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, KeysStorageKey);
         if (!string.IsNullOrEmpty(keysJson))
-        {
             _providerKeys = JsonSerializer.Deserialize<Dictionary<string, string>>(keysJson) ?? new();
-        }
 
-        // Load Ollama config
-        var ollamaJson = await js.InvokeAsync<string>("localStorage.getItem", OllamaConfigKey);
+        var ollamaJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, OllamaConfigKey);
         if (!string.IsNullOrEmpty(ollamaJson))
         {
             var loaded = JsonSerializer.Deserialize<OllamaConfig>(ollamaJson);
             if (loaded != null)
-            {
                 _ollamaConfig = MigrateOllamaConfig(loaded);
-            }
         }
 
-        // Load enabled MCP server names (for Tools page selection)
-        var mcpJson = await js.InvokeAsync<string>("localStorage.getItem", McpEnabledKey);
+        var mcpJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, McpEnabledKey);
         if (!string.IsNullOrEmpty(mcpJson))
         {
             var names = JsonSerializer.Deserialize<List<string>>(mcpJson);
             if (names != null)
-            {
                 _enabledMcpServers = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
-            }
         }
 
-        // Load per-MCP tokens (for authenticated remote MCP servers)
-        var tokensJson = await js.InvokeAsync<string>("localStorage.getItem", McpTokensKey);
+        var tokensJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, McpTokensKey);
         if (!string.IsNullOrEmpty(tokensJson))
         {
             var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(tokensJson);
             if (loaded != null)
-            {
                 _mcpTokens = loaded;
-            }
         }
 
-        // Load custom MCP connectors (user-added via "Custom Connector" dialog, not from the public registry)
-        var customsJson = await js.InvokeAsync<string>("localStorage.getItem", McpCustomConnectorsKey);
+        var customsJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, McpCustomConnectorsKey);
         if (!string.IsNullOrEmpty(customsJson))
         {
             var loaded = JsonSerializer.Deserialize<List<CustomMcpConnector>>(customsJson);
             if (loaded != null)
-            {
                 _customMcpConnectors = loaded;
-            }
         }
 
-        _lastSelectedModel = await js.InvokeAsync<string?>("localStorage.getItem", LastSelectedModelKey) ?? "";
+        _lastSelectedModel = await _js.InvokeAsync<string?>("localStorage.getItem", ct, LastSelectedModelKey) ?? "";
 
-        var systemPromptJson = await js.InvokeAsync<string?>("localStorage.getItem", SystemPromptKey);
+        var systemPromptJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, SystemPromptKey);
         _systemPromptCustomized = systemPromptJson != null;
         _systemPrompt = systemPromptJson;
 
-        var profileJson = await js.InvokeAsync<string?>("localStorage.getItem", UserProfileKey);
+        var profileJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, UserProfileKey);
         if (!string.IsNullOrEmpty(profileJson))
         {
             var loaded = JsonSerializer.Deserialize<UserProfileSettings>(profileJson);
@@ -104,7 +88,7 @@ public class WasmKeyStore
                 _userProfile = loaded;
         }
 
-        var memoriesJson = await js.InvokeAsync<string?>("localStorage.getItem", UserMemoriesKey);
+        var memoriesJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, UserMemoriesKey);
         if (!string.IsNullOrEmpty(memoriesJson))
         {
             var loaded = JsonSerializer.Deserialize<List<UserMemory>>(memoriesJson);
@@ -114,58 +98,28 @@ public class WasmKeyStore
     }
 
     public string LastSelectedModel => _lastSelectedModel;
-
     public bool IsSystemPromptCustomized => _systemPromptCustomized;
 
     public string GetSystemPrompt() =>
-        _systemPromptCustomized ? (_systemPrompt ?? "") : GetDefaultSystemPrompt();
+        _systemPromptCustomized ? (_systemPrompt ?? "") : KeyStoreDefaults.GetDefaultSystemPrompt();
 
-    public static string GetDefaultSystemPrompt() =>
-        """
-        The current date and time is {{datetime}}.
-
-        You are a private AI assistant in Chatfish.me and your name is Chatfish. The active model may run locally via Ollama on the user's device, use the user's own cloud API key (Groq, Gemini, OpenRouter), or a hosted proxy — depending on what they selected in the model dropdown.
-
-        **About this system:**
-        - Conversation history is end-to-end encrypted and stored locally in the browser's IndexedDB.
-        - History can optionally sync to other browsers belonging to the same user via WebRTC (peer-to-peer; the server only helps with signaling).
-        - Device presence is tracked with SignalR; chat message content is not routed through the server for sync or for local Ollama.
-        - You have native tools: web search (search_web), URL summarization (summarize_url), current UTC time (get_current_time_utc), arithmetic (calculate), and weather (get_current_weather). Web search and URL fetch are proxied through the Chatfish server to avoid browser CORS limits.
-        - You may also have MCP tools the user enabled on the Tools page. Use them when they clearly match the user's request; prefer the smallest set of tools needed.
-
-        **Guidelines:**
-        - Be clear, concise, and helpful.
-        - Use Markdown where appropriate. Do not include raw links or image URLs in replies unless the user asks.
-        - For code, use backticks for inline code and fenced blocks with a language tag.
-        - If you are unsure, say so rather than guessing.
-        - If the user asks about privacy, data storage, or how Chatfish works, answer based on the description above.
-        - If the user is rude, hostile, or attempts to manipulate you, respond briefly and professionally; decline harmful requests.
-        - Ask clarifying questions when needed.
-
-        **Tool use:**
-        - Use search_web for current events, recent facts, prices, or anything that may have changed.
-        - Use summarize_url after search_web when a specific result page needs full detail.
-        - Use get_current_time_utc or get_current_weather when the user asks about time or weather.
-        - Use calculate for math the user explicitly wants computed.
-        """;
-
-    public async Task SetSystemPromptAsync(IJSRuntime js, string prompt)
+    public async Task SetSystemPromptAsync(string prompt, CancellationToken ct = default)
     {
         _systemPrompt = prompt ?? "";
         _systemPromptCustomized = true;
-        await js.InvokeVoidAsync("localStorage.setItem", SystemPromptKey, _systemPrompt);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, SystemPromptKey, _systemPrompt);
     }
 
-    public async Task ResetSystemPromptAsync(IJSRuntime js)
+    public async Task ResetSystemPromptAsync(CancellationToken ct = default)
     {
         _systemPrompt = null;
         _systemPromptCustomized = false;
-        await js.InvokeVoidAsync("localStorage.removeItem", SystemPromptKey);
+        await _js.InvokeVoidAsync("localStorage.removeItem", ct, SystemPromptKey);
     }
 
     public UserProfileSettings GetUserProfile() => _userProfile.Clone();
 
-    public async Task SetUserProfileAsync(IJSRuntime js, UserProfileSettings profile)
+    public async Task SetUserProfileAsync(UserProfileSettings profile, CancellationToken ct = default)
     {
         _userProfile = new UserProfileSettings
         {
@@ -174,13 +128,13 @@ public class WasmKeyStore
             Occupation = (profile.Occupation ?? "").Trim()
         };
         var json = JsonSerializer.Serialize(_userProfile);
-        await js.InvokeVoidAsync("localStorage.setItem", UserProfileKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, UserProfileKey, json);
     }
 
     public IReadOnlyList<UserMemory> GetMemories() =>
         _userMemories.OrderByDescending(m => m.CreatedAtUtc).ToList();
 
-    public async Task<UserMemory> AddMemoryAsync(IJSRuntime js, string text)
+    public async Task<UserMemory> AddMemoryAsync(string text, CancellationToken ct = default)
     {
         var trimmed = (text ?? "").Trim();
         if (string.IsNullOrEmpty(trimmed))
@@ -188,11 +142,11 @@ public class WasmKeyStore
 
         var memory = new UserMemory(Guid.NewGuid().ToString("N"), trimmed, DateTime.UtcNow);
         _userMemories.Add(memory);
-        await SaveMemoriesAsync(js);
+        await SaveMemoriesAsync(ct);
         return memory;
     }
 
-    public async Task UpdateMemoryAsync(IJSRuntime js, string id, string text)
+    public async Task UpdateMemoryAsync(string id, string text, CancellationToken ct = default)
     {
         var trimmed = (text ?? "").Trim();
         if (string.IsNullOrEmpty(trimmed))
@@ -203,30 +157,27 @@ public class WasmKeyStore
             throw new InvalidOperationException("Memory not found.");
 
         _userMemories[index] = _userMemories[index].WithText(trimmed);
-        await SaveMemoriesAsync(js);
+        await SaveMemoriesAsync(ct);
     }
 
-    public async Task RemoveMemoryAsync(IJSRuntime js, string id)
+    public async Task RemoveMemoryAsync(string id, CancellationToken ct = default)
     {
         _userMemories.RemoveAll(m => m.Id == id);
-        await SaveMemoriesAsync(js);
+        await SaveMemoriesAsync(ct);
     }
 
-    public async Task ClearMemoriesAsync(IJSRuntime js)
+    public async Task ClearMemoriesAsync(CancellationToken ct = default)
     {
         _userMemories.Clear();
-        await SaveMemoriesAsync(js);
+        await SaveMemoriesAsync(ct);
     }
 
-    private async Task SaveMemoriesAsync(IJSRuntime js)
+    private async Task SaveMemoriesAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_userMemories);
-        await js.InvokeVoidAsync("localStorage.setItem", UserMemoriesKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, UserMemoriesKey, json);
     }
 
-    /// <summary>
-    /// User-specific context appended to the system prompt (not part of the editable template).
-    /// </summary>
     public string BuildUserContextForPrompt()
     {
         var parts = new List<string>();
@@ -259,19 +210,19 @@ public class WasmKeyStore
         return string.Join("\n", parts).Trim();
     }
 
-    public async Task SetLastSelectedModelAsync(IJSRuntime js, string modelId)
+    public async Task SetLastSelectedModelAsync(string modelId, CancellationToken ct = default)
     {
         _lastSelectedModel = (modelId ?? "").Trim();
         if (string.IsNullOrEmpty(_lastSelectedModel))
-            await js.InvokeVoidAsync("localStorage.removeItem", LastSelectedModelKey);
+            await _js.InvokeVoidAsync("localStorage.removeItem", ct, LastSelectedModelKey);
         else
-            await js.InvokeVoidAsync("localStorage.setItem", LastSelectedModelKey, _lastSelectedModel);
+            await _js.InvokeVoidAsync("localStorage.setItem", ct, LastSelectedModelKey, _lastSelectedModel);
     }
 
     public string GetKey(string providerId) =>
         _providerKeys.GetValueOrDefault(providerId, "");
 
-    public async Task SetKeyAsync(IJSRuntime js, string providerId, string key)
+    public async Task SetKeyAsync(string providerId, string key, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(key))
             _providerKeys.Remove(providerId);
@@ -279,24 +230,24 @@ public class WasmKeyStore
             _providerKeys[providerId] = key.Trim();
 
         var json = JsonSerializer.Serialize(_providerKeys);
-        await js.InvokeVoidAsync("localStorage.setItem", KeysStorageKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, KeysStorageKey, json);
     }
 
-    public async Task SaveAllKeysAsync(IJSRuntime js, string groq, string gemini, string openrouter)
+    public async Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default)
     {
         _providerKeys["groq"] = (groq ?? "").Trim();
         _providerKeys["gemini"] = (gemini ?? "").Trim();
         _providerKeys["openrouter"] = (openrouter ?? "").Trim();
 
         var json = JsonSerializer.Serialize(_providerKeys);
-        await js.InvokeVoidAsync("localStorage.setItem", KeysStorageKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, KeysStorageKey, json);
     }
 
     public string OllamaBaseUrl => _ollamaConfig.BaseUrl ?? "http://localhost:11434";
-
     public string OllamaChatEndpoint => OllamaBaseUrl.TrimEnd('/') + "/v1/chat/completions";
 
-    public List<string> OllamaModels => GetModelSettingsMap().Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    public List<string> OllamaModels =>
+        GetModelSettingsMap().Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 
     public IReadOnlyList<OllamaModelSettings> OllamaModelSettingsList =>
         GetModelSettingsMap().Values
@@ -314,9 +265,6 @@ public class WasmKeyStore
             : null;
     }
 
-    /// <summary>
-    /// Ollama model name marked as the vision proxy (must also have <see cref="OllamaModelSettings.SupportsVision"/>).
-    /// </summary>
     public string? GetVisionProxyModelName() =>
         GetModelSettingsMap().Values
             .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision)
@@ -332,13 +280,13 @@ public class WasmKeyStore
         return OllamaCapabilitiesResolver.CreateDefaultSettings(modelName);
     }
 
-    public async Task SetOllamaBaseUrlAsync(IJSRuntime js, string baseUrl)
+    public async Task SetOllamaBaseUrlAsync(string baseUrl, CancellationToken ct = default)
     {
         _ollamaConfig = _ollamaConfig with { BaseUrl = baseUrl.Trim() };
-        await SaveOllamaConfigAsync(js);
+        await SaveOllamaConfigAsync(ct);
     }
 
-    public async Task SetOllamaModelsAsync(IJSRuntime js, List<string> models)
+    public async Task SetOllamaModelsAsync(List<string> models, CancellationToken ct = default)
     {
         var map = GetModelSettingsMap();
         var distinct = models.Where(m => !string.IsNullOrWhiteSpace(m)).Select(m => m.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -353,10 +301,10 @@ public class WasmKeyStore
         }
 
         _ollamaConfig = _ollamaConfig with { Models = distinct, ModelSettings = next };
-        await SaveOllamaConfigAsync(js);
+        await SaveOllamaConfigAsync(ct);
     }
 
-    public async Task AddOllamaModelAsync(IJSRuntime js, string model, HttpClient? http = null)
+    public async Task AddOllamaModelAsync(string model, HttpClient? http = null, CancellationToken ct = default)
     {
         model = (model ?? "").Trim();
         if (string.IsNullOrWhiteSpace(model))
@@ -369,7 +317,7 @@ public class WasmKeyStore
         OllamaModelSettings settings;
         if (http != null)
         {
-            var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, OllamaBaseUrl, model);
+            var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, OllamaBaseUrl, model, ct);
             settings = OllamaCapabilitiesResolver.ResolveSettings(model, live);
         }
         else
@@ -383,10 +331,10 @@ public class WasmKeyStore
             Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
             ModelSettings = map
         };
-        await SaveOllamaConfigAsync(js);
+        await SaveOllamaConfigAsync(ct);
     }
 
-    public async Task RemoveOllamaModelAsync(IJSRuntime js, string model)
+    public async Task RemoveOllamaModelAsync(string model, CancellationToken ct = default)
     {
         var map = GetModelSettingsMap();
         map.Remove(model);
@@ -395,10 +343,10 @@ public class WasmKeyStore
             Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
             ModelSettings = map
         };
-        await SaveOllamaConfigAsync(js);
+        await SaveOllamaConfigAsync(ct);
     }
 
-    public async Task SaveOllamaModelSettingsAsync(IJSRuntime js, OllamaModelSettings settings)
+    public async Task SaveOllamaModelSettingsAsync(OllamaModelSettings settings, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(settings.Name))
             return;
@@ -428,16 +376,16 @@ public class WasmKeyStore
             Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
             ModelSettings = map
         };
-        await SaveOllamaConfigAsync(js);
+        await SaveOllamaConfigAsync(ct);
     }
 
-    private async Task SaveOllamaConfigAsync(IJSRuntime js)
+    private async Task SaveOllamaConfigAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_ollamaConfig);
-        await js.InvokeVoidAsync("localStorage.setItem", OllamaConfigKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, OllamaConfigKey, json);
     }
 
-    public async Task RefreshOllamaModelsFromServerAsync(IJSRuntime js, HttpClient http, string? baseUrl = null)
+    public async Task RefreshOllamaModelsFromServerAsync(HttpClient http, string? baseUrl = null, CancellationToken ct = default)
     {
         if (!string.IsNullOrWhiteSpace(baseUrl))
             _ollamaConfig = _ollamaConfig with { BaseUrl = baseUrl.Trim() };
@@ -446,7 +394,7 @@ public class WasmKeyStore
         {
             var origin = OllamaBaseUrl.TrimEnd('/');
             var tagsUrl = origin + "/api/tags";
-            var resp = await http.GetFromJsonAsync<OllamaTagsResponse>(tagsUrl);
+            var resp = await http.GetFromJsonAsync<OllamaTagsResponse>(tagsUrl, ct);
             if (resp?.models == null)
                 return;
 
@@ -456,7 +404,7 @@ public class WasmKeyStore
             foreach (var tag in resp.models.Where(m => !string.IsNullOrWhiteSpace(m.name)).Select(m => m.name!).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 existingMap.TryGetValue(tag, out var existing);
-                var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag);
+                var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag, ct);
                 next[tag] = OllamaCapabilitiesResolver.ResolveSettings(tag, live, existing);
             }
 
@@ -465,7 +413,7 @@ public class WasmKeyStore
                 Models = next.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
                 ModelSettings = next
             };
-            await SaveOllamaConfigAsync(js);
+            await SaveOllamaConfigAsync(ct);
         }
         catch (Exception ex)
         {
@@ -508,7 +456,6 @@ public class WasmKeyStore
         return loaded with { ModelSettings = map };
     }
 
-    // Internal response types (kept here to avoid polluting UI)
     private class OllamaTagsResponse
     {
         public List<OllamaModel> models { get; set; } = new();
@@ -519,14 +466,12 @@ public class WasmKeyStore
         public string name { get; set; } = "";
     }
 
-    // --- MCP remote tools (Tools.razor) ---
-
     public IReadOnlySet<string> EnabledMcpServerNames => _enabledMcpServers;
 
     public bool IsMcpServerEnabled(string name) =>
         !string.IsNullOrWhiteSpace(name) && _enabledMcpServers.Contains(name);
 
-    public async Task SetMcpServerEnabledAsync(IJSRuntime js, string name, bool enabled)
+    public async Task SetMcpServerEnabledAsync(string name, bool enabled, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(name)) return;
 
@@ -535,27 +480,25 @@ public class WasmKeyStore
         else
             _enabledMcpServers.Remove(name);
 
-        await SaveMcpEnabledAsync(js);
+        await SaveMcpEnabledAsync(ct);
     }
 
-    public async Task SetEnabledMcpServersAsync(IJSRuntime js, IEnumerable<string> names)
+    public async Task SetEnabledMcpServersAsync(IEnumerable<string> names, CancellationToken ct = default)
     {
         _enabledMcpServers = new HashSet<string>(names.Where(n => !string.IsNullOrWhiteSpace(n)), StringComparer.OrdinalIgnoreCase);
-        await SaveMcpEnabledAsync(js);
+        await SaveMcpEnabledAsync(ct);
     }
 
-    private async Task SaveMcpEnabledAsync(IJSRuntime js)
+    private async Task SaveMcpEnabledAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_enabledMcpServers.ToList());
-        await js.InvokeVoidAsync("localStorage.setItem", McpEnabledKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpEnabledKey, json);
     }
-
-    // --- Per-MCP server tokens (for RequiresAuth servers selected on the Tools page) ---
 
     public string GetMcpToken(string serverName) =>
         string.IsNullOrWhiteSpace(serverName) ? "" : _mcpTokens.GetValueOrDefault(serverName, "");
 
-    public async Task SetMcpTokenAsync(IJSRuntime js, string serverName, string token)
+    public async Task SetMcpTokenAsync(string serverName, string token, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(serverName)) return;
 
@@ -565,24 +508,16 @@ public class WasmKeyStore
             _mcpTokens[serverName] = token.Trim();
 
         var json = JsonSerializer.Serialize(_mcpTokens);
-        await js.InvokeVoidAsync("localStorage.setItem", McpTokensKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpTokensKey, json);
     }
 
     public IReadOnlyDictionary<string, string> GetAllMcpTokens() =>
         new Dictionary<string, string>(_mcpTokens);
 
-    // --- Custom MCP Connectors (added via the "Add Custom Connector" dialog on Tools page) ---
-
-    /// <summary>
-    /// User-defined MCP servers (name + URL). These are persisted separately from the public registry.
-    /// Tokens (if any) are stored in the same _mcpTokens dictionary, keyed by the connector Name.
-    /// </summary>
-    public record CustomMcpConnector(string Name, string ServerUrl);
-
     public IReadOnlyList<CustomMcpConnector> GetCustomConnectors() =>
         _customMcpConnectors.ToList();
 
-    public async Task AddCustomConnectorAsync(IJSRuntime js, string name, string serverUrl)
+    public async Task AddCustomConnectorAsync(string name, string serverUrl, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(serverUrl))
             return;
@@ -590,40 +525,36 @@ public class WasmKeyStore
         name = name.Trim();
         serverUrl = serverUrl.Trim();
 
-        // Remove any previous entry with the same name (allow overwrite on re-add)
         _customMcpConnectors.RemoveAll(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
         _customMcpConnectors.Add(new CustomMcpConnector(name, serverUrl));
-
-        await SaveCustomConnectorsAsync(js);
+        await SaveCustomConnectorsAsync(ct);
     }
 
-    public async Task RemoveCustomConnectorAsync(IJSRuntime js, string name)
+    public async Task RemoveCustomConnectorAsync(string name, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(name)) return;
 
         int removed = _customMcpConnectors.RemoveAll(c => c.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
         if (removed > 0)
         {
-            // Also clean up enabled flag and any token for this name
             _enabledMcpServers.Remove(name.Trim());
             _mcpTokens.Remove(name.Trim());
 
-            await SaveCustomConnectorsAsync(js);
-            await SaveMcpEnabledAsync(js);
-            await SaveMcpTokensAsync(js);
+            await SaveCustomConnectorsAsync(ct);
+            await SaveMcpEnabledAsync(ct);
+            await SaveMcpTokensAsync(ct);
         }
     }
 
-    private async Task SaveCustomConnectorsAsync(IJSRuntime js)
+    private async Task SaveCustomConnectorsAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_customMcpConnectors);
-        await js.InvokeVoidAsync("localStorage.setItem", McpCustomConnectorsKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpCustomConnectorsKey, json);
     }
 
-    private async Task SaveMcpTokensAsync(IJSRuntime js)
+    private async Task SaveMcpTokensAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_mcpTokens);
-        await js.InvokeVoidAsync("localStorage.setItem", McpTokensKey, json);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpTokensKey, json);
     }
 }

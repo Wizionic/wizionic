@@ -1,0 +1,40 @@
+@implements IAsyncDisposable
+@inject ISyncService SyncService
+@inject IAuthService AuthService
+
+@code {
+    private bool _started;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_started) return;
+        _started = true;
+
+        await AuthService.LoadAsync();
+        await SyncService.InitializeAsync();
+
+        AuthService.OnChanged += OnAuthChanged;
+
+        if (AuthService.IsAuthenticated)
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+    }
+
+    private async void OnAuthChanged()
+    {
+        try
+        {
+            if (AuthService.IsAuthenticated)
+                await SyncService.EnsureConnectedAndRegisteredAsync();
+        }
+        catch
+        {
+            // Transient hub errors are retried on next navigation or refresh.
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        AuthService.OnChanged -= OnAuthChanged;
+        return ValueTask.CompletedTask;
+    }
+}

@@ -1,0 +1,10 @@
+@inherits LayoutComponentBase
+
+<SyncConnectionBootstrap />
+
+<div style="height: 100vh; display: flex; flex-direction: column;">
+    <AppTopBar />
+    <div style="flex: 1; overflow: visible; padding-top: 3.5rem; height: 100%; position: relative;">
+        @Body
+    </div>
+</div>

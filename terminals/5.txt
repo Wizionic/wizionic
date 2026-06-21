@@ -1,0 +1,118 @@
+---
+pid: 50636
+cwd: "C:\Users\danie\src\addmauiproject"
+command: "dotnet build \"C:\\Users\\danie\\src\\addmauiproject\\ChatfishApp.csproj\"; if ($LASTEXITCODE -eq 0) { dotnet run --project \"C:\\Users\\danie\\src\\addmauiproject\\ChatfishApp.csproj\" --no-build }"
+started_at: 2026-06-20T22:44:30.937Z
+running_for_ms: 56884991 
+---
+  Determining projects to restore...
+C:\Users\danie\src\addmauiproject\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MailKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-9j88-vvj5-vhgr
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MimeKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-g7hc-96xr-gvvx
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+  All projects are up-to-date for restore.
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MailKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-9j88-vvj5-vhgr
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MimeKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-g7hc-96xr-gvvx
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+C:\Users\danie\src\addmauiproject\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
+  ChatfishApp.Core -> C:\Users\danie\src\addmauiproject\ChatfishApp.Core\bin\Debug\net10.0\ChatfishApp.Core.dll
+  ChatfishApp.Shared -> C:\Users\danie\src\addmauiproject\ChatfishApp.Shared\bin\Debug\net10.0\ChatfishApp.Shared.dll
+  ChatfishApp.Client -> C:\Users\danie\src\addmauiproject\ChatfishApp.Client\bin\Debug\net10.0\ChatfishApp.Client.dll
+  ChatfishApp.Client (Blazor output) -> C:\Users\danie\src\addmauiproject\ChatfishApp.Client\bin\Debug\net10.0\wwwroot
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(14,36): warning CS0436: The type 'IToolProvider' in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs' conflicts with the imported type 'IToolProvider' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(24,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(25,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(26,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(27,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(28,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Program.cs(81,31): warning CS0436: The type 'IToolProvider' in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs' conflicts with the imported type 'IToolProvider' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Program.cs(81,46): warning CS0436: The type 'DefaultToolProvider' in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs' conflicts with the imported type 'DefaultToolProvider' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Apis\WasmApiEndpoints.cs(179,26): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Apis\WasmApiEndpoints.cs(184,26): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Apis\WasmApiEndpoints.cs(189,26): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+  ChatfishApp -> C:\Users\danie\src\addmauiproject\bin\Debug\net10.0\ChatfishApp.dll
+
+Build succeeded.
+
+C:\Users\danie\src\addmauiproject\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MailKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-9j88-vvj5-vhgr
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MimeKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-g7hc-96xr-gvvx
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MailKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-9j88-vvj5-vhgr
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1902: Package 'MimeKit' 4.8.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-g7hc-96xr-gvvx
+C:\Users\danie\src\addmauiproject\ChatfishApp.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+C:\Users\danie\src\addmauiproject\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(14,36): warning CS0436: The type 'IToolProvider' in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs' conflicts with the imported type 'IToolProvider' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(24,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(25,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(26,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(27,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs(28,38): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Program.cs(81,31): warning CS0436: The type 'IToolProvider' in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs' conflicts with the imported type 'IToolProvider' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Program.cs(81,46): warning CS0436: The type 'DefaultToolProvider' in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs' conflicts with the imported type 'DefaultToolProvider' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\ToolProvider.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Apis\WasmApiEndpoints.cs(179,26): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Apis\WasmApiEndpoints.cs(184,26): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+C:\Users\danie\src\addmauiproject\Apis\WasmApiEndpoints.cs(189,26): warning CS0436: The type 'AppTools' in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs' conflicts with the imported type 'AppTools' in 'ChatfishApp.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. Using the type defined in 'C:\Users\danie\src\addmauiproject\Services\Tools\AppTools.cs'. [C:\Users\danie\src\addmauiproject\ChatfishApp.csproj]
+    19 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:11.10
+Using launch settings from C:\Users\danie\src\addmauiproject\Properties\launchSettings.json...
+[Email] SMTP configured: host=smtp-relay.brevo.com port=465 hasUser=True hasPass=True user="ad9c81001@smtp-brevo.com" from=no-reply@chatfish.me
+[Email] LIVE ENV AT STARTUP: Email__SmtpUser='ad9c81001@smtp-brevo.com' | Email__SmtpPass len=90 preview=xsmt...79Bb (fromEnv user:True pass:True)
+[Brevo] Configured: from=no-reply@chatfish.me senderName=Chatfish keyPresent=True keyLen=89 preview=xkey...pd85
+info: ChatfishApp.Services.AiProviderProxyService[0]
+      [AiProxy] Provider zyphra (Zyphra Cloud): type=OpenAICompatible baseUrl=https://api.zyphracloud.com/api/v1/ keyConfigured=True secretHeaderConfigured=False staticModels=1 discoverModels=False
+info: ChatfishApp.Services.AiProviderProxyService[0]
+      [AiProxy] Provider free-chat (Free Chat): type=Ollama baseUrl=https://relay.chatfish.me/v1/ keyConfigured=True secretHeaderConfigured=True staticModels=3 discoverModels=True
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (8ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode=WAL;
+info: Microsoft.EntityFrameworkCore.Migrations[20411]
+      Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsLock' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (9ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      INSERT OR IGNORE INTO "__EFMigrationsLock"("Id", "Timestamp") VALUES(1, '2026-06-20 22:44:47.6704553+00:00');
+      SELECT changes();
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+          "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
+          "ProductVersion" TEXT NOT NULL
+      );
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsHistory' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "MigrationId", "ProductVersion"
+      FROM "__EFMigrationsHistory"
+      ORDER BY "MigrationId";
+info: Microsoft.EntityFrameworkCore.Migrations[20405]
+      No migrations were applied. The database is already up to date.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (3ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      DELETE FROM "__EFMigrationsLock";
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*)
+      FROM "DataProtectionKeys" AS "d"
+[Auth] Persistence: chatfish.db path=C:\Users\danie\src\addmauiproject\chatfish.db sizeBytes=69632 dataProtectionKeyCount=1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode=WAL;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "d"."Id", "d"."FriendlyName", "d"."Xml"
+      FROM "DataProtectionKeys" AS "d"
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5136
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\danie\src\addmauiproject

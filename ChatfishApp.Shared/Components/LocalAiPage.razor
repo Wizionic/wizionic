@@ -1,0 +1,375 @@
+@inject ChatfishApp.Core.Storage.IKeyStore KeyStore
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject IAuthService AuthService
+
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
+    
+    <h4>Ollama - Local AI </h4>
+
+    <p style="color: #666; font-size: 0.9em;">Ollama configuration is stored only in your browser. </p>
+
+
+    <h3>Ollama - Local AI on your computer</h3>
+    <div style="max-width: 500px;">
+<div class="ollama-instructions">
+  <p>
+    Ollama lets you run AI models privately on your own computer —
+    no internet required, no API costs, no data leaving your machine.
+  </p>
+  <p>
+    Download and install Ollama from 
+    <a href="https://www.ollama.com/" target="_blank" rel="noopener">ollama.com</a>, 
+    then run one of these commands in your terminal to download a model:
+  </p>
+
+  <div class="model-commands">
+    <div class="model-command">
+      <span class="model-desc">Fast and lightweight — great for most computers (3.0GB)</span>
+      <pre><code>ollama pull ministral-3:3b</code></pre>
+    </div>
+    <div class="model-command">
+      <span class="model-desc">Google's efficient model — excellent quality for the size (7.2GB)</span>
+      <pre><code>ollama pull gemma4:e2b</code></pre>
+    </div>
+    <div class="model-command">
+      <span class="model-desc">Very fast, minimal hardware requirements (6.6GB)</span>
+      <pre><code>ollama pull qwen3.5:9b</code></pre>
+    </div>
+    <div class="model-command">
+      <span class="model-desc">Liquid AI's efficient architecture — strong tool use (5.2GB)</span>
+      <pre><code>ollama pull lfm2.5</code></pre>
+    </div>
+  </div>
+
+
+    <div style="color:#8a0101;margin: 1rem 0; padding: 0.75rem 1rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 0.9em;">
+    <strong>On https://chatfish.me:</strong> Browser security blocks direct http:// calls to your local Ollama (mixed content).
+    Use must add set OLLAMA_ORIGINS to https://chatfish.me or *
+    
+    <div class="model-command">
+      <span class="model-desc">Windows Powershell</span>
+      <pre><code>[System.Environment]::SetEnvironmentVariable("OLLAMA_ORIGINS","https://chatfish.me","User")</code></pre>
+    </div>
+    
+    
+    <div class="model-command">
+      <span class="model-desc">macOS / Linux</span>
+      <pre><code>sudo systemctl edit ollama
+# Add: Environment="OLLAMA_ORIGINS=https://chatfish.me"</code></pre>
+    </div>
+    
+</div>
+
+  <p>
+    Once downloaded, click <strong>Refresh Models from Ollama</strong> — 
+    Chatfish will detect your models automatically. All of these models 
+    support agentic tools like web search and summarization.
+  </p>
+
+</div>
+
+
+        <label>Base URL</label>
+        <input type="text" @bind="ollamaBaseUrl" placeholder="http://localhost:11434" class="form-control" />
+        <div style="font-size:0.75em; color:#888; margin:2px 0 4px;">For remote/network Ollama (with expose enabled), change to your LAN IP or https URL. http:// from this https site will be blocked by the browser.</div>
+
+        <button @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.25rem;">Refresh Models from Ollama</button>
+        <div style="font-size:0.72em; color:#888; margin-top:2px;">If this fails with a network/CORS error, add models by name manually instead (works everywhere).</div>
+
+        <div class="model-list" style="margin-top: 1rem;">
+            <label>Available Ollama Models</label>
+            @if (ollamaModelSettings.Any())
+            {
+                <div class="ollama-model-list">
+                    @foreach (var model in ollamaModelSettings)
+                    {
+                        <div class="ollama-model-row @(editingModelName == model.Name ? "is-active" : "")">
+                            <div class="ollama-model-row-main">
+                                <div class="ollama-model-row-title">@DisplayLabel(model)</div>
+                                <div class="ollama-model-row-subtitle">@model.Name</div>
+                            </div>
+                            <div class="ollama-model-row-meta">
+                                Managed by Ollama
+                                @if (model.IsVisionProxy)
+                                {
+                                    <span class="ollama-vision-proxy-badge">Vision proxy</span>
+                                }
+                            </div>
+                            <button type="button"
+                                    class="ollama-model-edit-btn"
+                                    title="Edit model settings"
+                                    @onclick="() => OpenModelEditor(model.Name)">
+                                ✏️
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="font-size: 0.8em; color: #888;">No models loaded. Use refresh (local http only) or add model names manually below.</div>
+            }
+        </div>
+
+        @if (editingModelName != null && editDraft != null)
+        {
+            <div class="ollama-model-editor">
+                <h4>Edit model</h4>
+
+                <label>Label</label>
+                <input type="text" @bind="editDraft.Label" class="form-control" />
+
+                <label>Model request name</label>
+                <input type="text" value="@editDraft.Name" class="form-control" readonly />
+
+                <label>Server endpoint</label>
+                <input type="text" value="@KeyStore.OllamaChatEndpoint" class="form-control" readonly />
+                <div class="ollama-field-hint">Chatfish sends requests directly to your Ollama server from the browser.</div>
+
+                <label>Context size</label>
+                <input type="number" min="0" step="1" @bind="editDraft.ContextSize" class="form-control" />
+
+                <div class="ollama-toggle-row">
+                    <div>
+                        <label class="ollama-toggle-label">Vision Support</label>
+                        <div class="ollama-field-hint">Allow image attachments in chat for this model.</div>
+                    </div>
+                    <label class="ollama-toggle">
+                        <input type="checkbox" @bind="editDraft.SupportsVision" />
+                        <span class="ollama-toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="ollama-toggle-row">
+                    <div>
+                        <label class="ollama-toggle-label">Tool Support</label>
+                        <div class="ollama-field-hint">Enable agentic tools (web search, MCP, etc.) for this model.</div>
+                    </div>
+                    <label class="ollama-toggle">
+                        <input type="checkbox" @bind="editDraft.SupportsTools" />
+                        <span class="ollama-toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="ollama-toggle-row @(editDraft.SupportsVision ? "" : "is-disabled")">
+                    <div>
+                        <label class="ollama-toggle-label">Vision proxy</label>
+                        <div class="ollama-field-hint">
+                            @if (editDraft.SupportsVision)
+                            {
+                                <span>Use this model to describe images for other models that do not support vision.</span>
+                            }
+                            else
+                            {
+                                <span>Enable vision support above to use this model as the vision proxy.</span>
+                            }
+                        </div>
+                    </div>
+                    <label class="ollama-toggle">
+                        <input type="checkbox"
+                               @bind="editDraft.IsVisionProxy"
+                               disabled="@(!editDraft.SupportsVision)" />
+                        <span class="ollama-toggle-slider"></span>
+                    </label>
+                </div>
+
+                @if (!string.IsNullOrEmpty(saveFeedback))
+                {
+                    <div class="ollama-save-feedback @(saveFeedbackIsError ? "is-error" : "is-success")" role="status">
+                        @saveFeedback
+                    </div>
+                }
+
+                <div class="ollama-editor-actions">
+                    <button type="button" @onclick="SaveModelEditor" class="btn btn-primary">Save model</button>
+                    <button type="button" @onclick="CloseModelEditor" class="btn btn-link-style">Close</button>
+                    <button type="button" @onclick="RemoveEditingModel" class="btn btn-outline-secondary ollama-remove-btn">Remove model</button>
+                </div>
+            </div>
+        }
+
+        <div style="margin-top: 0.5rem;">
+            <label>Add custom model tag</label>
+            <div style="display: flex; gap: 4px;">
+                <input type="text" @bind="newOllamaModel" placeholder="" class="form-control" style="flex:1;" />
+                <button @onclick="AddCustomOllamaModel" class="btn btn-outline-secondary">Add</button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(pageFeedback))
+    {
+        <div class="ollama-save-feedback @(pageFeedbackIsError ? "is-error" : "is-success")" role="status" style="margin-top: 1rem;">
+            @pageFeedback
+        </div>
+    }
+
+    <div style="margin-top: 1.5rem;">
+        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+    </div>
+</div>
+
+@code {
+    string ollamaBaseUrl = "http://localhost:11434";
+    List<ChatfishApp.Core.Storage.OllamaModelSettings> ollamaModelSettings = new();
+    string newOllamaModel = "";
+    string? editingModelName;
+    ChatfishApp.Core.Storage.OllamaModelSettings? editDraft;
+    string? saveFeedback;
+    bool saveFeedbackIsError;
+    string? pageFeedback;
+    bool pageFeedbackIsError;
+    CancellationTokenSource? _saveFeedbackCts;
+    CancellationTokenSource? _pageFeedbackCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await KeyStore.LoadAsync();
+        await AuthService.LoadAsync();
+
+        ollamaBaseUrl = KeyStore.OllamaBaseUrl;
+        ReloadModelSettings();
+    }
+
+    void ReloadModelSettings()
+    {
+        ollamaModelSettings = KeyStore.OllamaModelSettingsList.ToList();
+    }
+
+    static string DisplayLabel(ChatfishApp.Core.Storage.OllamaModelSettings model) =>
+        string.IsNullOrWhiteSpace(model.Label) ? model.Name : model.Label;
+
+    async Task RefreshOllamaModels()
+    {
+        try
+        {
+            await KeyStore.RefreshOllamaModelsFromServerAsync( Http, ollamaBaseUrl);
+            ollamaBaseUrl = KeyStore.OllamaBaseUrl;
+            ReloadModelSettings();
+            if (editingModelName != null)
+                OpenModelEditor(editingModelName);
+        }
+        catch (Exception ex)
+        {
+            var msg = ex.Message;
+            if (msg.Contains("CORS", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("fetch", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("Mixed Content", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("Failed to refresh", StringComparison.OrdinalIgnoreCase))
+            {
+                msg += "\n\nTip: On https://chatfish.me this is expected for http Ollama. Add the model name(s) manually in the box below instead, or configure your Ollama for https + OLLAMA_ORIGINS.";
+            }
+            await ShowPageFeedbackAsync(msg, isError: true);
+        }
+    }
+
+    async Task AddCustomOllamaModel()
+    {
+        try
+        {
+            await KeyStore.SetOllamaBaseUrlAsync(ollamaBaseUrl);
+            await KeyStore.AddOllamaModelAsync(newOllamaModel, Http);
+            ReloadModelSettings();
+            newOllamaModel = "";
+        }
+        catch (Exception ex)
+        {
+            await ShowPageFeedbackAsync($"Failed to add model: {ex.Message}", isError: true);
+        }
+    }
+
+    void OpenModelEditor(string modelName)
+    {
+        var settings = KeyStore.GetOllamaModelSettings(modelName);
+        if (settings == null)
+            return;
+
+        editingModelName = modelName;
+        editDraft = settings.Clone();
+    }
+
+    void CloseModelEditor()
+    {
+        editingModelName = null;
+        editDraft = null;
+    }
+
+    async Task SaveModelEditor()
+    {
+        if (editDraft == null)
+            return;
+
+        try
+        {
+            if (!editDraft.SupportsVision)
+                editDraft.IsVisionProxy = false;
+
+            await KeyStore.SetOllamaBaseUrlAsync( ollamaBaseUrl);
+            await KeyStore.SaveOllamaModelSettingsAsync( editDraft);
+            ReloadModelSettings();
+            editingModelName = editDraft.Name;
+            editDraft = KeyStore.GetOllamaModelSettings(editDraft.Name)?.Clone();
+            await ShowSaveFeedbackAsync("Model settings saved to your browser.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not save model settings: {ex.Message}", isError: true);
+        }
+    }
+
+    async Task ShowSaveFeedbackAsync(string message, bool isError)
+    {
+        _saveFeedbackCts?.Cancel();
+        _saveFeedbackCts?.Dispose();
+        _saveFeedbackCts = new CancellationTokenSource();
+        var token = _saveFeedbackCts.Token;
+
+        saveFeedback = message;
+        saveFeedbackIsError = isError;
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(4000, token);
+            saveFeedback = null;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    async Task ShowPageFeedbackAsync(string message, bool isError)
+    {
+        _pageFeedbackCts?.Cancel();
+        _pageFeedbackCts?.Dispose();
+        _pageFeedbackCts = new CancellationTokenSource();
+        var token = _pageFeedbackCts.Token;
+
+        pageFeedback = message;
+        pageFeedbackIsError = isError;
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(6000, token);
+            pageFeedback = null;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    async Task RemoveEditingModel()
+    {
+        if (editingModelName == null)
+            return;
+
+        await KeyStore.RemoveOllamaModelAsync( editingModelName);
+        ReloadModelSettings();
+        CloseModelEditor();
+    }
+}

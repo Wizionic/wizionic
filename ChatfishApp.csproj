@@ -23,6 +23,24 @@
     <!-- Razor components, view imports, etc. from the Client must only be compiled by the Client project. -->
     <RazorComponent Remove="ChatfishApp.Client\**" />
     <RazorGenerate Remove="ChatfishApp.Client\**" />
+    <Compile Remove="ChatfishApp.Maui\**" />
+    <Content Remove="ChatfishApp.Maui\**" />
+    <EmbeddedResource Remove="ChatfishApp.Maui\**" />
+    <None Remove="ChatfishApp.Maui\**" />
+    <RazorComponent Remove="ChatfishApp.Maui\**" />
+    <RazorGenerate Remove="ChatfishApp.Maui\**" />
+    <Compile Remove="ChatfishApp.Core\**" />
+    <Content Remove="ChatfishApp.Core\**" />
+    <EmbeddedResource Remove="ChatfishApp.Core\**" />
+    <None Remove="ChatfishApp.Core\**" />
+    <RazorComponent Remove="ChatfishApp.Core\**" />
+    <RazorGenerate Remove="ChatfishApp.Core\**" />
+    <Compile Remove="ChatfishApp.Shared\**" />
+    <Content Remove="ChatfishApp.Shared\**" />
+    <EmbeddedResource Remove="ChatfishApp.Shared\**" />
+    <None Remove="ChatfishApp.Shared\**" />
+    <RazorComponent Remove="ChatfishApp.Shared\**" />
+    <RazorGenerate Remove="ChatfishApp.Shared\**" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,7 +57,10 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.8" />
     <!-- Real email sending for magic links (SMTP via MailKit). Configure in appsettings under "Email" section (use user-secrets for passwords in real deploys). -->
     <PackageReference Include="MailKit" Version="4.8.0" />
+    <PackageReference Include="SIPSorcery" Version="10.0.10" />
     <ProjectReference Include="ChatfishApp.Client\ChatfishApp.Client.csproj" />
+    <ProjectReference Include="ChatfishApp.Core\ChatfishApp.Core.csproj" />
+    <ProjectReference Include="ChatfishApp.Shared\ChatfishApp.Shared.csproj" />
   </ItemGroup>
 
 </Project>

@@ -14,9 +14,12 @@ namespace ChatfishApp.Services;
 /// </summary>
 public class AiProviderProxyService
 {
+    private static readonly TimeSpan OllamaDiscoveryCacheTtl = TimeSpan.FromSeconds(60);
+
     private readonly AiProviderProxyOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AiProviderProxyService> _logger;
+    private readonly Dictionary<string, (DateTime CachedAtUtc, List<ProxiedProviderContracts.ProxiedModelDto> Models)> _ollamaDiscoveryCache = new(StringComparer.OrdinalIgnoreCase);
 
     public AiProviderProxyService(
         IOptions<AiProviderProxyOptions> options,
@@ -281,6 +284,13 @@ public class AiProviderProxyService
         ProxiedProviderOptions provider,
         CancellationToken ct)
     {
+        var cacheKey = $"{provider.Id}|{provider.BaseUrl}";
+        if (_ollamaDiscoveryCache.TryGetValue(cacheKey, out var cached)
+            && DateTime.UtcNow - cached.CachedAtUtc < OllamaDiscoveryCacheTtl)
+        {
+            return cached.Models;
+        }
+
         var origin = GetOllamaOrigin(provider.BaseUrl);
         var tagsUrl = $"{origin}/api/tags";
 
@@ -304,7 +314,7 @@ public class AiProviderProxyService
         var allowlist = configuredModels.ToDictionary(m => m.Id, m => m, StringComparer.OrdinalIgnoreCase);
         var allowlistOrder = configuredModels.Select(m => m.Id).ToList();
 
-        return resp.Models
+        var models = resp.Models
             .Where(m => !string.IsNullOrWhiteSpace(m.Name))
             .Where(m => allowlist.ContainsKey(m.Name!))
             .Select(m =>
@@ -346,6 +356,9 @@ public class AiProviderProxyService
             .OrderBy(m => allowlistOrder.FindIndex(k => string.Equals(k, m.Id, StringComparison.OrdinalIgnoreCase)))
             .ThenBy(m => m.Label, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        _ollamaDiscoveryCache[cacheKey] = (DateTime.UtcNow, models);
+        return models;
     }
 
     private static ProxiedProviderContracts.ProxiedModelDto ToModelDto(ProxiedModelOptions m) =>

@@ -1,0 +1,8 @@
+---
+pid: 19232
+cwd: "C:\Users\danie\src\addmauiproject"
+command: "Set-Location C:\\Users\\danie\\src\\addmauiproject; dotnet run --project ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0-windows10.0.19041.0 --no-build"
+started_at: 2026-06-20T19:08:43.263Z
+running_for_ms: 69910010 
+---
+Using launch settings from ChatfishApp.Maui\Properties\launchSettings.json...

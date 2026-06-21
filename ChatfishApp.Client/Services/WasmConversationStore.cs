@@ -1,130 +1,72 @@
+using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Storage;
 using Microsoft.JSInterop;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Net;
 
 namespace ChatfishApp.Client.Services;
 
 /// <summary>
 /// Client-side storage for conversation history (multi-convo, titles, messages).
-/// 
-/// Data now lives in IndexedDB ("chatfish-conversations" DB) for much larger capacity
-/// than localStorage and a clean schema that supports future selective cross-device sync.
-/// 
-/// All *content* blobs (the JSON of List&lt;ChatMessage&gt;) are *always* AES-GCM encrypted
-/// before being written:
-///   - Authenticated users: use the server-provided per-user key (enables sync across devices).
-///   - Guest / unauthenticated: a local device-only key is generated on first use and stored
-///     inside the IDB. This satisfies the requirement that even unauthenticated chats must
-///     be encrypted at rest in the browser.
-/// 
-/// Lightweight metadata (title, lastUpdated, syncEnabled flag) is stored in cleartext so the
-/// list of conversations is visible even before the encryption key is ready.
-/// 
-/// The "syncEnabled" flag per conversation makes the structure ready for "sync all or only some".
+/// IndexedDB-backed; content blobs are AES-GCM encrypted at rest.
 /// </summary>
-public class WasmConversationStore
+public class WasmConversationStore : IConversationStore
 {
     private const string LastConvoKey = "wasmchat-last-convo";
     private const string ConvoPrefix = "wasmchat-convo-";
 
-    private readonly WasmAuthService _auth;
-    private readonly WasmCryptoService _crypto;
+    private readonly IAuthService _auth;
+    private readonly ICryptoService _crypto;
+    private readonly IJSRuntime _js;
 
-    public WasmConversationStore(WasmAuthService auth, WasmCryptoService crypto)
+    public WasmConversationStore(IAuthService auth, ICryptoService crypto, IJSRuntime js)
     {
         _auth = auth;
         _crypto = crypto;
-
-        // When the user logs in (or out) the consumer (Chat) can decide to
-        // reload the list under the new namespace. We still notify.
+        _js = js;
         _auth.OnChanged += () => { /* consumer decides when to reload */ };
     }
 
-    public record LocalConvo(string Id, string Title, DateTime LastUpdated);
+    private record StoredMeta(string key, string id, string @namespace, string title, string lastUpdated, bool syncEnabled, string? contentFingerprint, string? deletedAt, bool? titleIsCustom);
 
-    public record SyncManifestEntry(string Id, string Title, long LastUpdatedTicks, string ContentFingerprint, long? DeletedAtTicks = null)
-    {
-        public bool IsDeleted => DeletedAtTicks.HasValue;
-    }
+    private static bool HasCustomTitle(StoredMeta? meta) => meta?.titleIsCustom == true;
 
-    /// <summary>
-    /// Represents a file attachment uploaded by the user in a conversation turn.
-    /// DataBase64 holds the full content (for vision models we send the bytes; for display we use data: urls for images).
-    /// </summary>
-    public record Attachment(string Name, string ContentType, string DataBase64, long Size)
-    {
-        /// <summary>Convenience data URL for image thumbnails (null for non-images like PDF).</summary>
-        public string? DataUrl => ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
-            ? $"data:{ContentType};base64,{DataBase64}"
-            : null;
-    }
+    private string GetPrefix() => StorageNamespace.GetPrefix(_auth);
 
-    private static string GetStableHash(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return "00000000";
-        using var sha = System.Security.Cryptography.SHA256.Create();
-        var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
-        return BitConverter.ToString(bytes, 0, 4).Replace("-", "").ToLowerInvariant();
-    }
+    private async Task<string> GetHistoryKeyAsync() =>
+        await _auth.GetOrCreateHistoryEncryptionKeyAsync();
 
-    private string GetPrefix()
+    private async Task<string?> ReadContentAsync(string fullKey)
     {
-        if (_auth.IsAuthenticated)
-        {
-            if (!string.IsNullOrEmpty(_auth.UserId))
-                return $"u-{_auth.UserId}-";  // stable across refreshes/processes
-            if (!string.IsNullOrEmpty(_auth.Email))
-                return $"e-{GetStableHash(_auth.Email)}-";
-        }
-        return "wasmchat-";  // guest (compat with any very old guest data)
-    }
-
-    /// <summary>
-    /// Always returns a usable AES-GCM base64 key for encrypting/decrypting
-    /// *history content* in the current namespace (guest or authed).
-    /// This is what makes "all chats (including unauthenticated) are encrypted in IDB" true.
-    /// </summary>
-    private async Task<string> GetHistoryKeyAsync(IJSRuntime js)
-    {
-        return await _auth.GetOrCreateHistoryEncryptionKeyAsync(js);
-    }
-
-    private async Task<string?> ReadContentAsync(IJSRuntime js, string fullKey)
-    {
-        var keyB64 = await GetHistoryKeyAsync(js);
-        var stored = await js.InvokeAsync<string>("idbGetContent", fullKey);
+        var keyB64 = await GetHistoryKeyAsync();
+        var stored = await _js.InvokeAsync<string>("idbGetContent", fullKey);
         if (string.IsNullOrEmpty(stored) || string.IsNullOrEmpty(keyB64))
             return stored;
 
         return await _crypto.DecryptAsync(keyB64, stored);
     }
 
-    private async Task WriteContentAsync(IJSRuntime js, string fullKey, string json)
+    private async Task WriteContentAsync(string fullKey, string json)
     {
-        var keyB64 = await GetHistoryKeyAsync(js);
-        string toStore = json;
+        var keyB64 = await GetHistoryKeyAsync();
+        var toStore = json;
         if (!string.IsNullOrEmpty(keyB64))
-        {
             toStore = await _crypto.EncryptAsync(keyB64, json);
-        }
-        await js.InvokeVoidAsync("idbPutContent", fullKey, toStore);
+
+        await _js.InvokeVoidAsync("idbPutContent", fullKey, toStore);
     }
 
-    public async Task<List<LocalConvo>> LoadIndexAsync(IJSRuntime js)
+    public async Task<List<LocalConvo>> LoadIndexAsync(CancellationToken ct = default)
     {
         var ns = GetPrefix();
-        // Load lightweight meta objects (no content blobs). They are stored in cleartext
-        // so the list is always visible even if we don't have the encryption key yet.
-        var metas = await js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
 
         if (_auth.IsAuthenticated)
         {
-            // Recovery for data saved during the period when namespace used unstable
-            // email.GetHashCode() (different value after every refresh).
-            // We pull in any old "wasmchat-..." or "e-..." metas (their .key will be used
-            // later for content load if the computed ns doesn't match).
             try
             {
-                var allMetas = await js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
+                var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
                 var legacy = allMetas
                     .Where(m => !string.IsNullOrEmpty(m.@namespace) &&
                                 (m.@namespace.StartsWith("wasmchat-") || m.@namespace.StartsWith("e-")) &&
@@ -147,25 +89,17 @@ public class WasmConversationStore
             }
         }
 
-        var result = metas
+        return metas
             .Where(m => string.IsNullOrEmpty(m.deletedAt))
             .OrderByDescending(m => m.lastUpdated)
             .Select(m => new LocalConvo(m.id, m.title ?? "(empty)", DateTime.Parse(m.lastUpdated)))
             .ToList();
-
-        return result;
     }
 
-    // Internal shape coming back from the JS idbGetMetasByNamespace helper.
-    // Matches the property names we use when putting (lowercase for namespace etc.).
-    private record StoredMeta(string key, string id, string @namespace, string title, string lastUpdated, bool syncEnabled, string? contentFingerprint, string? deletedAt, bool? titleIsCustom);
-
-    private static bool HasCustomTitle(StoredMeta? meta) => meta?.titleIsCustom == true;
-
-    public async Task<List<SyncManifestEntry>> LoadManifestEntriesAsync(IJSRuntime js, bool backfillMissingFingerprints = false)
+    public async Task<List<SyncManifestEntry>> LoadManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default)
     {
         var ns = GetPrefix();
-        var metas = await js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
         var entries = new List<SyncManifestEntry>();
 
         foreach (var m in metas)
@@ -181,9 +115,9 @@ public class WasmConversationStore
 
             if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
             {
-                var messages = await LoadConversationAsync(js, m.id);
+                var messages = await LoadConversationAsync(m.id, ct);
                 fingerprint = SyncFingerprint.ForConversation(m.id, title, messages);
-                await PersistContentFingerprintAsync(js, m, title, fingerprint, deletedAt: null);
+                await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
             }
 
             entries.Add(new SyncManifestEntry(
@@ -197,17 +131,17 @@ public class WasmConversationStore
         return entries;
     }
 
-    private async Task<StoredMeta?> GetMetaByIdAsync(IJSRuntime js, string id)
+    private async Task<StoredMeta?> GetMetaByIdAsync(string id)
     {
         var ns = GetPrefix();
-        var metas = await js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
         var meta = metas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
         if (meta != null)
             return meta;
 
         try
         {
-            var allMetas = await js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
+            var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
             return allMetas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
         }
         catch
@@ -216,9 +150,9 @@ public class WasmConversationStore
         }
     }
 
-    private async Task PersistContentFingerprintAsync(IJSRuntime js, StoredMeta meta, string title, string fingerprint, string? deletedAt)
+    private async Task PersistContentFingerprintAsync(StoredMeta meta, string title, string fingerprint, string? deletedAt)
     {
-        await js.InvokeVoidAsync("idbPutMeta", new
+        await _js.InvokeVoidAsync("idbPutMeta", new
         {
             key = meta.key,
             id = meta.id,
@@ -232,20 +166,17 @@ public class WasmConversationStore
         });
     }
 
-    /// <summary>
-    /// Soft-delete: keep tombstone meta, remove content blob. Returns UTC delete time for sync.
-    /// </summary>
-    public async Task<DateTime> TombstoneDeleteConversationAsync(IJSRuntime js, string id, DateTime? deletedAtUtc = null)
+    private async Task<DateTime> TombstoneDeleteConversationAsync(string id, DateTime? deletedAtUtc = null)
     {
         var deletedAt = deletedAtUtc ?? DateTime.UtcNow;
         var deletedAtIso = deletedAt.ToString("o");
         var ns = GetPrefix();
         var metaKey = ns + ConvoPrefix + id;
-        var existing = await GetMetaByIdAsync(js, id);
+        var existing = await GetMetaByIdAsync(id);
         var title = existing?.title ?? "(deleted)";
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
 
-        await js.InvokeVoidAsync("idbPutMeta", new
+        await _js.InvokeVoidAsync("idbPutMeta", new
         {
             key = existing?.key ?? metaKey,
             id,
@@ -258,15 +189,15 @@ public class WasmConversationStore
             titleIsCustom = existing?.titleIsCustom ?? false
         });
 
-        await js.InvokeVoidAsync("idbDeleteConvoContent", existing?.key ?? metaKey);
+        await _js.InvokeVoidAsync("idbDeleteConvoContent", existing?.key ?? metaKey);
 
         try
         {
-            var allMetas = await js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
+            var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
             foreach (var m in allMetas.Where(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase)))
             {
                 if (!string.IsNullOrEmpty(m.key))
-                    await js.InvokeVoidAsync("idbDeleteConvoContent", m.key);
+                    await _js.InvokeVoidAsync("idbDeleteConvoContent", m.key);
             }
         }
         catch (Exception ex)
@@ -277,12 +208,9 @@ public class WasmConversationStore
         return deletedAt;
     }
 
-    /// <summary>
-    /// Apply a remote delete if the tombstone is newer than local content (or local is already deleted).
-    /// </summary>
-    public async Task<bool> ShouldAcceptIncomingContentAsync(IJSRuntime js, string id, List<ChatMessage> messages)
+    public async Task<bool> ShouldAcceptIncomingContentAsync(string id, List<ChatMessage> messages, CancellationToken ct = default)
     {
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         if (meta == null || string.IsNullOrEmpty(meta.deletedAt))
             return true;
 
@@ -290,10 +218,10 @@ public class WasmConversationStore
         return ChatMessageHelper.GetLatestContentTicks(messages) > deletedAtTicks;
     }
 
-    public async Task<bool> TryApplyRemoteDeleteAsync(IJSRuntime js, string id, long deletedAtTicks)
+    public async Task<bool> TryApplyRemoteDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default)
     {
         var remoteDeletedAt = new DateTime(deletedAtTicks, DateTimeKind.Utc);
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         if (meta == null)
             return false;
 
@@ -305,53 +233,49 @@ public class WasmConversationStore
         }
         else
         {
-            var contentTicks = ChatMessageHelper.GetLatestContentTicks(await LoadConversationAsync(js, id));
+            var contentTicks = ChatMessageHelper.GetLatestContentTicks(await LoadConversationAsync(id, ct));
             if (contentTicks > deletedAtTicks || DateTime.Parse(meta.lastUpdated).Ticks > deletedAtTicks)
                 return false;
         }
 
-        await TombstoneDeleteConversationAsync(js, id, remoteDeletedAt);
+        await TombstoneDeleteConversationAsync(id, remoteDeletedAt);
         return true;
     }
 
-    public async Task<string?> GetLastConvoIdAsync(IJSRuntime js)
+    public async Task<string?> GetLastConvoIdAsync(CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var settingKey = ns + LastConvoKey;
-        return await js.InvokeAsync<string>("idbGetSetting", settingKey);
+        return await _js.InvokeAsync<string>("idbGetSetting", settingKey);
     }
 
-    public async Task SetLastConvoIdAsync(IJSRuntime js, string id)
+    public async Task SetLastConvoIdAsync(string id, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var settingKey = ns + LastConvoKey;
-        await js.InvokeVoidAsync("idbPutSetting", settingKey, id);
+        await _js.InvokeVoidAsync("idbPutSetting", settingKey, id);
     }
 
-    public async Task<List<ChatMessage>> LoadConversationAsync(IJSRuntime js, string id)
+    public async Task<List<ChatMessage>> LoadConversationAsync(string id, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var fullKey = ns + ConvoPrefix + id;
-        var json = await ReadContentAsync(js, fullKey);
+        var json = await ReadContentAsync(fullKey);
         if (string.IsNullOrEmpty(json))
         {
-            // Legacy recovery: the convo may have been saved under an old namespace
-            // (due to previous unstable GetHashCode). Look up the meta by id and
-            // use whatever storage key it recorded.
             try
             {
-                var allMetas = await js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
+                var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
                 var meta = allMetas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
                 if (meta != null && !string.IsNullOrEmpty(meta.key) && meta.key != fullKey)
-                {
-                    json = await ReadContentAsync(js, meta.key);
-                }
+                    json = await ReadContentAsync(meta.key);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[WasmConvStore] Legacy content key lookup failed for {id}: {ex.Message}");
             }
         }
+
         if (string.IsNullOrEmpty(json))
             return new List<ChatMessage>();
 
@@ -359,43 +283,43 @@ public class WasmConversationStore
         return ChatMessageHelper.NormalizeAll(messages);
     }
 
-    public async Task SaveConversationAsync(IJSRuntime js, string id, List<ChatMessage> messages)
+    public async Task SaveConversationAsync(string id, List<ChatMessage> messages, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var fullKey = ns + ConvoPrefix + id;
         var json = JsonSerializer.Serialize(messages);
-        await WriteContentAsync(js, fullKey, json);
+        await WriteContentAsync(fullKey, json);
     }
 
-    public Task<DateTime> DeleteConversationAsync(IJSRuntime js, string id) =>
-        TombstoneDeleteConversationAsync(js, id);
+    public Task<DateTime> DeleteConversationAsync(string id, CancellationToken ct = default) =>
+        TombstoneDeleteConversationAsync(id);
 
-    public async Task<string?> GetMetaTitleAsync(IJSRuntime js, string id)
+    public async Task<string?> GetMetaTitleAsync(string id, CancellationToken ct = default)
     {
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         return meta?.title;
     }
 
-    public async Task<(string Title, bool TitleIsCustom)> GetMetaTitleInfoAsync(IJSRuntime js, string id)
+    public async Task<(string Title, bool TitleIsCustom)> GetMetaTitleInfoAsync(string id, CancellationToken ct = default)
     {
-        var meta = await GetMetaByIdAsync(js, id);
+        var meta = await GetMetaByIdAsync(id);
         var title = string.IsNullOrWhiteSpace(meta?.title) ? "(empty)" : meta.title;
         return (title, HasCustomTitle(meta));
     }
 
-    public async Task SetConversationTitleAsync(IJSRuntime js, string id, string title)
+    public async Task SetConversationTitleAsync(string id, string title, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var metaKey = ns + ConvoPrefix + id;
-        var existing = await GetMetaByIdAsync(js, id);
+        var existing = await GetMetaByIdAsync(id);
         var normalizedTitle = NormalizeCustomTitle(title);
         var now = DateTime.UtcNow.ToString("o");
         bool syncEnabled = existing?.syncEnabled
             ?? (_auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email));
-        var messages = await LoadConversationAsync(js, id);
+        var messages = await LoadConversationAsync(id, ct);
         var contentFingerprint = SyncFingerprint.ForConversation(id, normalizedTitle, messages);
 
-        await js.InvokeVoidAsync("idbPutMeta", new
+        await _js.InvokeVoidAsync("idbPutMeta", new
         {
             key = existing?.key ?? metaKey,
             id,
@@ -409,9 +333,9 @@ public class WasmConversationStore
         });
     }
 
-    public async Task UpdateIndexAfterSaveAsync(IJSRuntime js, string id, List<ChatMessage> messages, List<LocalConvo> currentIndex)
+    public async Task UpdateIndexAfterSaveAsync(string id, List<ChatMessage> messages, List<LocalConvo> currentIndex, CancellationToken ct = default)
     {
-        var existing = await GetMetaByIdAsync(js, id);
+        var existing = await GetMetaByIdAsync(id);
 
         string title;
         bool titleIsCustom;
@@ -431,12 +355,10 @@ public class WasmConversationStore
         var ns = GetPrefix();
         var metaKey = ns + ConvoPrefix + id;
         var now = DateTime.UtcNow.ToString("o");
-
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
-
         var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages);
 
-        await js.InvokeVoidAsync("idbPutMeta", new
+        await _js.InvokeVoidAsync("idbPutMeta", new
         {
             key = existing?.key ?? metaKey,
             id,
@@ -449,29 +371,23 @@ public class WasmConversationStore
             titleIsCustom
         });
 
-        await SetLastConvoIdAsync(js, id);
+        await SetLastConvoIdAsync(id, ct);
     }
 
-    /// <summary>
-    /// Persists the per-conversation "should this convo participate in cross-device sync?"
-    /// flag. This is the main knob that makes the storage schema "flexible for sync all or only some".
-    /// Only meaningful for authenticated namespaces.
-    /// </summary>
-    public async Task SetConversationSyncEnabledAsync(IJSRuntime js, string id, bool enabled)
+    public async Task SetConversationSyncEnabledAsync(string id, bool enabled, CancellationToken ct = default)
     {
         var ns = GetPrefix();
         var metaKey = ns + ConvoPrefix + id;
 
-        // Read existing meta if present (so we don't lose title/lastUpdated).
-        var existing = (await js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns))
+        var existing = (await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns))
                        .FirstOrDefault(m => m.id == id);
 
-        var now = (existing?.lastUpdated ?? DateTime.UtcNow.ToString("o"));
+        var now = existing?.lastUpdated ?? DateTime.UtcNow.ToString("o");
 
-        var meta = new
+        await _js.InvokeVoidAsync("idbPutMeta", new
         {
             key = metaKey,
-            id = id,
+            id,
             @namespace = ns,
             title = existing?.title ?? "(empty)",
             lastUpdated = now,
@@ -479,17 +395,15 @@ public class WasmConversationStore
             contentFingerprint = existing?.contentFingerprint ?? "",
             deletedAt = existing?.deletedAt ?? "",
             titleIsCustom = existing?.titleIsCustom ?? false
-        };
-
-        await js.InvokeVoidAsync("idbPutMeta", meta);
+        });
     }
 
     private static string StripHtmlForTitle(string htmlOrText)
     {
         if (string.IsNullOrWhiteSpace(htmlOrText)) return "(empty)";
-        var plain = System.Text.RegularExpressions.Regex.Replace(htmlOrText, "<.*?>", string.Empty);
-        plain = System.Net.WebUtility.HtmlDecode(plain).Trim();
-        if (plain.Length > 30) plain = plain.Substring(0, 30) + "...";
+        var plain = Regex.Replace(htmlOrText, "<.*?>", string.Empty);
+        plain = WebUtility.HtmlDecode(plain).Trim();
+        if (plain.Length > 30) plain = plain[..30] + "...";
         return plain;
     }
 
@@ -498,24 +412,6 @@ public class WasmConversationStore
         var trimmed = title.Trim();
         if (string.IsNullOrWhiteSpace(trimmed))
             return "(empty)";
-        return trimmed.Length > 80 ? trimmed.Substring(0, 80) : trimmed;
+        return trimmed.Length > 80 ? trimmed[..80] : trimmed;
     }
-
-    // ChatMessage shape used for WASM local (and live sync) storage.
-    // We keep the old "User" field for backward compat with existing localStorage data.
-    // New code (and the live sync path) should prefer Role + raw Content (matching the
-    // server Message entity) so that cross-device sync and the main hosted chat can
-    // eventually share the same logical format.
-    public record ChatMessage(
-        string? Role = null,
-        string Content = "",
-        string? ModelUsed = null,
-        DateTime? Timestamp = null,
-        string? User = null,
-        string? ToolTrace = null,
-        List<Attachment>? Attachments = null,
-        string? ContentFormat = null,
-        string? ItemId = null,
-        DateTime? ModifiedAt = null,
-        DateTime? DeletedAt = null);
 }
