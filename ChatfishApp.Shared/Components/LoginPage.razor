@@ -1,0 +1,214 @@
+@inject IAuthService Auth
+@inject IGuestDataMigrationService? GuestMigration
+@inject NavigationManager Nav
+
+<div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
+    <h2>Chatfish</h2>
+    <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--bubble-blue); border: 1px solid var(--primary-dark); border-radius: 6px;">
+        Connect to local AI and keep all your data private!
+    </div>
+    <p style="color:#555;">Chat history and settings are stored entirely in your browser / on device. Log in with an email <em>only</em> if you want:
+        <ul style="margin:0.5rem 0 0.5rem 1.25rem; color:#555;">
+            <li>to sync your encrypted chat history and settings across browsers or devices</li>
+            <li>one of your devices (connected to your local AI) to act as a chat server for your other devices</li>
+        </ul>
+    </p>
+
+    @if (Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email))
+    {
+        <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--success); border: 1px solid #0a0; border-radius: 6px;">
+            Logged in as <strong>@Auth.Email</strong>.<br />
+            <span style="font-size:0.9em;">You can now sync your encrypted chat history across browsers or devices.</span>
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/chat")'>Continue to Chat</button>
+            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/settings")'>Settings</button>
+            <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
+        </div>
+    }
+    else
+    {
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div style="color:#c00; margin: 0.25rem 0 0.5rem; font-size:0.9em;">@error</div>
+        }
+
+        @if (loginSent)
+        {
+            <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: #f0f7ff; border: 1px solid #3BA7FF; border-radius: 6px;">
+                <p style="margin:0 0 0.25rem 0;"><strong>Login code sent!</strong></p>
+                <p style="margin:0; font-size:0.95em;">
+                    We've emailed a login code to <strong>@email</strong>. Open your inbox (and check spam).
+                    Enter the code below, or click the web login link in the email.
+                </p>
+            </div>
+
+            <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap; margin-top:0.75rem;">
+                <div style="flex:1; min-width:160px;">
+                    <input type="text"
+                           @bind-value="loginCode"
+                           @bind-value:event="oninput"
+                           placeholder="Login code"
+                           class="form-control"
+                           style="letter-spacing:0.15em; text-transform:uppercase;" />
+                </div>
+                <button class="btn btn-primary"
+                        @onclick="VerifyCode"
+                        disabled="@(busy || string.IsNullOrWhiteSpace(loginCode))">
+                    Verify code
+                </button>
+            </div>
+
+            <button class="btn btn-outline-secondary" style="margin-top:0.75rem;" @onclick="Reset" disabled="@busy">Use a different email</button>
+        }
+        else
+        {
+            <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:1; min-width:220px;">
+                    <input type="email"
+                           @bind-value="email"
+                           @bind-value:event="oninput"
+                           placeholder="email address"
+                           class="form-control" />
+                </div>
+                <button class="btn btn-primary"
+                        @onclick="SendLoginCode"
+                        disabled="@(busy || !IsValidEmail(email))">
+                    Send login code
+                </button>
+            </div>
+        }
+
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size:0.95em;">
+            You can also continue without logging in but all your chat history and settings will only be stored locally and encrypted on this device.
+            <div style="margin-top:0.35rem;">
+                <a href="/chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Chat Now</a>
+                &nbsp;•&nbsp;
+                <a href="/local-ai" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Setup your local AI</a>
+            </div>
+        </div>
+
+        <p style="margin-top:1rem; font-size:0.8em; color:#666;">
+            All chat history is only stored locally on your device(s) and is never sent through a server.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter] public bool RedirectAuthenticatedToChat { get; set; } = true;
+    [Parameter] public string RedirectAfterLogin { get; set; } = "/chat";
+    [Parameter] public string AccountPath { get; set; } = "/account";
+    /// <summary>
+    /// WASM: /account redirects unauthenticated users to / (same login landing).
+    /// MAUI: set false so /account shows the login form (Home is not the login page).
+    /// </summary>
+    [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
+
+    string email = "";
+    string loginCode = "";
+    bool loginSent;
+    bool busy;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.LoadAsync();
+        if (Auth.IsAuthenticated && GuestMigration is not null)
+            await GuestMigration.MigrateIfNeededAsync();
+
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        string path = uri.AbsolutePath.TrimEnd('/');
+        bool isExplicitAccountView = path.Equals(AccountPath.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+
+        if (!Auth.IsAuthenticated && isExplicitAccountView && RedirectUnauthenticatedAccountToRoot)
+        {
+            Nav.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (Auth.IsAuthenticated && RedirectAuthenticatedToChat && !isExplicitAccountView)
+        {
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+    }
+
+    async Task SendLoginCode()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (!IsValidEmail(email)) return;
+
+            var (success, err) = await Auth.RequestLoginCodeAsync(email);
+            if (success)
+                loginSent = true;
+            else
+                error = err;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task VerifyCode()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(loginCode))
+                return;
+
+            var (success, err) = await Auth.VerifyLoginCodeAsync(email, loginCode);
+            if (!success)
+            {
+                error = err;
+                return;
+            }
+
+            if (GuestMigration is not null)
+                await GuestMigration.MigrateIfNeededAsync();
+
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task DoLogout()
+    {
+        await Auth.SignOutAsync();
+    }
+
+    void Reset()
+    {
+        loginSent = false;
+        loginCode = "";
+        error = null;
+    }
+
+    private static bool IsValidEmail(string? e)
+    {
+        if (string.IsNullOrWhiteSpace(e))
+            return false;
+
+        var value = e.Trim();
+        int atIndex = value.IndexOf('@');
+        if (atIndex <= 0 || atIndex == value.Length - 1)
+            return false;
+
+        int dotIndex = value.LastIndexOf('.');
+        if (dotIndex <= atIndex + 1 || dotIndex == value.Length - 1)
+            return false;
+
+        if (value.Contains(' ') || value.Length < 5 || value.Length > 254)
+            return false;
+
+        return true;
+    }
+}

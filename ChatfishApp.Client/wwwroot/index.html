@@ -7,7 +7,7 @@
     <title>Chatfish WASM</title>
     <base href="/" />
     <!-- Unified custom CSS (single source: design tokens + all custom styles for both hosted WASM and standalone client). -->
-    <link rel="stylesheet" href="css/chatfish.css" />
+    <link rel="stylesheet" href="_content/ChatfishApp.Shared/css/chatfish.css" />
     <link rel="icon" type="image/png" href="/images/favicon.png" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet" />
@@ -26,35 +26,7 @@
         <a class="dismiss">🗙</a>
     </div>
     <script src="_framework/blazor.webassembly.js"></script>
-    <script>
-        window.scrollChatToBottom = () => {
-            const container = document.getElementById('chat-container');
-            if (container) {
-                container.scrollTop = container.scrollHeight;
-            }
-        };
-
-        window.isMobileViewport = () => window.innerWidth <= 640.98;
-
-        window.getChatTextareaValue = (el) => (el && typeof el.value === 'string') ? el.value : '';
-
-        window.resetChatTextarea = (el) => {
-            if (!el) return;
-            el.value = '';
-        };
-
-        window.setupChatEnterToSend = function (textareaEl) {
-            if (!textareaEl || textareaEl.__chatfishEnterBound) return;
-            textareaEl.__chatfishEnterBound = true;
-            textareaEl.addEventListener('keydown', function (ev) {
-                if (ev.key === 'Enter' && !ev.shiftKey) {
-                    ev.preventDefault();
-                    const btn = document.getElementById('chat-send-btn');
-                    if (btn) btn.click();
-                }
-            });
-        };
-    </script>
+    <script src="_content/ChatfishApp.Shared/js/chatInterop.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/quill-resize-image@1.0.11/dist/quill-resize-image.min.js"></script>
     <script src="js/quillInterop.js"></script>

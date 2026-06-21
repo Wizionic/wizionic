@@ -5,6 +5,10 @@ using ChatfishApp.Components;
 using ChatfishApp.Services;
 using ChatfishApp.Services.Tools;
 using ChatfishApp.Apis;
+using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Storage;
+using ChatfishApp.Core.Sync;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -92,12 +96,21 @@ builder.Services.AddSingleton<AiProviderProxyService>();
 // Must be registered here (main app DI) so that server-side rendering of WASM pages (layout + topbar)
 // can provide the service. The Client's DI also registers it for the interactive WASM runtime.
 builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
+builder.Services.AddSingleton<ChatfishApp.Core.UI.ISidebarState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.SidebarState>());
 
-// HttpClient for WASM client components (e.g. Settings) during any server-side rendering of the component tree (layout, topbar, etc.).
-// The actual interactive WASM runtime (in Client/Program.cs) provides its own configured instance (with BaseAddress).
-// Keep this registration minimal — do not register client-only services like WasmAuthService or WasmSyncService here,
-// otherwise they can interfere with WebAssembly bootstrap, render mode activation, and hot reload under `dotnet watch`.
-builder.Services.AddScoped<HttpClient>();
+// HttpClient + shared auth/sync stubs for server-side rendering of WASM layout/components (AppLayout, SyncConnectionBootstrap, etc.).
+// The interactive WASM runtime (Client/Program.cs) provides its own scoped services when the page becomes interactive.
+// Do not register WasmSyncService or other client-only implementations here — they can interfere with WASM bootstrap.
+builder.Services.AddScoped(sp =>
+{
+    var navigationManager = sp.GetRequiredService<NavigationManager>();
+    return new HttpClient { BaseAddress = new Uri(navigationManager.BaseUri) };
+});
+builder.Services.AddScoped<ChatAuthService>();
+builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
+builder.Services.AddScoped<NullSyncService>();
+builder.Services.AddScoped<ISyncService>(sp => sp.GetRequiredService<NullSyncService>());
+builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
 
 // Data Protection for at-rest encryption of sensitive per-user values (e.g. the LocalEncryptionKey
 // used by WASM clients for browser-stored history blobs + live sync payloads, and the existing
@@ -146,7 +159,10 @@ builder.Services.AddAuthentication("ChatfishAuth")
         // Production hardening: always require Secure (https), and Lax SameSite so magic-link
         // email clicks (cross-site top-level navigation) still work while protecting against CSRF on APIs.
         options.Cookie.HttpOnly = true;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        // Development may use plain http (e.g. MAUI dev against http://localhost:5136).
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
         options.Cookie.SameSite = SameSiteMode.Lax;
 
         // WASM HttpClient calls /api/* with fetch; a 302 to "/" is followed and returns HTML,
@@ -155,7 +171,9 @@ builder.Services.AddAuthentication("ChatfishAuth")
         {
             OnRedirectToLogin = ctx =>
             {
-                if (ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/hubs"))
+                if (ctx.Request.Path.StartsWithSegments("/api")
+                    || ctx.Request.Path.StartsWithSegments("/hubs")
+                    || ctx.Request.Path.StartsWithSegments("/sync-hub"))
                 {
                     ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     return Task.CompletedTask;
@@ -166,7 +184,9 @@ builder.Services.AddAuthentication("ChatfishAuth")
             },
             OnRedirectToAccessDenied = ctx =>
             {
-                if (ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/hubs"))
+                if (ctx.Request.Path.StartsWithSegments("/api")
+                    || ctx.Request.Path.StartsWithSegments("/hubs")
+                    || ctx.Request.Path.StartsWithSegments("/sync-hub"))
                 {
                     ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
                     return Task.CompletedTask;
@@ -287,26 +307,11 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
 
     if (user == null)
     {
-        // Invalid/expired token → send back to the new WASM root landing page (guest form).
         ctx.Response.Redirect("/");
         return;
     }
 
-    var claims = new List<Claim>
-    {
-        new Claim(ClaimTypes.Name, user.Email),
-        new Claim(ClaimTypes.NameIdentifier, user.Id.ToString())
-    };
-
-    var identity = new ClaimsIdentity(claims, "ChatfishAuth");
-    var principal = new ClaimsPrincipal(identity);
-
-    var authProps = new AuthenticationProperties
-    {
-        IsPersistent = true,
-        AllowRefresh = true
-    };
-    await ctx.SignInAsync("ChatfishAuth", principal, authProps);
+    await AuthSignInHelper.SignInUserAsync(ctx, user);
 
     // After successful magic-link sign-in, land on "/" so the WASM landing page can
     // immediately show the "Logged in as ..." state (with buttons to chat/settings).

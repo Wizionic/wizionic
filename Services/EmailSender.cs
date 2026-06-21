@@ -35,10 +35,9 @@ public class EmailOptions
 public interface IEmailSender
 {
     /// <summary>
-    /// Sends the magic login email containing both a prominent clickable link and the raw URL for copy/paste
-    /// (useful when the recipient is not on the same device/browser as the one that requested login).
+    /// Sends the unified login email with a copy/paste code (web + native) and an optional web magic link.
     /// </summary>
-    Task SendMagicLinkEmailAsync(string toEmail, string magicLinkUrl);
+    Task SendLoginEmailAsync(string toEmail, string loginCode, string magicLinkUrl);
 }
 
 /// <summary>
@@ -91,12 +90,11 @@ public class EmailSender : IEmailSender
         }
     }
 
-    public async Task SendMagicLinkEmailAsync(string toEmail, string magicLinkUrl)
+    public async Task SendLoginEmailAsync(string toEmail, string loginCode, string magicLinkUrl)
     {
         if (string.IsNullOrWhiteSpace(_options.SmtpHost) || string.IsNullOrWhiteSpace(_options.From))
         {
-            _logger.LogWarning("[EmailSender] SMTP not configured. Would have sent magic link to {Email}:\n{Link}", toEmail, magicLinkUrl);
-            // In dev without config we still allow the flow (link is in server log from the endpoint).
+            _logger.LogWarning("[EmailSender] SMTP not configured. Would have sent login code to {Email}: code={Code} link={Link}", toEmail, loginCode, magicLinkUrl);
             return;
         }
 
@@ -105,53 +103,9 @@ public class EmailSender : IEmailSender
         var message = new MimeMessage();
         message.From.Add(MailboxAddress.Parse(_options.From));
         message.To.Add(MailboxAddress.Parse(toEmail));
-        message.Subject = "Your Chatfish Magic Login Link";
+        message.Subject = LoginEmailContent.Subject;
 
-        // Plain text part (always present for clients that prefer text or for copy)
-        var textBody = $@"Hello,
-
-You (or someone using your email) requested to log in to Chatfish.
-
-Click the link below or copy and paste it into your browser to sign in:
-
-{magicLinkUrl}
-
-This one-time link expires in 15 minutes.
-
-If you did not request this login link you can safely ignore this email.
-
--- The Chatfish Team
-";
-
-        // HTML part with a big clickable "button" + the raw link shown for easy copy on any device
-        var htmlBody = $@"<!DOCTYPE html>
-<html>
-<head>
-<meta charset=""utf-8"" />
-<style>
-  body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, ""Segoe UI"", Roboto, sans-serif; line-height: 1.5; color: #222; max-width: 520px; margin: 0 auto; padding: 16px; }}
-  .btn {{ display: inline-block; background: #3BA7FF; color: white !important; padding: 14px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; margin: 12px 0; }}
-  .link {{ word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ""Liberation Mono"", ""Courier New"", monospace; background: #f4f4f4; padding: 10px; border-radius: 4px; display: block; margin: 12px 0; }}
-  .footer {{ font-size: 0.85em; color: #666; margin-top: 24px; }}
-</style>
-</head>
-<body>
-  <p>Hello,</p>
-  <p>You (or someone using your email) requested to log in to <strong>Chatfish</strong>.</p>
-
-  <p>Click the button below to sign in:</p>
-  <p><a class=""btn"" href=""{magicLinkUrl}"">Log in to Chatfish</a></p>
-
-  <p>Or copy and paste this link (works from any device/browser):</p>
-  <p class=""link"">{magicLinkUrl}</p>
-
-  <p style=""font-size:0.9em;"">The link expires in 15 minutes and can only be used once.</p>
-
-  <p style=""font-size:0.9em;"">If you did not request this, you can safely ignore this email.</p>
-
-  <div class=""footer"">-- The Chatfish Team</div>
-</body>
-</html>";
+        var (textBody, htmlBody) = LoginEmailContent.Build(loginCode, magicLinkUrl);
 
         var bodyBuilder = new BodyBuilder
         {
@@ -208,12 +162,12 @@ If you did not request this login link you can safely ignore this email.
             await smtp.SendAsync(message);
             await smtp.DisconnectAsync(true);
 
-            _logger.LogInformation("Magic link email sent to {Email}", toEmail);
+            _logger.LogInformation("Login email sent to {Email}", toEmail);
         }
         catch (Exception ex)
         {
             // For auth failures (535 5.7.8 etc.) this will include the attempted user in preceding log lines.
-            _logger.LogError(ex, "Failed to send magic link email to {Email} (attempted SMTP user: \"{User}\"). Link was: {Link}", toEmail, _options.SmtpUser, magicLinkUrl);
+            _logger.LogError(ex, "Failed to send login email to {Email} (attempted SMTP user: \"{User}\"). Code was: {Code}", toEmail, _options.SmtpUser, loginCode);
 
             // Extra guidance on the console for the common Brevo 535 case.
             var msg = (ex.InnerException?.ToString() ?? ex.ToString());

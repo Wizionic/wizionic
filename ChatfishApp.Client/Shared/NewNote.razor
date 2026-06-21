@@ -1,7 +1,7 @@
-@using ChatMessage = ChatfishApp.Client.Services.WasmConversationStore.ChatMessage
 @using ChatfishApp.Client.Services
+@using ChatMessage = ChatfishApp.Core.Storage.ChatMessage
 @inject IJSRuntime JS
-@inject WasmNoteStore NoteStore
+@inject INoteStore NoteStore
 
 @if (IsOpen)
 {
@@ -88,7 +88,7 @@
     [Parameter] public ChatMessage? SourceMessage { get; set; }
     [Parameter] public string? ExistingNoteId { get; set; }
 
-    private List<WasmNoteStore.LocalNote> _notes = new();
+    private List<LocalNote> _notes = new();
     private bool _showExistingNotes;
     private bool _showNewNoteInput;
     private bool _confirming;
@@ -110,7 +110,7 @@
         ResetState();
         try
         {
-            _notes = await NoteStore.LoadIndexAsync(JS);
+            _notes = await NoteStore.LoadIndexAsync();
         }
         catch (Exception ex)
         {
@@ -180,11 +180,11 @@
     {
         if (SourceMessage == null || string.IsNullOrEmpty(_targetNoteId)) return;
 
-        var messages = await NoteStore.LoadNoteAsync(JS, _targetNoteId);
+        var messages = await NoteStore.LoadNoteAsync(_targetNoteId);
         messages.Add(SourceMessage);
-        await NoteStore.SaveNoteAsync(JS, _targetNoteId, messages);
+        await NoteStore.SaveNoteAsync(_targetNoteId, messages);
         var note = _notes.FirstOrDefault(n => n.Id == _targetNoteId);
-        await NoteStore.UpdateIndexAfterSaveAsync(JS, _targetNoteId, note?.Title ?? _targetNoteName);
+        await NoteStore.UpdateIndexAfterSaveAsync(_targetNoteId, note?.Title ?? _targetNoteName);
 
         await CloseDialog();
     }
@@ -196,8 +196,8 @@
         var id = Guid.NewGuid().ToString();
         var title = _newNoteName.Trim();
         var messages = new List<ChatMessage> { SourceMessage };
-        await NoteStore.SaveNoteAsync(JS, id, messages);
-        await NoteStore.UpdateIndexAfterSaveAsync(JS, id, title);
+        await NoteStore.SaveNoteAsync(id, messages);
+        await NoteStore.UpdateIndexAfterSaveAsync(id, title);
 
         await CloseDialog();
     }

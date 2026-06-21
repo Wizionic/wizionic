@@ -13,3 +13,7 @@
 **/railpack.json.bak
 **/Dockerfile*
 **/.dockerignore
+
+# Native MAUI app — not buildable/deployable on Linux Railway host
+ChatfishApp.Maui/
+terminals/

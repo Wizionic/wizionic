@@ -246,10 +246,10 @@ Primary goals:
 
 **Current State:** Not started. This is the new direction the user is very excited about after research. No MAUI projects, no BlazorWebView, no platform code, no native storage or WebView bridges yet. The Blazor components, catalog, tools, and AI wiring are all in the single server-centric project today.
 
-**Goal:** Native desktop (Windows via WinUI/WebView2, Mac) and mobile apps using .NET MAUI + Blazor Hybrid. Deliver the best possible local + agentic experience: local AI (Ollama) as the effortless default, everything stored locally on the user's devices only, full reuse of the existing Blazor UI/components/services (via shared projects), and — the standout capability — rich, live AI visibility into (and agentic control over) browser tabs by embedding a real WebView control. Chat history syncs only between the user's local clients; the central server never sees or stores it.
+**Goal:** Native desktop (Windows via WinUI/WebView2, Mac) and mobile apps using .NET MAUI + Blazor Hybrid. Deliver the best possible local + agentic experience: local AI (Ollama) as the effortless default, everything stored locally on the user's devices only, optimize reuse of the existing Blazor UI/components/services (via shared projects), and — the standout capability — rich, live AI visibility into (and agentic control over) browser tabs by embedding a real WebView control. Chat history syncs only between the user's local clients; the central server never sees or stores it.
 
 **Key Benefits (from user research)**
-- Reuse the existing components (Chat.razor UI, MainLayout + NavMenu, Settings, Roadmap renderer, CSS, model selector, streaming, markdown, services after abstraction) with only thin platform adapters.
+- attempt Reuse the existing components (Chat.razor UI, MainLayout + NavMenu, Settings, Roadmap renderer, CSS, model selector, streaming, markdown, services after abstraction) with only thin platform adapters.
 - More local and native abilities (direct filesystem for exports/attachments, SecureStorage, camera for vision, notifications, true offline, excellent LAN reach for Ollama, background tasks).
 - Use the WebView control to add web browsing with Agentic control + AI visibility into browser tabs (the killer feature that pure web or server targets can't match as cleanly or privately).
 - direct llama.cpp integration gives you more control, better optimization, smaller footprint, and easier bundling for a desktop/mobile app.
@@ -334,6 +334,110 @@ Primary goals:
 **Reuse (the whole point of this target):** After extraction, the same `Chat.razor` (with its model selector, streaming, markdown), `MainLayout`/`NavMenu`, `Settings`, `Roadmap.razor`, `ProviderCatalog`, tool system, AI service patterns, etc. power the MAUI app with almost no duplication. Only platform adapters and the new browser-context tools are MAUI-specific.
 
 **Challenges:** New project type and MAUI + Blazor Hybrid learning curve + platform differences (Windows WebView2 is excellent; Mac/iOS/Android vary); reliable, low-latency JS interop from Blazor to the live WebView content; packaging and distributing a hybrid app; keeping the shared code truly portable across server/WASM/MAUI; threading / lifecycle differences in hybrid; user education on granting browser access safely.
+
+
+### Phase 1 — Foundation & Core Parity *(Start Here)*
+
+  **Goal:** Working MAUI app that feels like Chatfish,shares the same login, and participates in sync.
+
+  #### Project Setup
+  - Scaffold `ChatfishApp.Maui` in existing solution
+  - Extract `ChatfishApp.Core` shared library:models, interfaces, AI pipeline, tool definitions
+  - Wire shared Blazor components via RCL:`Chat.razor`, Notes, Settings, NavMenu, MainLayout
+  - SQLite via EF Core for local chat history and notes
+  - Implement `INoteStore` and `IChatHistoryStore`backed by SQLite
+
+  #### Authentication
+  - Login via existing chatfish.me magic link (same email = same identity across web and native)
+  - There should be a setting in Appsettings.json so that production can use Chatfish.me for login, SignalR hub while local development can use localhost
+  - The same login email will be used so that the Maui device just shows another device on the sync page
+  - Add password login option later
+
+  #### Sync — MAUI as Full Peer *(Priority 1)*
+  - Connect to chatfish.me SignalR hub(same as browsers — requires internet for sync only)
+  - Implement WebRTC DataChannel sync protocol, writing to SQLite instead of IndexedDB
+  - MAUI device appears in sync device listalongside browsers
+  - Notes and chat history sync bidirectionally with browser clients
+  - "Use this device for AI" — MAUI becomes chat server for other devices via existing WebRTC AI relay, backed by local Ollama
+
+  > **Technical note:** Evaluate **SIPSorcery**
+  > (mature C# WebRTC library) early —
+  > this is the main technical unknown for Phase 1.
+
+  #### Ollama Integration *(Priority 2)*
+  - Direct HTTP to local Ollama — no CORS,no mixed content issues
+  - Ollama installer/setup assistant if not detected
+  - Seamless model selection from local Ollama catalog
+  - Replaces the awkward OLLAMA_ORIGINS workaround needed on the web app
+
+  #### Home Assistant Integration *(Priority3)*
+  - User configures HA base URL + long-lived access token in settings
+  - `HomeAssistantService` behind `ISmartHomeService` interface in Core
+  - AI tool functions for light control, scenes, device state queries
+  - Tool execution appears in existing `ToolExecutionTrace` UI automatically
+  - Works over local network — no mixed content, no CORS, no cloud
+
+---
+
+### Phase 2 — Agentic Browser
+  **Goal:** Embedded WebView with AI visibility and control — the feature that makes MAUI genuinely unique.
+  - Tabbed browsing via WebView control (WebView2 on Windows, WKWebView on Mac)
+  - AI reads page content via `EvaluateJavaScriptAsync`
+  - AI browser tool functions (all appear in`ToolExecutionTrace` automatically):
+  - `NavigateTo(url)`
+  - `GetPageContent()`
+  - `ClickElement(selector)`
+  - `FillField(selector, value)`
+  - `ExtractData(selector)`
+  - User-initiated agentic tasks ("book the cheapest flight", "fill this form")
+  - AI visibility into open tabs as context (explicit user permission per tab)
+  - Foundation for full computer use / desktop automation via accessibility APIs
+
+---
+
+### Phase 3 — Local Mesh & Embedded Hub
+  **Goal:** Reduce internet dependency for local sync.
+
+  MAUI becomes the local network anchor.
+  - Embedded ASP.NET Core + SignalR hub running inside MAUI app
+  - mDNS announcement via `_chatfish._tcp.local`
+  - Browsers resolve `chatfish.local:5000` via mDNS (browsers can resolve `.local` even though they cannot broadcast it)
+  - WASM settings: manual local hub IP entry (v1), auto-discovery via mDNS hostname (v2)
+  - Self-signed cert on first run to satisfy HTTPS mixed content from chatfish.me
+  - Device list shows connection type: local hub ⚡ vs chatfish.me ☁️
+  - Graceful fallback to chatfish.me hub when MAUI not on network
+  ---
+
+### Phase 4 — Advanced Local Features
+
+  #### Memory & RAG
+  - Local vector store via `sqlite-vec` (already using SQLite — natural fit)
+  - Long-term memory across conversations
+  - Semantic search over notes and chat history
+  - "Remember that I prefer..." style persistence
+
+  #### Extended Smart Home
+  - Broader HA entity support beyond lights: media players, switches, sensors, automations
+  - Natural language HA control via AI tools
+  - "What's playing in the living room?"
+  - "Turn everything off when I leave"
+
+  #### File System & Computer Use
+
+  - File read/write tools for AI agent
+  - Local document summarization and indexing
+  - Desktop automation beyond browser (OS level)
+
+  #### Full Local Mesh (No Internet Sync)
+
+  - Complete mDNS peer discovery — no internet needed even for initial handshake
+  - MAUI as mesh coordinator for all local Chatfish clients
+  - Fully offline sync when all devices on same network
+---
+
+### Reuse Strategy
+After Core extraction, please reuse as many components for chatting, notes, provider catelogs.
+---
 
 ---
 

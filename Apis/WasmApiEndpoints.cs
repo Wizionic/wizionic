@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 
+
 namespace ChatfishApp.Apis;
 
 /// <summary>
@@ -45,22 +46,45 @@ public static class WasmApiEndpoints
             if (string.IsNullOrWhiteSpace(req.Email))
                 return Results.BadRequest("Email is required.");
 
-            var token = await magic.CreateMagicLinkTokenAsync(req.Email.Trim());
+            var loginCode = await magic.CreateMagicLinkTokenAsync(req.Email.Trim());
 
             var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
-            var magicLink = $"{baseUrl}/magic-login?token={token}";
+            var magicLink = $"{baseUrl}/magic-login?token={Uri.EscapeDataString(loginCode)}";
 
-            // Always log for dev / ops visibility (even when real SMTP is configured).
-            // This is safe because the link is only useful to someone who also controls the inbox.
-            Console.WriteLine($"[DEV] Magic link for {req.Email}: {magicLink}");
+            Console.WriteLine($"[DEV] Login code for {req.Email}: {loginCode} (link: {magicLink})");
 
-            // Send the real email. The email body (both HTML and text) contains a prominent
-            // clickable login action and the raw URL for copy/paste.
-            await emailSender.SendMagicLinkEmailAsync(req.Email.Trim(), magicLink);
+            await emailSender.SendLoginEmailAsync(req.Email.Trim(), loginCode, magicLink);
 
-            // Do not return the magicLink to the caller. The only delivery channel is the
-            // email that was just sent. The client UI only shows a generic "check your email" message.
-            return Results.Ok(new { sent = true, message = "Magic login link sent. Check your email inbox (and spam folder). The message contains a clickable link and the raw URL for copying." });
+            return Results.Ok(new
+            {
+                sent = true,
+                message = "Login code sent. Check your email inbox (and spam folder). The message contains a copy/paste code for the app and a web login link."
+            });
+        });
+
+        publicAuth.MapPost("/verify-code", async (HttpContext ctx, MagicLinkService magic, VerifyLoginCode req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Code))
+                return Results.BadRequest("Email and code are required.");
+
+            var user = await magic.ValidateLoginCodeAsync(req.Email.Trim(), req.Code.Trim());
+            if (user == null)
+                return Results.Unauthorized();
+
+            await AuthSignInHelper.SignInUserAsync(ctx, user);
+
+            return Results.Ok(new
+            {
+                success = true,
+                email = user.Email,
+                message = "Signed in successfully."
+            });
+        });
+
+        publicAuth.MapPost("/logout", async (HttpContext ctx) =>
+        {
+            await AuthSignInHelper.SignOutUserAsync(ctx);
+            return Results.Ok(new { signedOut = true });
         });
 
         var group = endpoints.MapGroup("/api").RequireAuthorization();
@@ -246,8 +270,9 @@ public static class WasmApiEndpoints
     public record SummarizeUrlRequest(string Url);
     public record WeatherRequest(double Latitude, double Longitude, string? Units = "celsius", int? ForecastDays = 0);
 
-    // Request for the public magic-link flow (used by the WASM landing page at /).
+    // Request for the public login flow (used by WASM and MAUI landing pages).
     public record RequestMagicLink(string Email);
+    public record VerifyLoginCode(string Email, string Code);
 
     // --- MCP Registry proxy models (clean output for the Tools page) ---
 

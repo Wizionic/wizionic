@@ -1,59 +1,63 @@
 using ChatfishApp.Client.Services;
+using ChatfishApp.Shared.Services.Mcp;
+using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Chat;
+using ChatfishApp.Core.Storage;
+using ChatfishApp.Core.Sync;
+using ChatfishApp.Core.UI;
+using ChatfishApp.Shared.Services;
+using ChatfishApp.Shared.Services.Tools;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
-builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
-builder.Services.AddSingleton<ChatfishApp.Client.Services.WasmKeyStore>();
-builder.Services.AddSingleton<ChatfishApp.Client.Services.WasmAiProviderService>();
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmChatCompletionService>();
-// Live device presence + (future) sync signaling over SignalR.
-// Must be Scoped because it depends on HttpClient (Scoped) and WasmAuthService (Scoped).
-// In Blazor WASM there is effectively one scope for the lifetime of the app, so this is
-// still long-lived and appropriate for holding the SignalR HubConnection.
-// Using Singleton would cause a ScopedInSingletonException during service validation at startup.
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmSyncService>();
+builder.Services.AddSingleton<SidebarState>();
+builder.Services.AddSingleton<ISidebarState>(sp => sp.GetRequiredService<SidebarState>());
+builder.Services.AddSingleton<WasmKeyStore>();
+builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<WasmKeyStore>());
+builder.Services.AddScoped<ChatModelCatalogService>();
+builder.Services.AddScoped<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
+builder.Services.AddScoped<ChatCompletionService>();
+builder.Services.AddScoped<IChatCompletionService>(sp => sp.GetRequiredService<ChatCompletionService>());
+builder.Services.AddSingleton<JsSyncPreferencesStore>();
+builder.Services.AddSingleton<ISyncPreferencesStore>(sp => sp.GetRequiredService<JsSyncPreferencesStore>());
+builder.Services.AddScoped<JsWebRtcTransport>();
+builder.Services.AddScoped<IWebRtcTransport>(sp => sp.GetRequiredService<JsWebRtcTransport>());
+builder.Services.AddScoped<WasmSyncService>();
+builder.Services.AddScoped<ISyncService>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddScoped<WasmConversationStore>();
+builder.Services.AddScoped<IConversationStore>(sp => sp.GetRequiredService<WasmConversationStore>());
+builder.Services.AddScoped<WasmNoteStore>();
+builder.Services.AddScoped<INoteStore>(sp => sp.GetRequiredService<WasmNoteStore>());
+builder.Services.AddScoped<IGuestKeyProvider, BrowserGuestKeyProvider>();
+builder.Services.AddScoped<ChatAuthService>();
+builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
+builder.Services.AddScoped<WasmCryptoService>();
+builder.Services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<WasmCryptoService>());
+builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationService>();
+builder.Services.AddScoped<WasmGuestDataMigrationService>();
 
-// These must be Scoped because they depend on HttpClient (which is Scoped in Blazor WASM).
-// Using Scoped here is fine and common in WASM apps — they live for the lifetime of the WASM app.
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmConversationStore>();
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmNoteStore>();
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmAuthService>();
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmCryptoService>();
-builder.Services.AddScoped<ChatfishApp.Client.Services.WasmGuestDataMigrationService>();
-
-// App-level tools for agentic / tool-calling support in WASM (same tools as server, executed in browser).
-// DefaultToolProvider now also pulls in remote MCP tools selected by the user on the Tools page.
-builder.Services.AddSingleton<ChatfishApp.Client.Services.Mcp.McpToolSource>();
-builder.Services.AddSingleton<ChatfishApp.Services.Tools.IToolProvider, ChatfishApp.Services.Tools.DefaultToolProvider>();
-
-// Configure static HttpClients for same-origin server proxies (tools + AI providers).
-// Setting BaseAddress ensures relative calls like "/api/tools/..." and "/api/proxy/..." resolve
-// to the host server (important for the proxies to work reliably from the browser).
-var serverProxyHttp = new HttpClient
-{
-    BaseAddress = new Uri(builder.HostEnvironment.BaseAddress),
-    Timeout = TimeSpan.FromMinutes(10)
-};
-ChatfishApp.Services.Tools.AppTools.HttpClient = serverProxyHttp;
-ChatfishApp.Client.Services.WasmAiProviderService.ProxyHttp = serverProxyHttp;
+builder.Services.AddScoped<McpToolSource>();
+builder.Services.AddScoped<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
+builder.Services.AddScoped<IToolProvider, DefaultToolProvider>();
 
 var host = builder.Build();
 
-// Eagerly resolve WasmSyncService (and its dependencies) at startup so that
-// it connects to the signaling hub and can receive incoming WebRTC sync
-// payloads even if the user never opens the /sync page.
-// As long as any WASM page is loaded and the user is authenticated, syncs
-// will be received in the background and persisted automatically.
-var authService = host.Services.GetRequiredService<WasmAuthService>();
-var guestMigration = host.Services.GetRequiredService<WasmGuestDataMigrationService>();
-var syncService = host.Services.GetRequiredService<WasmSyncService>();
-var aiProvider = host.Services.GetRequiredService<WasmAiProviderService>();
+var http = host.Services.GetRequiredService<HttpClient>();
+AppTools.HttpClient = http;
 
+var authService = host.Services.GetRequiredService<IAuthService>();
+var guestMigration = host.Services.GetRequiredService<IGuestDataMigrationService>();
+var syncService = host.Services.GetRequiredService<ISyncService>();
 await authService.LoadAsync();
 await guestMigration.MigrateIfNeededAsync();
-await aiProvider.RefreshProxiedProvidersAsync();
+
+using (var scope = host.Services.CreateScope())
+{
+    await scope.ServiceProvider.GetRequiredService<ChatModelCatalogService>().RefreshAsync();
+}
 await syncService.InitializeAsync();
 
 if (authService.IsAuthenticated)

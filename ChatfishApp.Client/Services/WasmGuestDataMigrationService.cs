@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.JSInterop;
-using static ChatfishApp.Client.Services.WasmConversationStore;
+using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Storage;
 
 namespace ChatfishApp.Client.Services;
 
@@ -11,7 +12,7 @@ namespace ChatfishApp.Client.Services;
 /// This service migrates guest data into the authenticated namespace on login,
 /// re-encrypting content with the server key so sync and cross-device access work.
 /// </summary>
-public class WasmGuestDataMigrationService
+public class WasmGuestDataMigrationService : IGuestDataMigrationService
 {
     private const string GuestNamespace = "wasmchat-";
     private const string ConvoPrefix = "wasmchat-convo-";
@@ -20,13 +21,13 @@ public class WasmGuestDataMigrationService
     private const string GuestEncryptionKeySetting = "guest-encryption-key";
 
     private readonly IJSRuntime _js;
-    private readonly WasmAuthService _auth;
-    private readonly WasmCryptoService _crypto;
+    private readonly IAuthService _auth;
+    private readonly ICryptoService _crypto;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public event Action? OnMigrated;
 
-    public WasmGuestDataMigrationService(IJSRuntime js, WasmAuthService auth, WasmCryptoService crypto)
+    public WasmGuestDataMigrationService(IJSRuntime js, IAuthService auth, ICryptoService crypto)
     {
         _js = js;
         _auth = auth;
