@@ -296,6 +296,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         if (local.IsDeleted)
             return remote.LastUpdatedTicks > local.DeletedAtTicks!.Value;
 
+        if (!string.IsNullOrEmpty(remote.ContentFingerprint) && string.IsNullOrEmpty(local.ContentFingerprint))
+            return true;
+
         if (!string.IsNullOrEmpty(remote.ContentFingerprint) && !string.IsNullOrEmpty(local.ContentFingerprint))
         {
             if (!string.Equals(remote.ContentFingerprint, local.ContentFingerprint, StringComparison.Ordinal))
@@ -448,11 +451,6 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             var (title, titleIsCustom) = await _conversationStore.GetMetaTitleInfoAsync(convoId);
             var dataJson = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom);
             var fingerprint = SyncFingerprint.ForConversation(convoId, title, messages);
-            if (await IsItemAcknowledgedAsync(peerId, isNote: false, convoId, fingerprint))
-            {
-                Console.WriteLine($"[WebRtcSyncCoordinator] Skipping convo {convoId} for {peerId} (peer already has current version)");
-                continue;
-            }
 
             var item = new SyncQueueItem
             {
@@ -475,11 +473,6 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             var entries = await _noteStore.LoadNoteAsync(noteId);
             var dataJson = NoteSyncPayload.Serialize(noteId, title, entries);
             var fingerprint = SyncFingerprint.ForNote(noteId, title, entries);
-            if (await IsItemAcknowledgedAsync(peerId, isNote: true, noteId, fingerprint))
-            {
-                Console.WriteLine($"[WebRtcSyncCoordinator] Skipping note {noteId} for {peerId} (peer already has current version)");
-                continue;
-            }
 
             var item = new SyncQueueItem
             {

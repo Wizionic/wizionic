@@ -124,26 +124,28 @@ public static class WasmApiEndpoints
             if (u == null)
                 return Results.Unauthorized();
 
-            string? plaintextKey = null;
+            var plaintextKey = LocalEncryptionKeyService.ResolveStoredKey(u.LocalEncryptionKey, protector, out var migrateLegacy);
 
-            if (!string.IsNullOrEmpty(u.LocalEncryptionKey))
+            if (plaintextKey == null && string.IsNullOrEmpty(u.LocalEncryptionKey))
             {
-                plaintextKey = protector.Unprotect(u.LocalEncryptionKey);
-            }
-
-            if (string.IsNullOrEmpty(plaintextKey))
-            {
-                // Either first time, or the previously protected value can no longer be unprotected
-                // (e.g. DataProtection key ring was lost during a transition, dev clean, or hosting restart before DB persistence).
-                // Re-provision a fresh key. This lets the login flow complete and the WASM client see an authenticated user.
-                // Note: any client-side IndexedDB history encrypted with the *old* key bytes will no longer decrypt on this device
-                // (or other devices that had the old key). For early users this is acceptable; they can re-login everywhere.
-                var rawKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-                u.LocalEncryptionKey = protector.Protect(rawKey);
+                plaintextKey = LocalEncryptionKeyService.GenerateRawKeyBase64();
+                u.LocalEncryptionKey = plaintextKey;
                 await db.SaveChangesAsync();
-                plaintextKey = rawKey;
-
-                Console.WriteLine($"[Auth] Re-provisioned fresh LocalEncryptionKey for {email} (previous value could not be unprotected).");
+                Console.WriteLine($"[Auth] Created LocalEncryptionKey for {email} (first fetch).");
+            }
+            else if (plaintextKey == null)
+            {
+                Console.WriteLine($"[Auth] LocalEncryptionKey for {email} is missing or corrupted; refusing to rotate.");
+                return Results.Problem(
+                    title: "Encryption key unavailable",
+                    detail: "Your account encryption key could not be read. Data was not rotated. Contact support or restore chatfish.db from backup.",
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+            else if (migrateLegacy)
+            {
+                u.LocalEncryptionKey = plaintextKey;
+                await db.SaveChangesAsync();
+                Console.WriteLine($"[Auth] Migrated legacy protected LocalEncryptionKey to plaintext for {email}.");
             }
 
             return Results.Ok(new { Key = plaintextKey });

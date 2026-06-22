@@ -112,13 +112,9 @@ builder.Services.AddScoped<NullSyncService>();
 builder.Services.AddScoped<ISyncService>(sp => sp.GetRequiredService<NullSyncService>());
 builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
 
-// Data Protection for at-rest encryption of sensitive per-user values (e.g. the LocalEncryptionKey
-// used by WASM clients for browser-stored history blobs + live sync payloads, and the existing
-// UserProviderKey.Key values). The protector is used server-side when storing/retrieving these
-// values; authenticated WASM clients receive the *unprotected* key over TLS+cookie so they can
-// perform client-side AES-GCM encryption of their local data and of blobs transferred during
-// live (both-devices-open) sync. The server never stores the WASM history content itself.
-// See User.LocalEncryptionKey and the Wasm*Store + WasmLiveSyncClient in the Client project.
+// Data Protection persists the ASP.NET cookie auth ticket encryption key ring in SQLite.
+// Users.LocalEncryptionKey (WASM/MAUI IndexedDB crypto) is stored as plaintext base64 and is
+// NOT wrapped with Data Protection — see LocalEncryptionKeyService.
 // Forwarded headers so that when deployed behind a TLS-terminating reverse proxy / load balancer
 // (Railway, Render, Cloudflare, nginx, etc.) we correctly see Scheme=https, the real Host, and client IP.
 // This fixes mixed-content redirect URLs (http://chatfish.me?ReturnUrl=...) for auth challenges on /api/*

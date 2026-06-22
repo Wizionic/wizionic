@@ -31,18 +31,6 @@ public class MagicLinkService
         return new string(buffer);
     }
 
-    /// <summary>
-    /// Generates a fresh random key (base64) that WASM/MAUI clients will use for AES-GCM
-    /// encryption of their local history blobs and of blobs transferred during live
-    /// (both-devices-open) cross-device sync. The *protected* (server at-rest) form
-    /// is what we store in the DB.
-    /// </summary>
-    private static string GenerateEncryptionKey()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(32); // 256-bit key for AES-GCM
-        return Convert.ToBase64String(bytes);
-    }
-
     public async Task<string> CreateMagicLinkTokenAsync(string email)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
@@ -60,10 +48,7 @@ public class MagicLinkService
         }
 
         if (string.IsNullOrEmpty(user.LocalEncryptionKey))
-        {
-            var rawKey = GenerateEncryptionKey();
-            user.LocalEncryptionKey = _keyProtector.Protect(rawKey);
-        }
+            user.LocalEncryptionKey = LocalEncryptionKeyService.GenerateRawKeyBase64();
 
         user.MagicLinkToken = GenerateLoginCode();
         user.MagicLinkExpiresAt = DateTime.UtcNow.AddMinutes(15);
@@ -111,18 +96,19 @@ public class MagicLinkService
         user.MagicLinkToken = null;
         user.MagicLinkExpiresAt = null;
 
-        bool needsNewKey = string.IsNullOrEmpty(user.LocalEncryptionKey);
-        if (!needsNewKey)
+        if (string.IsNullOrEmpty(user.LocalEncryptionKey))
+            user.LocalEncryptionKey = LocalEncryptionKeyService.GenerateRawKeyBase64();
+        else
         {
-            var tryUnprotect = _keyProtector.Unprotect(user.LocalEncryptionKey!);
-            if (string.IsNullOrEmpty(tryUnprotect))
-                needsNewKey = true;
-        }
+            var resolved = LocalEncryptionKeyService.ResolveStoredKey(user.LocalEncryptionKey, _keyProtector, out var migrate);
+            if (resolved == null)
+            {
+                Console.WriteLine($"[Auth] User {user.Email} has a corrupted LocalEncryptionKey; login blocked until fixed.");
+                return null;
+            }
 
-        if (needsNewKey)
-        {
-            var rawKey = GenerateEncryptionKey();
-            user.LocalEncryptionKey = _keyProtector.Protect(rawKey);
+            if (migrate)
+                user.LocalEncryptionKey = resolved;
         }
 
         await _db.SaveChangesAsync();

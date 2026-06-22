@@ -809,8 +809,8 @@
             catch { /* ignore if host script not ready */ }
 
             dotNetRef = DotNetObjectReference.Create<object>(this);
-            await JS.InvokeVoidAsync("setupChatImagePaste", dotNetRef, messageTextarea);
-            await JS.InvokeVoidAsync("setupChatEnterToSend", messageTextarea);
+            try { await JS.InvokeVoidAsync("setupChatImagePaste", dotNetRef, messageTextarea); } catch { /* host script may not be ready */ }
+            try { await JS.InvokeVoidAsync("setupChatEnterToSend", messageTextarea); } catch { /* host script may not be ready */ }
         }
 
         if (_pendingScroll)
