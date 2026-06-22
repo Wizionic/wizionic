@@ -12,11 +12,9 @@ public class User
     public DateTime? MagicLinkExpiresAt { get; set; }
 
     /// <summary>
-    /// Per-user random key (base64) used by WASM clients for encrypting local history blobs
-    /// (and live sync payloads) in browser storage. Protected at rest on the server via IDataProtector.
-    /// Fetched by authenticated WASM instances so that multiple live devices for the same email
-    /// can encrypt/decrypt data for live cross-device sync (server acts only as auth + signaling;
-    /// history blobs are never stored in SQLite for the WASM path).
+    /// Per-user random AES-256 key (base64, 32 raw bytes) used by WASM/MAUI clients for IndexedDB
+    /// encryption and live sync payloads. Stored as plaintext in SQLite; created once per user.
+    /// Fetched over HTTPS+cookie auth so all devices for the same email share one stable key.
     /// </summary>
     public string? LocalEncryptionKey { get; set; }
 }

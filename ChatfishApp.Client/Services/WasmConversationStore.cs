@@ -113,11 +113,22 @@ public class WasmConversationStore : IConversationStore
                 ? DeleteSyncPayload.AckValue(deletedAtTicks.Value)
                 : m.contentFingerprint ?? "";
 
-            if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
+            if (!deletedAtTicks.HasValue)
             {
                 var messages = await LoadConversationAsync(m.id, ct);
-                fingerprint = SyncFingerprint.ForConversation(m.id, title, messages);
-                await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
+                var computed = SyncFingerprint.ForConversation(m.id, title, messages);
+                if (!string.IsNullOrEmpty(fingerprint) && !string.Equals(fingerprint, computed, StringComparison.Ordinal))
+                {
+                    Console.WriteLine(
+                        $"[WasmConvStore] Convo {m.id}: stored fingerprint does not match readable content " +
+                        "(likely decrypt failure after key rotation); manifest will request resync");
+                    fingerprint = computed;
+                }
+                else if (string.IsNullOrEmpty(fingerprint) && backfillMissingFingerprints)
+                {
+                    fingerprint = computed;
+                    await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
+                }
             }
 
             entries.Add(new SyncManifestEntry(
