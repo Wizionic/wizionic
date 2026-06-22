@@ -55,11 +55,22 @@ public class WasmNoteStore : INoteStore
                 ? DeleteSyncPayload.AckValue(deletedAtTicks.Value)
                 : m.contentFingerprint ?? "";
 
-            if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
+            if (!deletedAtTicks.HasValue)
             {
                 var noteEntries = await LoadNoteAsync(m.id, ct);
-                fingerprint = SyncFingerprint.ForNote(m.id, title, noteEntries);
-                await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
+                var computed = SyncFingerprint.ForNote(m.id, title, noteEntries);
+                if (!string.IsNullOrEmpty(fingerprint) && !string.Equals(fingerprint, computed, StringComparison.Ordinal))
+                {
+                    Console.WriteLine(
+                        $"[WasmNoteStore] Note {m.id}: stored fingerprint does not match readable content " +
+                        "(likely decrypt failure after key rotation); manifest will request resync");
+                    fingerprint = computed;
+                }
+                else if (string.IsNullOrEmpty(fingerprint) && backfillMissingFingerprints)
+                {
+                    fingerprint = computed;
+                    await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
+                }
             }
 
             entries.Add(new SyncManifestEntry(
