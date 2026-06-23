@@ -9,6 +9,29 @@
     <UserSecretsId>a8d4cf06-2e6d-4968-9752-b26c847c8502</UserSecretsId>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- No debug symbols in production -->
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <!-- Enable trimming for smaller Blazor WASM output -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <!-- Optional: More aggressive trimming (use with caution, test thoroughly) -->
+    <!-- <TrimMode>full</TrimMode> -->
+  </PropertyGroup>
+
+  <!-- Exclude development config files from publish -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <Content Remove="appsettings.Development.json" />
+    <Content Remove="**\appsettings.Development.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="appsettings*.json">
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
   <!-- Exclude the supporting Client project sources from this main project's default globs.
        The main .csproj lives at repo root for flatter Railway-friendly publish commands.
        The Client project (sibling dir) is still referenced for its WASM components, services,
