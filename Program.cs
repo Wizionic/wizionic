@@ -23,9 +23,11 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
     .AddInteractiveWebAssemblyComponents();
 
+
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<ChatfishDbContext>(options =>
 {
-    options.UseSqlite("Data Source=chatfish.db");
+    options.UseSqlite(connectionString);
     // Ignore this in dev so that model changes during active development (e.g. after removing legacy tables)
     // don't hard-crash startup before the corresponding migration is created/applied.
     // We always add a proper migration for model changes (see RemoveLegacyServerChatHistoryTables).
