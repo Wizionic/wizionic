@@ -18,35 +18,31 @@
 ---
 
 ## Solution Layout
+ 
+ ```
+ ChatfishApp/
+ ├── ChatfishApp.csproj          # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite, auth
+ ├── ChatfishApp.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
+ ├── ChatfishApp.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)
+ ├── ChatfishApp.Client/         # WASM Implementation: Browser-specific implementations (IndexedDB, JS Crypto)
+ ├── ChatfishApp.Maui/           # MAUI App: Native shell, native storage (SQLite), native sync
+ ├── Components/                 # Server shell for Blazor Web App (App.razor, Routes.razor)
+ ├── Apis/                       # Host API endpoints (WasmApiEndpoints, SyncHub, etc.)
+ ├── Data/                       # Server-side EF Core entities + ChatfishDbContext
+ ├── Services/                   # Server-only services: email, key protection, AI proxy
+ ├── Pages/                      # Server-rendered pages (Roadmap, Architecture)
+ └── wwwroot/                    # Static assets and documentation
+ ```
+ 
+ ### Project Sharing Model: WASM vs MAUI
+ 
+ | Layer | Shared? | Role |
+ |-------|---------|------|
+ | **`ChatfishApp.Core`** | ✅ Yes | Defines the "what": Interfaces (`IConversationStore`, `ISyncService`) and DTOs. No platform-specific code. |
+ | **`ChatfishApp.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to both clients. |
+ | **`ChatfishApp.Client`** | ❌ No | WASM-specific: Implements Core interfaces using browser APIs (IndexedDB, WebCrypto). |
+ | **`ChatfishApp.Maui`** | ❌ No | MAUI-specific: Implements Core interfaces using native APIs (SQLite, platform storage), hosts the Shared UI in a WebView/Blazor Hybrid shell. |
 
-```
-newuserloginkeepdata/
-├── ChatfishApp.csproj          # Host: ASP.NET Core, APIs, SignalR hub, SQLite, magic-link auth
-├── ChatfishApp.Client/         # Blazor WebAssembly: pages, client services, UI
-│   ├── Pages/                  # WASM routes (@rendermode InteractiveWebAssembly)
-│   ├── Services/               # Storage, sync, AI, auth, crypto
-│   └── Shared/                 # WasmLayout, WasmTopBar, QuillEditor, dialogs
-├── Components/                 # Server shell: App.razor, Routes, layouts, JS interop helpers
-├── Apis/                       # WasmApiEndpoints, SyncHub, AiProxyEndpoints
-├── Data/                       # EF Core entities + ChatfishDbContext
-├── Services/                   # Server-only: email, keys, presence, AI proxy
-├── Pages/                      # Server-rendered pages (Roadmap, Architecture, Styleguide)
-└── wwwroot/                    # Static assets, ROADMAP.md, ARCHITECTURE.md, images
-```
-
-### Blazor Web App model
-
-| Layer | Role |
-|-------|------|
-| **Host (`ChatfishApp`)** | Serves the HTML shell, static files, `/api/*`, `/sync-hub`, cookie auth, and prerendered server pages (`/roadmap`, `/architecture`). |
-| **WASM client (`ChatfishApp.Client`)** | Downloads once; runs in the browser. All main product UI (`/`, `/chat`, `/notes`, `/sync`, etc.) uses `InteractiveWebAssemblyRenderMode`. |
-| **`Components/App.razor`** | Root HTML document. Hosts global JS: IndexedDB helpers, AES-GCM crypto, WebRTC, sidebar toggle, Quill. |
-| **`Components/Routes.razor`** | Router with `AdditionalAssemblies` pointing at the Client project so WASM `@page` routes are discovered. |
-| **Shared contracts** | `ChatfishApp.Contracts` (in Client) for provider catalog DTOs used by both host proxy APIs and WASM. |
-
-**Render modes in practice:** Login, Chat, Notes, Settings, Sync, Tools, Local AI, and Cloud Providers are WASM-interactive. Roadmap and Architecture are server-rendered pages that load markdown from `wwwroot/`.
-
-**DI split:** `Program.cs` (host) registers DB, auth, SignalR, server tools, email. `ChatfishApp.Client/Program.cs` registers WASM services (`WasmAuthService`, `WasmSyncService`, stores, etc.) and eagerly starts sync on app load.
 
 ---
 
@@ -203,98 +199,86 @@ A phone/tablet without Ollama can designate another online device as **AI server
 ---
 
 ## Key Files Reference
+ 
+ ### Host — startup & shell
+ 
+ | File | Description |
+ |------|-------------|
+ | `Program.cs` | App builder: Blazor modes, SQLite, cookie auth, SignalR hub, forwarded headers, magic-link routes |
+ | `Components/App.razor` | HTML shell for WASM; hosts global JS (IDB, crypto, WebRTC) |
+ | `Components/Routes.razor` | Router + `AdditionalAssemblies` to find shared components |
+ 
+ ### Authentication & APIs
+ 
+ | File | Description |
+ |------|-------------|
+ | `Apis/WasmApiEndpoints.cs` | `/api/auth/*`, `/api/user/encryption-key`, `/api/keys`, `/api/tools/*` |
+ | `Apis/AiProxyEndpoints.cs` | `/api/proxy/providers`, `/api/proxy/chat` for CORS-restricted models |
+ | `Services/MagicLinkService.cs` | Create/validate magic-link tokens |
+ | `Data/ChatfishDbContext.cs` | EF Core context for server DB |
+ 
+ ### Sync & presence
+ 
+ | File | Description |
+ |------|-------------|
+ | `Apis/SyncHub.cs` | SignalR hub: device registration, WebRTC signaling relay |
+ | `Services/DevicePresenceService.cs` | In-memory online device registry per user |
+ 
+ ### Shared UI (`ChatfishApp.Shared`)
+ 
+ | File | Route (approx) | Description |
+ |------|---------------|-------------|
+ | `Components/LoginPage.razor` | `/` | Landing, magic-link login, guest continue |
+ | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, tool traces |
+ | `Components/NotesPage.razor` | `/notes` | Notebooks, Quill entries, floating add button |
+ | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets, auto-sync, AI server pick |
+ | `Components/LocalAiPage.razor` | `/local-ai` | Ollama URL, model discovery |
+ | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
+ | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences |
+ | `Components/ToolsPage.razor` | `/tools` | Enable MCP servers and tokens |
+ | `Layout/AppLayout.razor` | - | Main cohesive layout for both WASM & MAUI |
+ 
+ ### Shared Logic (`ChatfishApp.Shared`)
+ 
+ | File | Description |
+ |------|-------------|
+ | `Services/ChatCompletionService.cs` | Core completion loop + tool execution logic |
+ | `Services/ChatModelCatalogService.cs` | Manage available AI models across providers |
+ | `Services/Mcp/McpToolSource.cs` | Discover and cache MCP tools from enabled servers |
+ | `Services/Tools/AppTools.cs` | Core built-in tool implementations (`search_web`, etc.) |
+ 
+ ### Business Contracts (`ChatfishApp.Core`)
+ 
+ | File | Description |
+ |------|-------------|
+ | `Storage/IConversationStore.cs` | Interface for chat history persistence |
+ | `Storage/INoteStore.cs` | Interface for notes persistence |
+ | `Storage/ICryptoService.cs` | Interface for AES-GCM encryption/decryption |
+ | `Sync/ISyncService.cs` | Interface for cross-device synchronization |
+ 
+ ### Client Implementations (WASM vs MAUI)
+ 
+ | Feature | WASM Implementation (`ChatfishApp.Client`) | MAUI Implementation (`ChatfishApp.Maui`) |
+ |---------|-------------------------------------------|------------------------------------------|
+ | **Conversations** | `Services/WasmConversationStore.cs` (IndexedDB) | `Services/SqliteConversationStore.cs` (SQLite) |
+ | **Notes** | `Services/WasmNoteStore.cs` (IndexedDB) | `Services/SqliteNoteStore.cs` (SQLite) |
+ | **Encryption** | `Services/WasmCryptoService.cs` (WebCrypto JS) | `Services/MauiCryptoService.cs` (Native .NET) |
+ | **Sync** | `Services/WasmSyncService.cs` | `Services/MauiSyncService.cs` |
+ | **Keys/Settings** | `Services/WasmKeyStore.cs` (localStorage) | `Services/SqliteKeyStore.cs` (SQLite) |
 
-### Host — startup & shell
-
-| File | Description |
-|------|-------------|
-| `Program.cs` | App builder: Blazor modes, SQLite, cookie auth, SignalR hub, forwarded headers, magic-link routes |
-| `Components/App.razor` | HTML shell, global CSS/JS (IDB, crypto, WebRTC, sidebar) |
-| `Components/Routes.razor` | Router + `AdditionalAssemblies` for Client WASM routes |
-| `Components/Layout/MainLayout.razor` | Layout for server pages (`/roadmap`, `/architecture`) |
-
-### Authentication & APIs
-
-| File | Description |
-|------|-------------|
-| `Apis/WasmApiEndpoints.cs` | `/api/auth/*`, `/api/user/encryption-key`, `/api/keys`, `/api/tools/*` |
-| `Apis/AiProxyEndpoints.cs` | `/api/proxy/providers`, `/api/proxy/chat` for CORS-restricted models |
-| `Services/MagicLinkService.cs` | Create/validate magic-link tokens |
-| `Services/KeyProtectionService.cs` | IDataProtector wrap/unwrap for DB secrets |
-| `Services/BrevoEmailSender.cs` | Transactional email for magic links |
-| `Data/User.cs` | User entity incl. `LocalEncryptionKey` |
-| `Data/ChatfishDbContext.cs` | EF Core context |
-
-### Sync & presence
-
-| File | Description |
-|------|-------------|
-| `Apis/SyncHub.cs` | SignalR hub: device registration, WebRTC signaling relay |
-| `Services/DevicePresenceService.cs` | In-memory online device registry per user |
-
-### WASM — pages
-
-| File | Route | Description |
-|------|-------|-------------|
-| `Client/Pages/Login.razor` | `/`, `/account` | Landing, magic-link login, guest continue |
-| `Client/Pages/Chat.razor` | `/chat` | Main chat UI, sidebar, attachments, tool traces |
-| `Client/Pages/Notes.razor` | `/notes` | Notebooks, Quill entries, floating add button |
-| `Client/Pages/Sync.razor` | `/sync` | Device list, sync targets, auto-sync, AI server pick |
-| `Client/Pages/LocalAi.razor` | `/local-ai` | Ollama URL, model discovery |
-| `Client/Pages/CloudProviders.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
-| `Client/Pages/Settings.razor` | `/settings` | Profile, system prompt, preferences |
-| `Client/Pages/Tools.razor` | `/tools` | Enable MCP servers and tokens |
-| `Pages/Roadmap.razor` | `/roadmap` | Renders `wwwroot/ROADMAP.md` |
-| `Pages/Architecture.razor` | `/architecture` | Renders this document |
-
-### WASM — client services
-
-| File | Description |
-|------|-------------|
-| `Client/Program.cs` | WASM DI, startup auth + guest migration + sync connect |
-| `Client/Services/WasmAuthService.cs` | Cookie auth check, encryption key resolution (guest vs server) |
-| `Client/Services/WasmCryptoService.cs` | AES-GCM encrypt/decrypt via JS interop |
-| `Client/Services/WasmConversationStore.cs` | IndexedDB conversations: meta + encrypted message JSON |
-| `Client/Services/WasmNoteStore.cs` | IndexedDB notes (parallel schema to conversations) |
-| `Client/Services/WasmKeyStore.cs` | localStorage: Ollama config, provider keys, MCP selections, profile |
-| `Client/Services/WasmGuestDataMigrationService.cs` | Guest → authenticated data migration on login |
-| `Client/Services/WasmAiProviderService.cs` | Build `IChatClient` per model (Ollama direct, proxy, user keys) |
-| `Client/Services/WasmChatCompletionService.cs` | Shared completion + tool loop for Chat and AI relay |
-| `Client/Services/WasmSyncService.cs` | SignalR hub client, WebRTC sync, AI proxy channel, auto-sync |
-| `Client/Services/SidebarState.cs` | Sidebar collapsed state + mobile auto-collapse |
-| `Client/Services/SyncFingerprint.cs` | Content fingerprints for manifest/delta sync |
-| `Client/Services/Mcp/McpToolSource.cs` | Discover and cache MCP tools from enabled servers |
-| `Client/Services/Mcp/McpRemoteClient.cs` | HTTP JSON-RPC to remote MCP endpoints |
-
-### Tools (shared server + WASM)
-
-| File | Description |
-|------|-------------|
-| `Services/Tools/AppTools.cs` | `search_web`, `summarize_url`, `get_time` implementations |
-| `Services/Tools/ToolProvider.cs` | `IToolProvider` / `DefaultToolProvider` — merges AppTools + MCP |
-| `Services/AiProviderProxyService.cs` | Server-side chat proxy for CORS-blocked providers |
-
-### UI shared components
-
-| File | Description |
-|------|-------------|
-| `Client/Shared/WasmLayout.razor` | WASM page layout with `WasmTopBar` |
-| `Client/Shared/WasmTopBar.razor` | Nav icons: notes, local AI, cloud, settings, sync, tools, account |
-| `Client/Shared/QuillEditor.razor` | Rich-text editor for notes |
-| `Client/Shared/ConfirmDialog.razor` | Reusable confirm modal |
-| `wwwroot/css/chatfish.css` | Global styles, chat layout, sidebar, mobile overlay |
 
 ---
 
 ## Typical Agent Onboarding
+ 
+ 1. Read this doc and skim `wwwroot/ROADMAP.md` for direction (not current state).
+ 2. For **chat/AI** changes → `ChatPage.razor`, `ChatCompletionService` (Shared), `ChatModelCatalogService`.
+ 3. For **storage/privacy** → `IConversationStore`/`INoteStore` (Core) and the respective implementations in `ChatfishApp.Client` or `ChatfishApp.Maui`.
+ 4. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
+ 5. For **sync** → `ISyncService` (Core), `SyncPresencePage.razor`, and platform implementations of `ISyncService`.
+ 6. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
+ 7. For **tools/MCP** → `AppTools.cs`, `McpToolSource` (Shared), `ToolsPage.razor`.
 
-1. Read this doc and skim `wwwroot/ROADMAP.md` for direction (not current state).
-2. For **chat/AI** changes → `Chat.razor`, `WasmChatCompletionService`, `WasmAiProviderService`.
-3. For **storage/privacy** → `WasmConversationStore`, `WasmNoteStore`, `WasmCryptoService`, `WasmAuthService`.
-4. For **vision proxy / model routing** → `LocalAi.razor`, `WasmChatCompletionService`, `WasmKeyStore`, `AiProviderProxyService`.
-5. For **sync** → `WasmSyncService`, `SyncHub`, WebRTC JS in `App.razor`, `Sync.razor`.
-6. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
-7. For **tools/MCP** → `AppTools.cs`, `McpToolSource`, `Tools.razor`.
 
 ---
 

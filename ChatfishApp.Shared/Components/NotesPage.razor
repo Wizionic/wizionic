@@ -71,65 +71,80 @@
 
                     @if (msg.DeletedAt is null)
                     {
-                    <div class="message-row">
-                        <div class="message-bot @(isEditing ? "note-editing" : "")">
-                            <div class="note-response-actions">
-                                @if (isEditing)
-                                {
-                                    <button type="button" class="menu-button note-action-btn" @onclick="() => SaveEdit(capturedIndex)" title="Save">
-                                        <i class="cf-icon bi bi-check-lg"></i>
-                                    </button>
-                                    <button type="button" class="menu-button note-action-btn" @onclick="CancelEdit" title="Cancel">
-                                        <i class="cf-icon bi bi-x-lg"></i>
-                                    </button>
-                                }
-                                else
-                                {
-                                    <button type="button" class="menu-button note-action-btn" @onclick="() => StartEdit(capturedIndex)" title="Edit">
-                                        <i class="cf-icon bi bi-pencil"></i>
-                                    </button>
-                                    <button type="button" class="menu-button note-action-btn" @onclick="() => PromptDeleteNoteEntry(capturedIndex)" title="Delete entry">
-                                        <i class="cf-icon bi bi-trash3-fill"></i>
-                                    </button>
-                                }
+                        <div class="message-row" style="margin-bottom: 32px; display: flex; justify-content:  flex-start;">
+                                <div style="position: relative; display: inline-flex; flex-direction: column; align-items: flex-end; max-width: 100%;margin-bottom: 10px;">
+                                <div class="note-response-actions" style="position: absolute; top: -20px; right: 8px;  padding: 4px 10px; border-radius: 8px; display: flex; gap: 8px; z-index: 2; border: 1px solid rgba(0,0,0,0.05);">
+                                    @if (isEditing)
+                                    {
+                                        <button type="button" class="menu-button note-action-btn" @onclick="() => SaveEdit(capturedIndex)" title="Save">
+                                            <i class="cf-icon bi bi-check-lg"></i>
+                                        </button>
+                                        <button type="button" class="menu-button note-action-btn" @onclick="CancelEdit" title="Cancel">
+                                            <i class="cf-icon bi bi-x-lg"></i>
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="menu-button note-action-btn" @onclick="() => StartEdit(capturedIndex)" title="Edit">
+                                            <i class="cf-icon bi bi-pencil"></i>
+                                        </button>
+                                         @if (capturedIndex > 0)
+                                         {
+                                             <button type="button" class="menu-button note-action-btn" @onclick="() => MoveNoteEntryUp(capturedIndex)" title="Move up">
+                                                 <i class="cf-icon bi bi-arrow-up"></i>
+                                             </button>
+                                         }
+                                         @if (capturedIndex < currentNoteMessages.Count - 1)
+                                         {
+                                             <button type="button" class="menu-button note-action-btn" @onclick="() => MoveNoteEntryDown(capturedIndex)" title="Move down">
+                                                 <i class="cf-icon bi bi-arrow-down"></i>
+                                             </button>
+                                         }
+                                        <button type="button" class="menu-button note-action-btn" @onclick="() => PromptDeleteNoteEntry(capturedIndex)" title="Delete entry">
+                                            <i class="cf-icon bi bi-trash3-fill"></i>
+                                        </button>
+                                    }
+                                </div>
+                                <div class="message-bot @(isEditing ? "note-editing" : "")">
+                                    @if (isEditing)
+                                    {
+                                        <QuillEditor @ref="quillEditor"
+                                                     @key="@($"note-edit-{activeNoteId}-{capturedIndex}-{editSessionKey}")"
+                                                     InitialHtml="@editingInitialHtml" />
+                                    }
+                                    else if (NoteContentFormatter.IsHtml(msg.ContentFormat))
+                                    {
+                                        <div class="ql-snow note-quill-display">
+                                            <div class="ql-editor">
+                                                @((MarkupString)msg.Content)
+                                            </div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="chat-markdown">
+                                            @((MarkupString)NoteContentFormatter.ToDisplayHtml(msg.Content, msg.ContentFormat))
+                                        </div>
+                                    }
+
+                                    @if (!IsUserNoteEntry(msg) && !string.IsNullOrWhiteSpace(msg.ModelUsed))
+                                    {
+                                        <div class="model-label" style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
+                                            via @msg.ModelUsed
+                                        </div>
+                                    }
+                                    @if (msg.Timestamp.HasValue)
+                                    {
+                                        <div style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
+                                            @(msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm"))
+                                        </div>
+                                    }
+                                </div>
                             </div>
-
-                            @if (isEditing)
-                            {
-                                <QuillEditor @ref="quillEditor"
-                                             @key="@($"note-edit-{activeNoteId}-{capturedIndex}-{editSessionKey}")"
-                                             InitialHtml="@editingInitialHtml" />
-                            }
-                            else if (NoteContentFormatter.IsHtml(msg.ContentFormat))
-                            {
-                                <div class="ql-snow note-quill-display">
-                                    <div class="ql-editor">
-                                        @((MarkupString)msg.Content)
-                                    </div>
-                                </div>
-                            }
-                            else
-                            {
-                                <div class="chat-markdown">
-                                    @((MarkupString)NoteContentFormatter.ToDisplayHtml(msg.Content, msg.ContentFormat))
-                                </div>
-                            }
-
-                            @if (!IsUserNoteEntry(msg) && !string.IsNullOrWhiteSpace(msg.ModelUsed))
-                            {
-                                <div class="model-label" style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
-                                    via @msg.ModelUsed
-                                </div>
-                            }
-                            @if (msg.Timestamp.HasValue)
-                            {
-                                <div style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
-                                    @(msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm"))
-                                </div>
-                            }
                         </div>
-                    </div>
                     }
+                    
+
                 }
             </div>
         </div>
@@ -387,6 +402,30 @@
             await DeleteNoteEntry(index);
 
         CancelPendingDelete();
+    }
+
+    private async Task MoveNoteEntryUp(int index)
+    {
+        if (index <= 0 || index >= currentNoteMessages.Count) return;
+        
+        var item = currentNoteMessages[index];
+        currentNoteMessages.RemoveAt(index);
+        currentNoteMessages.Insert(index - 1, item);
+        
+        await SaveCurrent();
+        StateHasChanged();
+    }
+
+    private async Task MoveNoteEntryDown(int index)
+    {
+        if (index < 0 || index >= currentNoteMessages.Count - 1) return;
+        
+        var item = currentNoteMessages[index];
+        currentNoteMessages.RemoveAt(index);
+        currentNoteMessages.Insert(index + 1, item);
+        
+        await SaveCurrent();
+        StateHasChanged();
     }
 
     private async Task DeleteNoteEntry(int index)
