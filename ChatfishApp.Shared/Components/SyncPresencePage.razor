@@ -31,7 +31,7 @@
                 Sign in with your email to see your other devices and sync chats between browsers and native apps.
             </div>
             <div style="margin-top: 0.75rem;">
-                <button @onclick="@(() => Nav.NavigateTo("/login"))" class="btn btn-outline-secondary btn-sm">Go to login</button>
+                <button @onclick="@(() => Nav.NavigateTo("/account"))" class="btn btn-outline-secondary btn-sm">Go to login</button>
                 @if (ShowBackToChat)
                 {
                     <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary btn-sm" style="margin-left: 0.5rem;">Back to Chat</button>
