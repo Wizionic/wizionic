@@ -725,9 +725,10 @@
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html lang=\"en\"><head>");
-        sb.AppendLine($"<meta charset=\"utf-8\">");
+        sb.AppendLine("<meta charset=\"utf-8\">");
         sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
-        sb.AppendLine($"<title>{EncodeHtml(note.Title)} — Chatfish Notes Export</title>");
+        string titleLine = $"<title>{EncodeHtml(note.Title)} — Chatfish Notes Export</title>";
+        sb.AppendLine(titleLine);
         sb.AppendLine("<style>");
         sb.AppendLine("  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; background: #fff; }");
         sb.AppendLine("  h1 { border-bottom: 2px solid #2563eb; padding-bottom: 8px; color: #1e3a5f; }");
@@ -737,14 +738,15 @@
         sb.AppendLine("  .meta { font-size: 0.75rem; color: #94a3b8; margin-bottom: 8px; }");
         sb.AppendLine("</style>");
         sb.AppendLine("</head><body>");
-        sb.AppendLine($"<h1>{EncodeHtml(note.Title)}</h1>");
+        string h1Line = $"<h1>{EncodeHtml(note.Title)}</h1>";
+        sb.AppendLine(h1Line);
 
         foreach (var entry in entries)
         {
             sb.AppendLine("<div class=\"note-entry\">");
-            sb.AppendLine($"<div class=\"meta\">{(entry.Timestamp?.ToLocalTime().ToString("MMM d, yyyy HH:mm") ?? "no date")}");
+            sb.AppendLine("<div class=\"meta\">" + (entry.Timestamp?.ToLocalTime().ToString("MMM d, yyyy HH:mm") ?? "no date"));
             if (!string.IsNullOrWhiteSpace(entry.ModelUsed))
-                sb.Append($" &middot; via {EncodeHtml(entry.ModelUsed)}");
+                sb.Append(" &middot; via " + EncodeHtml(entry.ModelUsed));
             sb.AppendLine("</div>");
 
             var html = entry.Content;
@@ -753,7 +755,10 @@
             {
                 var paragraphs = html.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
                 foreach (var p in paragraphs.Where(p => !string.IsNullOrWhiteSpace(p)))
-                    sb.AppendLine($"<p>{EncodeHtml(p)}</p>");
+                {
+                    string pLine = $"<p>{EncodeHtml(p)}</p>";
+                    sb.AppendLine(pLine);
+                }
             }
             else if (!string.IsNullOrWhiteSpace(html))
             {
@@ -775,7 +780,7 @@
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html lang=\"en\"><head>");
-        sb.AppendLine($"<meta charset=\"utf-8\">");
+        sb.AppendLine("<meta charset=\"utf-8\">");
         sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
         sb.AppendLine("<title>Chatfish Notes Export — All Notebooks</title>");
         sb.AppendLine("<style>");
@@ -792,14 +797,15 @@
 
         foreach (var (note, entries) in notesToExport)
         {
-            sb.AppendLine($"<h2>{EncodeHtml(note.Title)} <span style=\"font-size:0.7em;color:#94a3b8\">({note.LastUpdated.ToLocalTime():yyyy-MM-dd HH:mm})</span></h2>");
+            string h2Line = $"<h2>{EncodeHtml(note.Title)} <span style=\"font-size:0.7em;color:#94a3b8\">({note.LastUpdated.ToLocalTime():yyyy-MM-dd HH:mm})</span></h2>";
+            sb.AppendLine(h2Line);
 
             foreach (var entry in entries)
             {
                 sb.AppendLine("<div class=\"note-entry\">");
-                sb.AppendLine($"<div class=\"meta\">{(entry.Timestamp?.ToLocalTime().ToString("MMM d, yyyy HH:mm") ?? "no date")}");
+                sb.AppendLine("<div class=\"meta\">" + (entry.Timestamp?.ToLocalTime().ToString("MMM d, yyyy HH:mm") ?? "no date"));
                 if (!string.IsNullOrWhiteSpace(entry.ModelUsed))
-                    sb.Append($" &middot; via {EncodeHtml(entry.ModelUsed)}");
+                    sb.Append(" &middot; via " + EncodeHtml(entry.ModelUsed));
                 sb.AppendLine("</div>");
 
                 var html = entry.Content;
@@ -808,7 +814,10 @@
                 {
                     var paragraphs = html.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
                     foreach (var p in paragraphs.Where(p => !string.IsNullOrWhiteSpace(p)))
-                        sb.AppendLine($"<p>{EncodeHtml(p)}</p>");
+                    {
+                        string pLine = $"<p>{EncodeHtml(p)}</p>";
+                        sb.AppendLine(pLine);
+                    }
                 }
                 else if (!string.IsNullOrWhiteSpace(html))
                 {
