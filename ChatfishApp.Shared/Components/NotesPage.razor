@@ -678,14 +678,12 @@
     private static string EncodeHtml(string s) =>
         s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
-    private static string sanitizeFileName(string name)
-    {
-        var invalid = System.IO.Path.GetInvalidFileNameChars();
-        return new string(name.Where(c => !invalid.Contains(c)).ToArray())
-                   .Replace(" ", "_")
-                   .Replace("/", "_")
-                   .Replace("\\", "_");
-    }
+    // Hardcoded to avoid System.IO.Path.GetInvalidFileNameChars() which gets trimmed in Blazor WASM release builds.
+    private static readonly char[] InvalidFileNameChars = { '<', '>', ':', '"', '|', '?', '*', '\\', '/' };
+
+    private static string sanitizeFileName(string name) =>
+        new string(name.Select(c => InvalidFileNameChars.Contains(c) ? '_' : c).ToArray())
+                      .Replace(" ", "_");
 
     private void ToggleExportAllMenu()
     {
