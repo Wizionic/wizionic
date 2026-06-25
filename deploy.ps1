@@ -35,8 +35,9 @@ Out-File -FilePath "$OUTPUT_DIR\Dockerfile" -InputObject $DockerContent -Encodin
 
 Write-Host "Transferring clean build assets to M5 Server..." -ForegroundColor Cyan
 
-# 4. Clear the remote host directory using a semicolon instead of && (safe for both shells)
-ssh "${SSH_USER}@${SERVER_IP}" "rm -rf /var/www/chatfish/* ; mkdir -p /var/www/chatfish"
+# 4. Clear old deployment assets safely, explicitly preserving the 'data' directory
+$SafeCleanCmd = "find /var/www/chatfish -mindepth 1 -maxdepth 1 ! -name 'data' -exec rm -rf {} +"
+ssh "${SSH_USER}@${SERVER_IP}" $SafeCleanCmd
 
 # 5. Fix the SCP path by wrapping the variable properly using curly braces to avoid the colon collision
 scp -r "${OUTPUT_DIR}\*" "${SSH_USER}@${SERVER_IP}:/var/www/chatfish/"
