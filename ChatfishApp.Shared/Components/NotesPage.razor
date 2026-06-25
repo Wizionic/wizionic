@@ -3,6 +3,7 @@
 @using ChatfishApp.Core.Storage
 @using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
+@using System.Text
 
 @inject IJSRuntime JS
 @inject INoteStore NoteStore
@@ -34,6 +35,9 @@
             <div class="cf-item">
                 <span class="cf-link small">
                    <h4>Notebooks</h4>
+                    <div class="menu" @onclick:stopPropagation>
+                        <button id="notebooks-menu-btn" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleExportAllMenu()" title="Notebook options">⋮</button>
+                    </div>
                     <button class="menu-button" @onclick="OpenCreateNoteDialog" title="New notebook">
                         <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
                     </button>
@@ -171,12 +175,27 @@
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
                 Rename
             </div>
+            <div @onclick="() => ExportNotebook(openMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-file-earmark-arrow-down"></i></button>
+                Export
+            </div>
             <div @onclick="() => PromptDeleteNote(openMenuId)">
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
                 Delete note
             </div>
         </div>
         <div class="menu-overlay" @onclick="CloseMenu"></div>
+    }
+
+    @if (openExportAllMenuId != null)
+    {
+        <div class="menu-popup" style="@exportAllPopupStyle" @onclick:stopPropagation>
+            <div @onclick="() => ExportAllNotebooks()">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-file-earmark-arrow-down"></i></button>
+                Export all
+            </div>
+        </div>
+        <div class="menu-overlay" @onclick="CloseExportAllMenu"></div>
     }
 
     <ConfirmDialog IsVisible="showDeleteConfirm"
@@ -218,7 +237,9 @@
     private string? activeNoteId;
     private List<ChatMessage> currentNoteMessages = new();
     private string? openMenuId;
+    private string? openExportAllMenuId;
     private string activePopupStyle = "";
+    private string exportAllPopupStyle = "";
     private ElementReference chatContainer;
 
     private int? editingMessageIndex;
@@ -608,6 +629,204 @@
 
     private static bool IsUserNoteEntry(ChatMessage msg) =>
         string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
+
+    private async Task ExportNotebook(string? noteId)
+    {
+        CloseMenu();
+
+        if (string.IsNullOrEmpty(noteId))
+            return;
+
+        var allNotes = await NoteStore.LoadIndexAsync();
+        var targetNote = allNotes.FirstOrDefault(n => n.Id == noteId);
+        if (targetNote == null)
+            return;
+
+        var entries = (await NoteStore.LoadNoteAsync(targetNote.Id))
+                      .Where(e => e.DeletedAt is null)
+                      .ToList();
+        if (!entries.Any())
+            return;
+
+        await BuildAndDownloadHtml(targetNote, entries, sanitizeFileName(targetNote.Title));
+    }
+
+    private async Task ExportAllNotebooks()
+    {
+        CloseExportAllMenu();
+
+        var allNotes = await NoteStore.LoadIndexAsync();
+        var notesToExport = new List<(LocalNote Note, List<ChatMessage> Entries)>();
+
+        foreach (var n in allNotes.OrderByDescending(x => x.LastUpdated))
+        {
+            var entries = (await NoteStore.LoadNoteAsync(n.Id))
+                          .Where(e => e.DeletedAt is null)
+                          .ToList();
+            if (entries.Any())
+            {
+                notesToExport.Add((n, entries));
+            }
+        }
+
+        if (!notesToExport.Any())
+            return;
+
+        await BuildAndDownloadAllNotesHtml(notesToExport);
+    }
+
+    private static string EncodeHtml(string s) =>
+        s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+
+    private static string sanitizeFileName(string name)
+    {
+        var invalid = System.IO.Path.GetInvalidFileNameChars();
+        return new string(name.Where(c => !invalid.Contains(c)).ToArray())
+                   .Replace(" ", "_")
+                   .Replace("/", "_")
+                   .Replace("\\", "_");
+    }
+
+    private void ToggleExportAllMenu()
+    {
+        if (openExportAllMenuId != null)
+        {
+            openExportAllMenuId = null;
+            exportAllPopupStyle = "";
+        }
+        else
+        {
+            openExportAllMenuId = "export-all";
+            _ = PositionExportAllPopup();
+        }
+    }
+
+    private void CloseExportAllMenu()
+    {
+        openExportAllMenuId = null;
+        exportAllPopupStyle = "";
+    }
+
+    private async Task PositionExportAllPopup()
+    {
+        try
+        {
+            var pos = await JS.InvokeAsync<PopupPosition>("getMenuPopupPosition", "notebooks-menu-btn");
+            exportAllPopupStyle = $"position: fixed; top: {pos.top}px; left: {pos.left}px; z-index: 10000;";
+            StateHasChanged();
+        }
+        catch
+        {
+            exportAllPopupStyle = "position: fixed; top: 80px; left: 140px; z-index: 10000;";
+            StateHasChanged();
+        }
+    }
+
+    private async Task BuildAndDownloadHtml(LocalNote note, List<ChatMessage> entries, string filename)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"en\"><head>");
+        sb.AppendLine($"<meta charset=\"utf-8\">");
+        sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+        sb.AppendLine($"<title>{EncodeHtml(note.Title)} — Chatfish Notes Export</title>");
+        sb.AppendLine("<style>");
+        sb.AppendLine("  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; background: #fff; }");
+        sb.AppendLine("  h1 { border-bottom: 2px solid #2563eb; padding-bottom: 8px; color: #1e3a5f; }");
+        sb.AppendLine("  .note-entry { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0; }");
+        sb.AppendLine("  .note-entry p { margin: 0 0 8px 0; }");
+        sb.AppendLine("  .note-entry img { max-width: 100%; height: auto; border-radius: 4px; }");
+        sb.AppendLine("  .meta { font-size: 0.75rem; color: #94a3b8; margin-bottom: 8px; }");
+        sb.AppendLine("</style>");
+        sb.AppendLine("</head><body>");
+        sb.AppendLine($"<h1>{EncodeHtml(note.Title)}</h1>");
+
+        foreach (var entry in entries)
+        {
+            sb.AppendLine("<div class=\"note-entry\">");
+            sb.AppendLine($"<div class=\"meta\">{(entry.Timestamp?.ToLocalTime().ToString("MMM d, yyyy HH:mm") ?? "no date")}");
+            if (!string.IsNullOrWhiteSpace(entry.ModelUsed))
+                sb.Append($" &middot; via {EncodeHtml(entry.ModelUsed)}");
+            sb.AppendLine("</div>");
+
+            var html = entry.Content;
+            var contentFormat = entry.ContentFormat;
+            if (!string.IsNullOrWhiteSpace(html) && !NoteContentFormatter.IsHtml(contentFormat))
+            {
+                var paragraphs = html.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                foreach (var p in paragraphs.Where(p => !string.IsNullOrWhiteSpace(p)))
+                    sb.AppendLine($"<p>{EncodeHtml(p)}</p>");
+            }
+            else if (!string.IsNullOrWhiteSpace(html))
+            {
+                sb.AppendLine(html);
+            }
+
+            sb.AppendLine("</div>");
+        }
+
+        sb.AppendLine("</body></html>");
+
+        var htmlContent = sb.ToString();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(htmlContent);
+        await JS.InvokeVoidAsync("cfDownloadHtml", $"{filename}.html", Convert.ToBase64String(bytes));
+    }
+
+    private async Task BuildAndDownloadAllNotesHtml(List<(LocalNote Note, List<ChatMessage> Entries)> notesToExport)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"en\"><head>");
+        sb.AppendLine($"<meta charset=\"utf-8\">");
+        sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+        sb.AppendLine("<title>Chatfish Notes Export — All Notebooks</title>");
+        sb.AppendLine("<style>");
+        sb.AppendLine("  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; background: #fff; }");
+        sb.AppendLine("  h1 { border-bottom: 2px solid #2563eb; padding-bottom: 8px; color: #1e3a5f; }");
+        sb.AppendLine("  h2 { margin-top: 40px; color: #2563eb; border-bottom: 1px solid #dbeafe; padding-bottom: 4px; }");
+        sb.AppendLine("  .note-entry { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0; }");
+        sb.AppendLine("  .note-entry p { margin: 0 0 8px 0; }");
+        sb.AppendLine("  .note-entry img { max-width: 100%; height: auto; border-radius: 4px; }");
+        sb.AppendLine("  .meta { font-size: 0.75rem; color: #94a3b8; margin-bottom: 8px; }");
+        sb.AppendLine("</style>");
+        sb.AppendLine("</head><body>");
+        sb.AppendLine("<h1>Chatfish Notes Export</h1>");
+
+        foreach (var (note, entries) in notesToExport)
+        {
+            sb.AppendLine($"<h2>{EncodeHtml(note.Title)} <span style=\"font-size:0.7em;color:#94a3b8\">({note.LastUpdated.ToLocalTime():yyyy-MM-dd HH:mm})</span></h2>");
+
+            foreach (var entry in entries)
+            {
+                sb.AppendLine("<div class=\"note-entry\">");
+                sb.AppendLine($"<div class=\"meta\">{(entry.Timestamp?.ToLocalTime().ToString("MMM d, yyyy HH:mm") ?? "no date")}");
+                if (!string.IsNullOrWhiteSpace(entry.ModelUsed))
+                    sb.Append($" &middot; via {EncodeHtml(entry.ModelUsed)}");
+                sb.AppendLine("</div>");
+
+                var html = entry.Content;
+                var contentFormat = entry.ContentFormat;
+                if (!string.IsNullOrWhiteSpace(html) && !NoteContentFormatter.IsHtml(contentFormat))
+                {
+                    var paragraphs = html.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                    foreach (var p in paragraphs.Where(p => !string.IsNullOrWhiteSpace(p)))
+                        sb.AppendLine($"<p>{EncodeHtml(p)}</p>");
+                }
+                else if (!string.IsNullOrWhiteSpace(html))
+                {
+                    sb.AppendLine(html);
+                }
+
+                sb.AppendLine("</div>");
+            }
+        }
+
+        sb.AppendLine("</body></html>");
+
+        var htmlContent = sb.ToString();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(htmlContent);
+        await JS.InvokeVoidAsync("cfDownloadHtml", "chatfish-notes-export-all.html", Convert.ToBase64String(bytes));
+    }
 
     private void ToggleMenu(string id)
     {
