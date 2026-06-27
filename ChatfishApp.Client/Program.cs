@@ -5,6 +5,7 @@ using ChatfishApp.Core.Chat;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
 using ChatfishApp.Core.UI;
+using ChatfishApp.Core.Update;
 using ChatfishApp.Shared.Services;
 using ChatfishApp.Shared.Services.Tools;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
@@ -38,6 +39,7 @@ builder.Services.AddScoped<WasmCryptoService>();
 builder.Services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<WasmCryptoService>());
 builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationService>();
 builder.Services.AddScoped<WasmGuestDataMigrationService>();
+builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
 
 builder.Services.AddScoped<McpToolSource>();
 builder.Services.AddScoped<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
