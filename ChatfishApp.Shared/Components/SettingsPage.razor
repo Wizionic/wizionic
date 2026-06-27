@@ -1,6 +1,8 @@
 
 @inject ChatfishApp.Core.Storage.IKeyStore KeyStore
+@inject ChatfishApp.Core.Update.IUpdateService UpdateService
 @inject NavigationManager Nav
+@using ChatfishApp.Core.Update
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
     <h4 style="margin: 0;">Settings</h4>
@@ -162,6 +164,38 @@
             @saveFeedback
         </div>
     }
+
+    <!-- App Updates (MAUI only) -->
+    @if (AppEnvironment.IsMaui)
+    {
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+            <h4>App Updates</h4>
+
+            @if (updateInfo != null)
+            {
+                <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--success, #d4edda); border: 1px solid #0a0; border-radius: 6px;">
+                    Version @updateInfo.Version is available!
+                </div>
+                <button class="btn btn-primary" @onclick="InstallUpdate" disabled="@busy">
+                    @(busy ? "Installing..." : "Install and Restart")
+                </button>
+            }
+            else if (hasChecked)
+            {
+                <div style="margin: 0.75rem 0; color: #555;">
+                    You're on the latest version.
+                </div>
+            }
+
+            @if (!busy)
+            {
+                <button class="btn btn-outline-secondary" style="margin-top: 0.5rem;"
+                        @onclick="CheckForUpdate" disabled="@busy">
+                    Check for Updates
+                </button>
+            }
+        </div>
+    }
 </div>
 
 <ConfirmDialog IsVisible="@showDeleteAllConfirm"
@@ -185,6 +219,11 @@
     private string? saveFeedback;
     private bool saveFeedbackIsError;
     private CancellationTokenSource? _saveFeedbackCts;
+
+    // Update check state (used when IsMaui is true)
+    private UpdateInfo? updateInfo;
+    private bool hasChecked;
+    private bool busy;
 
     private IEnumerable<ChatfishApp.Core.Storage.UserMemory> FilteredMemories =>
         string.IsNullOrWhiteSpace(memorySearch)
@@ -376,5 +415,33 @@
         catch (TaskCanceledException)
         {
         }
+    }
+
+    private async Task CheckForUpdate()
+    {
+        if (UpdateService == null) return;
+        busy = true;
+        hasChecked = false;
+        updateInfo = null;
+        StateHasChanged();
+        try
+        {
+            updateInfo = await UpdateService.CheckForUpdateAsync();
+            hasChecked = true;
+        }
+        finally
+        {
+            busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task InstallUpdate()
+    {
+        if (updateInfo == null || UpdateService == null) return;
+        busy = true;
+        StateHasChanged();
+        await UpdateService.DownloadAndInstallAsync(updateInfo);
+        // ApplyUpdatesAndRestart won't return — app restarts with new version
     }
 }

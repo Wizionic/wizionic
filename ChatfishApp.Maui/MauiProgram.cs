@@ -5,12 +5,14 @@ using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
 using ChatfishApp.Core.Chat;
 using ChatfishApp.Core.UI;
+using ChatfishApp.Core.Update;
 using ChatfishApp.Maui.Services;
 using ChatfishApp.Shared.Services;
 using ChatfishApp.Shared.Services.Mcp;
 using ChatfishApp.Shared.Services.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Velopack;
 
 namespace ChatfishApp.Maui;
 
@@ -18,6 +20,11 @@ public static class MauiProgram
 {
 	public static MauiApp CreateMauiApp()
 	{
+		// Must be the very first line before anything else
+        VelopackApp.Build().Run();
+
+		AppEnvironment.SetMaui();
+		
 		var builder = MauiApp.CreateBuilder();
 
 		var configBuilder = new ConfigurationBuilder()
@@ -94,6 +101,8 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
 		builder.Services.AddSingleton<ChatAuthService>();
 		builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
+		builder.Services.AddSingleton<MauiUpdateService>();
+		builder.Services.AddSingleton<IUpdateService>(sp => sp.GetRequiredService<MauiUpdateService>());
 
 		builder.Services.AddMauiBlazorWebView();
 
