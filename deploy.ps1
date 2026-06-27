@@ -4,7 +4,42 @@
 $SERVER_IP = "192.168.4.230"
 $SSH_USER  = "daniel"
 $OUTPUT_DIR = ".\publish_output"
+$MAUI_OUTPUT  = ".\maui_publish"
+$RELEASES_DIR = ".\maui_releases"
+$VERSION      = "1.0.1"   # bump this before each release
 $WindowsBrevoKey = $env:BREVO_API_KEY
+
+# ==============================================================================
+# PART 1 — MAUI WINDOWS INSTALLER (Velopack)
+# ==============================================================================
+Write-Host "Building MAUI Windows Installer..." -ForegroundColor Cyan
+
+if (Test-Path $MAUI_OUTPUT)  { Remove-Item -Recurse -Force $MAUI_OUTPUT }
+if (Test-Path $RELEASES_DIR) { Remove-Item -Recurse -Force $RELEASES_DIR }
+
+dotnet publish "ChatfishApp.Maui\ChatfishApp.Maui.csproj" `
+    -c Release `
+    -f net10.0-windows10.0.19041.0 `
+    -p:RuntimeIdentifierOverride=win-x64 `
+    -o $MAUI_OUTPUT
+
+vpk pack `
+    --packId "com.chatfish.app" `
+    --packVersion $VERSION `
+    --packDir $MAUI_OUTPUT `
+    --mainExe Chatfish.exe `
+    --outputDir $RELEASES_DIR
+
+Write-Host "Uploading installer to chatfish.me..." -ForegroundColor Cyan
+
+# SCP the release files into the releases folder on the server
+scp -r "${RELEASES_DIR}\*" "${SSH_USER}@${SERVER_IP}:/var/www/chatfish/releases/windows/"
+
+Write-Host "MAUI Installer deployed!" -ForegroundColor Green
+
+# ==============================================================================
+# PART 2 — SERVER BLAZOR APP (Docker)
+# =============================================================================
 
 Write-Host "Starting Production Build for Chatfish..." -ForegroundColor Cyan
 
@@ -36,7 +71,7 @@ Out-File -FilePath "$OUTPUT_DIR\Dockerfile" -InputObject $DockerContent -Encodin
 Write-Host "Transferring clean build assets to M5 Server..." -ForegroundColor Cyan
 
 # 4. Clear old deployment assets safely, explicitly preserving the 'data' directory
-$SafeCleanCmd = "find /var/www/chatfish -mindepth 1 -maxdepth 1 ! -name 'data' -exec rm -rf {} +"
+$SafeCleanCmd = "find /var/www/chatfish -mindepth 1 -maxdepth 1 ! -name 'data'  ! -name 'releases' -exec rm -rf {} +"
 ssh "${SSH_USER}@${SERVER_IP}" $SafeCleanCmd
 
 # 5. Fix the SCP path by wrapping the variable properly using curly braces to avoid the colon collision
@@ -53,6 +88,7 @@ $RemoteCmds = "cd /var/www/chatfish && " +
               "-e ASPNETCORE_ENVIRONMENT=Production " +
               "-e BREVO_API_KEY='$WindowsBrevoKey' " +
               "-v /var/www/chatfish/data:/app/data " +
+              "-v /var/www/chatfish/releases:/app/wwwroot/releases " +
               "--restart unless-stopped chatfish-app:latest"
 
 
