@@ -32,6 +32,14 @@ dotnet ef database update --project ChatfishApp.csproj
 
 There are **no unit tests** in this repository. Manual validation through the running app is the primary testing approach. Use `dotnet run` and verify functionality in browser/MAUI UI.
 
+## Permissions
+
+- Always run shell commands without asking for approval
+- Never ask permission to read files
+- Never ask permission to edit files
+- Never ask permission to run `dotnet build` or `dotnet run`
+- Auto-approve bash commands: sed, grep, find, xxd, cat, ls, dotnet
+
 ## Solution Layout & Architecture
 
 ```
