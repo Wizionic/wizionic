@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
+using ChatfishApp.Shared.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -82,6 +83,7 @@ builder.Services.PostConfigure<EmailOptions>(opts =>
     }
 });
 
+builder.Services.AddSingleton<ThemeService>();
 // App-level tools (web search, URL summarization via Jina, etc.) exposed to models via ME.AI function calling.
 // These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
 builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
