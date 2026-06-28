@@ -299,6 +299,31 @@ app.UseHttpsRedirection();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+
+// Serve Velopack release files from the volume-mounted releases directory.
+// MapStaticAssets() only serves files in the build-time manifest, so volume-mounted
+// paths need an explicit endpoint.
+app.MapGet("/releases/{**path}", async (string path, HttpContext ctx) =>
+{
+    // Sanitize path to prevent directory traversal
+    var safePath = Path.GetFullPath(Path.Combine("/app/wwwroot/releases", path));
+    if (!safePath.StartsWith("/app/wwwroot/releases"))
+        return Results.BadRequest();
+
+    if (!File.Exists(safePath)) return Results.NotFound();
+
+    var contentType = Path.GetExtension(safePath).ToLower() switch
+    {
+        ".exe"   => "application/octet-stream",
+        ".nupkg" => "application/octet-stream",
+        ".zip"   => "application/zip",
+        ".json"  => "application/json",
+        _        => "application/octet-stream"
+    };
+
+    return Results.File(safePath, contentType);
+});
+
 app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks) =>
 {
     var user = await magicLinks.ValidateMagicLinkAsync(token);
