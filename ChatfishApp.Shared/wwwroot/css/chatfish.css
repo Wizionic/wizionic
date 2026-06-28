@@ -21,8 +21,8 @@
 
 html, body {
     height: 100%;
-    background: var(--grey-50);
-    color: var(--text-dark);
+    background: var(--color-bg);
+    color: var(--color-text);
     font-family: "Segoe UI", sans-serif;
     line-height: var(--line-normal);
 }
@@ -137,6 +137,39 @@ a:hover {
 
     --border-light: 1px solid var(--grey-200);
     --border-medium: 1px solid var(--grey-300);
+
+        /* === SEMANTIC THEME TOKENS (components should use these) === */
+
+    /* Backgrounds */
+    --color-bg:            var(--grey-50);
+    --color-bg-surface:    #ffffff;
+    --color-bg-subtle:     var(--light-blue-2);
+    --color-bg-muted:      var(--grey-100);
+
+    /* Borders */
+    --color-border:        var(--grey-200);
+    --color-border-strong: var(--grey-300);
+
+    /* Text */
+    --color-text:          var(--text-dark);
+    --color-text-muted:    var(--grey-500);
+    --color-text-inverse:  var(--text-light);
+
+    /* Sidebar */
+    --color-sidebar-bg:    var(--light-blue-2);
+    --color-sidebar-border: var(--grey-200);
+
+    /* Chat */
+    --color-chat-bg:       var(--light-blue-3);
+    --color-bubble-user:   var(--bubble-blue);
+    --color-bubble-ai:     #ffffff;
+
+    /* Topbar */
+    --color-topbar-bg:     var(--light-blue-2);
+
+    /* Accents (shared across themes) */
+    --color-accent:        var(--primary-blue);
+    --color-accent-dark:   var(--primary-dark);
 }
 
 /* ------------------------------
@@ -249,14 +282,14 @@ a:hover {
     flex-direction: column;
     height: calc(100vh - 3.5rem);
     width: 100%;               /* fills the parent <main> perfectly */
-    background: var(--light-blue-3);   /* uniform background so sides match the area around chat bubbles */
+    background: var(--color-chat-bg);
 }
 
 .chat-container {
     flex: 1;
     overflow-y: auto;
     padding: 1.5rem 1rem 195px;  /* reserve space for taller 3-line input bar */
-    background: var(--light-blue-3);
+    background: var(--color-chat-bg);
     max-width: 1080px;
     margin: 0 auto;
     width: 100%;
@@ -267,7 +300,8 @@ a:hover {
 
 .message-me {
     margin-left: auto;
-    background: var(--bubble-blue);
+    background: var(--color-bubble-user);
+    color: var(--color-text);
     padding: 0.6rem 1rem;
     border-radius: 12px;
     max-width: 70%;
@@ -277,7 +311,8 @@ a:hover {
 .message-bot {
     position: relative;
     margin-right: auto;
-    background: var(--bubble-ai-bg, #ffffff);
+    background: var(--color-bubble-ai);
+    color: var(--color-text);
     padding: 0.6rem 1rem;
     padding-top: 1.75rem;
     border-radius: 12px;
@@ -315,7 +350,7 @@ a:hover {
 
 /* ====================== COMPACT SEAMLESS INPUT (full-width of chat content) ====================== */
 .input-area {
-    background: var(--light-blue-3);   /* exact match to .chat-container for seamless look */
+    background: var(--color-chat-bg);
     border-top: none;
     box-shadow: none;
     padding: 10px 24px 14px;  /* side padding controls distance from edges of the chat pane */
@@ -326,8 +361,8 @@ a:hover {
     display: flex;
     align-items: flex-end;   /* buttons stay at bottom when textarea grows */
     gap: 6px;
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
+    background: var(--color-bg-surface);
+    border: 1px solid var(--color-border);
     border-radius: 18px;
     padding: 6px 12px;
     max-width: none;         /* let it fill the full available width of the chat area */
@@ -951,11 +986,56 @@ a:hover {
 }
 
 .settings-content .settings-card {
-    border: 1px solid var(--grey-200);
+    border: 1px solid var(--color-border);
     border-radius: 10px;
-    background: white;
+    background: var(--color-bg-surface);
     padding: 1.25rem 1.5rem;
     margin-top: 1.25rem;
+}
+
+.settings-content .theme-setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.settings-content .theme-setting-row:first-of-type {
+    padding-top: 0;
+}
+
+.settings-content .theme-setting-row:last-of-type {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.settings-content .theme-setting-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.settings-content .theme-setting-label {
+    margin: 0;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.settings-content .theme-setting-desc {
+    margin: 0.25rem 0 0;
+    font-size: 0.85em;
+    color: var(--color-text-muted);
+    line-height: 1.4;
+}
+
+.settings-content .theme-setting-select {
+    min-width: 190px;
+    max-width: 220px;
+    flex-shrink: 0;
+    background: var(--color-bg-surface);
+    color: var(--color-text);
+    border-color: var(--color-border);
 }
 
 .settings-content .memory-search-wrap {
@@ -1077,8 +1157,8 @@ a:hover {
 
 /* Top bar / page / sidebar structure (previously copied; now in unified global so WASM + any server pages share) */
 .top-row {
-    background: var(--light-blue-2);
-    border-bottom: var(--border-light);
+    background: var(--color-topbar-bg);
+    border-bottom: 1px solid var(--color-border);
     height: 3.5rem;
     display: flex;
     align-items: center;
@@ -1193,8 +1273,8 @@ a:hover {
 .sidebar {
     width: 250px;
     flex-shrink: 0;
-    background: var(--light-blue-2);
-    border-right: 1px solid var(--grey-200);
+    background: var(--color-sidebar-bg);
+    border-right: 1px solid var(--color-sidebar-border);
     overflow-y: auto;
     position: fixed;
     top: 3.5rem;
@@ -1208,7 +1288,7 @@ main {
     margin-top: 0;
     margin-left: 250px;
     min-width: 0;
-    background: var(--grey-50);
+    background: var(--color-bg);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -2041,3 +2121,155 @@ body .message-bot,
     margin: 0.35rem 0;
 }
 
+
+/* ========================================
+   THEMES
+   ======================================== */
+
+/* --- Dark --- */
+[data-theme="dark"] {
+    --grey-50:             #1a1a2e;
+    --grey-100:            #1e2a45;
+    --grey-200:            #2d3748;
+    --grey-300:            #4a5568;
+    --light-blue-1:        #1e2a45;
+    --light-blue-2:        #16213e;
+    --light-blue-3:        #1a1a2e;
+    --text-dark:           #e2e8f0;
+    --primary-dark:        #7CCBFF;
+    --bubble-blue:         #1e3a5f;
+    --bubble-ai-bg:        #16213e;
+
+    --color-bg:            #1a1a2e;
+    --color-bg-surface:    #16213e;
+    --color-bg-subtle:     #0f3460;
+    --color-bg-muted:      #1e2a45;
+
+    --color-border:        #2d3748;
+    --color-border-strong: #4a5568;
+
+    --color-text:          #e2e8f0;
+    --color-text-muted:    #94a3b8;
+    --color-text-inverse:  #1a1a2e;
+
+    --color-sidebar-bg:    #16213e;
+    --color-sidebar-border: #2d3748;
+
+    --color-chat-bg:       #1a1a2e;
+    --color-bubble-user:   #1e3a5f;
+    --color-bubble-ai:     #16213e;
+
+    --color-topbar-bg:     #16213e;
+}
+
+/* --- Dracula --- */
+[data-theme="dracula"] {
+    --grey-50:             #282a36;
+    --grey-100:            #383a4a;
+    --grey-200:            #44475a;
+    --grey-300:            #6272a4;
+    --light-blue-1:        #383a4a;
+    --light-blue-2:        #1e1f29;
+    --light-blue-3:        #282a36;
+    --text-dark:           #f8f8f2;
+    --primary-dark:        #bd93f9;
+    --bubble-blue:         #44475a;
+    --bubble-ai-bg:        #1e1f29;
+
+    --color-bg:            #282a36;
+    --color-bg-surface:    #1e1f29;
+    --color-bg-subtle:     #44475a;
+    --color-bg-muted:      #383a4a;
+
+    --color-border:        #44475a;
+    --color-border-strong: #6272a4;
+
+    --color-text:          #f8f8f2;
+    --color-text-muted:    #6272a4;
+
+    --color-sidebar-bg:    #1e1f29;
+    --color-sidebar-border: #44475a;
+
+    --color-chat-bg:       #282a36;
+    --color-bubble-user:   #44475a;
+    --color-bubble-ai:     #1e1f29;
+
+    --color-topbar-bg:     #1e1f29;
+
+    --color-accent:        #bd93f9;
+    --color-accent-dark:   #9d73d9;
+}
+
+/* --- Nord --- */
+[data-theme="nord"] {
+    --grey-50:             #2e3440;
+    --grey-100:            #3b4252;
+    --grey-200:            #4c566a;
+    --grey-300:            #616e88;
+    --light-blue-1:        #434c5e;
+    --light-blue-2:        #3b4252;
+    --light-blue-3:        #2e3440;
+    --text-dark:           #eceff4;
+    --primary-dark:        #88c0d0;
+    --bubble-blue:         #4c566a;
+    --bubble-ai-bg:        #3b4252;
+
+    --color-bg:            #2e3440;
+    --color-bg-surface:    #3b4252;
+    --color-bg-subtle:     #434c5e;
+    --color-bg-muted:      #3b4252;
+
+    --color-border:        #4c566a;
+    --color-border-strong: #616e88;
+
+    --color-text:          #eceff4;
+    --color-text-muted:    #9099aa;
+
+    --color-sidebar-bg:    #3b4252;
+    --color-sidebar-border: #4c566a;
+
+    --color-chat-bg:       #2e3440;
+    --color-bubble-user:   #4c566a;
+    --color-bubble-ai:     #3b4252;
+
+    --color-topbar-bg:     #3b4252;
+
+    --color-accent:        #88c0d0;
+    --color-accent-dark:   #5e9db0;
+}
+
+/* --- Solarized Light --- */
+[data-theme="solarized-light"] {
+    --grey-50:             #fdf6e3;
+    --grey-100:            #ede8d5;
+    --grey-200:            #ccc4a8;
+    --grey-300:            #b5ae95;
+    --light-blue-1:        #e8e2cf;
+    --light-blue-2:        #eee8d5;
+    --light-blue-3:        #fdf6e3;
+    --text-dark:           #657b83;
+    --primary-dark:        #268bd2;
+    --bubble-blue:         #d4cdb5;
+    --bubble-ai-bg:        #eee8d5;
+
+    --color-bg:            #fdf6e3;
+    --color-bg-surface:    #eee8d5;
+    --color-bg-subtle:     #e8e2cf;
+    --color-bg-muted:      #ede8d5;
+
+    --color-border:        #ccc4a8;
+    --color-border-strong: #b5ae95;
+
+    --color-text:          #657b83;
+    --color-text-muted:    #93a1a1;
+
+    --color-sidebar-bg:    #eee8d5;
+    --color-chat-bg:       #fdf6e3;
+    --color-bubble-user:   #d4cdb5;
+    --color-bubble-ai:     #eee8d5;
+
+    --color-topbar-bg:     #eee8d5;
+
+    --color-accent:        #268bd2;
+    --color-accent-dark:   #1a6ea8;
+}

@@ -1,3 +1,5 @@
+@inject IJSRuntime JS
+
 <div class="top-row px-4">
     <div class="top-left">
         <a class="cf-brand" href="/chat">
@@ -28,3 +30,19 @@
         </a>
     </div>
 </div>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Re-apply after every render — Blazor enhanced navigation can strip <html data-theme>
+        // between per-page WASM root swaps. JS-only call avoids redundant C# state churn.
+        try
+        {
+            await ThemeInterop.ApplySavedAsync(JS);
+        }
+        catch
+        {
+            // JS interop may be unavailable during static render passes.
+        }
+    }
+}

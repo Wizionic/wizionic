@@ -71,6 +71,7 @@ public static class MauiProgram
 			};
 		});
 
+		builder.Services.AddSingleton<ThemeService>();
 		builder.Services.AddSingleton<SqliteSettingsDatabase>();
 		builder.Services.AddSingleton<SqliteHistoryDatabase>();
 		builder.Services.AddScoped<SqliteConversationStore>();

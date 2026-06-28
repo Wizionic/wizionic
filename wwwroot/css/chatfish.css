@@ -137,6 +137,40 @@ a:hover {
 
     --border-light: 1px solid var(--grey-200);
     --border-medium: 1px solid var(--grey-300);
+
+    /* === SEMANTIC THEME TOKENS (components should use these) === */
+
+    /* Backgrounds */
+    --color-bg:            var(--grey-50);
+    --color-bg-surface:    #ffffff;
+    --color-bg-subtle:     var(--light-blue-2);
+    --color-bg-muted:      var(--grey-100);
+
+    /* Borders */
+    --color-border:        var(--grey-200);
+    --color-border-strong: var(--grey-300);
+
+    /* Text */
+    --color-text:          var(--text-dark);
+    --color-text-muted:    var(--grey-500);
+    --color-text-inverse:  var(--text-light);
+
+    /* Sidebar */
+    --color-sidebar-bg:    var(--light-blue-2);
+    --color-sidebar-border: var(--grey-200);
+
+    /* Chat */
+    --color-chat-bg:       var(--light-blue-3);
+    --color-bubble-user:   var(--bubble-blue);
+    --color-bubble-ai:     #ffffff;
+
+    /* Topbar */
+    --color-topbar-bg:     var(--light-blue-2);
+
+    /* Accents (shared across themes) */
+    --color-accent:        var(--primary-blue);
+    --color-accent-dark:   var(--primary-dark);
+
 }
 
 /* ------------------------------
@@ -2041,3 +2075,107 @@ body .message-bot,
     margin: 0.35rem 0;
 }
 
+
+/* ========================================
+   THEMES
+   ======================================== */
+
+/* --- Dark --- */
+[data-theme="dark"] {
+    --color-bg:            #1a1a2e;
+    --color-bg-surface:    #16213e;
+    --color-bg-subtle:     #0f3460;
+    --color-bg-muted:      #1e2a45;
+
+    --color-border:        #2d3748;
+    --color-border-strong: #4a5568;
+
+    --color-text:          #e2e8f0;
+    --color-text-muted:    #94a3b8;
+    --color-text-inverse:  #1a1a2e;
+
+    --color-sidebar-bg:    #16213e;
+    --color-sidebar-border: #2d3748;
+
+    --color-chat-bg:       #1a1a2e;
+    --color-bubble-user:   #1e3a5f;
+    --color-bubble-ai:     #16213e;
+
+    --color-topbar-bg:     #16213e;
+}
+
+/* --- Dracula --- */
+[data-theme="dracula"] {
+    --color-bg:            #282a36;
+    --color-bg-surface:    #1e1f29;
+    --color-bg-subtle:     #44475a;
+    --color-bg-muted:      #383a4a;
+
+    --color-border:        #44475a;
+    --color-border-strong: #6272a4;
+
+    --color-text:          #f8f8f2;
+    --color-text-muted:    #6272a4;
+
+    --color-sidebar-bg:    #1e1f29;
+    --color-sidebar-border: #44475a;
+
+    --color-chat-bg:       #282a36;
+    --color-bubble-user:   #44475a;
+    --color-bubble-ai:     #1e1f29;
+
+    --color-topbar-bg:     #1e1f29;
+
+    --color-accent:        #bd93f9;
+    --color-accent-dark:   #9d73d9;
+}
+
+/* --- Nord --- */
+[data-theme="nord"] {
+    --color-bg:            #2e3440;
+    --color-bg-surface:    #3b4252;
+    --color-bg-subtle:     #434c5e;
+    --color-bg-muted:      #3b4252;
+
+    --color-border:        #4c566a;
+    --color-border-strong: #616e88;
+
+    --color-text:          #eceff4;
+    --color-text-muted:    #9099aa;
+
+    --color-sidebar-bg:    #3b4252;
+    --color-sidebar-border: #4c566a;
+
+    --color-chat-bg:       #2e3440;
+    --color-bubble-user:   #4c566a;
+    --color-bubble-ai:     #3b4252;
+
+    --color-topbar-bg:     #3b4252;
+
+    --color-accent:        #88c0d0;
+    --color-accent-dark:   #5e9db0;
+}
+
+/* --- Solarized Light --- */
+[data-theme="solarized-light"] {
+    --color-bg:            #fdf6e3;
+    --color-bg-surface:    #eee8d5;
+    --color-bg-subtle:     #e8e2cf;
+    --color-bg-muted:      #ede8d5;
+
+    --color-border:        #ccc4a8;
+    --color-border-strong: #b5ae95;
+
+    --color-text:          #657b83;
+    --color-text-muted:    #93a1a1;
+
+    --color-sidebar-bg:    #eee8d5;
+    --color-chat-bg:       #fdf6e3;
+    --color-bubble-user:   #d4cdb5;
+    --color-bubble-ai:     #eee8d5;
+
+    --color-topbar-bg:     #eee8d5;
+
+    --color-accent:        #268bd2;
+    --color-accent-dark:   #1a6ea8;
+}
