@@ -104,9 +104,51 @@
                                                  <i class="cf-icon bi bi-arrow-down"></i>
                                              </button>
                                          }
-                                        <button type="button" class="menu-button note-action-btn" @onclick="() => PromptDeleteNoteEntry(capturedIndex)" title="Delete entry">
-                                            <i class="cf-icon bi bi-trash3-fill"></i>
-                                        </button>
+                                        <div class="menu" @onclick:stopPropagation style="position:relative;">
+                                            @if (openEntryMenuIndex == capturedIndex)
+                                            {
+                                                <div class="menu-popup" style="@entryPopupStyle" @onclick:stopPropagation>
+                                                    <div @onclick="() => { CloseEntryMenu(); PromptDeleteNoteEntry(capturedIndex); }">
+                                                        <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                                                        Delete note entry
+                                                    </div>
+                                                    <div @onclick="() => OpenMoveNotebookDialog(capturedIndex)">
+                                                        <button type="button" class="menu-button"><i class="cf-icon bi bi-arrow-right-square"></i></button>
+                                                        Move note entry
+                                                    </div>
+                                                </div>
+                                                <div class="menu-overlay" @onclick="CloseEntryMenu"></div>
+                                            }
+                                            @if (openMoveNotebookDialog)
+                                            {
+                                                <div class="newnote-overlay" @onclick:stopPropagation>
+                                                    <div class="newnote-modal move-notebook-modal" @onclick:stopPropagation>
+                                                        <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Move Note to Notebook</h4>
+                                                        @if (moveTargetNotebooks.Count == 0)
+                                                        {
+                                                            <p style="font-size:0.85rem;color:#64748b;margin:12px 0 0 0;">No other notebooks available.</p>
+                                                        }
+                                                        else
+                                                        {
+                                                            @foreach (var target in moveTargetNotebooks)
+                                                            {
+                                                                var t = target;
+                                                                <div class="move-notebook-item" @onclick="() => ConfirmMoveEntry(t.Id)" @onclick:stopPropagation>
+                                                                    <i class="cf-icon bi bi-journal" style="font-size:1.1em;color:#64748b;margin-right:8px;"></i>
+                                                                    <span>@t.Title</span>
+                                                                </div>
+                                                            }
+                                                        }
+                                                        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+                                                            <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseMoveNotebookDialog">Cancel</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            }
+                                            <button type="button" id="@($"entry-menu-btn-{capturedIndex}")" class="menu-button note-action-btn" style="background:none;border:none;padding:4px;cursor:pointer;" @onclick="() => ToggleEntryMenu(capturedIndex)" title="More options">
+                                                <i class="cf-icon bi bi-three-dots-vertical"></i>
+                                            </button>
+                                        </div>
                                     }
                                 </div>
                                 <div class="message-bot @(isEditing ? "note-editing" : "")">
@@ -181,7 +223,7 @@
             </div>
             <div @onclick="() => PromptDeleteNote(openMenuId)">
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
-                Delete note
+                Delete Notebook
             </div>
         </div>
         <div class="menu-overlay" @onclick="CloseMenu"></div>
@@ -258,6 +300,13 @@
     private string deleteConfirmMessage = "";
     private string? pendingDeleteNoteId;
     private int? pendingDeleteEntryIndex;
+
+    private int? openEntryMenuIndex;
+    private string entryPopupStyle = "";
+    private bool openMoveNotebookDialog;
+    private string moveSourceNoteId = "";
+    private int moveSourceEntryIndex = -1;
+    private List<LocalNote> moveTargetNotebooks = new();
 
     private class PopupPosition
     {
@@ -440,12 +489,102 @@
     private async Task MoveNoteEntryDown(int index)
     {
         if (index < 0 || index >= currentNoteMessages.Count - 1) return;
-        
+
         var item = currentNoteMessages[index];
         currentNoteMessages.RemoveAt(index);
         currentNoteMessages.Insert(index + 1, item);
-        
+
         await SaveCurrent();
+        StateHasChanged();
+    }
+
+    private void ToggleEntryMenu(int index)
+    {
+        if (openEntryMenuIndex == index)
+        {
+            CloseEntryMenu();
+        }
+        else
+        {
+            openEntryMenuIndex = index;
+            _ = PositionEntryPopup(index);
+            StateHasChanged();
+        }
+    }
+
+    private void CloseEntryMenu()
+    {
+        openEntryMenuIndex = null;
+        entryPopupStyle = "";
+        StateHasChanged();
+    }
+
+    private async Task PositionEntryPopup(int index)
+    {
+        try
+        {
+            var pos = await JS.InvokeAsync<PopupPosition>("getMenuPopupPosition", $"entry-menu-btn-{index}");
+            // Use the raw position from JS — no extra offsets. The JS function already
+            // handles overflow (positions left if no room on the right edge).
+            entryPopupStyle = $"position: fixed; top: {pos.top:F0}px; left: {pos.left:F0}px; z-index: 15000;";
+            StateHasChanged();
+        }
+        catch
+        {
+            entryPopupStyle = "position: fixed; top: 80px; right: 20px; z-index: 15000;";
+            StateHasChanged();
+        }
+    }
+
+    private void OpenMoveNotebookDialog(int entryIndex)
+    {
+        CloseEntryMenu();
+        moveSourceNoteId = activeNoteId ?? "";
+        moveSourceEntryIndex = entryIndex;
+        moveTargetNotebooks = notes.Where(n => n.Id != moveSourceNoteId).ToList();
+        openMoveNotebookDialog = true;
+        StateHasChanged();
+    }
+
+    private void CloseMoveNotebookDialog()
+    {
+        openMoveNotebookDialog = false;
+        moveSourceNoteId = "";
+        moveSourceEntryIndex = -1;
+        moveTargetNotebooks.Clear();
+        StateHasChanged();
+    }
+
+    private async Task ConfirmMoveEntry(string targetNoteId)
+    {
+        openMoveNotebookDialog = false;
+        StateHasChanged();
+
+        var sourceEntries = await NoteStore.LoadNoteAsync(moveSourceNoteId);
+        if (moveSourceEntryIndex < 0 || moveSourceEntryIndex >= sourceEntries.Count) return;
+
+        var msg = sourceEntries[moveSourceEntryIndex] with
+        {
+            ItemId = Guid.NewGuid().ToString("N"),
+            ModifiedAt = DateTime.UtcNow
+        };
+
+        // Remove from source
+        sourceEntries.RemoveAt(moveSourceEntryIndex);
+        await NoteStore.SaveNoteAsync(moveSourceNoteId, sourceEntries);
+
+        // Add to target
+        var targetEntries = await NoteStore.LoadNoteAsync(targetNoteId);
+        targetEntries.Add(msg);
+        await NoteStore.SaveNoteAsync(targetNoteId, targetEntries);
+
+        // Update indexes for both
+        notes = await NoteStore.LoadIndexAsync();
+        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(moveSourceNoteId, notes.FirstOrDefault(n => n.Id == moveSourceNoteId)?.Title ?? "");
+        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(targetNoteId, notes.FirstOrDefault(n => n.Id == targetNoteId)?.Title ?? "");
+
+        // Reload current view
+        await LoadNote(activeNoteId!);
         StateHasChanged();
     }
 
