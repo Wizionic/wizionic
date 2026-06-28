@@ -1,0 +1,58 @@
+@implements IAsyncDisposable
+@inject ThemeService Theme
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+@code {
+    private DotNetObjectReference<ThemeBootstrap>? _dotNetRef;
+    private bool _initialized;
+
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_initialized)
+            return;
+
+        _initialized = true;
+        _dotNetRef = DotNetObjectReference.Create(this);
+
+        try
+        {
+            await ThemeInterop.InitPersistentHooksAsync(JS);
+            await Theme.SyncFromStorageAndApplyAsync(JS);
+            await ThemeInterop.InitSystemListenerAsync(JS, _dotNetRef);
+        }
+        catch
+        {
+        }
+    }
+
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        try
+        {
+            await Theme.SyncFromStorageAndApplyAsync(JS);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnSystemColorSchemeChanged()
+    {
+        await Theme.HandleSystemColorSchemeChangedAsync(JS);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+        _dotNetRef?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
