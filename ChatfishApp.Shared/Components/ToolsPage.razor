@@ -3,13 +3,13 @@
 @inject HttpClient Http
 @inject ChatfishApp.Core.Storage.IMcpToolRefresher? McpToolRefresher
 
-<div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
-        <h4 style="margin:0;">MCP Tools</h4>
-    <p style="color: #666; font-size: 0.9em;">
+<div class="settings-content cf-tools" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
+    <h4 style="margin:0;">MCP Tools</h4>
+    <p class="text-sm" style="font-size: 0.9em;">
         Select remote MCP servers to make available to the model during chat. Only servers that publish HTTP/SSE endpoints (streamable-http or SSE) are shown — stdio-only local servers are filtered out because a browser cannot launch them.
     </p>
 
-    <div style="background:#f8f9fa; border:1px solid #eee; padding:0.75rem 1rem; border-radius:6px; margin: 0.75rem 0; font-size:0.85em; color:#444;">
+    <div style="background: var(--color-bg-muted); border: 1px solid var(--color-border); padding: 0.75rem 1rem; border-radius: 6px; margin: 0.75rem 0; font-size: 0.85em; color: var(--color-text);">
         <strong>Important notes:</strong>
         <ul style="margin:0.4rem 0 0 1rem; padding:0;">
             <li><strong>Authentication:</strong> Servers marked "requires token" need an API key / Bearer token. Full token management UI is planned; for now the model will be unable to use protected servers until you can supply credentials securely.</li>
@@ -23,16 +23,16 @@
         <button @onclick="RefreshRegistry" class="btn btn-outline-primary btn-sm" disabled="@isLoading">
             @(isLoading ? "Loading..." : "Refresh from Registry")
         </button>
-        <span style="font-size:0.8em; color:#888; margin-left:auto;">@enabledCount enabled</span>
+        <span class="text-muted" style="font-size:0.8em; margin-left:auto;">@enabledCount enabled</span>
     </div>
 
     @if (isLoading && !registryTools.Any())
     {
-        <div style="color:#666; padding:1rem 0;">Loading MCP servers from registry...</div>
+        <div class="text-muted" style="padding:1rem 0;">Loading MCP servers from registry...</div>
     }
     else if (!string.IsNullOrEmpty(loadError))
     {
-        <div style="color:#c00; background:#fff0f0; padding:0.5rem 0.75rem; border-radius:4px;">
+        <div class="cf-dialog-error">
             @loadError
             <button @onclick="RefreshRegistry" class="btn btn-link" style="padding:0 0.25rem; font-size:0.9em;">Retry</button>
         </div>
@@ -43,7 +43,7 @@
         <div style="display:flex; flex-direction:column; gap:0.5rem;">
             @foreach (var t in registryTools)
             {
-                <div style="border:1px solid #e5e5e5; border-radius:6px; padding:0.6rem 0.8rem; background:white;">
+                <div class="cf-tools-card">
                     <label style="display:flex; gap:0.6rem; align-items:flex-start; cursor:pointer; margin:0;">
                         <input type="checkbox"
                                checked="@t.IsEnabled"
@@ -55,30 +55,30 @@
                                 <strong>@t.Name</strong>
                                 @if (!string.IsNullOrWhiteSpace(t.Version))
                                 {
-                                    <span style="font-size:0.75em; background:#f0f0f0; padding:1px 5px; border-radius:3px; color:#555;">v@t.Version</span>
+                                    <span class="cf-badge-default">v@t.Version</span>
                                 }
                                 @if (t.RequiresAuth)
                                 {
-                                    <span style="font-size:0.7em; background:#fff3cd; color:#856404; padding:1px 6px; border-radius:3px; border:1px solid #ffeaa7;">requires token</span>
+                                    <span class="cf-badge-auth">requires token</span>
                                 }
-                                <span style="font-size:0.7em; color:#888; margin-left:auto;">@t.Transport</span>
+                                <span class="text-muted" style="font-size:0.7em; margin-left:auto;">@t.Transport</span>
                             </div>
 
                             @if (!string.IsNullOrWhiteSpace(t.Description))
                             {
-                                <div style="font-size:0.85em; color:#444; margin-top:2px; line-height:1.3;">
+                                <div class="text-sm" style="margin-top:2px; line-height:1.3;">
                                     @t.Description
                                 </div>
                             }
 
-                            <div style="font-size:0.75em; color:#666; margin-top:4px; word-break:break-all;">
-                                <span style="color:#888;">endpoint:</span> @t.RemoteUrl
+                            <div class="cf-lv-row">
+                                <span class="cf-lv-label">endpoint:</span> @t.RemoteUrl
                             </div>
 
                             @if (t.IsEnabled)
                             {
                                 <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
-                                    <span style="font-size:0.72em; color:#555; white-space:nowrap;">Token / Key:</span>
+                                    <span class="cf-xs-text">Token / Key:</span>
                                     <input type="password"
                                            value="@t.Token"
                                            @oninput="@(e => UpdateAndSaveToken(t, (e as ChangeEventArgs)?.Value?.ToString() ?? ""))"
@@ -90,7 +90,7 @@
                             @if (!string.IsNullOrWhiteSpace(t.InfoUrl))
                             {
                                 <div style="margin-top:2px;">
-                                    <a href="@t.InfoUrl" target="_blank" rel="noopener" style="font-size:0.75em;">more info ↗</a>
+                                    <a href="@t.InfoUrl" target="_blank" rel="noopener" class="cf-more-info">more info ↗</a>
                                 </div>
                             }
                         </div>
@@ -101,16 +101,16 @@
     }
     else if (!isLoading && string.IsNullOrEmpty(loadError) && !registryTools.Any())
     {
-        <div style="color:#666; font-size:0.9em;">No remote MCP servers found from the registry (or all were stdio-only and filtered out).</div>
+        <div class="text-sm" style="font-size:0.9em; padding:0.25rem 0;">No remote MCP servers found from the registry (or all were stdio-only and filtered out).</div>
     }
 
     <!-- ==================== CUSTOM CONNECTORS SECTION ==================== -->
     <div style="margin-top: 1.5rem;">
         <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
             <h3 style="margin:0; font-size:1.05rem;">Custom Connectors
-                <small style="color:#888; margin-left:auto;">  Add your own remote MCP servers (HTTP/SSE)</small>
+                <small class="text-muted" style="margin-left:auto;">  Add your own remote MCP servers (HTTP/SSE)</small>
                 </h3>
-            
+
             <div><button @onclick="OpenAddCustomDialog" class="btn btn-outline-secondary btn-sm">
                 + Add Custom Connector
             </button></div>
@@ -121,7 +121,7 @@
             <div style="display:flex; flex-direction:column; gap:0.5rem;">
                 @foreach (var t in customTools)
                 {
-                    <div style="border:1px solid #e5e5e5; border-radius:6px; padding:0.55rem 0.75rem; background:#fafafa;">
+                    <div class="cf-tools-card cf-tools-card-muted">
                         <div style="display:flex; gap:0.5rem; align-items:flex-start;">
                             <input type="checkbox"
                                    checked="@t.IsEnabled"
@@ -131,20 +131,20 @@
                             <div style="flex:1; min-width:0; font-size:0.92em;">
                                 <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                     <strong>@t.Name</strong>
-                                    <span style="font-size:0.65em; background:#e0e0e0; padding:1px 5px; border-radius:3px; color:#444;">CUSTOM</span>
+                                    <span class="cf-badge-custom">CUSTOM</span>
                                     <button @onclick="() => RequestRemoveCustom(t)"
-                                            style="margin-left:auto; font-size:0.7em; border:none; background:transparent; color:#c33; cursor:pointer; padding:0 2px;"
+                                            class="cf-remove-btn"
                                             title="Remove this custom connector">✕</button>
                                 </div>
 
-                                <div style="font-size:0.72em; color:#555; margin-top:1px; word-break:break-all;">
-                                    <span style="color:#888;">url:</span> @t.RemoteUrl
+                                <div class="cf-lv-row" style="font-size:0.72em; margin-top:1px;">
+                                    <span class="cf-lv-label">url:</span> @t.RemoteUrl
                                 </div>
 
                                 @if (t.IsEnabled)
                                 {
                                     <div style="margin-top:5px; display:flex; gap:6px; align-items:center;">
-                                        <span style="font-size:0.7em; color:#555; white-space:nowrap;">Token / Key:</span>
+                                        <span class="cf-xs-text" style="font-size:0.7em;">Token / Key:</span>
                                         <input type="password"
                                                value="@t.Token"
                                                @oninput="@(e => UpdateAndSaveToken(t, (e as ChangeEventArgs)?.Value?.ToString() ?? ""))"
@@ -160,7 +160,7 @@
         }
         else
         {
-            <div style="font-size:0.85em; color:#666; padding:0.25rem 0;">
+            <div class="text-sm" style="padding:0.25rem 0;">
                 No custom connectors yet. Click <strong>Add Custom Connector</strong> above to connect to your own MCP server.
             </div>
         }
@@ -168,7 +168,7 @@
 
     <div style="margin-top: 1.5rem; display:flex; gap:0.5rem; align-items:center;">
         <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
-        <small style="color:#888;">Selections (including customs) are saved automatically in your browser.</small>
+        <small class="text-muted">Selections (including customs) are saved automatically in your browser.</small>
     </div>
 
 </div>
@@ -180,34 +180,34 @@
                OnConfirm="ConfirmRemoveCustom"
                OnCancel="() => removeCustomName = null" />
 
-<!-- Simple Custom Connector Dialog (styled to match the provided example) -->
+<!-- Simple Custom Connector Dialog -->
 @if (showAddCustomDialog)
 {
     <div @onclick="CloseCustomDialog"
          style="position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:10000; display:flex; align-items:center; justify-content:center;">
         <div @onclick:stopPropagation
-             style="background:white; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.15); width:100%; max-width:420px; margin:1rem; padding:1.25rem 1.5rem; font-size:0.95rem;">
-            
+             style="background:var(--color-bg-surface); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.15); width:100%; max-width:420px; margin:1rem; padding:1.25rem 1.5rem; font-size:0.95rem;">
+
             <div style="font-size:1.15rem; font-weight:600; margin-bottom:0.15rem;">Custom Connector</div>
-            <div style="color:#666; font-size:0.85rem; margin-bottom:1rem;">
+            <div class="text-muted" style="font-size:0.85rem; margin-bottom:1rem;">
                 Enter a custom name and an MCP server URL
             </div>
 
             <div style="margin-bottom:0.75rem;">
-                <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:3px;">Name</label>
+                <label style="display:block; font-size:0.8rem; color:var(--cf-text-muted); margin-bottom:3px;">Name</label>
                 <input type="text" @bind="newCustomName" placeholder="My Connector"
-                       style="width:100%; padding:6px 10px; border:1px solid #ccc; border-radius:6px; font-size:0.95rem;" />
+                       class="cf-dialog-input" />
             </div>
 
             <div style="margin-bottom:1rem;">
-                <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:3px;">Server URL</label>
+                <label style="display:block; font-size:0.8rem; color:var(--cf-text-muted); margin-bottom:3px;">Server URL</label>
                 <input type="text" @bind="newCustomUrl" placeholder="https://mcp.example.com/sse or https://.../mcp"
-                       style="width:100%; padding:6px 10px; border:1px solid #ccc; border-radius:6px; font-size:0.95rem;" />
+                       class="cf-dialog-input" />
             </div>
 
             @if (!string.IsNullOrEmpty(customDialogError))
             {
-                <div style="color:#c33; font-size:0.8rem; margin-bottom:0.6rem; background:#fff0f0; padding:4px 8px; border-radius:4px;">
+                <div class="cf-dialog-error">
                     @customDialogError
                 </div>
             }
@@ -219,7 +219,7 @@
 
                 <button @onclick="AddCustomConnector"
                         class="btn btn-primary"
-                        style="padding:6px 18px; font-size:0.9rem; background:#333; border-color:#333; color:white;">
+                        style="padding:6px 18px; font-size:0.9rem; background:var(--primary-blue); border-color:var(--primary-blue); color:var(--color-text-inverse);">
                     Add Connector
                 </button>
             </div>

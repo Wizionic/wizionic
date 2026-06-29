@@ -59,7 +59,7 @@
             }
             @if (!notes.Any())
             {
-                <div class="cf-item" style="font-size:0.75em; color:#888; padding-left:12px;">No notes yet.</div>
+                <div class="cf-item" style="font-size:0.75em; color:var(--cf-text-muted); padding-left:12px;">No notes yet.</div>
             }
         </nav>
     </div>
@@ -123,10 +123,10 @@
                                             {
                                                 <div class="newnote-overlay" @onclick:stopPropagation>
                                                     <div class="newnote-modal move-notebook-modal" @onclick:stopPropagation>
-                                                        <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Move Note to Notebook</h4>
+                                                        <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Move Note to Notebook</h4>
                                                         @if (moveTargetNotebooks.Count == 0)
                                                         {
-                                                            <p style="font-size:0.85rem;color:#64748b;margin:12px 0 0 0;">No other notebooks available.</p>
+                                                            <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:12px 0 0 0;">No other notebooks available.</p>
                                                         }
                                                         else
                                                         {
@@ -134,7 +134,7 @@
                                                             {
                                                                 var t = target;
                                                                 <div class="move-notebook-item" @onclick="() => ConfirmMoveEntry(t.Id)" @onclick:stopPropagation>
-                                                                    <i class="cf-icon bi bi-journal" style="font-size:1.1em;color:#64748b;margin-right:8px;"></i>
+                                                                    <i class="cf-icon bi bi-journal" style="font-size:1.1em;color:var(--cf-text-muted);margin-right:8px;"></i>
                                                                     <span>@t.Title</span>
                                                                 </div>
                                                             }
@@ -175,13 +175,13 @@
 
                                     @if (!IsUserNoteEntry(msg) && !string.IsNullOrWhiteSpace(msg.ModelUsed))
                                     {
-                                        <div class="model-label" style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
+                                        <div class="model-label" style="font-size:0.6em;color:var(--cf-text-muted);text-align:right;margin-top:2px;opacity:0.7">
                                             via @msg.ModelUsed
                                         </div>
                                     }
                                     @if (msg.Timestamp.HasValue)
                                     {
-                                        <div style="font-size:0.6em;color:#888;text-align:right;margin-top:2px;opacity:0.7">
+                                        <div style="font-size:0.6em;color:var(--cf-text-muted);text-align:right;margin-top:2px;opacity:0.7">
                                             @(msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm"))
                                         </div>
                                     }
@@ -250,12 +250,12 @@
     {
         <div class="newnote-overlay" @onclick="CancelNameDialog">
             <div class="newnote-modal" @onclick:stopPropagation>
-                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">
                     @(nameDialogMode == NoteNameDialogMode.Create ? "New Notebook" : "Rename Note")
                 </h4>
                 @if (nameDialogMode == NoteNameDialogMode.Create)
                 {
-                    <p style="font-size:0.85rem;color:#64748b;margin:0 0 12px 0;">Enter a name for your notebook. A first note entry will be added automatically.</p>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 12px 0;">Enter a name for your notebook. A first note entry will be added automatically.</p>
                 }
                 <input type="text"
                        @bind="nameDialogTitle"

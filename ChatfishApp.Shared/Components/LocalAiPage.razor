@@ -7,7 +7,7 @@
     
     <h4>Ollama - Local AI </h4>
 
-    <p style="color: #666; font-size: 0.9em;">Ollama configuration is stored only in your browser. </p>
+    <p style="color: var(--color-text-muted); font-size: 0.9em;">Ollama configuration is stored only in your browser. </p>
 
 
     <h3>Ollama - Local AI on your computer</h3>
@@ -43,7 +43,7 @@
   </div>
 
 
-    <div style="color:#8a0101;margin: 1rem 0; padding: 0.75rem 1rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 0.9em;">
+    <div class="cf-info-box" style="margin: 1rem 0; border-color: var(--color-accent);">
     <strong>On https://chatfish.me:</strong> Browser security blocks direct http:// calls to your local Ollama (mixed content).
     Use must add set OLLAMA_ORIGINS to https://chatfish.me or *
     
@@ -72,10 +72,10 @@
 
         <label>Base URL</label>
         <input type="text" @bind="ollamaBaseUrl" placeholder="http://localhost:11434" class="form-control" />
-        <div style="font-size:0.75em; color:#888; margin:2px 0 4px;">For remote/network Ollama (with expose enabled), change to your LAN IP or https URL. http:// from this https site will be blocked by the browser.</div>
+        <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">For remote/network Ollama (with expose enabled), change to your LAN IP or https URL. http:// from this https site will be blocked by the browser.</div>
 
         <button @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.25rem;">Refresh Models from Ollama</button>
-        <div style="font-size:0.72em; color:#888; margin-top:2px;">If this fails with a network/CORS error, add models by name manually instead (works everywhere).</div>
+        <div style="font-size:0.72em; color:var(--cf-text-muted); margin-top:2px;">If this fails with a network/CORS error, add models by name manually instead (works everywhere).</div>
 
         <div class="model-list" style="margin-top: 1rem;">
             <label>Available Ollama Models</label>
@@ -108,7 +108,7 @@
             }
             else
             {
-                <div style="font-size: 0.8em; color: #888;">No models loaded. Use refresh (local http only) or add model names manually below.</div>
+                <div style="font-size: 0.8em; color: var(--cf-text-muted);">No models loaded. Use refresh (local http only) or add model names manually below.</div>
             }
         </div>
 
