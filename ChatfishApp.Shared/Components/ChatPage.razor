@@ -75,7 +75,7 @@
             }
             @if (!localConvos.Any())
             {
-                <div class="cf-item" style="font-size:0.75em; color:#888; padding-left:12px;">No local conversations yet.</div>
+                <div class="cf-item" style="font-size:0.75em; color:var(--cf-text-muted); padding-left:12px;">No local conversations yet.</div>
             }
         </nav>
     </div>
@@ -121,7 +121,7 @@
                                     <div class="message-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;">
                                         @foreach (var att in msg.Attachments)
                                         {
-                                            <div style="width:52px; height:52px; border:1px solid #ccc; border-radius:4px; overflow:hidden; background:#f8f8f8; position:relative; flex-shrink:0;">
+                                            <div style="width:52px; height:52px; border:1px solid var(--cf-border); border-radius:4px; overflow:hidden; background:var(--cf-bg-subtle); position:relative; flex-shrink:0;">
                                                 @{
                                                     var thumbSrc = att.DataUrl;
                                                     if (thumbSrc == null && att.ContentType != null && att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(att.DataBase64))
@@ -135,7 +135,7 @@
                                                 }
                                                 else
                                                 {
-                                                    <div style="font-size:9px; display:flex; align-items:center; justify-content:center; height:100%; color:#555; text-align:center; padding:2px;">
+                                                    <div style="font-size:9px; display:flex; align-items:center; justify-content:center; height:100%; color:var(--cf-text-muted); text-align:center; padding:2px;">
                                                         📄<br /><span style="font-size:6px; word-break:break-all; line-height:1;">@att.Name</span>
                                                     </div>
                                                 }
@@ -160,8 +160,8 @@
                                 @if (!string.IsNullOrWhiteSpace(msg.ToolTrace))
                                 {
                                     <details style="margin-bottom: 2px; font-size: 0.7em;">
-                                        <summary style="cursor:pointer; color:#888;">Model reasoning / tool calls</summary>
-                                        <pre style="white-space:pre-wrap; font-size:0.85em; background:#f4f4f4; padding:4px; border-radius:3px; margin:2px 0;">@msg.ToolTrace</pre>
+                                        <summary style="cursor:pointer; color:var(--cf-text-muted);">Model reasoning / tool calls</summary>
+                                        <pre style="white-space:pre-wrap; font-size:0.85em; background:var(--cf-bg-subtle); padding:4px; border-radius:3px; margin:2px 0;">@msg.ToolTrace</pre>
                                     </details>
                                 }
                                 <div class="chat-markdown">
@@ -210,7 +210,7 @@
                                         }
                                         else
                                         {
-                                            <div style="font-size:9px; height:100%; display:flex; align-items:center; justify-content:center; color:#666; text-align:center; padding:1px; line-height:1.1;">
+                                            <div style="font-size:9px; height:100%; display:flex; align-items:center; justify-content:center; color:var(--cf-text-muted); text-align:center; padding:1px; line-height:1.1;">
                                                 📄<br /><span style="font-size:7px; word-break:break-all;">@f.Name</span>
                                             </div>
                                         }
@@ -333,7 +333,7 @@
 {
     <div class="newnote-overlay" @onclick="CancelRenameConvo">
         <div class="newnote-modal" @onclick:stopPropagation>
-            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Rename Chat</h4>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Rename Chat</h4>
             <input type="text"
                    @bind="renameConvoTitle"
                    @bind:event="oninput"
@@ -356,8 +356,8 @@
         <div class="newnote-modal" @onclick:stopPropagation>
                 @if (_noteShowExisting && _noteDialogNotes.Any())
                 {
-                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Add to Note</h4>
-                    <p style="font-size:0.85rem;color:#64748b;margin-bottom:12px;">Select an existing note or create a new one:</p>
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add to Note</h4>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin-bottom:12px;">Select an existing note or create a new one:</p>
                     <select @bind="_noteSelectedId" class="newnote-select">
                         <option value="">— New note —</option>
                         @foreach (var n in _noteDialogNotes.OrderByDescending(x => x.LastUpdated))
@@ -381,8 +381,8 @@
                 }
                 else if (_noteShowNewInput)
                 {
-                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Create New Note</h4>
-                    <p style="font-size:0.85rem;color:#64748b;margin-bottom:12px;">
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Create New Note</h4>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin-bottom:12px;">
                         @if (!_noteDialogNotes.Any())
                         {
                             <span>You don't have any notes yet. Enter a name for your first note:</span>
@@ -404,8 +404,8 @@
                 }
                 else if (_noteConfirming)
                 {
-                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:#1F2A37;">Add to Note</h4>
-                    <p style="font-size:0.85rem;color:#64748b;margin-bottom:12px;">Add this message to <strong>@_noteTargetName</strong>?</p>
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add to Note</h4>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin-bottom:12px;">Add this message to <strong>@_noteTargetName</strong>?</p>
                     @if (_noteSourceMessage != null && !string.IsNullOrEmpty(_noteSourceMessage.Content))
                     {
                         <div style="background:#f1f5f9;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:0.8rem;color:#475569;max-height:120px;overflow-y:auto;">
@@ -420,7 +420,7 @@
                 }
                 else
                 {
-                    <p style="margin:0;font-size:0.9rem;color:#64748b;">Loading notes...</p>
+                    <p style="margin:0;font-size:0.9rem;color:var(--cf-text-muted);">Loading notes...</p>
                 }
             </div>
         </div>

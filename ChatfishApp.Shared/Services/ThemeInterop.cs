@@ -6,28 +6,14 @@ internal static class ThemeInterop
 {
     private const string JsPrefix = "chatfishTheme.";
 
-    public static async Task<ThemePreferences> GetSavedAsync(IJSRuntime js, CancellationToken ct = default)
-    {
-        var colorScheme = await js.InvokeAsync<string?>($"{JsPrefix}getColorScheme", ct);
-        var theme = await js.InvokeAsync<string?>($"{JsPrefix}getTheme", ct);
-        return new ThemePreferences
-        {
-            ColorScheme = colorScheme ?? ThemeService.DefaultColorScheme,
-            Theme = theme ?? ThemeService.DefaultThemeId
-        };
-    }
+    public static ValueTask<string> GetSavedThemeAsync(IJSRuntime js, CancellationToken ct = default) =>
+        js.InvokeAsync<string>($"{JsPrefix}getTheme", ct);
 
-    public static ValueTask SaveAsync(IJSRuntime js, string colorScheme, string theme, CancellationToken ct = default) =>
-        js.InvokeVoidAsync($"{JsPrefix}save", ct, colorScheme, theme);
+    public static ValueTask SaveThemeAsync(IJSRuntime js, string theme, CancellationToken ct = default) =>
+        js.InvokeVoidAsync($"{JsPrefix}saveTheme", ct, theme);
 
-    public static ValueTask ApplyAsync(IJSRuntime js, string colorScheme, string theme, CancellationToken ct = default) =>
-        js.InvokeVoidAsync($"{JsPrefix}apply", ct, colorScheme, theme);
-
-    public static ValueTask ApplySavedAsync(IJSRuntime js, CancellationToken ct = default) =>
-        js.InvokeVoidAsync($"{JsPrefix}applySaved", ct);
-
-    public static ValueTask InitPersistentHooksAsync(IJSRuntime js, CancellationToken ct = default) =>
-        js.InvokeVoidAsync($"{JsPrefix}initPersistentHooks", ct);
+    public static ValueTask ApplyAsync(IJSRuntime js, string theme, CancellationToken ct = default) =>
+        js.InvokeVoidAsync($"{JsPrefix}apply", ct, theme);
 
     public static ValueTask InitSystemListenerAsync<T>(IJSRuntime js, DotNetObjectReference<T> dotnetRef, CancellationToken ct = default)
         where T : class =>
@@ -35,10 +21,11 @@ internal static class ThemeInterop
 
     public static ValueTask DisposeSystemListenerAsync(IJSRuntime js, CancellationToken ct = default) =>
         js.InvokeVoidAsync($"{JsPrefix}disposeSystemListener", ct);
-}
 
-internal sealed class ThemePreferences
-{
-    public string ColorScheme { get; set; } = ThemeService.DefaultColorScheme;
-    public string Theme { get; set; } = ThemeService.DefaultThemeId;
+    public static ValueTask ApplySavedAsync(IJSRuntime js, CancellationToken ct = default) =>
+        js.InvokeVoidAsync($"{JsPrefix}applyEarly", ct);
+
+    public static ValueTask InitPersistentHooksAsync(IJSRuntime js, CancellationToken ct = default) =>
+        js.InvokeVoidAsync($"{JsPrefix}initPersistentHooks", ct);
+
 }

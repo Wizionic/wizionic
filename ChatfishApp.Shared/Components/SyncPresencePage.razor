@@ -11,21 +11,21 @@
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
     <h4 style="margin: 0;">Sync</h4>
-    <p style="color: #666; font-size: 0.9em;">
+    <p style="color: var(--color-text-muted); font-size: 0.9em;">
         Cross-device sync requires email login. The server only helps devices find each other and exchange small signaling messages.
         Encrypted chat history and notes travel directly between your devices — never through the server.
     </p>
 
     @if (!string.IsNullOrEmpty(PendingDataSyncMessage))
     {
-        <div style="margin: 1rem 0; padding: 0.75rem 1rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; font-size: 0.9em;">
+        <div class="cf-sync-info-box">
             @PendingDataSyncMessage
         </div>
     }
 
     @if (!AuthService.IsAuthenticated)
     {
-        <div style="margin: 2rem 0; padding: 1rem 1.25rem; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
+        <div class="cf-sync-warning" style="margin: 2rem 0;">
             <strong>Login required.</strong>
             <div style="margin-top: 0.5rem;">
                 Sign in with your email to see your other devices and sync chats between browsers and native apps.
@@ -46,26 +46,26 @@
             <button @onclick="RefreshDevices" class="btn btn-outline-primary btn-sm" disabled="@isRefreshing">
                 @(isRefreshing ? "Refreshing..." : "Refresh")
             </button>
-            <span style="font-size: 0.8em; color: #888; margin-left: auto;">
+            <span class="cf-status-offline" style="font-size: 0.8em; margin-left: auto;">
                 @(SyncService.IsConnected ? "Connected for live updates" : "Connecting…")
             </span>
         </div>
 
         @if (devices.Any())
         {
-            <div style="border: 1px solid #e5e5e5; border-radius: 6px; overflow: hidden; margin-bottom: 1rem;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 0.95em;">
+            <div class="cf-sync-table-wrapper" style="border-radius: 6px; overflow: hidden; margin-bottom: 1rem;">
+                <table class="cf-sync-table">
                     <thead>
-                        <tr style="background: #f8f9fa;">
-                            <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Device Name</th>
-                            <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Last Active</th>
+                        <tr>
+                            <th class="cf-sync-cell">Device Name</th>
+                            <th class="cf-sync-cell">Last Active</th>
                             @if (ShowAiServerOptions)
                             {
-                                <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">AI Server</th>
+                                <th class="cf-sync-cell">AI Server</th>
                             }
                             else
                             {
-                                <th style="text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;">Status</th>
+                                <th class="cf-sync-cell">Status</th>
                             }
                         </tr>
                     </thead>
@@ -73,23 +73,23 @@
                         @foreach (var d in devices.OrderByDescending(x => x.IsOnline).ThenByDescending(x => x.LastActiveUtc))
                         {
                             var isSelf = SyncService.IsSelf(d.DeviceId);
-                            <tr style="@(isSelf ? "background:#f0f7ff;" : "")">
-                                <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0;">
-                                    <span style="color: @(d.IsOnline ? "#22c55e" : "#888"); font-size: 0.9em; margin-right: 6px;">●</span>
+                            <tr style="@(isSelf ? "background:var(--cf-bg-subtle);" : "")">
+                                <td class="cf-sync-cell">
+                                    <span class="@(d.IsOnline ? "cf-status-online" : "cf-status-offline")" style="font-size: 0.9em; margin-right: 6px;">●</span>
                                     <strong>@d.Name</strong>
                                     @if (isSelf)
                                     {
-                                        <span style="font-size: 0.7em; color: #1F7FCC; margin-left: 6px;">(this device)</span>
+                                        <span class="cf-sync-cell-self" style="font-size: 0.7em; color: #1F7FCC; margin-left: 6px;">(this device)</span>
                                     }
                                     @if (d.IsOnline)
                                     {
-                                        <span style="font-size: 0.7em; color: #22c55e; margin-left: 8px;">online</span>
+                                        <span class="cf-status-online" style="font-size: 0.7em; margin-left: 8px;">online</span>
                                     }
                                 </td>
-                                <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; color: #555;">
+                                <td class="cf-sync-cell">
                                     @FormatLastActive(d.LastActiveUtc, d.IsOnline)
                                 </td>
-                                <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0;">
+                                <td class="cf-sync-cell">
                                     @if (ShowAiServerOptions && !isSelf)
                                     {
                                         var canUse = d.IsOnline;
@@ -97,7 +97,7 @@
                                         var aiHint = d.CanRelayAi && d.AiModelCount > 0
                                             ? $"{d.AiModelCount} model(s) advertised"
                                             : "Models discovered after connecting";
-                                        <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.85em; @(canUse ? "cursor:pointer;" : "color:#aaa;")" title="@(canUse ? $"Route chat completions through this device ({aiHint})" : "Device must be online")">
+                                        <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.85em; @(canUse ? "cursor:pointer;" : "opacity:0.5;font-style:italic;")" title="@(canUse ? $"Route chat completions through this device ({aiHint})" : "Device must be online")">
                                             <input type="checkbox"
                                                    checked="@isAiServer"
                                                    disabled="@(!canUse)"
@@ -106,11 +106,11 @@
                                         </label>
                                         @if (canUse && !isAiServer && d.CanRelayAi && d.AiModelCount > 0)
                                         {
-                                            <div style="font-size:0.75em; color:#555; margin-top:2px;">@d.AiModelCount model(s) available</div>
+                                            <div style="font-size:0.75em; opacity:0.7; margin-top:2px;">@d.AiModelCount model(s) available</div>
                                         }
                                         @if (isAiServer)
                                         {
-                                            <div style="font-size:0.75em; color:#555; margin-top:2px;">
+                                            <div style="font-size:0.75em; opacity:0.7; margin-top:2px;">
                                                 @(SyncService.IsAiProxyConnected ? "Connected" : "Connecting…")
                                                 @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
                                                 {
@@ -123,15 +123,15 @@
                                     {
                                         @if (d.IsOnline)
                                         {
-                                            <span style="color: #22c55e; font-size: 0.85em;">Online</span>
+                                            <span class="cf-status-online" style="font-size: 0.85em;">Online</span>
                                         }
                                         else
                                         {
-                                            <span style="font-size: 0.85em; color: #555;">Offline</span>
+                                            <span class="cf-status-offline" style="font-size: 0.85em;">Offline</span>
                                         }
                                         @if (d.CanRelayAi && d.AiModelCount > 0)
                                         {
-                                            <span style="font-size: 0.85em; color: #555;"> · @d.AiModelCount AI model(s)</span>
+                                            <span style="font-size: 0.85em; opacity:0.7;"> · @d.AiModelCount AI model(s)</span>
                                         }
                                     }
                                 </td>

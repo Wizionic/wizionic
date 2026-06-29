@@ -14,40 +14,30 @@
     </p>
 
     <!-- Appearance -->
-    <div class="settings-card">
-        <h3 style="margin: 0 0 0.25rem;">Appearance</h3>
-        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
-            Customize how Chatfish looks on this device.
-        </p>
+<div class="settings-card">
+    <h3 style="margin: 0 0 0.25rem;">Appearance</h3>
+    <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
+        Customize how Chatfish looks on this device.
+    </p>
 
-        <div class="theme-setting-row">
-            <div class="theme-setting-info">
-                <p class="theme-setting-label">Color scheme</p>
-                <p class="theme-setting-desc">Choose whether Chatfish follows the system, light, or dark mode.</p>
-            </div>
-            <select class="form-select form-select-sm theme-setting-select"
-                    @onchange="OnColorSchemeChanged">
-                @foreach (var scheme in Theme.AvailableColorSchemes)
-                {
-                    <option value="@scheme.Id" selected="@(scheme.Id == Theme.ColorScheme)">@scheme.DisplayName</option>
-                }
-            </select>
+    <div class="theme-setting-row">
+        <div class="theme-setting-info">
+            <p class="theme-setting-label">Theme</p>
+            <p class="theme-setting-desc">
+                Pick a color palette. "System default" follows your OS light/dark preference.
+            </p>
         </div>
-
-        <div class="theme-setting-row">
-            <div class="theme-setting-info">
-                <p class="theme-setting-label">Theme</p>
-                <p class="theme-setting-desc">Pick a color palette. Chatfish uses your color scheme when the default theme is selected.</p>
-            </div>
-            <select class="form-select form-select-sm theme-setting-select"
-                    @onchange="OnThemeChanged">
-                @foreach (var theme in Theme.AvailableThemes)
-                {
-                    <option value="@theme.Id" selected="@(theme.Id == Theme.Theme)">@theme.DisplayName</option>
-                }
-            </select>
-        </div>
+        <select class="form-select form-select-sm theme-setting-select"
+                @onchange="OnThemeChanged">
+            @foreach (var theme in Theme.AvailableThemes)
+            {
+                <option value="@theme.Id" selected="@(theme.Id == Theme.Theme)">
+                    @theme.DisplayName
+                </option>
+            }
+        </select>
     </div>
+</div>
 
     <!-- About you -->
     <div class="settings-card">
@@ -288,11 +278,7 @@
 
     private void OnThemeChangedFromService() => InvokeAsync(StateHasChanged);
 
-    private async Task OnColorSchemeChanged(ChangeEventArgs e)
-    {
-        var scheme = e.Value?.ToString() ?? ThemeService.DefaultColorScheme;
-        await Theme.SetColorSchemeAsync(scheme, JS);
-    }
+
 
     private async Task OnThemeChanged(ChangeEventArgs e)
     {
