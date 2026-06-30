@@ -198,9 +198,114 @@ a:hover {
     --cf-success-fg:   #22c55e;
     --cf-table-th-bg:  #f8f9fa;
 
-    /* Status / state colors -- all themes share these */
-    --cf-status-online:  #22c55e;
-    --cf-status-offline: var(--color-text-muted);
+    /* SyncPresencePage helpers */
+    --cf-sync-error-bg:      #3d1f1f;
+
+    /* SyncPresencePage helpers */
+    --cf-sync-warning-fg:     var(--color-warning-tx, #ffb86c);
+}
+
+/* SyncPresencePage component classes (all theme-aware) */
+.cf-success-box {
+    background: var(--success);
+    border: 1px solid var(--color-success-border, #22c55e);
+    color: inherit;
+    border-radius: 6px;
+}
+
+.cf-sync-status-dot {
+    color: var(--cf-status-online);
+}
+
+.cf-sync-muted-text {
+    color: var(--color-text-muted);
+}
+
+.cf-sync-label-text {
+    color: var(--color-text-muted);
+}
+
+.cf-sync-card {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    border: 1px solid var(--cf-border, var(--color-border));
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    background: var(--cf-bg-surface);
+}
+
+.cf-sync-info-card {
+    margin-top: 1rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--light-blue-2);
+    border: 1px solid var(--primary-blue);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.cf-sync-no-devices-text {
+    color: var(--color-text-muted);
+}
+
+/* SyncPresencePage status dot color overrides for dark themes */
+[data-theme="dracula"] .cf-success-box,
+[data-theme="chatfish-dark"] .cf-success-box,
+[data-theme="nord"] .cf-success-box,
+[data-theme="solarized-light"] .cf-success-box {
+    color: inherit; /* no explicit text color — let theme cascade */
+}
+
+[data-theme="dracula"] .cf-sync-info-card,
+[data-theme="chatfish-dark"] .cf-sync-info-card,
+[data-theme="nord"] .cf-sync-info-card,
+[data-theme="solarized-light"] .cf-sync-info-card {
+    background: var(--color-info-bg, var(--light-blue-2));
+    border-color: var(--color-info-border, var(--primary-blue));
+    color: var(--color-info-fg, var(--text-dark));
+}
+
+.cf-sync-label-text {
+    color: var(--color-text-muted);
+}
+
+.cf-sync-card {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    border: 1px solid var(--cf-border);
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    background: var(--cf-bg-surface);
+}
+
+.cf-sync-info-card {
+    margin-top: 1rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--light-blue-2);
+    border: 1px solid var(--primary-blue);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+/* ========================================
+    SyncPresencePage utilities (theme-aware)
+    ======================================== */
+.cf-success-box {
+    background: var(--success);
+    border: 1px solid #bbf7d0;
+    color: inherit;
+    border-radius: 6px;
+}
+
+    /* SyncPresencePage helpers */
+    --cf-sync-row-bg:        #f0fdf4;
+    --cf-sync-border-green:  #bbf7d0;
+    --cf-sync-success-fg:    #166534;
+    --cf-sync-warning-fg:    #b45309;
+    --cf-sync-info-bg:       #e6f2ff;
+    --cf-sync-info-border:   #b3d9ff;
+    --cf-sync-muted-tx:      var(--color-text-muted);
 }
 
 /* ------------------------------
@@ -1567,6 +1672,36 @@ body .top-left,
     background: rgba(189, 147, 249, 0.15) !important;
 }
 
+/* --- chatfish-dark topbar icon hover --- */
+[data-theme="chatfish-dark"] .top-row-right a:hover,
+[data-theme="chatfish-dark"] .top-row > div:last-child a:hover {
+    background: rgba(124, 203, 255, 0.18) !important;
+}
+
+[data-theme="chatfish-dark"] .top-left a:hover {
+    background: rgba(124, 203, 255, 0.12) !important;
+}
+
+/* --- Nord topbar icon hover --- */
+[data-theme="nord"] .top-row-right a:hover,
+[data-theme="nord"] .top-row > div:last-child a:hover {
+    background: rgba(136, 192, 208, 0.15) !important;
+}
+
+[data-theme="nord"] .top-left a:hover {
+    background: rgba(136, 192, 208, 0.1) !important;
+}
+
+/* --- Solarized Light topbar icon hover (light theme — accent-based) --- */
+[data-theme="solarized-light"] .top-row-right a:hover,
+[data-theme="solarized-light"] .top-row > div:last-child a:hover {
+    background: rgba(38, 139, 210, 0.1) !important;
+}
+
+[data-theme="solarized-light"] .top-left a:hover {
+    background: rgba(38, 139, 210, 0.07) !important;
+}
+
 .top-row-right a i,
 .top-row-right a .bi,
 .top-row > div:last-child a i,
@@ -2408,6 +2543,198 @@ body .message-bot,
     --cf-status-online:  #859900;
 }
 
+/* --- GitHub Light --- */
+[data-theme="github-light"] {
+    --grey-50:             #ffffff;
+    --grey-100:            #f6f8fa;
+    --grey-200:            #e1e4e8;
+    --grey-300:            #d0d7de;
+    --light-blue-1:        #f0f4f8;
+    --light-blue-2:        #f6f8fa;
+    --light-blue-3:        #ffffff;
+    --text-dark:           #24292f;
+    --primary-dark:        #0969da;
+    --bubble-blue:         #dbeafe;
+    --bubble-ai-bg:        #f6f8fa;
+
+    --color-bg:            #ffffff;
+    --color-bg-surface:    #f6f8fa;
+    --color-bg-subtle:     #f0f4f8;
+    --color-bg-muted:      #eaeef2;
+
+    --color-border:        #d0d7de;
+    --color-border-strong: #afb8c1;
+
+    --color-text:          #24292f;
+    --color-text-muted:    #57606a;
+    --color-text-inverse:  #ffffff;
+
+    --color-sidebar-bg:        #f6f8fa;
+    --color-sidebar-hover:     #eaeef2;
+    --color-sidebar-active:    #dbeafe;
+    --color-sidebar-border:    #d0d7de;
+
+    --color-chat-bg:       #ffffff;
+    --color-bubble-user:   #dbeafe;
+    --color-bubble-ai:     #f6f8fa;
+
+    --color-topbar-bg:     #f6f8fa;
+
+    --color-accent:        #0969da;
+    --color-accent-dark:   #0550ae;
+
+    --color-error:         #cf222e;
+    --color-error-bg:      #fff0f0;
+    --color-warning-bg:    #fff8c5;
+    --color-warning-tx:    #7d4e00;
+    --color-warning-bdr:   #f5c518;
+
+    --color-info-bg:       #ddf4ff;
+    --color-info-border:   #0969da;
+    --color-info-fg:       #24292f;
+    --color-success-border: #2da44e;
+
+    /* Component cf-* tokens */
+    --cf-text-muted:   #57606a;
+    --cf-error-fg:     #cf222e;
+    --cf-border:       #d0d7de;
+    --cf-bg-surface:   var(--color-bg-surface);
+    --cf-bg-subtle:    var(--color-bg-subtle);
+    --cf-bg-muted:     var(--color-bg-muted);
+    --cf-info-box-bg:  #ddf4ff;
+
+    --cf-status-online:  #2da44e;
+    --cf-status-offline: var(--color-text-muted);
+}
+
+
+/* --- Catppuccin Latte --- */
+[data-theme="catppuccin-latte"] {
+    --grey-50:             #eff1f5;
+    --grey-100:            #e6e9ef;
+    --grey-200:            #ccd0da;
+    --grey-300:            #bcc0cc;
+    --light-blue-1:        #dce0e8;
+    --light-blue-2:        #e6e9ef;
+    --light-blue-3:        #eff1f5;
+    --text-dark:           #4c4f69;
+    --primary-dark:        #1e66f5;
+    --bubble-blue:         #c5d8ff;
+    --bubble-ai-bg:        #e6e9ef;
+
+    --color-bg:            #eff1f5;
+    --color-bg-surface:    #e6e9ef;
+    --color-bg-subtle:     #dce0e8;
+    --color-bg-muted:      #ccd0da;
+
+    --color-border:        #bcc0cc;
+    --color-border-strong: #acb0be;
+
+    --color-text:          #4c4f69;
+    --color-text-muted:    #8c8fa1;
+    --color-text-inverse:  #eff1f5;
+
+    --color-sidebar-bg:        #e6e9ef;
+    --color-sidebar-hover:     #dce0e8;
+    --color-sidebar-active:    #c5d8ff;
+    --color-sidebar-border:    #bcc0cc;
+
+    --color-chat-bg:       #eff1f5;
+    --color-bubble-user:   #c5d8ff;
+    --color-bubble-ai:     #e6e9ef;
+
+    --color-topbar-bg:     #e6e9ef;
+
+    --color-accent:        #1e66f5;
+    --color-accent-dark:   #1653cc;
+
+    --color-error:         #d20f39;
+    --color-error-bg:      #fce0e6;
+    --color-warning-bg:    #fdf0d5;
+    --color-warning-tx:    #8c5e00;
+    --color-warning-bdr:   #e5c890;
+
+    --color-info-bg:       #dce8ff;
+    --color-info-border:   #1e66f5;
+    --color-info-fg:       #4c4f69;
+    --color-success-border: #40a02b;
+
+    /* Component cf-* tokens */
+    --cf-text-muted:   #8c8fa1;
+    --cf-error-fg:     #d20f39;
+    --cf-border:       #bcc0cc;
+    --cf-bg-surface:   var(--color-bg-surface);
+    --cf-bg-subtle:    var(--color-bg-subtle);
+    --cf-bg-muted:     var(--color-bg-muted);
+    --cf-info-box-bg:  #dce8ff;
+
+    --cf-status-online:  #40a02b;
+    --cf-status-offline: var(--color-text-muted);
+}
+
+[data-theme="bella-purple"] {
+    --grey-50:             #faf7ff;
+    --grey-100:            #f3eeff;
+    --grey-200:            #e2d5f8;
+    --grey-300:            #c9b3ef;
+    --light-blue-1:        #ecdff8;
+    --light-blue-2:        #f3eeff;
+    --light-blue-3:        #faf7ff;
+    --text-dark:           #3b1f6e;
+    --primary-dark:        #7c3aed;
+    --bubble-blue:         #ddd0f7;
+    --bubble-ai-bg:        #f3eeff;
+
+    --color-bg:            #faf7ff;
+    --color-bg-surface:    #f3eeff;
+    --color-bg-subtle:     #ecdff8;
+    --color-bg-muted:      #e2d5f8;
+
+    --color-border:        #c9b3ef;
+    --color-border-strong: #a78bda;
+
+    --color-text:          #3b1f6e;
+    --color-text-muted:    #7c5fad;
+    --color-text-inverse:  #faf7ff;
+
+    --color-sidebar-bg:        #f3eeff;
+    --color-sidebar-hover:     #ecdff8;
+    --color-sidebar-active:    #ddd0f7;
+    --color-sidebar-border:    #c9b3ef;
+
+    --color-chat-bg:       #faf7ff;
+    --color-bubble-user:   #ddd0f7;
+    --color-bubble-ai:     #f3eeff;
+
+    --color-topbar-bg:     #f3eeff;
+
+    --color-accent:        #7c3aed;
+    --color-accent-dark:   #5b21b6;
+
+    --color-error:         #be123c;
+    --color-error-bg:      #ffe4ed;
+    --color-warning-bg:    #fdf3ff;
+    --color-warning-tx:    #6b21a8;
+    --color-warning-bdr:   #d8b4fe;
+
+    --color-info-bg:       #ede9fe;
+    --color-info-border:   #7c3aed;
+    --color-info-fg:       #3b1f6e;
+    --color-success-border: #7e22ce;
+
+    /* Component cf-* tokens */
+    --cf-text-muted:   #7c5fad;
+    --cf-error-fg:     #be123c;
+    --cf-border:       #c9b3ef;
+    --cf-bg-surface:   var(--color-bg-surface);
+    --cf-bg-subtle:    var(--color-bg-subtle);
+    --cf-bg-muted:     var(--color-bg-muted);
+    --cf-info-box-bg:  #ede9fe;
+
+    --cf-status-online:  #7e22ce;
+    --cf-status-offline: var(--color-text-muted);
+}
+
 /* ========================================
    Component utility classes (global)
    ======================================== */
@@ -2444,6 +2771,134 @@ body .message-bot,
 /* Sync table rows -- borders are theme-aware via cf-sync-table rules below */
 .cf-sync-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid var(--color-border); font-size:0.95em; }
 .cf-sync-row:last-child { border-bottom:none; }
+
+/* Online/offline status indicators */
+.cf-status-online  { color:#22c55e !important; }
+.cf-status-offline { color:var(--color-text-muted) !important; }
+
+/* Self-device row highlight (theme-aware subtle bg) */
+.cf-sync-self-row { background: var(--cf-bg-subtle); border-radius:4px; margin-top:1px; }
+
+/* ========================================
+    SyncPresencePage — theme-aware component CSS
+    ======================================== */
+.sync-page-content { padding: 1rem 2rem; max-width: 860px; margin: 0 auto; }
+.sync-page-title  { font-size: var(--font-xl); color: var(--text-dark); margin-bottom: 0.25rem; }
+.sync-page-subtitle { color: var(--color-text-muted); font-size: 0.9em; }
+
+.sync-page-margin-t-sm { margin-top: 0.5rem; }
+.sync-page-margin-t-md { margin-top: 0.75rem; }
+.sync-page-expand-1   { margin-left: auto; }
+.sync-page-flush     { margin-left: -1px; }
+.sync-page-section-gap-top { margin-top: 1.25rem; margin-bottom: 0.4rem; }
+
+/* --- Section headers with buttons (flex) --- */
+.sync-page-section-header { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
+.sync-page-section-header h3 { margin:0; }
+
+.sync-page-flex-row { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem; }
+
+/* --- Sync login warning --- */
+.sync-login-required-box { margin:2rem 0; }
+.sync-page-margin-l-sm  { margin-left:0.5rem; }
+
+/* --- Table wrapper --- */
+.cf-sync-table-wrapper { border-radius:6px; overflow:hidden; margin-bottom:1rem; }
+
+/* --- Self row highlight --- */
+.sync-table-row-self { background:var(--cf-bg-subtle); }
+
+/* --- Online label --- */
+.sync-online-label { font-size:0.7em; color:#22c55e; margin-left:8px; }
+
+/* --- AI server checkbox controls --- */
+.sync-ai-label     { display:flex; align-items:center; gap:0.35rem; font-size:0.85em; cursor:pointer; }
+.sync-ai-label-disabled { display:flex; align-items:center; gap:0.35rem; font-size:0.85em; opacity:0.5; font-style:italic; cursor:not-allowed; }
+
+/* --- Model count hint --- */
+.sync-model-count-hint { font-size:0.75em; opacity:0.7; margin-top:2px; }
+
+/* --- AI status text --- */
+.sync-ai-status       { font-size:0.75em; opacity:0.7; margin-top:2px; }
+.sync-warning-text    { color:var(--cf-sync-warning-fg); }
+
+/* --- Status text (non-AI mode) --- */
+.sync-status-text { font-size:0.85em; }
+
+/* --- AI info box --- */
+.sync-ai-info-box { margin-bottom:0.75rem; padding:0.5rem 0.75rem; }
+
+/* --- Rename row --- */
+.sync-rename-row   { display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap; }
+.sync-page-label   { font-size:0.9em; color:var(--color-text-muted); }
+.sync-input-field  { flex:1; min-width:220px; max-width:320px; background:white; }
+
+/* --- Sync target checkboxes --- */
+.sync-these-devices-section    { margin:1rem 0 0.5rem; }
+.sync-page-subsection-title     { font-weight:600; margin-bottom:0.35rem; }
+.sync-target-checkboxes-group   { display:flex; flex-direction:column; gap:.35rem; }
+
+/* sync target checkboxes – theme-aware */
+.sync-target-online,
+.sync-target-offline { display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.92em; }
+
+.sync-target-online   .cf-status-online-syncdot  { color:#22c55e; }
+.sync-target-offline  .cf-status-offline-syncdot { color:#888; }
+
+/* --- No-devices / muted text --- */
+.sync-page-muted-text { font-size:0.9em; }
+.sync-page-muted-text,
+[data-theme="chatfish-light"] .sync-page-muted-text,
+[data-theme="solarized-light"] .sync-page-muted-text { color:#888; }
+
+[data-theme="chatfish-dark"] .sync-page-muted-text,
+[data-theme="dracula"]       .sync-page-muted-text,
+[data-theme="nord"]          .sync-page-muted-text   { color:var(--cf-text-muted); }
+
+.sync-loading-pad  { padding:0.75rem 0; }
+.sync-loading-pad  { color:#666; }
+[data-theme="chatfish-dark"] .sync-loading-pad,
+[data-theme="dracula"]       .sync-loading-pad,
+[data-theme="nord"]          .sync-loading-pad,
+[data-theme="solarized-light"] .sync-loading-pad        { color:var(--color-text-muted); }
+
+/* --- Convo / Notes rows (use cf-sync-card) --- */
+.sync-convo-notes-group { display:flex; flex-direction:column; gap:0.4rem; }
+
+.sync-item-row { padding-top:0.35rem !important; padding-bottom:0.35rem !important; }
+
+.sync-item-info  { flex:1; min-width:0; }
+.sync-item-title { font-weight:500; }
+.sync-item-date  { font-size:0.75em; }
+.sync-page-muted-text + .sync-item-date,
+[data-theme="chatfish-dark"] .sync-item-date,
+[data-theme="dracula"]       .sync-item-date,
+[data-theme="nord"]          .sync-item-date,
+[data-theme="solarized-light"] .sync-item-date        { color:var(--color-text-muted); }
+
+[data-theme="chatfish-light"] .sync-item-date  { color:#888; }
+[data-theme="solarized-light"] .sync-item-date { color:#93a1a1; }
+
+/* --- Status message box (reuse cf-sync-info-card) --- */
+.sync-status-msg-box { margin-top:1rem; }
+
+/* --- Back-to-chat row --- */
+.sync-back-to-chat-row { margin-top:1.5rem; display:flex; gap:0.5rem; align-items:center; }
+
+/* --- Auto-sync label --- */
+.sync-auto-sync-label { font-size:0.85em; color:var(--color-text-muted); display:flex; align-items:center; gap: 0.35rem; cursor: pointer; }
+
+/* === SyncPresencePage status dot color overrides for dark themes === */
+[data-theme="chatfish-dark"] .cf-status-online,
+[data-theme="dracula"]       .cf-status-online,
+[data-theme="nord"]          .cf-status-online { 
+    color:#a3be8c !important; 
+}
+
+/* Solarized-light uses #859900 from :root for – if it sets --cf-status-online use  that */
+[data-theme="solarized-light"] .cf-status-online { 
+    color: var(--cf-status-online, #859900) !important; 
+}
 
 /* Online/offline status indicators */
 .cf-status-online  { color:#22c55e !important; }

@@ -9,9 +9,12 @@ public sealed class ThemeService
     private static readonly ThemeOption[] ThemeCatalog =
     [
         new("system",           "System default"),
-        new("chatfish-light",   "Chatfish Light"),
-        new("chatfish-dark",    "Chatfish Dark"),
-        new("dracula",          "Dracula"),
+        new("chatfish-light",   "Light"),
+        new("chatfish-dark",    "Dark"),
+        new("bella-purple",     "Bella Purple"),
+        new("catppuccin-latte", "Catppuccin Latte"),
+        new("dracula",          "Dracula"), 
+        new("github-light",          "Github Light"), 
         new("nord",             "Nord"),
         new("solarized-light",  "Solarized Light"),
     ];
