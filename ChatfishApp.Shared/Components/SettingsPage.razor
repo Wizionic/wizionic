@@ -14,30 +14,30 @@
     </p>
 
     <!-- Appearance -->
-<div class="settings-card">
-    <h3 style="margin: 0 0 0.25rem;">Appearance</h3>
-    <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
-        Customize how Chatfish looks on this device.
-    </p>
+    <div class="settings-card">
+        <h3 style="margin: 0 0 0.25rem;">Appearance</h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
+            Customize how Chatfish looks on this device.
+        </p>
 
-    <div class="theme-setting-row">
-        <div class="theme-setting-info">
-            <p class="theme-setting-label">Theme</p>
-            <p class="theme-setting-desc">
-                Pick a color palette. "System default" follows your OS light/dark preference.
-            </p>
+        <div class="theme-setting-row">
+            <div class="theme-setting-info">
+                <p class="theme-setting-label">Theme</p>
+                <p class="theme-setting-desc">
+                    Pick a color palette. "System default" follows your OS light/dark preference.
+                </p>
+            </div>
+            <select class="form-select form-select-sm theme-setting-select"
+                    @onchange="OnThemeChanged">
+                @foreach (var theme in Theme.AvailableThemes)
+                {
+                    <option value="@theme.Id" selected="@(theme.Id == Theme.Theme)">
+                        @theme.DisplayName
+                    </option>
+                }
+            </select>
         </div>
-        <select class="form-select form-select-sm theme-setting-select"
-                @onchange="OnThemeChanged">
-            @foreach (var theme in Theme.AvailableThemes)
-            {
-                <option value="@theme.Id" selected="@(theme.Id == Theme.Theme)">
-                    @theme.DisplayName
-                </option>
-            }
-        </select>
     </div>
-</div>
 
     <!-- About you -->
     <div class="settings-card">
