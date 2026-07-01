@@ -8,6 +8,7 @@ public interface IChatCompletionService
         string modelId,
         IReadOnlyList<ChatMessage> messages,
         string? currentUser = null,
+        string? conversationId = null,
         CancellationToken ct = default);
 }
 

@@ -52,5 +52,9 @@ public interface IKeyStore
 
     string HomeAssistantBaseUrl { get; }
     string HomeAssistantToken { get; }
-    Task SetHomeAssistantConfigAsync(string baseUrl, string token, CancellationToken ct = default);
+    string HomeAssistantAssistantName { get; }
+    string HomeAssistantDeviceSummary { get; }
+    DateTime? HomeAssistantDeviceSummaryUpdatedAt { get; }
+    Task SetHomeAssistantConfigAsync(string baseUrl, string token, string assistantName, CancellationToken ct = default);
+    Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default);
 }
