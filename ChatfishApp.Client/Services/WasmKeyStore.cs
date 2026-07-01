@@ -1,4 +1,5 @@
 using ChatfishApp.Core.Ollama;
+using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
 using Microsoft.JSInterop;
 using System.Net.Http.Json;
@@ -20,6 +21,7 @@ public class WasmKeyStore : IKeyStore
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
+    private const string HomeAssistantConfigKey = "wasm-home-assistant-config";
 
     private readonly IJSRuntime _js;
 
@@ -33,6 +35,7 @@ public class WasmKeyStore : IKeyStore
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
+    private HomeAssistantConfig _homeAssistantConfig = new();
 
     public WasmKeyStore(IJSRuntime js) => _js = js;
 
@@ -94,6 +97,14 @@ public class WasmKeyStore : IKeyStore
             var loaded = JsonSerializer.Deserialize<List<UserMemory>>(memoriesJson);
             if (loaded != null)
                 _userMemories = loaded;
+        }
+
+        var haJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, HomeAssistantConfigKey);
+        if (!string.IsNullOrEmpty(haJson))
+        {
+            var loaded = JsonSerializer.Deserialize<HomeAssistantConfig>(haJson);
+            if (loaded != null)
+                _homeAssistantConfig = loaded;
         }
     }
 
@@ -556,5 +567,19 @@ public class WasmKeyStore : IKeyStore
     {
         var json = JsonSerializer.Serialize(_mcpTokens);
         await _js.InvokeVoidAsync("localStorage.setItem", ct, McpTokensKey, json);
+    }
+
+    public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";
+    public string HomeAssistantToken => _homeAssistantConfig.Token ?? "";
+
+    public async Task SetHomeAssistantConfigAsync(string baseUrl, string token, CancellationToken ct = default)
+    {
+        _homeAssistantConfig = new HomeAssistantConfig
+        {
+            BaseUrl = baseUrl?.Trim().TrimEnd('/') ?? "",
+            Token = HomeAssistantCredentials.NormalizeToken(token)
+        };
+        var json = JsonSerializer.Serialize(_homeAssistantConfig);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, HomeAssistantConfigKey, json);
     }
 }
