@@ -1,7 +1,7 @@
 using System.Net.Http.Json;
 using Microsoft.Extensions.AI;
 using ChatfishApp.Core.Storage;
-using ChatfishApp.Shared.Services.Tools;
+using ChatfishApp.Core.Tools;
 
 namespace ChatfishApp.Shared.Services.Mcp;
 
@@ -19,6 +19,7 @@ namespace ChatfishApp.Shared.Services.Mcp;
 public class McpToolSource : IMcpToolRefresher
 {
     private readonly IKeyStore _keyStore;
+    private readonly IToolExecutionTrace _trace;
     private readonly HttpClient _registryHttp;
     private readonly HttpClient _sharedHttp; // long timeout client for MCP calls
 
@@ -26,9 +27,10 @@ public class McpToolSource : IMcpToolRefresher
     private HashSet<string> _lastEnabledSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
-    public McpToolSource(IKeyStore keyStore, HttpClient registryHttp)
+    public McpToolSource(IKeyStore keyStore, IToolExecutionTrace trace, HttpClient registryHttp)
     {
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
+        _trace = trace ?? throw new ArgumentNullException(nameof(trace));
         _registryHttp = registryHttp ?? throw new ArgumentNullException(nameof(registryHttp));
 
         _sharedHttp = new HttpClient
@@ -98,7 +100,7 @@ public class McpToolSource : IMcpToolRefresher
             if (server.RequiresAuth && string.IsNullOrWhiteSpace(token))
             {
                 // Record that we skipped it (visible in trace on first use)
-                ToolExecutionTrace.Record(
+                _trace.Record(
                     $"⚠️ Skipping MCP {server.Name} — token required but not configured");
                 continue;
             }
@@ -116,6 +118,7 @@ public class McpToolSource : IMcpToolRefresher
                 {
                     var aiTool = new McpAIFunction(
                         client,
+                        _trace,
                         def.Name,
                         def.Description,
                         def.InputSchema,
@@ -124,12 +127,12 @@ public class McpToolSource : IMcpToolRefresher
                     newTools.Add(aiTool);
                 }
 
-                ToolExecutionTrace.Record(
+                _trace.Record(
                     $"🔗 Connected to MCP {shortLabel} — {discovered.Count} tool(s) available");
             }
             catch (Exception ex)
             {
-                ToolExecutionTrace.Record(
+                _trace.Record(
                     $"❌ Failed to connect to MCP {server.Name}: {ex.Message}");
             }
         }
@@ -153,6 +156,7 @@ public class McpToolSource : IMcpToolRefresher
                 {
                     var aiTool = new McpAIFunction(
                         client,
+                        _trace,
                         def.Name,
                         def.Description,
                         def.InputSchema,
@@ -161,12 +165,12 @@ public class McpToolSource : IMcpToolRefresher
                     newTools.Add(aiTool);
                 }
 
-                ToolExecutionTrace.Record(
+                _trace.Record(
                     $"🔗 Connected to custom MCP {shortLabel} — {discovered.Count} tool(s) available");
             }
             catch (Exception ex)
             {
-                ToolExecutionTrace.Record(
+                _trace.Record(
                     $"❌ Failed to connect to custom MCP {custom.Name}: {ex.Message}");
             }
         }

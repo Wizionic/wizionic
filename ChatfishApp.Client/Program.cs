@@ -7,6 +7,9 @@ using ChatfishApp.Core.Sync;
 using ChatfishApp.Core.UI;
 using ChatfishApp.Core.Update;
 using ChatfishApp.Shared.Services;
+using ChatfishApp.Core.Browser;
+using ChatfishApp.Core.SmartHome;
+using ChatfishApp.Core.Tools;
 using ChatfishApp.Shared.Services.Tools;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 
@@ -42,14 +45,17 @@ builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationSer
 builder.Services.AddScoped<WasmGuestDataMigrationService>();
 builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
 
+builder.Services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
+builder.Services.AddSingleton<IRequestRouter, KeywordRequestRouter>();
+builder.Services.AddSingleton<ISmartHomeService, NullSmartHomeService>();
+builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 builder.Services.AddScoped<McpToolSource>();
 builder.Services.AddScoped<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
-builder.Services.AddScoped<IToolProvider, DefaultToolProvider>();
+builder.Services.AddScoped<NativeToolModule>();
+builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
+builder.Services.AddScoped<IToolProvider, CompositeToolProvider>();
 
 var host = builder.Build();
-
-var http = host.Services.GetRequiredService<HttpClient>();
-AppTools.HttpClient = http;
 
 var authService = host.Services.GetRequiredService<IAuthService>();
 var guestMigration = host.Services.GetRequiredService<IGuestDataMigrationService>();
