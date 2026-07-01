@@ -1,5 +1,3 @@
-using ChatfishApp.Core.Storage;
-
 namespace ChatfishApp.Shared.Services.Tools;
 
 public enum RouteType
@@ -20,5 +18,5 @@ public interface IRequestRouter
     RequestRoute ClassifyRequest(
         string message,
         IReadOnlyList<IToolModule> activeModules,
-        IReadOnlyList<ChatMessage>? conversation = null);
+        string? conversationId = null);
 }

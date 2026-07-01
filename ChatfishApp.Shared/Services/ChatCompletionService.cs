@@ -3,7 +3,9 @@ using ChatfishApp.Core.Storage;
 using Microsoft.Extensions.AI;
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using StoreAttachment = ChatfishApp.Core.Storage.Attachment;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIContent = Microsoft.Extensions.AI.AIContent;
@@ -29,34 +31,32 @@ public sealed class ChatCompletionService : IChatCompletionService
     private readonly IToolProvider _toolProvider;
     private readonly IToolExecutionTrace _trace;
     private readonly IRequestRouter _router;
+    private readonly IRoutingSessionStore _sessions;
     private IReadOnlyList<AITool> _currentTools = [];
     private RequestRoute? _currentRoute;
     private static readonly HttpClient OllamaHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
-
-    private const string HomeAssistantToolPrompt =
-        "You have live Home Assistant tools (ListLights, ControlLight, GetEntityState, CallService). " +
-        "When the user asks to control lights or other devices you MUST call a tool before answering. " +
-        "If you do not know the exact entity_id, call ListLights first. " +
-        "Never claim you turned a light on/off or changed its color unless a tool returned success.";
 
     public ChatCompletionService(
         ChatModelCatalogService catalog,
         IKeyStore keyStore,
         IToolProvider toolProvider,
         IToolExecutionTrace trace,
-        IRequestRouter router)
+        IRequestRouter router,
+        IRoutingSessionStore sessions)
     {
         _catalog = catalog;
         _keyStore = keyStore;
         _toolProvider = toolProvider;
         _trace = trace;
         _router = router;
+        _sessions = sessions;
     }
 
     public async Task<ChatCompletionResult> CompleteAsync(
         string modelId,
         IReadOnlyList<StoreChatMessage> messages,
         string? currentUser = null,
+        string? conversationId = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(modelId))
@@ -102,7 +102,7 @@ public sealed class ChatCompletionService : IChatCompletionService
                     .Build();
 
                 var activeModules = _toolProvider.GetActiveModules();
-                var route = _router.ClassifyRequest(lastUserMessage, activeModules, effectiveMessages);
+                var route = _router.ClassifyRequest(lastUserMessage, activeModules, conversationId);
                 _currentRoute = route;
                 _currentTools = route.TargetModule != null
                     ? _toolProvider.GetToolsForModules([route.TargetModule, "Native"])
@@ -112,15 +112,26 @@ public sealed class ChatCompletionService : IChatCompletionService
                     ? $"🧭 Route: {route.Type} → {route.TargetModule}"
                     : $"🧭 Route: {route.Type}");
 
+                if (route.TargetModule == "HomeAssistant")
+                {
+                    var session = _sessions.Get(conversationId);
+                    var assistantName = _keyStore.HomeAssistantAssistantName;
+                    if (!ContextualRequestRouter.ContainsWakeWord(lastUserMessage, assistantName) &&
+                        session.IsActive("HomeAssistant", ContextualRequestRouter.SessionTtl))
+                    {
+                        _trace.Record("🧭 Session: continuing active Home Assistant conversation");
+                    }
+                }
+
                 var toolNames = _currentTools.OfType<AIFunction>().Select(f => f.Name).ToList();
                 _trace.Record(toolNames.Count > 0
                     ? $"🔧 Tools ({toolNames.Count}): {string.Join(", ", toolNames)}"
                     : "🔧 Tools: none available");
 
-                if (route.TargetModule == "HomeAssistant" ||
-                    KeywordRequestRouter.ShouldEnforceHomeAssistantTools(lastUserMessage, activeModules, effectiveMessages))
+                if (ContextualRequestRouter.ShouldEnforceHomeAssistantTools(route))
                 {
-                    AppendSystemInstruction(chatHistory, HomeAssistantToolPrompt);
+                    var session = _sessions.Get(conversationId);
+                    AppendSystemInstruction(chatHistory, BuildHomeAssistantPrompt(session));
                 }
 
                 chatOptions = new ChatOptions { Tools = _currentTools.ToList() };
@@ -172,8 +183,7 @@ public sealed class ChatCompletionService : IChatCompletionService
                     if (!string.IsNullOrWhiteSpace(extractSource))
                         _trace.Record($"ℹ️ Extracted final response from {extractSource}.");
 
-                    if (KeywordRequestRouter.ShouldEnforceHomeAssistantTools(
-                            lastUserMessage, _toolProvider.GetActiveModules(), effectiveMessages) &&
+                    if (ContextualRequestRouter.ShouldEnforceHomeAssistantTools(_currentRoute) &&
                         !HaToolsWereInvoked())
                     {
                         _trace.Record("⚠️ Model replied without calling Home Assistant tools — retrying with tool-required prompt.");
@@ -203,13 +213,16 @@ public sealed class ChatCompletionService : IChatCompletionService
                             _trace.Record("⚠️ Home Assistant action was NOT performed — no tool was called.");
                             if (ResponseClaimsHomeAssistantAction(responseText))
                             {
+                                var assistantName = _keyStore.HomeAssistantAssistantName;
                                 responseText =
-                                    "I wasn't able to control your Home Assistant devices — the model answered without calling the Home Assistant tools. " +
-                                    "Try asking again, or switch to a model with stronger tool support (e.g. Llama 3.3 or Qwen). " +
-                                    "You can also ask me to list your lights first.";
+                                    $"I wasn't able to control your Home Assistant devices — the model answered without calling the Home Assistant tools. " +
+                                    $"Start with your assistant name (e.g. \"{assistantName}, turn off the kitchen light\") or continue within 15 minutes of a successful command. " +
+                                    "Try a model with stronger tool support (e.g. Llama 3.3 or Qwen) if this keeps happening.";
                             }
                         }
                     }
+
+                    RecordHomeAssistantSessionIfNeeded(conversationId);
 
                     var toolTrace = string.Join("\n", _trace.GetCurrentTrace());
                     if (!string.IsNullOrWhiteSpace(reasoningTrace))
@@ -493,11 +506,67 @@ public sealed class ChatCompletionService : IChatCompletionService
     private List<AiChatMessage> BuildRetryHistoryForHomeAssistant(IList<AiChatMessage> chatHistory)
     {
         var retryHistory = chatHistory.ToList();
+        var assistantName = _keyStore.HomeAssistantAssistantName;
         AppendSystemInstruction(
             retryHistory,
-            "CRITICAL: Call ListLights or ControlLight now to perform the user's request. " +
+            $"CRITICAL: Call ListLights or ControlLight now to perform the user's request for assistant '{assistantName}'. " +
             "Do not answer with text only — you must invoke a Home Assistant tool.");
         return retryHistory;
+    }
+
+    private string BuildHomeAssistantPrompt(RoutingSession session)
+    {
+        var assistantName = _keyStore.HomeAssistantAssistantName;
+        var sb = new StringBuilder();
+        sb.AppendLine($"You have access to a Home Assistant integration named \"{assistantName}\".");
+        sb.AppendLine($"When the user addresses \"{assistantName}\" directly, or continues an active smart-home session, use the Home Assistant tools (ListLights, ControlLight, GetEntityState, CallService) to fulfill the request.");
+        sb.AppendLine("You MUST call a tool before claiming you changed a device. If you do not know the entity_id, call ListLights first.");
+
+        var summary = _keyStore.HomeAssistantDeviceSummary;
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Current known devices:");
+            sb.AppendLine(summary);
+        }
+
+        if (session.IsActive("HomeAssistant", ContextualRequestRouter.SessionTtl))
+        {
+            sb.AppendLine();
+            sb.AppendLine("ACTIVE SESSION: You are currently controlling home devices in this conversation.");
+            if (!string.IsNullOrWhiteSpace(session.LastEntityActedOn))
+                sb.AppendLine($"Last entity: {session.LastEntityActedOn}.");
+            if (!string.IsNullOrWhiteSpace(session.LastAction))
+                sb.AppendLine($"Last action: {session.LastAction}.");
+            sb.AppendLine("Follow-up messages about the same device should use Home Assistant tools.");
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private void RecordHomeAssistantSessionIfNeeded(string? conversationId)
+    {
+        if (!HaToolsWereInvoked() || string.IsNullOrWhiteSpace(conversationId))
+            return;
+
+        string? entity = null;
+        string? action = null;
+        foreach (var line in _trace.GetCurrentTrace())
+        {
+            if (!line.Contains("control_light", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            entity = ExtractTraceParam(line, "entity") ?? entity;
+            action = ExtractTraceParam(line, "state") ?? action;
+        }
+
+        _sessions.RecordToolInvocation(conversationId, "HomeAssistant", entity, action);
+    }
+
+    private static string? ExtractTraceParam(string line, string paramName)
+    {
+        var match = Regex.Match(line, $"{paramName}=\"([^\"]+)\"", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     private bool HaToolsWereInvoked() =>

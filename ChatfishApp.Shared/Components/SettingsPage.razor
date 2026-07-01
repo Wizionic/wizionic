@@ -1,11 +1,9 @@
 
 @inject ChatfishApp.Core.Storage.IKeyStore KeyStore
-@inject ChatfishApp.Core.SmartHome.ISmartHomeService SmartHome
 @inject ChatfishApp.Core.Update.IUpdateService UpdateService
 @inject ChatfishApp.Shared.Services.ThemeService Theme
 @inject IJSRuntime JS
 @inject NavigationManager Nav
-@using ChatfishApp.Core.SmartHome
 @using ChatfishApp.Core.Update
 @implements IDisposable
 
@@ -196,56 +194,6 @@
         </div>
     }
 
-    <!-- Home Assistant (MAUI only) -->
-    @if (AppEnvironment.IsMaui)
-    {
-        <div class="settings-card" style="margin-top: 1.5rem;">
-            <h3 style="margin: 0 0 0.25rem;">Home Assistant</h3>
-            <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 1rem;">
-                Connect to a local Home Assistant instance so the AI can control lights, scenes, and devices on your LAN.
-            </p>
-
-            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Base URL</label>
-            <input type="url"
-                   class="form-control form-control-sm"
-                   style="margin-bottom: 0.25rem;"
-                   autocomplete="off"
-                   spellcheck="false"
-                   value="@haBaseUrlDraft"
-                   @oninput="OnHaBaseUrlChanged"
-                   @onchange="OnHaBaseUrlChanged" />
-            <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 0.75rem;">
-                Example: <code>http://192.168.4.23:8123</code> — type your URL; the example above is not pre-filled.
-            </p>
-
-            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Long-lived access token</label>
-            <input type="password"
-                   class="form-control form-control-sm"
-                   style="margin-bottom: 0.75rem;"
-                   autocomplete="off"
-                   value="@haTokenDraft"
-                   @oninput="OnHaTokenChanged"
-                   @onchange="OnHaTokenChanged" />
-
-            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                <button class="btn btn-primary btn-sm" @onclick="SaveHomeAssistant" disabled="@haBusy">Save</button>
-                <button class="btn btn-outline-secondary btn-sm" @onclick="TestHomeAssistant" disabled="@haBusy">
-                    @(haBusy ? "Testing..." : "Test connection")
-                </button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(haFeedback))
-            {
-                <div style="margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
-                            background: @(haFeedbackIsError ? "#fff0f0" : "#e6f2ff");
-                            border: 1px solid @(haFeedbackIsError ? "#f5c2c7" : "#b3d9ff");
-                            color: @(haFeedbackIsError ? "#c00" : "inherit");">
-                    @haFeedback
-                </div>
-            }
-        </div>
-    }
-
     <!-- App Updates (MAUI only) -->
     @if (AppEnvironment.IsMaui)
     {
@@ -301,13 +249,6 @@
     private bool saveFeedbackIsError;
     private CancellationTokenSource? _saveFeedbackCts;
 
-    // Home Assistant (MAUI only)
-    private string haBaseUrlDraft = "";
-    private string haTokenDraft = "";
-    private string? haFeedback;
-    private bool haFeedbackIsError;
-    private bool haBusy;
-
     // Update check state (used when IsMaui is true)
     private UpdateInfo? updateInfo;
     private bool hasChecked;
@@ -324,8 +265,6 @@
         await KeyStore.LoadAsync();
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
-        haBaseUrlDraft = KeyStore.HomeAssistantBaseUrl;
-        haTokenDraft = KeyStore.HomeAssistantToken;
         ReloadMemories();
     }
 
@@ -525,76 +464,6 @@
         }
         catch (TaskCanceledException)
         {
-        }
-    }
-
-    private void OnHaBaseUrlChanged(ChangeEventArgs e) =>
-        haBaseUrlDraft = e.Value?.ToString() ?? "";
-
-    private void OnHaTokenChanged(ChangeEventArgs e) =>
-        haTokenDraft = e.Value?.ToString() ?? "";
-
-    private async Task SaveHomeAssistant()
-    {
-        try
-        {
-            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft);
-            haFeedback = "Home Assistant settings saved.";
-            haFeedbackIsError = false;
-        }
-        catch (Exception ex)
-        {
-            haFeedback = $"Could not save: {ex.Message}";
-            haFeedbackIsError = true;
-        }
-        StateHasChanged();
-    }
-
-    private async Task TestHomeAssistant()
-    {
-        haBusy = true;
-        haFeedback = null;
-        StateHasChanged();
-        try
-        {
-            if (!HomeAssistantCredentials.TryNormalize(
-                    haBaseUrlDraft, haTokenDraft, out _, out _))
-            {
-                haFeedback = string.IsNullOrWhiteSpace(haBaseUrlDraft)
-                    ? "Base URL is empty. Type your Home Assistant URL (the gray example text is not pre-filled)."
-                    : "Enter both base URL and access token.";
-                haFeedbackIsError = true;
-                return;
-            }
-
-            Console.WriteLine($"[Settings] HA test starting — url length {haBaseUrlDraft.Length}, token length {haTokenDraft.Length}");
-            if (Uri.TryCreate(haBaseUrlDraft.Trim(), UriKind.Absolute, out var testUri))
-                Console.WriteLine($"[Settings] HA test target {testUri.Scheme}://{testUri.Authority}");
-
-            var result = await SmartHome.TestConnectionAsync(haBaseUrlDraft, haTokenDraft);
-            if (result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) ||
-                result.StartsWith("Enter both", StringComparison.OrdinalIgnoreCase) ||
-                result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase))
-            {
-                haFeedback = result;
-                haFeedbackIsError = true;
-                return;
-            }
-
-            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft);
-            haFeedback = "Connected to Home Assistant successfully.";
-            haFeedbackIsError = false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Settings] HA test exception: {ex.GetType().Name}: {ex.Message}");
-            haFeedback = $"Connection failed: {ex.Message}";
-            haFeedbackIsError = true;
-        }
-        finally
-        {
-            haBusy = false;
-            StateHasChanged();
         }
     }
 

@@ -571,14 +571,31 @@ public class WasmKeyStore : IKeyStore
 
     public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";
     public string HomeAssistantToken => _homeAssistantConfig.Token ?? "";
+    public string HomeAssistantAssistantName =>
+        string.IsNullOrWhiteSpace(_homeAssistantConfig.AssistantName)
+            ? "Home"
+            : _homeAssistantConfig.AssistantName.Trim();
+    public string HomeAssistantDeviceSummary => _homeAssistantConfig.CachedDeviceSummary ?? "";
+    public DateTime? HomeAssistantDeviceSummaryUpdatedAt => _homeAssistantConfig.DeviceSummaryUpdatedAt;
 
-    public async Task SetHomeAssistantConfigAsync(string baseUrl, string token, CancellationToken ct = default)
+    public async Task SetHomeAssistantConfigAsync(string baseUrl, string token, string assistantName, CancellationToken ct = default)
     {
         _homeAssistantConfig = new HomeAssistantConfig
         {
             BaseUrl = baseUrl?.Trim().TrimEnd('/') ?? "",
-            Token = HomeAssistantCredentials.NormalizeToken(token)
+            Token = HomeAssistantCredentials.NormalizeToken(token),
+            AssistantName = string.IsNullOrWhiteSpace(assistantName) ? "Home" : assistantName.Trim(),
+            CachedDeviceSummary = _homeAssistantConfig.CachedDeviceSummary,
+            DeviceSummaryUpdatedAt = _homeAssistantConfig.DeviceSummaryUpdatedAt
         };
+        var json = JsonSerializer.Serialize(_homeAssistantConfig);
+        await _js.InvokeVoidAsync("localStorage.setItem", ct, HomeAssistantConfigKey, json);
+    }
+
+    public async Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default)
+    {
+        _homeAssistantConfig.CachedDeviceSummary = summary ?? "";
+        _homeAssistantConfig.DeviceSummaryUpdatedAt = DateTime.UtcNow;
         var json = JsonSerializer.Serialize(_homeAssistantConfig);
         await _js.InvokeVoidAsync("localStorage.setItem", ct, HomeAssistantConfigKey, json);
     }

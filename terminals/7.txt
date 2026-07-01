@@ -1,0 +1,29 @@
+---
+pid: 21132
+cwd: "C:\Users\danie\src\june30"
+command: "dotnet build ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0-windows10.0.19041.0"
+started_at: 2026-07-01T12:06:37.381Z
+running_for_ms: 23889994 
+---
+  Determining projects to restore...
+C:\Users\danie\src\june30\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary. [C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj]
+C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3.ios' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+  All projects are up-to-date for restore.
+C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q [TargetFramework=net10.0-windows10.0.19041.0]
+C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3.ios' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q [TargetFramework=net10.0-windows10.0.19041.0]
+C:\Users\danie\src\june30\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
+  ChatfishApp.Core -> C:\Users\danie\src\june30\ChatfishApp.Core\bin\Debug\net10.0\ChatfishApp.Core.dll
+  ChatfishApp.Shared -> C:\Users\danie\src\june30\ChatfishApp.Shared\bin\Debug\net10.0\ChatfishApp.Shared.dll
+  XAML source generation is enabled (MauiXamlInflator=SourceGen). This generates C# code from XAML at compile time for better performance. To disable, remove the MauiXamlInflator line from your .csproj file (reverts to configuration-based defaults: Runtime in Debug, XamlC in Release).
+  ChatfishApp.Maui -> C:\Users\danie\src\june30\ChatfishApp.Maui\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Chatfish.dll
+
+Build succeeded.
+
+C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q [TargetFramework=net10.0-windows10.0.19041.0]
+C:\Users\danie\src\june30\ChatfishApp.Maui\ChatfishApp.Maui.csproj : warning NU1903: Package 'SQLitePCLRaw.lib.e_sqlite3.ios' 2.1.11 has a known high severity vulnerability, https://github.com/advisories/GHSA-2m69-gcr7-jv3q [TargetFramework=net10.0-windows10.0.19041.0]
+C:\Users\danie\src\june30\ChatfishApp.Core\ChatfishApp.Core.csproj : warning NU1510: PackageReference System.Net.Http.Json will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
+    3 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:15.93
