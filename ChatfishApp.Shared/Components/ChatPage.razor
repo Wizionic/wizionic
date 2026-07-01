@@ -900,7 +900,7 @@
                 return text;
             }
 
-            var result = await ChatCompletionService.CompleteAsync(selectedModel, messages, currentUser);
+            var result = await ChatCompletionService.CompleteAsync(selectedModel, messages, currentUser, activeConvoId);
             _pendingToolTrace = result.ToolTrace;
 
             if (!string.IsNullOrEmpty(result.Error))
