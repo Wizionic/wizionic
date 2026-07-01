@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using ChatfishApp.Data;
 using ChatfishApp.Components;
 using ChatfishApp.Services;
-using ChatfishApp.Services.Tools;
+
 using ChatfishApp.Apis;
 using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Storage;
@@ -84,10 +84,6 @@ builder.Services.PostConfigure<EmailOptions>(opts =>
 });
 
 builder.Services.AddSingleton<ThemeService>();
-// App-level tools (web search, URL summarization via Jina, etc.) exposed to models via ME.AI function calling.
-// These are shared (not per-user) and let capable models act agentically ("search the web when it needs to").
-builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
-
 // CORS-restricted AI providers (e.g. Zyphra) — proxied through the backend using server-side keys.
 builder.Services.Configure<AiProviderProxyOptions>(builder.Configuration.GetSection(AiProviderProxyOptions.SectionName));
 builder.Services.AddHttpClient("ai-proxy", client =>

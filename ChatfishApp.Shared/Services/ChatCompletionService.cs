@@ -14,6 +14,7 @@ using FunctionResultContent = Microsoft.Extensions.AI.FunctionResultContent;
 using StoreChatMessage = ChatfishApp.Core.Storage.ChatMessage;
 
 using ChatfishApp.Core.Chat;
+using ChatfishApp.Core.Tools;
 using ChatfishApp.Shared.Services.Tools;
 
 namespace ChatfishApp.Shared.Services;
@@ -26,16 +27,30 @@ public sealed class ChatCompletionService : IChatCompletionService
     private readonly ChatModelCatalogService _catalog;
     private readonly IKeyStore _keyStore;
     private readonly IToolProvider _toolProvider;
+    private readonly IToolExecutionTrace _trace;
+    private readonly IRequestRouter _router;
+    private IReadOnlyList<AITool> _currentTools = [];
+    private RequestRoute? _currentRoute;
     private static readonly HttpClient OllamaHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
+
+    private const string HomeAssistantToolPrompt =
+        "You have live Home Assistant tools (ListLights, ControlLight, GetEntityState, CallService). " +
+        "When the user asks to control lights or other devices you MUST call a tool before answering. " +
+        "If you do not know the exact entity_id, call ListLights first. " +
+        "Never claim you turned a light on/off or changed its color unless a tool returned success.";
 
     public ChatCompletionService(
         ChatModelCatalogService catalog,
         IKeyStore keyStore,
-        IToolProvider toolProvider)
+        IToolProvider toolProvider,
+        IToolExecutionTrace trace,
+        IRequestRouter router)
     {
         _catalog = catalog;
         _keyStore = keyStore;
         _toolProvider = toolProvider;
+        _trace = trace;
+        _router = router;
     }
 
     public async Task<ChatCompletionResult> CompleteAsync(
@@ -63,19 +78,21 @@ public sealed class ChatCompletionService : IChatCompletionService
             var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory);
             PrependSystemPrompt(chatHistory);
 
-            ToolExecutionTrace.Clear();
+            _trace.Clear();
             if (!string.IsNullOrWhiteSpace(visionProxyTrace))
-                ToolExecutionTrace.Record(visionProxyTrace);
+                _trace.Record(visionProxyTrace);
             else if (serverVisionProxy && MessagesContainVisionAttachments(effectiveMessages, currentUser))
             {
                 var proxyId = modelInfo?.VisionProxyModelId ?? _catalog.GetProxiedVisionProxyModelId(modelId);
-                ToolExecutionTrace.Record(
+                _trace.Record(
                     $"👁️ Routing image(s) through server vision proxy ({proxyId})...");
             }
 
+            var lastUserMessage = ExtractLastUserMessage(effectiveMessages);
             var baseClient = _catalog.GetChatClientForModel(modelId);
             IChatClient client = baseClient;
             ChatOptions? chatOptions = null;
+            _currentRoute = null;
 
             if (supportsTools)
             {
@@ -84,8 +101,33 @@ public sealed class ChatCompletionService : IChatCompletionService
                     .UseFunctionInvocation()
                     .Build();
 
-                ToolExecutionTrace.Clear();
-                chatOptions = new ChatOptions { Tools = _toolProvider.GetTools().ToList() };
+                var activeModules = _toolProvider.GetActiveModules();
+                var route = _router.ClassifyRequest(lastUserMessage, activeModules, effectiveMessages);
+                _currentRoute = route;
+                _currentTools = route.TargetModule != null
+                    ? _toolProvider.GetToolsForModules([route.TargetModule, "Native"])
+                    : _toolProvider.GetTools();
+
+                _trace.Record(route.TargetModule != null
+                    ? $"🧭 Route: {route.Type} → {route.TargetModule}"
+                    : $"🧭 Route: {route.Type}");
+
+                var toolNames = _currentTools.OfType<AIFunction>().Select(f => f.Name).ToList();
+                _trace.Record(toolNames.Count > 0
+                    ? $"🔧 Tools ({toolNames.Count}): {string.Join(", ", toolNames)}"
+                    : "🔧 Tools: none available");
+
+                if (route.TargetModule == "HomeAssistant" ||
+                    KeywordRequestRouter.ShouldEnforceHomeAssistantTools(lastUserMessage, activeModules, effectiveMessages))
+                {
+                    AppendSystemInstruction(chatHistory, HomeAssistantToolPrompt);
+                }
+
+                chatOptions = new ChatOptions { Tools = _currentTools.ToList() };
+            }
+            else
+            {
+                _currentTools = [];
             }
 
             const int maxAttempts = 3;
@@ -128,9 +170,48 @@ public sealed class ChatCompletionService : IChatCompletionService
                     }
 
                     if (!string.IsNullOrWhiteSpace(extractSource))
-                        ToolExecutionTrace.Record($"ℹ️ Extracted final response from {extractSource}.");
+                        _trace.Record($"ℹ️ Extracted final response from {extractSource}.");
 
-                    var toolTrace = string.Join("\n", ToolExecutionTrace.GetCurrentTrace());
+                    if (KeywordRequestRouter.ShouldEnforceHomeAssistantTools(
+                            lastUserMessage, _toolProvider.GetActiveModules(), effectiveMessages) &&
+                        !HaToolsWereInvoked())
+                    {
+                        _trace.Record("⚠️ Model replied without calling Home Assistant tools — retrying with tool-required prompt.");
+
+                        if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var retryHistory = BuildRetryHistoryForHomeAssistant(chatHistory);
+                            var (retryText, retrySource) = await TryOllamaRawCompletionAsync(
+                                modelId, retryHistory, supportsTools: true, contextSize, ct);
+                            if (!string.IsNullOrWhiteSpace(retryText))
+                            {
+                                responseText = retryText;
+                                extractSource = retrySource;
+                            }
+                        }
+                        else
+                        {
+                            var retryHistory = BuildRetryHistoryForHomeAssistant(chatHistory);
+                            var retryResponse = await client.GetResponseAsync(retryHistory, chatOptions ?? new ChatOptions(), ct);
+                            var retryText = ExtractFinalDisplayText(retryResponse);
+                            if (!string.IsNullOrWhiteSpace(retryText) && !IsBogusExtractedText(retryText))
+                                responseText = retryText;
+                        }
+
+                        if (!HaToolsWereInvoked())
+                        {
+                            _trace.Record("⚠️ Home Assistant action was NOT performed — no tool was called.");
+                            if (ResponseClaimsHomeAssistantAction(responseText))
+                            {
+                                responseText =
+                                    "I wasn't able to control your Home Assistant devices — the model answered without calling the Home Assistant tools. " +
+                                    "Try asking again, or switch to a model with stronger tool support (e.g. Llama 3.3 or Qwen). " +
+                                    "You can also ask me to list your lights first.";
+                            }
+                        }
+                    }
+
+                    var toolTrace = string.Join("\n", _trace.GetCurrentTrace());
                     if (!string.IsNullOrWhiteSpace(reasoningTrace))
                     {
                         toolTrace = string.IsNullOrWhiteSpace(toolTrace)
@@ -148,7 +229,7 @@ public sealed class ChatCompletionService : IChatCompletionService
                     if (msg.Contains("429") || msg.Contains("too many requests") || msg.Contains("rate limit"))
                     {
                         int delayMs = attempt * 1200;
-                        ToolExecutionTrace.Record($"⚠️ Provider rate limit (429) on attempt {attempt}. Waiting {delayMs}ms before retry...");
+                        _trace.Record($"⚠️ Provider rate limit (429) on attempt {attempt}. Waiting {delayMs}ms before retry...");
                         await Task.Delay(delayMs, ct);
                         continue;
                     }
@@ -156,7 +237,7 @@ public sealed class ChatCompletionService : IChatCompletionService
                 }
             }
 
-            var exhaustedTrace = string.Join("\n", ToolExecutionTrace.GetCurrentTrace());
+            var exhaustedTrace = string.Join("\n", _trace.GetCurrentTrace());
             return new ChatCompletionResult(
                 "",
                 exhaustedTrace,
@@ -166,6 +247,16 @@ public sealed class ChatCompletionService : IChatCompletionService
         {
             return new ChatCompletionResult("", "", $"Error calling provider: {ex.Message}");
         }
+    }
+
+    private static string ExtractLastUserMessage(IReadOnlyList<StoreChatMessage> messages)
+    {
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(messages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+                return messages[i].Content ?? "";
+        }
+        return "";
     }
 
     private async Task<(List<StoreChatMessage> Messages, string? Trace)> ApplyVisionProxyAsync(
@@ -378,6 +469,60 @@ public sealed class ChatCompletionService : IChatCompletionService
             return;
 
         chatHistory.Insert(0, new AiChatMessage(ChatRole.System, systemText));
+    }
+
+    private static void AppendSystemInstruction(List<AiChatMessage> chatHistory, string instruction)
+    {
+        if (string.IsNullOrWhiteSpace(instruction))
+            return;
+
+        var systemIndex = chatHistory.FindIndex(m => m.Role == ChatRole.System);
+        if (systemIndex >= 0)
+        {
+            var existing = string.Join("\n",
+                chatHistory[systemIndex].Contents.OfType<TextContent>().Select(t => t.Text));
+            chatHistory[systemIndex] = new AiChatMessage(
+                ChatRole.System,
+                string.IsNullOrWhiteSpace(existing) ? instruction : $"{existing}\n\n{instruction}");
+            return;
+        }
+
+        chatHistory.Insert(0, new AiChatMessage(ChatRole.System, instruction));
+    }
+
+    private List<AiChatMessage> BuildRetryHistoryForHomeAssistant(IList<AiChatMessage> chatHistory)
+    {
+        var retryHistory = chatHistory.ToList();
+        AppendSystemInstruction(
+            retryHistory,
+            "CRITICAL: Call ListLights or ControlLight now to perform the user's request. " +
+            "Do not answer with text only — you must invoke a Home Assistant tool.");
+        return retryHistory;
+    }
+
+    private bool HaToolsWereInvoked() =>
+        _trace.GetCurrentTrace().Any(line => line.Contains("🏠", StringComparison.Ordinal));
+
+    private static bool ResponseClaimsHomeAssistantAction(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var lower = text.ToLowerInvariant();
+        string[] markers =
+        [
+            "turned on", "turned off", "turned the", "i have turned", "i've turned",
+            "light is now", "light has been", "done!", "all set", "successfully turned",
+            "is now off", "is now on", "is off", "is on"
+        ];
+
+        foreach (var marker in markers)
+        {
+            if (lower.Contains(marker, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     private string ResolveSystemPrompt()
@@ -852,7 +997,7 @@ public sealed class ChatCompletionService : IChatCompletionService
         }
         catch (Exception ex)
         {
-            ToolExecutionTrace.Record($"[debug] Ollama raw fallback failed: {ex.Message}");
+            _trace.Record($"[debug] Ollama raw fallback failed: {ex.Message}");
             return ("", null);
         }
     }
@@ -860,7 +1005,7 @@ public sealed class ChatCompletionService : IChatCompletionService
     private List<Dictionary<string, object?>> BuildOllamaToolDefinitions()
     {
         var tools = new List<Dictionary<string, object?>>();
-        foreach (var tool in _toolProvider.GetTools())
+        foreach (var tool in _currentTools)
         {
             if (tool is not AIFunction fn) continue;
             tools.Add(new Dictionary<string, object?>
@@ -881,7 +1026,7 @@ public sealed class ChatCompletionService : IChatCompletionService
 
     private async Task<string> InvokeToolAsync(string name, string argumentsJson, CancellationToken ct)
     {
-        var fn = _toolProvider.GetTools().OfType<AIFunction>().FirstOrDefault(f => f.Name == name);
+        var fn = _currentTools.OfType<AIFunction>().FirstOrDefault(f => f.Name == name);
         if (fn == null)
             return $"Tool '{name}' is not available.";
 

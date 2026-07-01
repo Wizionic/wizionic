@@ -1,4 +1,5 @@
 using ChatfishApp.Core.Ollama;
+using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -19,6 +20,7 @@ public class SqliteKeyStore : IKeyStore
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
+    private const string HomeAssistantConfigKey = "wasm-home-assistant-config";
 
     private readonly SqliteSettingsDatabase _db;
 
@@ -32,6 +34,7 @@ public class SqliteKeyStore : IKeyStore
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
+    private HomeAssistantConfig _homeAssistantConfig = new();
 
     public SqliteKeyStore(SqliteSettingsDatabase db) => _db = db;
 
@@ -93,6 +96,14 @@ public class SqliteKeyStore : IKeyStore
             var loaded = JsonSerializer.Deserialize<List<UserMemory>>(memoriesJson);
             if (loaded != null)
                 _userMemories = loaded;
+        }
+
+        var haJson = await _db.GetStringAsync(HomeAssistantConfigKey, ct);
+        if (!string.IsNullOrEmpty(haJson))
+        {
+            var loaded = JsonSerializer.Deserialize<HomeAssistantConfig>(haJson);
+            if (loaded != null)
+                _homeAssistantConfig = loaded;
         }
     }
 
@@ -555,5 +566,19 @@ public class SqliteKeyStore : IKeyStore
     {
         var json = JsonSerializer.Serialize(_mcpTokens);
         await _db.SetStringAsync(McpTokensKey, json, ct);
+    }
+
+    public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";
+    public string HomeAssistantToken => _homeAssistantConfig.Token ?? "";
+
+    public async Task SetHomeAssistantConfigAsync(string baseUrl, string token, CancellationToken ct = default)
+    {
+        _homeAssistantConfig = new HomeAssistantConfig
+        {
+            BaseUrl = baseUrl?.Trim().TrimEnd('/') ?? "",
+            Token = HomeAssistantCredentials.NormalizeToken(token)
+        };
+        var json = JsonSerializer.Serialize(_homeAssistantConfig);
+        await _db.SetStringAsync(HomeAssistantConfigKey, json, ct);
     }
 }

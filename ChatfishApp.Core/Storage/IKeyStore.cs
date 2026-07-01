@@ -49,4 +49,8 @@ public interface IKeyStore
     Task SetMcpTokenAsync(string serverName, string token, CancellationToken ct = default);
     Task AddCustomConnectorAsync(string name, string serverUrl, CancellationToken ct = default);
     Task RemoveCustomConnectorAsync(string name, CancellationToken ct = default);
+
+    string HomeAssistantBaseUrl { get; }
+    string HomeAssistantToken { get; }
+    Task SetHomeAssistantConfigAsync(string baseUrl, string token, CancellationToken ct = default);
 }

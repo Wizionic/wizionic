@@ -1,9 +1,12 @@
 using System.Net;
 using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Configuration;
+using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
 using ChatfishApp.Core.Chat;
+using ChatfishApp.Core.Tools;
 using ChatfishApp.Core.UI;
 using ChatfishApp.Core.Update;
 using ChatfishApp.Maui.Services;
@@ -93,13 +96,23 @@ public static class MauiProgram
 		builder.Services.AddScoped<IGuestKeyProvider, SqliteGuestKeyProvider>();
 		builder.Services.AddScoped<NullGuestDataMigrationService>();
 		builder.Services.AddScoped<IGuestDataMigrationService>(sp => sp.GetRequiredService<NullGuestDataMigrationService>());
+		builder.Services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
+		builder.Services.AddSingleton<IRequestRouter, KeywordRequestRouter>();
+		builder.Services.AddSingleton<ISmartHomeService, HomeAssistantService>();
+		builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 		builder.Services.AddSingleton<McpToolSource>();
 		builder.Services.AddSingleton<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
+		builder.Services.AddSingleton<NativeToolModule>();
+		builder.Services.AddSingleton<HomeAssistantToolModule>();
+		builder.Services.AddSingleton<BrowserAgentToolModule>();
+		builder.Services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
+		builder.Services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<HomeAssistantToolModule>());
+		builder.Services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<BrowserAgentToolModule>());
+		builder.Services.AddSingleton<IToolProvider, CompositeToolProvider>();
 		builder.Services.AddSingleton<ChatModelCatalogService>();
 		builder.Services.AddSingleton<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
 		builder.Services.AddSingleton<ChatCompletionService>();
 		builder.Services.AddSingleton<IChatCompletionService>(sp => sp.GetRequiredService<ChatCompletionService>());
-		builder.Services.AddSingleton<IToolProvider, DefaultToolProvider>();
 		builder.Services.AddSingleton<ChatAuthService>();
 		builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 		builder.Services.AddSingleton<MauiUpdateService>();
@@ -119,10 +132,6 @@ public static class MauiProgram
 		var serverOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ChatfishServerOptions>>().Value;
 		cookieStore.Configure(serverOptions);
 		cookieStore.EnsureLoadedAsync().GetAwaiter().GetResult();
-
-		// Wire HTTP for tool proxy calls; model catalog refresh runs when Chat/Settings open
-		// (do not block startup on /api/proxy/providers — host may be offline).
-		AppTools.HttpClient = app.Services.GetRequiredService<HttpClient>();
 
 		return app;
 	}

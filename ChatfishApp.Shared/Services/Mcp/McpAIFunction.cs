@@ -1,6 +1,6 @@
 using System.Text.Json;
+using ChatfishApp.Core.Tools;
 using Microsoft.Extensions.AI;
-using ChatfishApp.Shared.Services.Tools;
 
 namespace ChatfishApp.Shared.Services.Mcp;
 
@@ -14,6 +14,7 @@ namespace ChatfishApp.Shared.Services.Mcp;
 public sealed class McpAIFunction : AIFunction
 {
     private readonly McpRemoteClient _client;
+    private readonly IToolExecutionTrace _trace;
     private readonly string _toolName;
     private readonly string _description;
     private readonly JsonElement? _inputSchema;
@@ -21,12 +22,14 @@ public sealed class McpAIFunction : AIFunction
 
     public McpAIFunction(
         McpRemoteClient client,
+        IToolExecutionTrace trace,
         string toolName,
         string description,
         JsonElement? inputSchema,
         string serverDisplay)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        _trace = trace ?? throw new ArgumentNullException(nameof(trace));
         _toolName = toolName;
         _description = description;
         _inputSchema = inputSchema;
@@ -80,14 +83,14 @@ public sealed class McpAIFunction : AIFunction
         }
 
         var shortArgs = args.Count == 0 ? "" : " " + JsonSerializer.Serialize(args);
-        ToolExecutionTrace.Record($"🔌 {_serverDisplay} → {_toolName}{shortArgs}");
+        _trace.Record($"🔌 {_serverDisplay} → {_toolName}{shortArgs}");
 
         try
         {
             var resultText = await _client.CallToolAsync(_toolName, args, cancellationToken);
 
             var preview = resultText.Length > 220 ? resultText.Substring(0, 200) + "..." : resultText;
-            ToolExecutionTrace.Record($"   ✅ {_toolName} → {preview.Replace('\n', ' ')}");
+            _trace.Record($"   ✅ {_toolName} → {preview.Replace('\n', ' ')}");
 
             // Returning a string (or a structured object) is what the function invocation middleware
             // turns into a tool result message for the LLM.
@@ -96,7 +99,7 @@ public sealed class McpAIFunction : AIFunction
         catch (Exception ex)
         {
             var err = $"MCP call to {_toolName} on {_serverDisplay} failed: {ex.Message}";
-            ToolExecutionTrace.Record($"   ❌ {err}");
+            _trace.Record($"   ❌ {err}");
             return err; // surface the error to the model so it can decide what to do
         }
     }
