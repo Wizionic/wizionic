@@ -46,7 +46,8 @@ builder.Services.AddScoped<WasmGuestDataMigrationService>();
 builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
 
 builder.Services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
-builder.Services.AddSingleton<IRequestRouter, KeywordRequestRouter>();
+builder.Services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
+builder.Services.AddSingleton<IRequestRouter, ContextualRequestRouter>();
 builder.Services.AddSingleton<ISmartHomeService, NullSmartHomeService>();
 builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 builder.Services.AddScoped<McpToolSource>();
