@@ -19,6 +19,11 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.Services.AddSingleton<ThemeService>();
 builder.Services.AddSingleton<SidebarState>();
 builder.Services.AddSingleton<ISidebarState>(sp => sp.GetRequiredService<SidebarState>());
+builder.Services.AddSingleton<BrowserPanelState>();
+builder.Services.AddSingleton<IBrowserPanelState>(sp => sp.GetRequiredService<BrowserPanelState>());
+builder.Services.AddSingleton<IBrowserAgentService, NullBrowserAgentService>();
+builder.Services.AddSingleton<IBrowserOverlaySync, NullBrowserOverlaySync>();
+builder.Services.AddSingleton<IBrowserStore, NullBrowserStore>();
 builder.Services.AddSingleton<WasmKeyStore>();
 builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<WasmKeyStore>());
 builder.Services.AddScoped<ChatModelCatalogService>();
