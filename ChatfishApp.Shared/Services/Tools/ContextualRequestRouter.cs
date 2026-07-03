@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Tools;
+using ChatfishApp.Core.UI;
 
 namespace ChatfishApp.Shared.Services.Tools;
 
@@ -13,11 +14,16 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
     private readonly IKeyStore _keyStore;
     private readonly IRoutingSessionStore _sessions;
+    private readonly IBrowserPanelState _browserPanel;
 
-    public ContextualRequestRouter(IKeyStore keyStore, IRoutingSessionStore sessions)
+    public ContextualRequestRouter(
+        IKeyStore keyStore,
+        IRoutingSessionStore sessions,
+        IBrowserPanelState browserPanel)
     {
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        _browserPanel = browserPanel ?? throw new ArgumentNullException(nameof(browserPanel));
     }
 
     public RequestRoute ClassifyRequest(
@@ -38,9 +44,10 @@ public sealed class ContextualRequestRouter : IRequestRouter
                 return new RequestRoute(RouteType.ToolAssistedChat, "HomeAssistant");
         }
 
-        if (activeModules.Any(m => m.ModuleName == "BrowserAgent" && m.IsAvailable))
+        if (_browserPanel.IsOpen &&
+            activeModules.Any(m => m.ModuleName == "BrowserAgent" && m.IsAvailable))
         {
-            // Future: browser wake word from BrowserAgentConfig
+            return new RequestRoute(RouteType.ToolAssistedChat, "BrowserAgent");
         }
 
         return new RequestRoute(RouteType.ToolAssistedChat);

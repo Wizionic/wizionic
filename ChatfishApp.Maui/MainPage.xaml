@@ -5,10 +5,20 @@
              xmlns:components="clr-namespace:ChatfishApp.Maui.Components"
              x:Class="ChatfishApp.Maui.MainPage">
 
-    <BlazorWebView x:Name="blazorWebView" HostPage="wwwroot/index.html">
-        <BlazorWebView.RootComponents>
-            <RootComponent Selector="#app" ComponentType="{x:Type components:Routes}" />
-        </BlazorWebView.RootComponents>
-    </BlazorWebView>
+    <AbsoluteLayout x:Name="rootLayout">
+        <BlazorWebView x:Name="blazorWebView"
+                       HostPage="wwwroot/index.html"
+                       AbsoluteLayout.LayoutBounds="0,0,1,1"
+                       AbsoluteLayout.LayoutFlags="All">
+            <BlazorWebView.RootComponents>
+                <RootComponent Selector="#app" ComponentType="{x:Type components:Routes}" />
+            </BlazorWebView.RootComponents>
+        </BlazorWebView>
+
+        <WebView x:Name="browserWebView"
+                 IsVisible="False"
+                 AbsoluteLayout.LayoutBounds="0,0,0,0"
+                 AbsoluteLayout.LayoutFlags="None" />
+    </AbsoluteLayout>
 
 </ContentPage>

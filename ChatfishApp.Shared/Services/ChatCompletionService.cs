@@ -15,8 +15,10 @@ using FunctionCallContent = Microsoft.Extensions.AI.FunctionCallContent;
 using FunctionResultContent = Microsoft.Extensions.AI.FunctionResultContent;
 using StoreChatMessage = ChatfishApp.Core.Storage.ChatMessage;
 
+using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Chat;
 using ChatfishApp.Core.Tools;
+using ChatfishApp.Core.UI;
 using ChatfishApp.Shared.Services.Tools;
 
 namespace ChatfishApp.Shared.Services;
@@ -32,6 +34,8 @@ public sealed class ChatCompletionService : IChatCompletionService
     private readonly IToolExecutionTrace _trace;
     private readonly IRequestRouter _router;
     private readonly IRoutingSessionStore _sessions;
+    private readonly IBrowserPanelState _browserPanel;
+    private readonly IBrowserAgentService _browserAgent;
     private IReadOnlyList<AITool> _currentTools = [];
     private RequestRoute? _currentRoute;
     private static readonly HttpClient OllamaHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
@@ -42,7 +46,9 @@ public sealed class ChatCompletionService : IChatCompletionService
         IToolProvider toolProvider,
         IToolExecutionTrace trace,
         IRequestRouter router,
-        IRoutingSessionStore sessions)
+        IRoutingSessionStore sessions,
+        IBrowserPanelState browserPanel,
+        IBrowserAgentService browserAgent)
     {
         _catalog = catalog;
         _keyStore = keyStore;
@@ -50,6 +56,8 @@ public sealed class ChatCompletionService : IChatCompletionService
         _trace = trace;
         _router = router;
         _sessions = sessions;
+        _browserPanel = browserPanel;
+        _browserAgent = browserAgent;
     }
 
     public async Task<ChatCompletionResult> CompleteAsync(
@@ -77,6 +85,9 @@ public sealed class ChatCompletionService : IChatCompletionService
                 modelId, messages, currentUser, supportsVision, ct);
             var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory);
             PrependSystemPrompt(chatHistory);
+
+            if (_browserPanel.IsOpen)
+                AppendSystemInstruction(chatHistory, BuildBrowserPrompt());
 
             _trace.Clear();
             if (!string.IsNullOrWhiteSpace(visionProxyTrace))
@@ -512,6 +523,19 @@ public sealed class ChatCompletionService : IChatCompletionService
             $"CRITICAL: Call ListLights or ControlLight now to perform the user's request for assistant '{assistantName}'. " +
             "Do not answer with text only — you must invoke a Home Assistant tool.");
         return retryHistory;
+    }
+
+    private string BuildBrowserPrompt()
+    {
+        var url = string.IsNullOrWhiteSpace(_browserAgent.CurrentUrl) ? "(none)" : _browserAgent.CurrentUrl;
+        var title = string.IsNullOrWhiteSpace(_browserAgent.PageTitle) ? "(none)" : _browserAgent.PageTitle;
+
+        return $"""
+            Current browser URL: {url}
+            Page title: "{title}"
+            The user may ask you to summarize this page, extract information,
+            or navigate to other URLs. Use the available browser tools.
+            """;
     }
 
     private string BuildHomeAssistantPrompt(RoutingSession session)
