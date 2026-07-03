@@ -23,6 +23,10 @@ public static class MauiProgram
 {
 	public static MauiApp CreateMauiApp()
 	{
+#if WINDOWS
+		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
+		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
+#endif
 		// Must be the very first line before anything else
         VelopackApp.Build().Run();
 
@@ -89,6 +93,15 @@ public static class MauiProgram
 		builder.Services.AddSingleton<INotesSyncBridge>(sp => sp.GetRequiredService<MauiSyncService>());
 		builder.Services.AddSingleton<MauiSidebarState>();
 		builder.Services.AddSingleton<ISidebarState>(sp => sp.GetRequiredService<MauiSidebarState>());
+		builder.Services.AddSingleton<MauiBrowserPanelState>();
+		builder.Services.AddSingleton<IBrowserPanelState>(sp => sp.GetRequiredService<MauiBrowserPanelState>());
+		builder.Services.AddSingleton<SqliteBrowserStore>();
+		builder.Services.AddSingleton<IBrowserStore>(sp => sp.GetRequiredService<SqliteBrowserStore>());
+		builder.Services.AddSingleton<BrowserOverlayService>();
+		builder.Services.AddSingleton<IBrowserOverlaySync>(sp => sp.GetRequiredService<BrowserOverlayService>());
+		builder.Services.AddSingleton<MauiBrowserAgentService>();
+		builder.Services.AddSingleton<IBrowserAgentService>(sp => sp.GetRequiredService<MauiBrowserAgentService>());
+		builder.Services.AddSingleton<BrowserWebViewPlatformService>();
 		builder.Services.AddSingleton<SqliteKeyStore>();
 		builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<SqliteKeyStore>());
 		builder.Services.AddScoped<MauiCryptoService>();
@@ -100,7 +113,8 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
 		builder.Services.AddSingleton<IRequestRouter, ContextualRequestRouter>();
 		builder.Services.AddSingleton<ISmartHomeService, HomeAssistantService>();
-		builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
+		builder.Services.AddSingleton<MauiBrowserContext>();
+		builder.Services.AddSingleton<IBrowserContext>(sp => sp.GetRequiredService<MauiBrowserContext>());
 		builder.Services.AddSingleton<McpToolSource>();
 		builder.Services.AddSingleton<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
 		builder.Services.AddSingleton<NativeToolModule>();

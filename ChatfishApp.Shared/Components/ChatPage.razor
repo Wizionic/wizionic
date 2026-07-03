@@ -8,6 +8,8 @@
 @using ChatfishApp.Core.Storage
 @using ChatfishApp.Core.Sync
 @using ChatfishApp.Core.UI
+@using ChatfishApp.Core.Browser
+@using ChatfishApp.Shared.Services
 @using Microsoft.AspNetCore.Components.Forms
 @using ChatMessage = ChatfishApp.Core.Storage.ChatMessage
 @using Attachment = ChatfishApp.Core.Storage.Attachment
@@ -24,6 +26,7 @@
 @inject IChatCompletionService ChatCompletionService
 @inject INoteStore NoteStore
 @inject ISidebarState SidebarState
+@inject IBrowserPanelState BrowserPanel
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
         <!-- Sidebar toggle button is here (in Chat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
@@ -82,7 +85,8 @@
 
     <!-- Main content -->
     <main>
-        <div class="chat-wrapper" style="flex: 1; display: flex; flex-direction: column;">
+        <div id="chat-split-wrapper" class="chat-wrapper @(BrowserPanel.IsOpen ? "browser-panel-open" : "")" @ref="_splitWrapper">
+            <div class="chat-column" style="@ChatColumnStyle">
             @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
                 <div style="padding: 0.35rem 1rem; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; font-size: 0.85em; color: #166534;">
@@ -223,7 +227,7 @@
 
                         <textarea @ref="messageTextarea"
                                   id="chat-message-input"
-                                  placeholder="Message ChatFish..."
+                                  placeholder="@ChatPlaceholder"
                                   class="message-input"
                                   rows="3"></textarea>
                     </div>
@@ -283,6 +287,12 @@
                 <!-- Hidden file picker for attachments (triggered by the + menu) -->
                 <InputFile id="file-attach-input" style="display:none;" OnChange="OnFileSelected" />
             </div>
+            </div>
+
+            @if (BrowserPanel.IsOpen && AppEnvironment.IsMaui)
+            {
+                <EmbeddedBrowser />
+            }
         </div>
     </main>
 
@@ -526,7 +536,31 @@
         public double left { get; set; }
     }
 
+    private ElementReference _splitWrapper;
+
+    private string ChatPlaceholder =>
+        BrowserPanel.IsOpen
+            ? "Ask about this page, or say 'navigate to...'"
+            : "Message ChatFish...";
+
+    private string ChatColumnStyle
+    {
+        get
+        {
+            if (!BrowserPanel.IsOpen)
+                return "";
+
+            var width = BrowserPanel.ChatPaneWidthPx;
+            if (width <= 0)
+                return "flex: 0 0 32%; min-width: 280px; max-width: none;";
+
+            return FormattableString.Invariant(
+                $"flex: 0 0 {width}px; width: {width}px; min-width: 280px; max-width: none;");
+        }
+    }
+
     private Action? _sidebarStateChangedHandler;
+    private Action? _browserPanelChangedHandler;
     private Action? _syncChangedHandler;
     private string? _lastSyncedAiServerId;
     private int _lastSyncedRemoteModelCount = -1;
@@ -534,47 +568,26 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await KeyStore.LoadAsync();
-        await AuthService.LoadAsync();               // fetch email + encryption key from server (if cookie present)
-        if (AuthService.IsAuthenticated)
-            await GuestMigration.MigrateIfNeededAsync();
-        await ConversationStore.LoadIndexAsync();  // triggers any legacy cleaning (now respects auth for prefix/encryption)
+        dotNetRef ??= DotNetObjectReference.Create<object>(this);
+        RegisterEventHandlers();
 
-        if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
+        if (BrowserPanel.IsOpen && AppEnvironment.IsMaui)
         {
-            currentUser = AuthService.Email; // use real email instead of the old "LocalUser" sentinel
-            await SyncService.EnsureConnectedAndRegisteredAsync();
-            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
-                await SyncService.EnsureAiProxyConnectionAsync();
+            _ = InitializeChatDataAsync();
+            return;
         }
 
-        await RefreshModelListAsync();
-        EnsureValidModelSelection();
+        await InitializeChatDataAsync();
+    }
 
-        // Load history via store (will be under the per-email encrypted bucket if authed)
-        localConvos = await ConversationStore.LoadIndexAsync();
-        var lastId = await ConversationStore.GetLastConvoIdAsync();
-
-        if (!string.IsNullOrEmpty(lastId) && localConvos.Any(c => c.Id == lastId))
-        {
-            activeConvoId = lastId;
-            await LoadConversation(lastId);
-        }
-        else if (localConvos.Any())
-        {
-            activeConvoId = localConvos.OrderByDescending(c => c.LastUpdated).First().Id;
-            await LoadConversation(activeConvoId);
-        }
-        else
-        {
-            await NewConversation();
-        }
-
+    private void RegisterEventHandlers()
+    {
         _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
         SidebarState.OnChanged += _sidebarStateChangedHandler;
 
-        // Subscribe so the conversation sidebar auto-refreshes when a sync arrives
-        // while the user is on the chat page (even if they weren't on the sync page).
+        _browserPanelChangedHandler = () => InvokeAsync(OnBrowserPanelChangedAsync);
+        BrowserPanel.OnChanged += _browserPanelChangedHandler;
+
         SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
 
         _syncChangedHandler = () => InvokeAsync(async () =>
@@ -597,6 +610,46 @@
             StateHasChanged();
         });
         SyncService.OnChanged += _syncChangedHandler;
+    }
+
+    private async Task InitializeChatDataAsync()
+    {
+        await KeyStore.LoadAsync();
+        await AuthService.LoadAsync();
+        if (AuthService.IsAuthenticated)
+            await GuestMigration.MigrateIfNeededAsync();
+        await ConversationStore.LoadIndexAsync();
+
+        if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
+        {
+            currentUser = AuthService.Email;
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+                await SyncService.EnsureAiProxyConnectionAsync();
+        }
+
+        await RefreshModelListAsync();
+        EnsureValidModelSelection();
+
+        localConvos = await ConversationStore.LoadIndexAsync();
+        var lastId = await ConversationStore.GetLastConvoIdAsync();
+
+        if (!string.IsNullOrEmpty(lastId) && localConvos.Any(c => c.Id == lastId))
+        {
+            activeConvoId = lastId;
+            await LoadConversation(lastId);
+        }
+        else if (localConvos.Any())
+        {
+            activeConvoId = localConvos.OrderByDescending(c => c.LastUpdated).First().Id;
+            await LoadConversation(activeConvoId);
+        }
+        else
+        {
+            await NewConversation();
+        }
+
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task RefreshModelListAsync()
@@ -651,9 +704,10 @@
     public void Dispose()
     {
         if (_sidebarStateChangedHandler != null)
-        {
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
-        }
+
+        if (_browserPanelChangedHandler != null)
+            BrowserPanel.OnChanged -= _browserPanelChangedHandler;
 
         SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
 
@@ -689,6 +743,24 @@
         {
             Console.WriteLine($"[Chat] toggleSidebar failed: {ex.Message}");
         }
+    }
+
+    private async Task OnBrowserPanelChangedAsync()
+    {
+        if (BrowserPanel.IsOpen && !SidebarState.IsCollapsed)
+        {
+            SidebarState.IsCollapsed = true;
+            try
+            {
+                await JS.InvokeVoidAsync("toggleWasmSidebar", true);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Chat] browser panel sidebar collapse failed: {ex.Message}");
+            }
+        }
+
+        StateHasChanged();
     }
 
     void ToggleAttachMenu()
@@ -808,7 +880,7 @@
             }
             catch { /* ignore if host script not ready */ }
 
-            dotNetRef = DotNetObjectReference.Create<object>(this);
+            dotNetRef ??= DotNetObjectReference.Create<object>(this);
             try { await JS.InvokeVoidAsync("setupChatImagePaste", dotNetRef, messageTextarea); } catch { /* host script may not be ready */ }
             try { await JS.InvokeVoidAsync("setupChatEnterToSend", messageTextarea); } catch { /* host script may not be ready */ }
         }
@@ -819,6 +891,7 @@
             await Task.Delay(80);
             try { await JS.InvokeVoidAsync("scrollChatToBottom"); } catch { }
         }
+
     }
 
     async Task Send()

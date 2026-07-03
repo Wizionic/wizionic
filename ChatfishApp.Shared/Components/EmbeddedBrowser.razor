@@ -1,0 +1,720 @@
+@implements IDisposable
+@using Microsoft.JSInterop
+@using ChatfishApp.Core.Browser
+@using ChatfishApp.Core.UI
+@using ChatfishApp.Shared.Services
+@inject IJSRuntime JS
+@inject IBrowserPanelState BrowserPanel
+@inject IBrowserAgentService BrowserAgent
+@inject IBrowserOverlaySync BrowserOverlay
+@inject IBrowserStore BrowserStore
+
+<div class="browser-splitter"
+     title="Drag to resize"
+     @onmouseenter="OnSplitterMouseEnter"
+     @onmouseleave="OnSplitterMouseLeave"
+     @onmousedown="StartSplitterDrag"
+     @onmousedown:preventDefault></div>
+<div class="browser-panel">
+    <div class="browser-toolbar">
+        <button type="button" class="browser-toolbar-btn" @onclick="GoHomeAsync" title="Home">
+            <i class="bi bi-house"></i>
+        </button>
+        <button type="button" class="browser-toolbar-btn" @onclick="BrowserBack" disabled="@(!_canGoBack)" title="Back">
+            <i class="bi bi-arrow-left"></i>
+        </button>
+        <button type="button" class="browser-toolbar-btn" @onclick="BrowserForward" disabled="@(!_canGoForward)" title="Forward">
+            <i class="bi bi-arrow-right"></i>
+        </button>
+        <button type="button" class="browser-toolbar-btn" @onclick="BrowserRefresh" title="Refresh">
+            <i class="bi bi-arrow-clockwise @(_isLoading ? "spin" : "")"></i>
+        </button>
+        <div class="browser-url-wrap">
+            <input value="@_browserUrl"
+                   @oninput="OnUrlInput"
+                   @onkeydown="BrowserUrlKeyDown"
+                   @onfocus="OnUrlFocus"
+                   @onblur="OnUrlBlur"
+                   class="browser-url-input"
+                   placeholder="URL or search..."
+                   autocomplete="off"
+                   spellcheck="false" />
+            @if (_showUrlSuggestions && _urlSuggestions.Count > 0)
+            {
+                <ul class="browser-url-suggestions">
+                    @for (var i = 0; i < _urlSuggestions.Count; i++)
+                    {
+                        var idx = i;
+                        var entry = _urlSuggestions[idx];
+                        <li class="browser-url-suggestion @(idx == _urlSuggestionIndex ? "active" : "")"
+                            @onmousedown="() => SelectSuggestion(entry)"
+                            @onmousedown:preventDefault>
+                            <span class="browser-url-suggestion-url">@entry.Url</span>
+                            @if (!string.IsNullOrWhiteSpace(entry.Title)
+                                 && !entry.Title.Equals(entry.Url, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <span class="browser-url-suggestion-title">@entry.Title</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+        <div class="browser-bookmarks-menu-wrap">
+            <button type="button" class="browser-toolbar-btn @(_showBookmarkMenu ? "active" : "")"
+                    @onclick="ToggleBookmarkMenu" title="Bookmarks">
+                <i class="bi bi-folder"></i>
+            </button>
+            @if (_showBookmarkMenu)
+            {
+                <div class="browser-bookmarks-dropdown">
+                    <button type="button" class="browser-bookmarks-page-link" @onclick="OpenBookmarksPage">
+                        <i class="bi bi-grid"></i> All bookmarks
+                    </button>
+                    @foreach (var folder in BrowserStore.GetFolders())
+                    {
+                        var folderBookmarks = BrowserStore.GetBookmarks(folder.Id);
+                        if (!folderBookmarks.Any())
+                            continue;
+                        <div class="browser-bookmarks-folder-label">@folder.Name</div>
+                        @foreach (var bm in folderBookmarks)
+                        {
+                            <button type="button" class="browser-bookmarks-item"
+                                    @onclick="() => OpenBookmarkFromMenu(bm.Url)">
+                                <span class="browser-bookmarks-item-title">@bm.Title</span>
+                                <span class="browser-bookmarks-item-url">@bm.Url</span>
+                            </button>
+                        }
+                    }
+                    @if (!BrowserStore.GetBookmarks().Any())
+                    {
+                        <div class="browser-bookmarks-empty">No bookmarks yet</div>
+                    }
+                </div>
+            }
+        </div>
+        <button type="button" class="browser-toolbar-btn browser-go-btn" @onclick="BrowserNavigate">Go</button>
+        <button type="button" class="browser-toolbar-btn" @onclick="OpenBookmarkDialog" title="Bookmark this page" disabled="@(string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl) || _showStartPage)">
+            <i class="bi bi-bookmark-plus"></i>
+        </button>
+        <button type="button" class="browser-toolbar-btn" @onclick="OpenInExternalBrowser" title="Open in external browser">
+            <i class="bi bi-box-arrow-up-right"></i>
+        </button>
+        <button type="button" class="browser-toolbar-btn" @onclick="OpenSettings" title="Browser settings">
+            <i class="bi bi-gear"></i>
+        </button>
+    </div>
+    @if (!string.IsNullOrEmpty(_browserPageTitle) && !_showStartPage)
+    {
+        <div class="browser-page-title">@_browserPageTitle</div>
+    }
+    <div id="browser-content-host" class="browser-content browser-content-host">
+        @if (_showStartPage)
+        {
+            <div class="browser-start-page">
+                <h3 class="browser-start-title">Bookmarks</h3>
+                @foreach (var folder in BrowserStore.GetFolders())
+                {
+                    var folderBookmarks = BrowserStore.GetBookmarks(folder.Id);
+                    if (!folderBookmarks.Any())
+                        continue;
+                    <div class="browser-start-folder">
+                        <div class="browser-start-folder-name">@folder.Name</div>
+                        <div class="browser-start-grid">
+                            @foreach (var bm in folderBookmarks)
+                            {
+                                <button type="button" class="browser-start-tile" @onclick="() => OpenBookmark(bm.Url)">
+                                    <span class="browser-start-tile-title">@bm.Title</span>
+                                    <span class="browser-start-tile-url">@bm.Url</span>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (!BrowserStore.GetBookmarks().Any())
+                {
+                    <p class="browser-start-empty">No bookmarks yet. Use the bookmark icon to save pages.</p>
+                }
+            </div>
+        }
+        else if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+        {
+            <div class="browser-placeholder">Loading browser...</div>
+        }
+    </div>
+</div>
+
+@if (_showBookmarkDialog)
+{
+    <div class="newnote-overlay" @onclick="CloseBookmarkDialog">
+        <div class="newnote-modal browser-bookmark-modal" @onclick:stopPropagation>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add Bookmark</h4>
+            <label class="browser-settings-label">Name</label>
+            <input class="newnote-input" @bind="_bookmarkTitle" placeholder="Bookmark name..." />
+            <label class="browser-settings-label">Folder</label>
+            <select class="newnote-select" @bind="_bookmarkFolderId">
+                @foreach (var folder in BrowserStore.GetFolders())
+                {
+                    <option value="@folder.Id">@folder.Name</option>
+                }
+            </select>
+            <div style="margin-top:8px;">
+                <input class="newnote-input" @bind="_newFolderName" placeholder="Or create new folder..." />
+                @if (!string.IsNullOrWhiteSpace(_newFolderName))
+                {
+                    <button type="button" class="newnote-btn newnote-btn-secondary" style="margin-top:6px;" @onclick="CreateFolderForBookmark">Create folder</button>
+                }
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseBookmarkDialog">Cancel</button>
+                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="SaveBookmark" disabled="@(string.IsNullOrWhiteSpace(_bookmarkTitle))">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showSettings)
+{
+    <div class="newnote-overlay" @onclick="CloseSettings">
+        <div class="newnote-modal browser-settings-modal" @onclick:stopPropagation>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Browser Settings</h4>
+
+            <label class="browser-settings-label">Default search engine</label>
+            <select class="newnote-select" @bind="_settingsDraft.SearchEngine">
+                <option value="@BrowserSearchEngineKind.Brave">Brave</option>
+                <option value="@BrowserSearchEngineKind.DuckDuckGo">DuckDuckGo</option>
+                <option value="@BrowserSearchEngineKind.Bing">Bing</option>
+                <option value="@BrowserSearchEngineKind.Google">Google</option>
+                <option value="@BrowserSearchEngineKind.Custom">Custom URL</option>
+            </select>
+            @if (_settingsDraft.SearchEngine == BrowserSearchEngineKind.Custom)
+            {
+                <input class="newnote-input" style="margin-top:6px;" @bind="_settingsDraft.CustomSearchUrl"
+                       placeholder="https://example.com/search?q= or ...{query}" />
+            }
+
+            <label class="browser-settings-label">Homepage</label>
+            <select class="newnote-select" @bind="_settingsDraft.Homepage">
+                <option value="@BrowserHomepageKind.SearchEngine">Search engine</option>
+                <option value="@BrowserHomepageKind.Bookmarks">Bookmarks page</option>
+                <option value="@BrowserHomepageKind.CustomUrl">Custom URL</option>
+            </select>
+            @if (_settingsDraft.Homepage == BrowserHomepageKind.CustomUrl)
+            {
+                <input class="newnote-input" style="margin-top:6px;" @bind="_settingsDraft.CustomHomepageUrl" placeholder="https://..." />
+            }
+
+            <label class="browser-settings-label">New window behavior</label>
+            <select class="newnote-select" @bind="_settingsDraft.NewWindowBehavior">
+                <option value="@BrowserNewWindowBehavior.NewTab">Open in new tab</option>
+                <option value="@BrowserNewWindowBehavior.ExternalBrowser">Open in external browser</option>
+            </select>
+
+            <label class="browser-settings-row">
+                <input type="checkbox" @bind="_settingsDraft.AskBeforeDownloading" />
+                Ask before downloading
+            </label>
+            <label class="browser-settings-row">
+                <input type="checkbox" @bind="_settingsDraft.ClearCookiesOnExit" />
+                Clear cookies on exit
+            </label>
+            <label class="browser-settings-row">
+                <input type="checkbox" @bind="_settingsDraft.ClearCacheOnExit" />
+                Clear cache on exit
+            </label>
+            <label class="browser-settings-row">
+                <input type="checkbox" @bind="_settingsDraft.ClearHistoryOnExit" />
+                Clear history on exit
+            </label>
+
+            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseSettings">Cancel</button>
+                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="SaveSettings">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private DotNetObjectReference<object>? _dotNetRef;
+    private string _browserUrl = "";
+    private string _browserPageTitle = "";
+    private bool _canGoBack;
+    private bool _canGoForward;
+    private bool _isLoading;
+    private bool _pendingOverlaySync = true;
+    private bool _showStartPage;
+    private double _splitWrapperWidth;
+
+    private bool _showUrlSuggestions;
+    private int _urlSuggestionIndex = -1;
+    private List<BrowserHistoryEntry> _urlSuggestions = [];
+    private bool _suppressUrlBlur;
+    private bool _showBookmarkMenu;
+
+    private bool _showBookmarkDialog;
+    private string _bookmarkTitle = "";
+    private string _bookmarkFolderId = "default";
+    private string _newFolderName = "";
+
+    private bool _showSettings;
+    private BrowserSettings _settingsDraft = new();
+
+    private bool ShouldHideWebViewOverlay =>
+        _showStartPage || _showSettings || _showBookmarkDialog;
+
+    private int DropdownInsetPx =>
+        _showBookmarkMenu ? 300
+        : (_showUrlSuggestions && _urlSuggestions.Count > 0) ? 230
+        : 0;
+
+    private Action<string>? _urlChangedHandler;
+    private Action<string>? _titleChangedHandler;
+    private Action<bool>? _loadingChangedHandler;
+    private Action? _browserPanelChangedHandler;
+    private Action? _browserStoreChangedHandler;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _dotNetRef = DotNetObjectReference.Create<object>(this);
+        await BrowserStore.LoadAsync();
+        RegisterHandlers();
+        RestoreBrowserUiState();
+
+        _browserStoreChangedHandler = () => InvokeAsync(StateHasChanged);
+        BrowserStore.Changed += _browserStoreChangedHandler;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pendingOverlaySync)
+        {
+            _pendingOverlaySync = false;
+            await SyncOverlayAsync();
+        }
+    }
+
+    private void RegisterHandlers()
+    {
+        _urlChangedHandler = url =>
+        {
+            _browserUrl = url;
+            _canGoBack = BrowserAgent.CanGoBack;
+            _canGoForward = BrowserAgent.CanGoForward;
+            _showStartPage = false;
+            InvokeAsync(StateHasChanged);
+        };
+        _titleChangedHandler = title =>
+        {
+            _browserPageTitle = title;
+            InvokeAsync(StateHasChanged);
+        };
+        _loadingChangedHandler = loading =>
+        {
+            _isLoading = loading;
+            _canGoBack = BrowserAgent.CanGoBack;
+            _canGoForward = BrowserAgent.CanGoForward;
+            InvokeAsync(StateHasChanged);
+        };
+        BrowserAgent.UrlChanged += _urlChangedHandler;
+        BrowserAgent.TitleChanged += _titleChangedHandler;
+        BrowserAgent.LoadingChanged += _loadingChangedHandler;
+
+        _browserPanelChangedHandler = () => InvokeAsync(OnPanelChangedAsync);
+        BrowserPanel.OnChanged += _browserPanelChangedHandler;
+    }
+
+    private async Task OnPanelChangedAsync()
+    {
+        if (BrowserPanel.IsOpen)
+        {
+            RestoreBrowserUiState();
+            _pendingOverlaySync = true;
+            BrowserOverlay.RestoreCachedOverlay();
+            StateHasChanged();
+        }
+        else
+        {
+            await CloseOverlayAsync();
+        }
+    }
+
+    private async Task SyncOverlayAsync()
+    {
+        if (_dotNetRef == null)
+            return;
+
+        await InitializeSplitWidthAsync();
+
+        try
+        {
+            await JS.InvokeVoidAsync("chatfishBrowser.startBoundsObserver", "#browser-content-host", _dotNetRef);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] bounds observer failed: {ex.Message}");
+            return;
+        }
+
+        RestoreBrowserUiState();
+
+        if (ShouldHideWebViewOverlay)
+        {
+            BrowserOverlay.SetOverlayVisible(false);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+        {
+            var navigated = await BrowserAgent.NavigateHomeAsync();
+            if (!navigated)
+            {
+                _showStartPage = true;
+                BrowserOverlay.SetOverlayVisible(false);
+            }
+            RestoreBrowserUiState();
+        }
+    }
+
+    private void RestoreBrowserUiState()
+    {
+        if (!string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+            _browserUrl = BrowserAgent.CurrentUrl;
+        _browserPageTitle = BrowserAgent.PageTitle;
+        _canGoBack = BrowserAgent.CanGoBack;
+        _canGoForward = BrowserAgent.CanGoForward;
+        _isLoading = BrowserAgent.IsLoading;
+    }
+
+    private void OnUrlInput(ChangeEventArgs e)
+    {
+        _showBookmarkMenu = false;
+        _browserUrl = e.Value?.ToString() ?? "";
+        _urlSuggestions = BrowserStore.SearchHistory(_browserUrl).ToList();
+        _urlSuggestionIndex = _urlSuggestions.Count > 0 ? 0 : -1;
+        _showUrlSuggestions = _urlSuggestions.Count > 0 && !string.IsNullOrWhiteSpace(_browserUrl);
+        RefreshWebViewBounds();
+    }
+
+    private void OnUrlFocus()
+    {
+        _showBookmarkMenu = false;
+        if (!string.IsNullOrWhiteSpace(_browserUrl))
+        {
+            _urlSuggestions = BrowserStore.SearchHistory(_browserUrl).ToList();
+            _urlSuggestionIndex = _urlSuggestions.Count > 0 ? 0 : -1;
+            _showUrlSuggestions = _urlSuggestions.Count > 0;
+        }
+        RefreshWebViewBounds();
+    }
+
+    private async Task OnUrlBlur()
+    {
+        if (_suppressUrlBlur)
+            return;
+        await Task.Delay(150);
+        _showUrlSuggestions = false;
+        RefreshWebViewBounds();
+        StateHasChanged();
+    }
+
+    private async Task BrowserUrlKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Tab" && _showUrlSuggestions && _urlSuggestions.Count > 0)
+        {
+            var idx = _urlSuggestionIndex >= 0 ? _urlSuggestionIndex : 0;
+            ApplySuggestion(_urlSuggestions[idx]);
+            _showUrlSuggestions = false;
+            return;
+        }
+
+        if (_showUrlSuggestions && _urlSuggestions.Count > 0)
+        {
+            if (e.Key == "ArrowDown")
+            {
+                _urlSuggestionIndex = Math.Min(_urlSuggestionIndex + 1, _urlSuggestions.Count - 1);
+                return;
+            }
+            if (e.Key == "ArrowUp")
+            {
+                _urlSuggestionIndex = Math.Max(_urlSuggestionIndex - 1, 0);
+                return;
+            }
+            if (e.Key == "Escape")
+            {
+                _showUrlSuggestions = false;
+                RefreshWebViewBounds();
+                return;
+            }
+        }
+
+        if (e.Key == "Enter")
+            await BrowserNavigate();
+    }
+
+    private void ApplySuggestion(BrowserHistoryEntry entry)
+    {
+        _browserUrl = entry.Url;
+        _browserPageTitle = entry.Title;
+    }
+
+    private async Task SelectSuggestion(BrowserHistoryEntry entry)
+    {
+        _suppressUrlBlur = true;
+        ApplySuggestion(entry);
+        _showUrlSuggestions = false;
+        await BrowserNavigate();
+        _suppressUrlBlur = false;
+    }
+
+    private async Task BrowserNavigate()
+    {
+        _showUrlSuggestions = false;
+        _showStartPage = false;
+        await BrowserAgent.NavigateAsync(_browserUrl);
+        _browserUrl = BrowserAgent.CurrentUrl;
+        _canGoBack = BrowserAgent.CanGoBack;
+        _canGoForward = BrowserAgent.CanGoForward;
+        _pendingOverlaySync = true;
+        await SyncOverlayAsync();
+    }
+
+    private async Task GoHomeAsync()
+    {
+        _showUrlSuggestions = false;
+        _showBookmarkMenu = false;
+
+        var navigated = await BrowserAgent.NavigateHomeAsync();
+        if (!navigated)
+        {
+            _showStartPage = true;
+            _browserUrl = "";
+            _browserPageTitle = "";
+            BrowserOverlay.SetOverlayVisible(false);
+        }
+        else
+        {
+            _showStartPage = false;
+            RestoreBrowserUiState();
+            _pendingOverlaySync = true;
+            await SyncOverlayAsync();
+        }
+    }
+
+    private void ToggleBookmarkMenu()
+    {
+        _showBookmarkMenu = !_showBookmarkMenu;
+        if (_showBookmarkMenu)
+            _showUrlSuggestions = false;
+        RefreshWebViewBounds();
+    }
+
+    private async Task OpenBookmarksPage()
+    {
+        _showBookmarkMenu = false;
+        _showStartPage = true;
+        _browserUrl = "";
+        _browserPageTitle = "";
+        BrowserOverlay.SetOverlayVisible(false);
+        await Task.CompletedTask;
+    }
+
+    private async Task OpenBookmarkFromMenu(string url)
+    {
+        _showBookmarkMenu = false;
+        RefreshWebViewBounds();
+        await OpenBookmark(url);
+    }
+
+    private async Task OpenBookmark(string url)
+    {
+        _showStartPage = false;
+        _browserUrl = url;
+        await BrowserNavigate();
+    }
+
+    private async Task BrowserBack() => await BrowserAgent.GoBackAsync();
+    private async Task BrowserForward() => await BrowserAgent.GoForwardAsync();
+    private async Task BrowserRefresh()
+    {
+        if (_showStartPage)
+        {
+            StateHasChanged();
+            return;
+        }
+        await BrowserAgent.RefreshAsync();
+    }
+
+    private async Task OpenInExternalBrowser()
+    {
+        try { await BrowserAgent.OpenExternallyAsync(); }
+        catch (Exception ex) { Console.WriteLine($"[Browser] open external failed: {ex.Message}"); }
+    }
+
+    private void OpenBookmarkDialog()
+    {
+        _bookmarkTitle = string.IsNullOrWhiteSpace(_browserPageTitle) ? _browserUrl : _browserPageTitle;
+        _bookmarkFolderId = BrowserStore.GetFolders().FirstOrDefault()?.Id ?? "default";
+        _newFolderName = "";
+        _showBookmarkDialog = true;
+        BrowserOverlay.SetOverlayVisible(false);
+    }
+
+    private void CloseBookmarkDialog()
+    {
+        _showBookmarkDialog = false;
+        RestoreWebViewOverlayIfNeeded();
+    }
+
+    private async Task CreateFolderForBookmark()
+    {
+        if (string.IsNullOrWhiteSpace(_newFolderName))
+            return;
+        var folder = await BrowserStore.AddFolderAsync(_newFolderName);
+        _bookmarkFolderId = folder.Id;
+        _newFolderName = "";
+        StateHasChanged();
+    }
+
+    private async Task SaveBookmark()
+    {
+        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+            return;
+        await BrowserStore.AddBookmarkAsync(BrowserAgent.CurrentUrl, _bookmarkTitle, _bookmarkFolderId);
+        _showBookmarkDialog = false;
+        RestoreWebViewOverlayIfNeeded();
+    }
+
+    private void OpenSettings()
+    {
+        _settingsDraft = BrowserStore.GetSettings();
+        _showSettings = true;
+        BrowserOverlay.SetOverlayVisible(false);
+    }
+
+    private void CloseSettings()
+    {
+        _showSettings = false;
+        RestoreWebViewOverlayIfNeeded();
+    }
+
+    private async Task SaveSettings()
+    {
+        await BrowserStore.SaveSettingsAsync(_settingsDraft);
+        _showSettings = false;
+        RestoreWebViewOverlayIfNeeded();
+    }
+
+    private void RestoreWebViewOverlayIfNeeded()
+    {
+        if (ShouldHideWebViewOverlay)
+            return;
+
+        try
+        {
+            _ = JS.InvokeVoidAsync("chatfishBrowser.reportBoundsNow", "#browser-content-host");
+        }
+        catch
+        {
+            BrowserOverlay.RestoreCachedOverlay();
+        }
+    }
+
+    private async Task OnSplitterMouseEnter()
+    {
+        try { await JS.InvokeVoidAsync("chatfishBrowser.setResizeCursor", true); } catch { }
+    }
+
+    private async Task OnSplitterMouseLeave()
+    {
+        try { await JS.InvokeVoidAsync("chatfishBrowser.setResizeCursor", false); } catch { }
+    }
+
+    private async Task InitializeSplitWidthAsync()
+    {
+        try
+        {
+            _splitWrapperWidth = await JS.InvokeAsync<double>("chatfishBrowser.getWrapperWidth", "#chat-split-wrapper");
+        }
+        catch
+        {
+            _splitWrapperWidth = 0;
+        }
+
+        if (BrowserPanel.ChatPaneWidthPx <= 0 && _splitWrapperWidth > 0)
+        {
+            var defaultWidth = Math.Clamp(_splitWrapperWidth * 0.32, 280, _splitWrapperWidth * 0.55);
+            BrowserPanel.ChatPaneWidthPx = defaultWidth;
+        }
+    }
+
+    private async Task StartSplitterDrag()
+    {
+        if (_dotNetRef == null)
+            return;
+
+        try
+        {
+            _splitWrapperWidth = await JS.InvokeAsync<double>("chatfishBrowser.getWrapperWidth", "#chat-split-wrapper");
+            await JS.InvokeVoidAsync("chatfishBrowser.startSplitterDrag", _dotNetRef, "#chat-split-wrapper");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] splitter drag failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public void OnSplitterDrag(double x)
+    {
+        var max = _splitWrapperWidth > 0 ? _splitWrapperWidth * 0.6 : 900;
+        BrowserPanel.ChatPaneWidthPx = Math.Clamp(x, 280, max);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnBrowserOverlayBounds(double x, double y, double width, double height)
+    {
+        if (ShouldHideWebViewOverlay)
+        {
+            BrowserOverlay.SetOverlayVisible(false);
+            return;
+        }
+
+        var inset = DropdownInsetPx;
+        if (inset > 0 && height > inset + 80)
+        {
+            y += inset;
+            height -= inset;
+        }
+
+        BrowserOverlay.ReportBounds(x, y, width, height);
+    }
+
+    private void RefreshWebViewBounds() => RestoreWebViewOverlayIfNeeded();
+
+    private async Task CloseOverlayAsync()
+    {
+        try { await JS.InvokeVoidAsync("chatfishBrowser.stopBoundsObserver"); } catch { }
+        try { await JS.InvokeVoidAsync("chatfishBrowser.setResizeCursor", false); } catch { }
+        BrowserOverlay.SetOverlayVisible(false);
+    }
+
+    public void Dispose()
+    {
+        if (_urlChangedHandler != null)
+            BrowserAgent.UrlChanged -= _urlChangedHandler;
+        if (_titleChangedHandler != null)
+            BrowserAgent.TitleChanged -= _titleChangedHandler;
+        if (_loadingChangedHandler != null)
+            BrowserAgent.LoadingChanged -= _loadingChangedHandler;
+        if (_browserPanelChangedHandler != null)
+            BrowserPanel.OnChanged -= _browserPanelChangedHandler;
+        if (_browserStoreChangedHandler != null)
+            BrowserStore.Changed -= _browserStoreChangedHandler;
+
+        try { _ = JS.InvokeVoidAsync("chatfishBrowser.stopBoundsObserver"); } catch { }
+        BrowserOverlay.SetOverlayVisible(false);
+        _dotNetRef?.Dispose();
+    }
+}

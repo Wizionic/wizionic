@@ -1,4 +1,9 @@
+@implements IDisposable
 @inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject ISidebarState SidebarState
+@inject IBrowserPanelState BrowserPanel
+@using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
 
 <div class="top-row px-4">
@@ -9,6 +14,13 @@
         <a href="/notes" title="Notes">
             <i class="bi bi-journal-text" style="font-size: 24px;"></i>
         </a>
+        @if (AppEnvironment.IsMaui)
+        {
+            <button type="button" @onclick="ToggleBrowser" title="Browser"
+                    class="browser-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
+                <i class="bi bi-globe" style="font-size: 24px;"></i>
+            </button>
+        }
     </div>
     <div class="top-row-right">
         <a href="/local-ai" title="Local AI Setup">
@@ -39,10 +51,49 @@
 </div>
 
 @code {
+    private Action? _browserPanelChangedHandler;
+
+    protected override void OnInitialized()
+    {
+        _browserPanelChangedHandler = () => InvokeAsync(StateHasChanged);
+        BrowserPanel.OnChanged += _browserPanelChangedHandler;
+    }
+
+    private async Task ToggleBrowser()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        if (!uri.AbsolutePath.TrimEnd('/').Equals("/chat", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!BrowserPanel.IsOpen)
+                BrowserPanel.IsOpen = true;
+            Nav.NavigateTo("/chat");
+            await CollapseSidebarIfNeededAsync();
+            return;
+        }
+
+        BrowserPanel.Toggle();
+        if (BrowserPanel.IsOpen)
+            await CollapseSidebarIfNeededAsync();
+    }
+
+    private async Task CollapseSidebarIfNeededAsync()
+    {
+        if (!SidebarState.IsCollapsed)
+        {
+            SidebarState.IsCollapsed = true;
+            try
+            {
+                await JS.InvokeVoidAsync("toggleWasmSidebar", true);
+            }
+            catch
+            {
+                // JS interop may be unavailable during static render passes.
+            }
+        }
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Re-apply after every render — Blazor enhanced navigation can strip <html data-theme>
-        // between per-page WASM root swaps. JS-only call avoids redundant C# state churn.
         try
         {
             await ThemeInterop.ApplySavedAsync(JS);
@@ -51,5 +102,11 @@
         {
             // JS interop may be unavailable during static render passes.
         }
+    }
+
+    public void Dispose()
+    {
+        if (_browserPanelChangedHandler != null)
+            BrowserPanel.OnChanged -= _browserPanelChangedHandler;
     }
 }

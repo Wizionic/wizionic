@@ -97,6 +97,11 @@ builder.Services.AddSingleton<AiProviderProxyService>();
 // can provide the service. The Client's DI also registers it for the interactive WASM runtime.
 builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
 builder.Services.AddSingleton<ChatfishApp.Core.UI.ISidebarState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.SidebarState>());
+builder.Services.AddSingleton<ChatfishApp.Client.Services.BrowserPanelState>();
+builder.Services.AddSingleton<ChatfishApp.Core.UI.IBrowserPanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.BrowserPanelState>());
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserAgentService, ChatfishApp.Client.Services.NullBrowserAgentService>();
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserOverlaySync, ChatfishApp.Client.Services.NullBrowserOverlaySync>();
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserStore, ChatfishApp.Client.Services.NullBrowserStore>();
 
 // HttpClient + shared auth/sync stubs for server-side rendering of WASM layout/components (AppLayout, SyncConnectionBootstrap, etc.).
 // The interactive WASM runtime (Client/Program.cs) provides its own scoped services when the page becomes interactive.
