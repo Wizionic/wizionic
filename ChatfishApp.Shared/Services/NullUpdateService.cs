@@ -12,6 +12,12 @@ public class NullUpdateService : IUpdateService
 
     private NullUpdateService() { }
 
+    public string? GetInstalledVersion() => null;
+
+    public bool IsVelopackInstalled => false;
+
+    public string? UpdateFeedUrl => null;
+
     public Task<UpdateCheckResult> CheckForUpdateAsync() =>
         Task.FromResult(new UpdateCheckResult
         {

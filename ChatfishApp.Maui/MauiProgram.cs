@@ -138,6 +138,7 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IChatCompletionService>(sp => sp.GetRequiredService<ChatCompletionService>());
 		builder.Services.AddSingleton<ChatAuthService>();
 		builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
+		builder.Services.AddHttpClient();
 		builder.Services.AddSingleton<MauiUpdateService>();
 		builder.Services.AddSingleton<IUpdateService>(sp => sp.GetRequiredService<MauiUpdateService>());
 
