@@ -25,6 +25,15 @@ public class UpdateInfo
 /// </summary>
 public interface IUpdateService
 {
+    /// <summary>Velopack-installed version, when available.</summary>
+    string? GetInstalledVersion();
+
+    /// <summary>True when running from a Velopack Setup.exe install.</summary>
+    bool IsVelopackInstalled { get; }
+
+    /// <summary>Update feed URL (empty when updates are unavailable on this platform).</summary>
+    string? UpdateFeedUrl { get; }
+
     Task<UpdateCheckResult> CheckForUpdateAsync();
 
     Task DownloadAndInstallAsync(UpdateInfo update);
