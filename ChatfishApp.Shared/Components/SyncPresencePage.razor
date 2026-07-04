@@ -9,7 +9,7 @@
 @inject INoteStore NoteStore
 @inject NavigationManager Nav
 
-<div class="settings-content sync-wrapper">
+<div class="settings-content sync-page-content">
     @if (!string.IsNullOrEmpty(PendingDataSyncMessage))
     {
         <div class="cf-sync-info-box">@PendingDataSyncMessage</div>

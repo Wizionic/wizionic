@@ -13,14 +13,18 @@ internal static class QuillInterop
         ElementReference toolbarElement,
         bool readOnly,
         string placeholder,
-        string theme) =>
+        string theme,
+        object? dotNetHelper = null,
+        string? textChangeMethod = null) =>
         js.InvokeVoidAsync(
             $"{JsPrefix}createQuill",
             editorElement,
             toolbarElement,
             readOnly,
             placeholder,
-            theme);
+            theme,
+            dotNetHelper,
+            textChangeMethod);
 
     public static ValueTask<string> GetHtmlAsync(IJSRuntime js, ElementReference editorElement) =>
         js.InvokeAsync<string>($"{JsPrefix}getQuillHTML", editorElement);
