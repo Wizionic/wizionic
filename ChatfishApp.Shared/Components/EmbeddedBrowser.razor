@@ -8,6 +8,10 @@
 @inject IBrowserAgentService BrowserAgent
 @inject IBrowserOverlaySync BrowserOverlay
 @inject IBrowserStore BrowserStore
+@inject IBrowserSidebarStore SidebarStore
+@inject IBrowserSidePanelState SidePanel
+@inject IBrowserSideAgentService SideAgent
+@inject IPwaDetector PwaDetector
 
 <div class="browser-splitter"
      title="Drag to resize"
@@ -15,7 +19,7 @@
      @onmouseleave="OnSplitterMouseLeave"
      @onmousedown="StartSplitterDrag"
      @onmousedown:preventDefault></div>
-<div class="browser-panel">
+<div id="browser-panel" class="browser-panel">
     <div class="browser-toolbar">
         <button type="button" class="browser-toolbar-btn" @onclick="GoHomeAsync" title="Home">
             <i class="bi bi-house"></i>
@@ -100,55 +104,335 @@
         <button type="button" class="browser-toolbar-btn" @onclick="OpenInExternalBrowser" title="Open in external browser">
             <i class="bi bi-box-arrow-up-right"></i>
         </button>
-        <button type="button" class="browser-toolbar-btn" @onclick="OpenSettings" title="Browser settings">
+        <button type="button" class="browser-toolbar-btn @(SidePanel.IsOpen && SidePanel.Content == BrowserSidePanelContent.Settings ? "active" : "")"
+                @onclick="OpenSettingsInSidePanel" title="Browser settings">
             <i class="bi bi-gear"></i>
         </button>
     </div>
-    @if (!string.IsNullOrEmpty(_browserPageTitle) && !_showStartPage)
+    @if (ShowBookmarksBar)
     {
-        <div class="browser-page-title">@_browserPageTitle</div>
+        <div class="browser-bookmarks-bar" @onclick:stopPropagation="true" @onclick="CloseBarContextMenu">
+            @foreach (var bm in BookmarksBarItems)
+            {
+                <button type="button"
+                        class="browser-bookmarks-bar-item @(_dragOverBookmarkId == bm.Id ? "drag-over" : "")"
+                        title="@bm.Url"
+                        data-bookmark-id="@bm.Id"
+                        @onmousedown="(e) => StartBarItemDragAsync(e, bm.Id)"
+                        @onmousedown:preventDefault="true"
+                        @oncontextmenu="(e) => OnBarContextMenu(e, bm)"
+                        @oncontextmenu:preventDefault="true"
+                        @oncontextmenu:stopPropagation="true">
+                    <img class="browser-bookmarks-bar-icon" src="@BrowserFaviconUrl.Get(bm.Url)" alt="" loading="lazy" draggable="false" />
+                    @if (!string.IsNullOrWhiteSpace(bm.Title))
+                    {
+                        <span class="browser-bookmarks-bar-title">@bm.Title</span>
+                    }
+                </button>
+            }
+            @if (!BookmarksBarItems.Any())
+            {
+                <span class="browser-bookmarks-bar-empty">Add bookmarks to the "Bookmarks bar" folder to show them here.</span>
+            }
+        </div>
     }
-    <div id="browser-content-host" class="browser-content browser-content-host">
-        @if (_showStartPage)
-        {
-            <div class="browser-start-page">
-                <h3 class="browser-start-title">Bookmarks</h3>
-                @foreach (var folder in BrowserStore.GetFolders())
+    <div class="browser-body" id="browser-body" @onclick="() => CloseAllContextMenus()">
+        <div class="browser-main-column">
+            @if (!string.IsNullOrEmpty(_browserPageTitle) && !_showStartPage)
+            {
+                <div class="browser-page-title">@_browserPageTitle</div>
+            }
+            <div id="browser-content-host" class="browser-content browser-content-host">
+                @if (_showStartPage)
                 {
-                    var folderBookmarks = BrowserStore.GetBookmarks(folder.Id);
-                    if (!folderBookmarks.Any())
-                        continue;
-                    <div class="browser-start-folder">
-                        <div class="browser-start-folder-name">@folder.Name</div>
-                        <div class="browser-start-grid">
-                            @foreach (var bm in folderBookmarks)
-                            {
-                                <button type="button" class="browser-start-tile" @onclick="() => OpenBookmark(bm.Url)">
-                                    <span class="browser-start-tile-title">@bm.Title</span>
-                                    <span class="browser-start-tile-url">@bm.Url</span>
-                                </button>
-                            }
-                        </div>
+                    <div class="browser-start-page">
+                        <h3 class="browser-start-title">Bookmarks</h3>
+                        @foreach (var folder in BrowserStore.GetFolders())
+                        {
+                            var folderBookmarks = BrowserStore.GetBookmarks(folder.Id);
+                            if (!folderBookmarks.Any())
+                                continue;
+                            <div class="browser-start-folder">
+                                <div class="browser-start-folder-name">@folder.Name</div>
+                                <div class="browser-start-grid">
+                                    @foreach (var bm in folderBookmarks)
+                                    {
+                                        <button type="button" class="browser-start-tile" @onclick="() => OpenBookmark(bm.Url)">
+                                            <span class="browser-start-tile-title">@(string.IsNullOrWhiteSpace(bm.Title) ? bm.Url : bm.Title)</span>
+                                            <span class="browser-start-tile-url">@bm.Url</span>
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        @if (!BrowserStore.GetBookmarks().Any())
+                        {
+                            <p class="browser-start-empty">No bookmarks yet. Use the bookmark icon to save pages.</p>
+                        }
                     </div>
                 }
-                @if (!BrowserStore.GetBookmarks().Any())
+                else if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
                 {
-                    <p class="browser-start-empty">No bookmarks yet. Use the bookmark icon to save pages.</p>
+                    <div class="browser-placeholder">Loading browser...</div>
                 }
             </div>
-        }
-        else if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+        </div>
+
+        @if (SidePanel.IsOpen)
         {
-            <div class="browser-placeholder">Loading browser...</div>
+            <div class="browser-side-splitter"
+                 title="Drag to resize side panel"
+                 @onmouseenter="OnSplitterMouseEnter"
+                 @onmouseleave="OnSplitterMouseLeave"
+                 @onmousedown="StartSidePanelSplitterDrag"
+                 @onmousedown:preventDefault></div>
+            <div class="browser-side-column" style="width:@($"{_sidePanelWidthPx:F0}px")">
+                <div class="browser-side-header">
+                    <span class="browser-side-header-title">@SidePanelTitle</span>
+                    <button type="button" class="browser-side-close" @onclick="CloseSidePanel" title="Close panel">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+                <div class="browser-side-content">
+                    @if (SidePanel.Content == BrowserSidePanelContent.Bookmarks)
+                    {
+                        <div class="browser-side-bookmarks">
+                            <div class="browser-side-bookmarks-toolbar">
+                                <button type="button" class="browser-side-toolbar-btn" @onclick="ToggleSideNewFolderInput" title="New folder">
+                                    <i class="bi bi-folder-plus"></i> Folder
+                                </button>
+                                @if (_selectedBookmarkIds.Count > 0)
+                                {
+                                    <button type="button" class="browser-side-toolbar-btn browser-side-toolbar-btn-danger" @onclick="DeleteSelectedSideBookmarks">
+                                        <i class="bi bi-trash"></i> Delete (@_selectedBookmarkIds.Count)
+                                    </button>
+                                }
+                            </div>
+                            @if (_showSideNewFolderInput)
+                            {
+                                <div class="browser-side-new-folder">
+                                    <input class="newnote-input" @bind="_sideNewFolderName" placeholder="Folder name..."
+                                           @onkeydown="OnSideNewFolderKeyDown" />
+                                    <button type="button" class="browser-side-toolbar-btn" @onclick="ConfirmSideAddFolder" disabled="@string.IsNullOrWhiteSpace(_sideNewFolderName)">
+                                        Add
+                                    </button>
+                                    <button type="button" class="browser-side-toolbar-btn" @onclick="CancelSideNewFolder">
+                                        Cancel
+                                    </button>
+                                </div>
+                            }
+                            <div class="browser-side-bookmarks-list">
+                                @foreach (var folder in BrowserStore.GetFolders())
+                                {
+                                    var folderBookmarks = BrowserStore.GetBookmarks(folder.Id);
+                                    <div class="browser-side-folder @(_sidebarDragOverFolderId == folder.Id ? "drag-over" : "")"
+                                         data-sidebar-folder-id="@folder.Id">
+                                        <div class="browser-side-folder-header" data-sidebar-folder-drop="true"
+                                             @onmousedown="(e) => StartSidebarFolderDragAsync(e, folder.Id)">
+                                            <i class="bi bi-grip-vertical browser-side-drag-handle" aria-hidden="true"></i>
+                                            <span class="browser-side-folder-name">@folder.Name</span>
+                                            <span class="browser-side-folder-count">@folderBookmarks.Count</span>
+                                        </div>
+                                        @foreach (var bm in folderBookmarks)
+                                        {
+                                            <div class="browser-side-bookmark-row @(_sidebarDragOverBookmarkId == bm.Id ? "drag-over" : "") @(_selectedBookmarkIds.Contains(bm.Id) ? "selected" : "")"
+                                                 data-sidebar-bookmark-id="@bm.Id"
+                                                 data-sidebar-folder-id="@folder.Id">
+                                                <label class="browser-side-bookmark-check" @onclick:stopPropagation="true">
+                                                    <input type="checkbox" checked="@_selectedBookmarkIds.Contains(bm.Id)"
+                                                           @onchange="(e) => ToggleSideBookmarkSelection(bm.Id, e)" />
+                                                </label>
+                                                <button type="button" class="browser-side-bookmark-link"
+                                                        @onmousedown="(e) => StartSidebarBookmarkDragAsync(e, bm.Id, folder.Id)">
+                                                    <img class="browser-side-bookmark-icon" src="@BrowserFaviconUrl.Get(bm.Url)" alt="" draggable="false" />
+                                                    <span class="browser-side-bookmark-title">@(string.IsNullOrWhiteSpace(bm.Title) ? bm.Url : bm.Title)</span>
+                                                </button>
+                                                <button type="button" class="browser-side-bookmark-action" title="Edit"
+                                                        @onclick:stopPropagation="true" @onclick="() => EditSideBookmark(bm)">
+                                                    <i class="bi bi-pencil"></i>
+                                                </button>
+                                                <button type="button" class="browser-side-bookmark-action browser-side-bookmark-action-danger" title="Delete"
+                                                        @onclick:stopPropagation="true" @onclick="() => DeleteSideBookmark(bm.Id)">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                @if (!BrowserStore.GetFolders().Any())
+                                {
+                                    <div class="browser-side-bookmarks-empty">No folders yet.</div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    else if (SidePanel.Content == BrowserSidePanelContent.Settings)
+                    {
+                        <div class="browser-side-settings">
+                            <label class="browser-settings-label">Default search engine</label>
+                            <select class="newnote-select" @bind="_settingsDraft.SearchEngine">
+                                <option value="@BrowserSearchEngineKind.Brave">Brave</option>
+                                <option value="@BrowserSearchEngineKind.DuckDuckGo">DuckDuckGo</option>
+                                <option value="@BrowserSearchEngineKind.Bing">Bing</option>
+                                <option value="@BrowserSearchEngineKind.Google">Google</option>
+                                <option value="@BrowserSearchEngineKind.Custom">Custom URL</option>
+                            </select>
+                            @if (_settingsDraft.SearchEngine == BrowserSearchEngineKind.Custom)
+                            {
+                                <input class="newnote-input" style="margin-top:6px;" @bind="_settingsDraft.CustomSearchUrl"
+                                       placeholder="https://example.com/search?q= or ...{query}" />
+                            }
+
+                            <label class="browser-settings-label">Homepage</label>
+                            <select class="newnote-select" @bind="_settingsDraft.Homepage">
+                                <option value="@BrowserHomepageKind.SearchEngine">Search engine</option>
+                                <option value="@BrowserHomepageKind.Bookmarks">Bookmarks page</option>
+                                <option value="@BrowserHomepageKind.CustomUrl">Custom URL</option>
+                            </select>
+                            @if (_settingsDraft.Homepage == BrowserHomepageKind.CustomUrl)
+                            {
+                                <input class="newnote-input" style="margin-top:6px;" @bind="_settingsDraft.CustomHomepageUrl" placeholder="https://..." />
+                            }
+
+                            <label class="browser-settings-label">New window behavior</label>
+                            <select class="newnote-select" @bind="_settingsDraft.NewWindowBehavior">
+                                <option value="@BrowserNewWindowBehavior.NewTab">Open in new tab</option>
+                                <option value="@BrowserNewWindowBehavior.ExternalBrowser">Open in external browser</option>
+                            </select>
+
+                            <label class="browser-settings-row">
+                                <input type="checkbox" @bind="_settingsDraft.AskBeforeDownloading" />
+                                Ask before downloading
+                            </label>
+                            <label class="browser-settings-row">
+                                <input type="checkbox" @bind="_settingsDraft.ClearCookiesOnExit" />
+                                Clear cookies on exit
+                            </label>
+                            <label class="browser-settings-row">
+                                <input type="checkbox" @bind="_settingsDraft.ClearCacheOnExit" />
+                                Clear cache on exit
+                            </label>
+                            <label class="browser-settings-row">
+                                <input type="checkbox" @bind="_settingsDraft.ClearHistoryOnExit" />
+                                Clear history on exit
+                            </label>
+                            <label class="browser-settings-row">
+                                <input type="checkbox" @bind="_settingsDraft.ShowBookmarksBar" />
+                                Show bookmarks bar
+                            </label>
+
+                            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="SaveSettings">Save settings</button>
+                            </div>
+                        </div>
+                    }
+                    else if (SidePanel.Content == BrowserSidePanelContent.Web)
+                    {
+                        <div id="browser-side-content-host" class="browser-content browser-side-content-host"></div>
+                    }
+                </div>
+            </div>
         }
+
+        <div class="browser-vtoolbar" @onclick:stopPropagation="true">
+            <button type="button"
+                    class="browser-vtoolbar-btn @(SidePanel.IsOpen && SidePanel.Content == BrowserSidePanelContent.Bookmarks ? "active" : "")"
+                    title="Bookmarks"
+                    @onclick="OpenBookmarksInSidePanel">
+                <i class="bi bi-bookmarks"></i>
+            </button>
+            @foreach (var app in SidebarStore.GetPinnedApps())
+            {
+                <div class="sidebar-app-icon browser-vtoolbar-app @(SidePanel.ActiveAppId == app.Id ? "active" : "") @(app.IsPwa ? "is-pwa" : "") @(_vtoolbarDragOverAppId == app.Id ? "drag-over" : "")"
+                     data-vtoolbar-app-id="@app.Id"
+                     title="@(app.IsPwa ? $"{app.ShortName} (app)" : app.ShortName)"
+                     @onmousedown="(e) => StartVtoolbarAppDragAsync(e, app.Id)"
+                     @oncontextmenu:preventDefault="true"
+                     @oncontextmenu:stopPropagation="true"
+                     @oncontextmenu="(e) => ShowAppContextMenu(e, app)">
+                    @if (!string.IsNullOrWhiteSpace(app.IconUrl))
+                    {
+                        <img class="browser-vtoolbar-icon" src="@app.IconUrl" alt="@app.ShortName" />
+                    }
+                    else
+                    {
+                        <i class="bi bi-globe2"></i>
+                    }
+                    <span class="sidebar-app-icon-label">@app.ShortName</span>
+                </div>
+            }
+            <div class="browser-vtoolbar-spacer"></div>
+            <button type="button"
+                    class="browser-vtoolbar-btn browser-vtoolbar-add @(PwaDetector.CurrentManifest != null && !PwaDetector.IsCurrentPagePinned ? "pwa-available" : "")"
+                    title="@(PwaDetector.CurrentManifest != null && !PwaDetector.IsCurrentPagePinned ? "Install app" : "Pin to side panel")"
+                    @onclick="OpenPinDialog">
+                @if (PwaDetector.CurrentManifest != null && !PwaDetector.IsCurrentPagePinned)
+                {
+                    <i class="bi bi-app-indicator"></i>
+                }
+                else
+                {
+                    <i class="bi bi-plus-lg"></i>
+                }
+            </button>
+        </div>
     </div>
+
+    @if (_contextMenuApp != null)
+    {
+        <div class="browser-context-scrim" @onclick="() => CloseAllContextMenus()">
+            <div class="sidebar-context-menu browser-context-popover browser-context-popover--vtoolbar"
+                 style="top:@($"{_menuAnchorTop:F0}px");"
+                 @onclick:stopPropagation="true">
+                @if (_contextMenuApp.IsPwa)
+                {
+                    <div class="browser-context-popover-badge">App</div>
+                }
+                <div class="sidebar-context-menu-item" @onclick="() => OpenInSidePanel(_contextMenuApp)">
+                    <i class="bi bi-layout-sidebar-reverse"></i> Open in side panel
+                </div>
+                <div class="sidebar-context-menu-item" @onclick="() => OpenInMainBrowser(_contextMenuApp)">
+                    <i class="bi bi-window"></i> Open in main browser
+                </div>
+                <hr class="sidebar-context-menu-divider" />
+                <div class="sidebar-context-menu-item @(_contextMenuApp.DefaultOpenTarget == OpenTarget.SidePanel ? "default-selected" : "")"
+                     @onclick="() => SetDefaultTarget(_contextMenuApp, OpenTarget.SidePanel)">
+                    Set side panel as default
+                </div>
+                <div class="sidebar-context-menu-item @(_contextMenuApp.DefaultOpenTarget == OpenTarget.MainBrowser ? "default-selected" : "")"
+                     @onclick="() => SetDefaultTarget(_contextMenuApp, OpenTarget.MainBrowser)">
+                    Set main browser as default
+                </div>
+                <hr class="sidebar-context-menu-divider" />
+                <div class="sidebar-context-menu-item sidebar-context-menu-danger" @onclick="() => UnpinApp(_contextMenuApp)">
+                    <i class="bi bi-x-circle"></i> Remove from side panel
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_barContextMenuBookmarkId != null)
+    {
+        <div class="browser-context-scrim" @onclick="CloseBarContextMenu">
+            <div class="browser-bookmarks-bar-context-menu browser-context-popover browser-context-popover--bookmarks"
+                 style="left:@($"{_menuAnchorLeft:F0}px");top:@($"{_menuAnchorTop:F0}px");"
+                 @onclick:stopPropagation="true">
+                <button type="button" class="browser-bookmarks-bar-context-item" @onclick="OpenBarBookmarkInSidePanel">
+                    <i class="bi bi-layout-sidebar-reverse"></i> Open in side panel
+                </button>
+                <button type="button" class="browser-bookmarks-bar-context-item" @onclick="EditBarContextBookmark">
+                    <i class="bi bi-pencil"></i> Edit
+                </button>
+            </div>
+        </div>
+    }
 </div>
 
 @if (_showBookmarkDialog)
 {
     <div class="newnote-overlay" @onclick="CloseBookmarkDialog">
         <div class="newnote-modal browser-bookmark-modal" @onclick:stopPropagation>
-            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add Bookmark</h4>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">@(_bookmarkIsEditMode ? "Edit Bookmark" : "Add Bookmark")</h4>
             <label class="browser-settings-label">Name</label>
             <input class="newnote-input" @bind="_bookmarkTitle" placeholder="Bookmark name..." />
             <label class="browser-settings-label">Folder</label>
@@ -166,70 +450,54 @@
                 }
             </div>
             <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                @if (_bookmarkIsEditMode)
+                {
+                    <button type="button" class="newnote-btn newnote-btn-secondary" style="margin-right:auto;color:var(--color-danger,#c0392b);" @onclick="DeleteBookmark">Delete</button>
+                }
                 <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseBookmarkDialog">Cancel</button>
-                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="SaveBookmark" disabled="@(string.IsNullOrWhiteSpace(_bookmarkTitle))">Save</button>
+                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="SaveBookmark">Save</button>
             </div>
         </div>
     </div>
 }
 
-@if (_showSettings)
+@if (_showPinDialog)
 {
-    <div class="newnote-overlay" @onclick="CloseSettings">
-        <div class="newnote-modal browser-settings-modal" @onclick:stopPropagation>
-            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Browser Settings</h4>
-
-            <label class="browser-settings-label">Default search engine</label>
-            <select class="newnote-select" @bind="_settingsDraft.SearchEngine">
-                <option value="@BrowserSearchEngineKind.Brave">Brave</option>
-                <option value="@BrowserSearchEngineKind.DuckDuckGo">DuckDuckGo</option>
-                <option value="@BrowserSearchEngineKind.Bing">Bing</option>
-                <option value="@BrowserSearchEngineKind.Google">Google</option>
-                <option value="@BrowserSearchEngineKind.Custom">Custom URL</option>
-            </select>
-            @if (_settingsDraft.SearchEngine == BrowserSearchEngineKind.Custom)
+    <div class="newnote-overlay" @onclick="ClosePinDialog">
+        <div class="newnote-modal browser-bookmark-modal" @onclick:stopPropagation>
+            @if (PwaDetector.CurrentManifest != null)
             {
-                <input class="newnote-input" style="margin-top:6px;" @bind="_settingsDraft.CustomSearchUrl"
-                       placeholder="https://example.com/search?q= or ...{query}" />
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Install App</h4>
+                <div class="browser-pwa-install-hint">
+                    <i class="bi bi-app-indicator"></i>
+                    This site has a PWA manifest — install it as an app or pin the page only.
+                </div>
+                @if (!string.IsNullOrWhiteSpace(PwaManifestHelper.PickBestIcon(PwaDetector.CurrentManifest)))
+                {
+                    <div class="browser-pwa-preview">
+                        <img src="@PwaManifestHelper.PickBestIcon(PwaDetector.CurrentManifest)" alt="" />
+                        <span>@(PwaDetector.CurrentManifest.ShortName ?? PwaDetector.CurrentManifest.Name ?? "App")</span>
+                    </div>
+                }
             }
-
-            <label class="browser-settings-label">Homepage</label>
-            <select class="newnote-select" @bind="_settingsDraft.Homepage">
-                <option value="@BrowserHomepageKind.SearchEngine">Search engine</option>
-                <option value="@BrowserHomepageKind.Bookmarks">Bookmarks page</option>
-                <option value="@BrowserHomepageKind.CustomUrl">Custom URL</option>
-            </select>
-            @if (_settingsDraft.Homepage == BrowserHomepageKind.CustomUrl)
+            else
             {
-                <input class="newnote-input" style="margin-top:6px;" @bind="_settingsDraft.CustomHomepageUrl" placeholder="https://..." />
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Pin to Side Panel</h4>
+                <p class="browser-pin-hint">Pin this page to the vertical toolbar for quick access.</p>
             }
-
-            <label class="browser-settings-label">New window behavior</label>
-            <select class="newnote-select" @bind="_settingsDraft.NewWindowBehavior">
-                <option value="@BrowserNewWindowBehavior.NewTab">Open in new tab</option>
-                <option value="@BrowserNewWindowBehavior.ExternalBrowser">Open in external browser</option>
-            </select>
-
-            <label class="browser-settings-row">
-                <input type="checkbox" @bind="_settingsDraft.AskBeforeDownloading" />
-                Ask before downloading
-            </label>
-            <label class="browser-settings-row">
-                <input type="checkbox" @bind="_settingsDraft.ClearCookiesOnExit" />
-                Clear cookies on exit
-            </label>
-            <label class="browser-settings-row">
-                <input type="checkbox" @bind="_settingsDraft.ClearCacheOnExit" />
-                Clear cache on exit
-            </label>
-            <label class="browser-settings-row">
-                <input type="checkbox" @bind="_settingsDraft.ClearHistoryOnExit" />
-                Clear history on exit
-            </label>
-
-            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseSettings">Cancel</button>
-                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="SaveSettings">Save</button>
+            <label class="browser-settings-label">Name</label>
+            <input class="newnote-input" @bind="_pinName" placeholder="Name..." />
+            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="ClosePinDialog">Cancel</button>
+                @if (PwaDetector.CurrentManifest != null)
+                {
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="PinCurrentPage">Pin page only</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="PinCurrentAsPwa">Install app</button>
+                }
+                else
+                {
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="PinCurrentPage">Pin page</button>
+                }
             </div>
         </div>
     </div>
@@ -253,15 +521,65 @@
     private bool _showBookmarkMenu;
 
     private bool _showBookmarkDialog;
+    private bool _bookmarkIsEditMode;
+    private string? _editingBookmarkId;
     private string _bookmarkTitle = "";
     private string _bookmarkFolderId = "default";
     private string _newFolderName = "";
 
-    private bool _showSettings;
-    private BrowserSettings _settingsDraft = new();
+    private string? _barContextMenuBookmarkId;
+    private double _menuAnchorLeft;
+    private double _menuAnchorTop;
 
-    private bool ShouldHideWebViewOverlay =>
-        _showStartPage || _showSettings || _showBookmarkDialog;
+    private string? _dragOverBookmarkId;
+    private string? _sidebarDragOverBookmarkId;
+    private string? _sidebarDragOverFolderId;
+    private readonly HashSet<string> _selectedBookmarkIds = new(StringComparer.Ordinal);
+    private bool _showSideNewFolderInput;
+    private string _sideNewFolderName = "";
+
+    private BrowserSettings _settingsDraft = new();
+    private double _sidePanelWidthPx = 320;
+    private double _browserBodyWidth;
+
+    private bool _showPinDialog;
+    private string _pinName = "";
+
+    private SidebarApp? _contextMenuApp;
+    private bool _contextMenuOpenedSidePanel;
+    private string? _vtoolbarDragOverAppId;
+
+    private bool ShowBookmarksBar => BrowserStore.GetSettings().ShowBookmarksBar;
+
+    private IReadOnlyList<BrowserBookmark> BookmarksBarItems =>
+        ShowBookmarksBar
+            ? BrowserStore.GetBookmarks(BrowserBookmarkFolders.BookmarksBarFolderId)
+            : [];
+
+    private string SidePanelTitle
+    {
+        get
+        {
+            if (_contextMenuApp != null && SidePanel.Content == BrowserSidePanelContent.None)
+                return _contextMenuApp.ShortName;
+
+            return SidePanel.Content switch
+            {
+                BrowserSidePanelContent.Bookmarks => "Bookmarks",
+                BrowserSidePanelContent.Settings => "Browser Settings",
+                BrowserSidePanelContent.Web => SidebarStore.GetPinnedApps()
+                    .FirstOrDefault(a => a.Id == SidePanel.ActiveAppId)?.Name ?? "App",
+                _ => ""
+            };
+        }
+    }
+
+    private bool ShouldHideMainWebViewOverlay =>
+        _showStartPage || _showBookmarkDialog || _showPinDialog;
+
+    private bool ShouldHideSideWebViewOverlay =>
+        !SidePanel.IsOpen || SidePanel.Content != BrowserSidePanelContent.Web || _showPinDialog
+        || _contextMenuApp != null;
 
     private int DropdownInsetPx =>
         _showBookmarkMenu ? 300
@@ -273,16 +591,30 @@
     private Action<bool>? _loadingChangedHandler;
     private Action? _browserPanelChangedHandler;
     private Action? _browserStoreChangedHandler;
+    private Action? _sidebarStoreChangedHandler;
+    private Action? _sidePanelChangedHandler;
+    private Action? _pwaChangedHandler;
 
     protected override async Task OnInitializedAsync()
     {
         _dotNetRef = DotNetObjectReference.Create<object>(this);
         await BrowserStore.LoadAsync();
+        await SidebarStore.LoadAsync();
+        _sidePanelWidthPx = SidebarStore.GetSidePanelWidthPx();
         RegisterHandlers();
         RestoreBrowserUiState();
 
         _browserStoreChangedHandler = () => InvokeAsync(StateHasChanged);
         BrowserStore.Changed += _browserStoreChangedHandler;
+
+        _sidebarStoreChangedHandler = () => InvokeAsync(StateHasChanged);
+        SidebarStore.Changed += _sidebarStoreChangedHandler;
+
+        _sidePanelChangedHandler = () => InvokeAsync(OnSidePanelChangedAsync);
+        SidePanel.OnChanged += _sidePanelChangedHandler;
+
+        _pwaChangedHandler = () => InvokeAsync(StateHasChanged);
+        PwaDetector.Changed += _pwaChangedHandler;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -348,7 +680,7 @@
 
         try
         {
-            await JS.InvokeVoidAsync("chatfishBrowser.startBoundsObserver", "#browser-content-host", _dotNetRef);
+            await JS.InvokeVoidAsync("chatfishBrowser.startBoundsObserver", "#browser-content-host", "#browser-side-content-host", _dotNetRef);
         }
         catch (Exception ex)
         {
@@ -358,11 +690,7 @@
 
         RestoreBrowserUiState();
 
-        if (ShouldHideWebViewOverlay)
-        {
-            BrowserOverlay.SetOverlayVisible(false);
-            return;
-        }
+        ApplyOverlayVisibility();
 
         if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
         {
@@ -370,10 +698,25 @@
             if (!navigated)
             {
                 _showStartPage = true;
-                BrowserOverlay.SetOverlayVisible(false);
+                BrowserOverlay.SetMainOverlayVisible(false);
             }
             RestoreBrowserUiState();
         }
+    }
+
+    private async Task OnSidePanelChangedAsync()
+    {
+        _pendingOverlaySync = true;
+        StateHasChanged();
+        await SyncOverlayAsync();
+    }
+
+    private void ApplyOverlayVisibility()
+    {
+        if (ShouldHideMainWebViewOverlay)
+            BrowserOverlay.SetMainOverlayVisible(false);
+        if (ShouldHideSideWebViewOverlay)
+            BrowserOverlay.SetSideOverlayVisible(false);
     }
 
     private void RestoreBrowserUiState()
@@ -490,7 +833,7 @@
             _showStartPage = true;
             _browserUrl = "";
             _browserPageTitle = "";
-            BrowserOverlay.SetOverlayVisible(false);
+            BrowserOverlay.SetMainOverlayVisible(false);
         }
         else
         {
@@ -512,11 +855,37 @@
     private async Task OpenBookmarksPage()
     {
         _showBookmarkMenu = false;
-        _showStartPage = true;
-        _browserUrl = "";
-        _browserPageTitle = "";
-        BrowserOverlay.SetOverlayVisible(false);
+        OpenBookmarksInSidePanel();
         await Task.CompletedTask;
+    }
+
+    private void OpenBookmarksInSidePanel()
+    {
+        CloseAllContextMenus();
+        SidePanel.IsOpen = true;
+        SidePanel.Content = BrowserSidePanelContent.Bookmarks;
+        SidePanel.ActiveAppId = null;
+        SidePanel.NotifyChanged();
+    }
+
+    private void OpenSettingsInSidePanel()
+    {
+        CloseAllContextMenus();
+        _settingsDraft = BrowserStore.GetSettings();
+        SidePanel.IsOpen = true;
+        SidePanel.Content = BrowserSidePanelContent.Settings;
+        SidePanel.ActiveAppId = null;
+        SidePanel.NotifyChanged();
+    }
+
+    private void CloseSidePanel()
+    {
+        SidePanel.IsOpen = false;
+        SidePanel.Content = BrowserSidePanelContent.None;
+        SidePanel.ActiveAppId = null;
+        SidePanel.NotifyChanged();
+        BrowserOverlay.SetSideOverlayVisible(false);
+        RefreshWebViewBounds();
     }
 
     private async Task OpenBookmarkFromMenu(string url)
@@ -553,16 +922,49 @@
 
     private void OpenBookmarkDialog()
     {
+        CloseBarContextMenu();
+
+        var currentUrl = BrowserAgent.CurrentUrl;
+        if (string.IsNullOrWhiteSpace(currentUrl))
+            return;
+
+        var existing = BrowserStore.FindBookmarkByUrl(currentUrl);
+        if (existing != null)
+            OpenBookmarkEditDialog(existing);
+        else
+            OpenBookmarkAddDialog();
+    }
+
+    private void OpenBookmarkAddDialog()
+    {
+        _bookmarkIsEditMode = false;
+        _editingBookmarkId = null;
         _bookmarkTitle = string.IsNullOrWhiteSpace(_browserPageTitle) ? _browserUrl : _browserPageTitle;
-        _bookmarkFolderId = BrowserStore.GetFolders().FirstOrDefault()?.Id ?? "default";
+        _bookmarkFolderId = ShowBookmarksBar
+            && BrowserStore.GetFolders().Any(f => f.Id == BrowserBookmarkFolders.BookmarksBarFolderId)
+            ? BrowserBookmarkFolders.BookmarksBarFolderId
+            : BrowserStore.GetFolders().FirstOrDefault()?.Id ?? BrowserBookmarkFolders.DefaultFolderId;
         _newFolderName = "";
         _showBookmarkDialog = true;
-        BrowserOverlay.SetOverlayVisible(false);
+        BrowserOverlay.SetMainOverlayVisible(false);
+    }
+
+    private void OpenBookmarkEditDialog(BrowserBookmark bookmark)
+    {
+        _bookmarkIsEditMode = true;
+        _editingBookmarkId = bookmark.Id;
+        _bookmarkTitle = bookmark.Title;
+        _bookmarkFolderId = bookmark.FolderId;
+        _newFolderName = "";
+        _showBookmarkDialog = true;
+        BrowserOverlay.SetMainOverlayVisible(false);
     }
 
     private void CloseBookmarkDialog()
     {
         _showBookmarkDialog = false;
+        _bookmarkIsEditMode = false;
+        _editingBookmarkId = null;
         RestoreWebViewOverlayIfNeeded();
     }
 
@@ -578,41 +980,611 @@
 
     private async Task SaveBookmark()
     {
-        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+        if (_bookmarkIsEditMode)
+        {
+            if (string.IsNullOrWhiteSpace(_editingBookmarkId))
+                return;
+
+            var existing = BrowserStore.GetBookmarks().FirstOrDefault(b => b.Id == _editingBookmarkId);
+            if (existing == null)
+                return;
+
+            var updated = existing with
+            {
+                Title = _bookmarkTitle?.Trim() ?? "",
+                FolderId = _bookmarkFolderId
+            };
+            await BrowserStore.UpdateBookmarkAsync(updated);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+                return;
+            await BrowserStore.AddBookmarkAsync(BrowserAgent.CurrentUrl, _bookmarkTitle, _bookmarkFolderId);
+        }
+
+        CloseBookmarkDialog();
+    }
+
+    private async Task DeleteBookmark()
+    {
+        if (string.IsNullOrWhiteSpace(_editingBookmarkId))
             return;
-        await BrowserStore.AddBookmarkAsync(BrowserAgent.CurrentUrl, _bookmarkTitle, _bookmarkFolderId);
-        _showBookmarkDialog = false;
-        RestoreWebViewOverlayIfNeeded();
+
+        await BrowserStore.RemoveBookmarkAsync(_editingBookmarkId);
+        CloseBookmarkDialog();
     }
 
-    private void OpenSettings()
+    private async Task OnBarContextMenu(MouseEventArgs e, BrowserBookmark bookmark)
     {
-        _settingsDraft = BrowserStore.GetSettings();
-        _showSettings = true;
-        BrowserOverlay.SetOverlayVisible(false);
+        await SetMenuAnchorAsync(e.ClientX, e.ClientY);
+        _barContextMenuBookmarkId = bookmark.Id;
+        StateHasChanged();
     }
 
-    private void CloseSettings()
+    private void CloseBarContextMenu()
     {
-        _showSettings = false;
-        RestoreWebViewOverlayIfNeeded();
+        _barContextMenuBookmarkId = null;
+        RefreshWebViewBounds();
+    }
+
+    private async Task OpenBarBookmarkInSidePanel()
+    {
+        if (string.IsNullOrWhiteSpace(_barContextMenuBookmarkId))
+            return;
+
+        var bookmark = BrowserStore.GetBookmarks().FirstOrDefault(b => b.Id == _barContextMenuBookmarkId);
+        CloseBarContextMenu();
+        if (bookmark == null)
+            return;
+
+        SidePanel.IsOpen = true;
+        SidePanel.Content = BrowserSidePanelContent.Web;
+        SidePanel.ActiveAppId = null;
+        SidePanel.NotifyChanged();
+
+        await SideAgent.NavigateAsync(bookmark.Url);
+        _pendingOverlaySync = true;
+        await SyncOverlayAsync();
+    }
+
+    private void EditBarContextBookmark()
+    {
+        if (string.IsNullOrWhiteSpace(_barContextMenuBookmarkId))
+            return;
+
+        var bookmark = BrowserStore.GetBookmarks().FirstOrDefault(b => b.Id == _barContextMenuBookmarkId);
+        CloseBarContextMenu();
+        if (bookmark != null)
+            OpenBookmarkEditDialog(bookmark);
+    }
+
+    private async Task StartBarItemDragAsync(MouseEventArgs e, string bookmarkId)
+    {
+        if (_dotNetRef == null || e.Button != 0)
+            return;
+
+        CloseBarContextMenu();
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "chatfishBrowser.startBookmarkBarDrag",
+                _dotNetRef,
+                ".browser-bookmarks-bar",
+                bookmarkId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] bookmark bar drag failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnBookmarkBarClick(string bookmarkId)
+    {
+        var bookmark = BookmarksBarItems.FirstOrDefault(b => b.Id == bookmarkId);
+        if (bookmark != null)
+            await OpenBookmark(bookmark.Url);
+    }
+
+    [JSInvokable]
+    public void OnBookmarkBarDragOver(string? overId)
+    {
+        _dragOverBookmarkId = overId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnBookmarkBarDrop(string fromId, string targetId)
+    {
+        _dragOverBookmarkId = null;
+
+        if (string.IsNullOrWhiteSpace(fromId)
+            || string.IsNullOrWhiteSpace(targetId)
+            || fromId == targetId)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var items = BookmarksBarItems.ToList();
+        var fromIndex = items.FindIndex(b => b.Id == fromId);
+        var toIndex = items.FindIndex(b => b.Id == targetId);
+        if (fromIndex < 0 || toIndex < 0)
+            return;
+
+        var moved = items[fromIndex];
+        items.RemoveAt(fromIndex);
+        items.Insert(toIndex, moved);
+
+        await BrowserStore.ReorderBookmarksAsync(
+            BrowserBookmarkFolders.BookmarksBarFolderId,
+            items.Select(b => b.Id).ToList());
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleSideNewFolderInput()
+    {
+        _showSideNewFolderInput = !_showSideNewFolderInput;
+        if (!_showSideNewFolderInput)
+            _sideNewFolderName = "";
+    }
+
+    private void CancelSideNewFolder()
+    {
+        _showSideNewFolderInput = false;
+        _sideNewFolderName = "";
+    }
+
+    private async Task ConfirmSideAddFolder()
+    {
+        if (string.IsNullOrWhiteSpace(_sideNewFolderName))
+            return;
+
+        await BrowserStore.AddFolderAsync(_sideNewFolderName);
+        _sideNewFolderName = "";
+        _showSideNewFolderInput = false;
+        StateHasChanged();
+    }
+
+    private async Task OnSideNewFolderKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await ConfirmSideAddFolder();
+        else if (e.Key == "Escape")
+            CancelSideNewFolder();
+    }
+
+    private void ToggleSideBookmarkSelection(string bookmarkId, ChangeEventArgs e)
+    {
+        if (e.Value is bool selected)
+        {
+            if (selected)
+                _selectedBookmarkIds.Add(bookmarkId);
+            else
+                _selectedBookmarkIds.Remove(bookmarkId);
+        }
+
+        StateHasChanged();
+    }
+
+    private void EditSideBookmark(BrowserBookmark bookmark) => OpenBookmarkEditDialog(bookmark);
+
+    private async Task DeleteSideBookmark(string bookmarkId)
+    {
+        _selectedBookmarkIds.Remove(bookmarkId);
+        await BrowserStore.RemoveBookmarkAsync(bookmarkId);
+        StateHasChanged();
+    }
+
+    private async Task DeleteSelectedSideBookmarks()
+    {
+        if (_selectedBookmarkIds.Count == 0)
+            return;
+
+        var ids = _selectedBookmarkIds.ToList();
+        _selectedBookmarkIds.Clear();
+        await BrowserStore.RemoveBookmarksAsync(ids);
+        StateHasChanged();
+    }
+
+    private async Task StartSidebarBookmarkDragAsync(MouseEventArgs e, string bookmarkId, string folderId)
+    {
+        if (_dotNetRef == null || e.Button != 0)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "chatfishBrowser.startSidebarDrag",
+                _dotNetRef,
+                ".browser-side-bookmarks-list",
+                "bookmark",
+                bookmarkId,
+                folderId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] sidebar bookmark drag failed: {ex.Message}");
+        }
+    }
+
+    private async Task StartSidebarFolderDragAsync(MouseEventArgs e, string folderId)
+    {
+        if (_dotNetRef == null || e.Button != 0)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "chatfishBrowser.startSidebarDrag",
+                _dotNetRef,
+                ".browser-side-bookmarks-list",
+                "folder",
+                folderId,
+                folderId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] sidebar folder drag failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnSidebarBookmarkClick(string bookmarkId)
+    {
+        var bookmark = BrowserStore.GetBookmarks().FirstOrDefault(b => b.Id == bookmarkId);
+        if (bookmark != null)
+            await OpenBookmark(bookmark.Url);
+    }
+
+    [JSInvokable]
+    public void OnSidebarDragOver(string? targetKind, string? targetId, string? targetFolderId)
+    {
+        _sidebarDragOverBookmarkId = targetKind == "bookmark" ? targetId : null;
+        _sidebarDragOverFolderId = targetKind == "folder" ? targetId : null;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnSidebarDrop(
+        string fromKind,
+        string fromId,
+        string fromFolderId,
+        string? targetKind,
+        string? targetId,
+        string? targetFolderId)
+    {
+        _sidebarDragOverBookmarkId = null;
+        _sidebarDragOverFolderId = null;
+
+        if (string.IsNullOrWhiteSpace(targetKind) || string.IsNullOrWhiteSpace(targetId))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        if (fromKind == "bookmark")
+        {
+            if (targetKind == "bookmark" && fromId != targetId && !string.IsNullOrWhiteSpace(targetFolderId))
+                await BrowserStore.MoveBookmarkAsync(fromId, targetFolderId, targetId);
+            else if (targetKind == "folder" && fromFolderId != targetId)
+                await BrowserStore.MoveBookmarkAsync(fromId, targetId);
+        }
+        else if (fromKind == "folder" && targetKind == "folder" && fromId != targetId)
+        {
+            var folders = BrowserStore.GetFolders().ToList();
+            var fromIndex = folders.FindIndex(f => f.Id == fromId);
+            var toIndex = folders.FindIndex(f => f.Id == targetId);
+            if (fromIndex >= 0 && toIndex >= 0)
+            {
+                var moved = folders[fromIndex];
+                folders.RemoveAt(fromIndex);
+                folders.Insert(toIndex, moved);
+                await BrowserStore.ReorderFoldersAsync(folders.Select(f => f.Id).ToList());
+            }
+        }
+
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task SaveSettings()
     {
         await BrowserStore.SaveSettingsAsync(_settingsDraft);
-        _showSettings = false;
-        RestoreWebViewOverlayIfNeeded();
+        StateHasChanged();
+        RefreshWebViewBounds();
     }
 
-    private void RestoreWebViewOverlayIfNeeded()
+    private void CloseAllContextMenus(bool keepSidePanelOpen = false)
     {
-        if (ShouldHideWebViewOverlay)
+        CloseBarContextMenu();
+        if (_contextMenuApp == null)
+            return;
+
+        _contextMenuApp = null;
+        if (_contextMenuOpenedSidePanel && !keepSidePanelOpen)
+            CloseSidePanel();
+
+        _contextMenuOpenedSidePanel = false;
+        RefreshWebViewBounds();
+    }
+
+    private async Task OpenPinDialog()
+    {
+        CloseAllContextMenus();
+        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl) || _showStartPage)
+            return;
+
+        try { await PwaDetector.DetectFromPageAsync(); } catch { }
+
+        _pinName = string.IsNullOrWhiteSpace(_browserPageTitle) ? _browserUrl : _browserPageTitle;
+        if (PwaDetector.CurrentManifest != null)
+        {
+            var manifest = PwaDetector.CurrentManifest;
+            _pinName = manifest.ShortName
+                ?? manifest.Name
+                ?? _pinName;
+        }
+
+        _showPinDialog = true;
+        BrowserOverlay.SetMainOverlayVisible(false);
+        BrowserOverlay.SetSideOverlayVisible(false);
+    }
+
+    private void ClosePinDialog()
+    {
+        _showPinDialog = false;
+        RefreshWebViewBounds();
+    }
+
+    private async Task PinCurrentPage()
+    {
+        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+            return;
+
+        var app = new SidebarApp(
+            Guid.NewGuid().ToString("N"),
+            string.IsNullOrWhiteSpace(_pinName) ? BrowserAgent.CurrentUrl : _pinName.Trim(),
+            string.IsNullOrWhiteSpace(_pinName) ? BrowserAgent.CurrentUrl : _pinName.Trim(),
+            BrowserAgent.CurrentUrl,
+            BrowserFaviconUrl.Get(BrowserAgent.CurrentUrl),
+            null,
+            null,
+            false,
+            OpenTarget.SidePanel,
+            DateTime.UtcNow,
+            IsPwa: false);
+
+        await SidebarStore.PinAppAsync(app);
+        ClosePinDialog();
+        await OpenSidebarAppAsync(app, OpenTarget.SidePanel);
+    }
+
+    private async Task PinCurrentAsPwa()
+    {
+        var manifest = PwaDetector.CurrentManifest;
+        if (manifest == null || string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+            return;
+
+        var startUrl = PwaManifestHelper.ResolveStartUrl(manifest, BrowserAgent.CurrentUrl);
+        var name = manifest.ShortName ?? manifest.Name ?? _pinName;
+        if (string.IsNullOrWhiteSpace(name))
+            name = startUrl;
+
+        var suggestedTarget = PwaManifestHelper.SuggestOpenTarget(manifest);
+        var app = new SidebarApp(
+            Guid.NewGuid().ToString("N"),
+            name,
+            manifest.ShortName ?? name,
+            startUrl,
+            PwaManifestHelper.PickBestIcon(manifest) ?? BrowserFaviconUrl.Get(startUrl),
+            manifest.BackgroundColor,
+            manifest.ThemeColor,
+            false,
+            suggestedTarget,
+            DateTime.UtcNow,
+            IsPwa: true);
+
+        await SidebarStore.PinAppAsync(app);
+        ClosePinDialog();
+        await OpenSidebarAppAsync(app, suggestedTarget);
+    }
+
+    private Task OpenApp(SidebarApp app) => OpenSidebarAppAsync(app);
+
+    private async Task OpenSidebarAppAsync(SidebarApp app, OpenTarget? overrideTarget = null)
+    {
+        CloseAllContextMenus();
+
+        var target = overrideTarget ?? app.DefaultOpenTarget;
+        if (target == OpenTarget.LastUsed)
+            target = SidebarStore.GetLastOpenTarget(app.Id);
+
+        if (target == OpenTarget.MainBrowser)
+        {
+            _showStartPage = false;
+            await BrowserAgent.NavigateAsync(app.StartUrl);
+            await SidebarStore.SetLastOpenTargetAsync(app.Id, OpenTarget.MainBrowser);
+            RefreshWebViewBounds();
+            return;
+        }
+
+        SidePanel.IsOpen = true;
+        SidePanel.Content = BrowserSidePanelContent.Web;
+        SidePanel.ActiveAppId = app.Id;
+        SidePanel.NotifyChanged();
+
+        await SideAgent.NavigateAsync(app.StartUrl);
+        await SidebarStore.SetLastOpenTargetAsync(app.Id, OpenTarget.SidePanel);
+        _pendingOverlaySync = true;
+        await SyncOverlayAsync();
+    }
+
+    private async Task ShowAppContextMenu(MouseEventArgs e, SidebarApp app)
+    {
+        await SetMenuAnchorAsync(e.ClientX, e.ClientY);
+        _contextMenuOpenedSidePanel = !SidePanel.IsOpen;
+        if (_contextMenuOpenedSidePanel)
+        {
+            SidePanel.IsOpen = true;
+            SidePanel.Content = BrowserSidePanelContent.None;
+            SidePanel.ActiveAppId = null;
+            SidePanel.NotifyChanged();
+        }
+
+        _contextMenuApp = app;
+        BrowserOverlay.SetSideOverlayVisible(false);
+        _pendingOverlaySync = true;
+        await SyncOverlayAsync();
+        StateHasChanged();
+    }
+
+    private async Task StartVtoolbarAppDragAsync(MouseEventArgs e, string appId)
+    {
+        if (_dotNetRef == null || e.Button != 0)
             return;
 
         try
         {
-            _ = JS.InvokeVoidAsync("chatfishBrowser.reportBoundsNow", "#browser-content-host");
+            await JS.InvokeVoidAsync(
+                "chatfishBrowser.startVtoolbarDrag",
+                _dotNetRef,
+                ".browser-vtoolbar",
+                appId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] vtoolbar drag failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnVtoolbarAppClick(string appId)
+    {
+        var app = SidebarStore.GetPinnedApps().FirstOrDefault(a => a.Id == appId);
+        if (app != null)
+            await OpenApp(app);
+    }
+
+    [JSInvokable]
+    public void OnVtoolbarDragOver(string? overAppId)
+    {
+        _vtoolbarDragOverAppId = overAppId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnVtoolbarAppDrop(string fromId, string targetId)
+    {
+        _vtoolbarDragOverAppId = null;
+
+        if (string.IsNullOrWhiteSpace(fromId)
+            || string.IsNullOrWhiteSpace(targetId)
+            || fromId == targetId)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var apps = SidebarStore.GetPinnedApps().ToList();
+        var fromIndex = apps.FindIndex(a => a.Id == fromId);
+        var toIndex = apps.FindIndex(a => a.Id == targetId);
+        if (fromIndex < 0 || toIndex < 0)
+            return;
+
+        var moved = apps[fromIndex];
+        apps.RemoveAt(fromIndex);
+        apps.Insert(toIndex, moved);
+        await SidebarStore.ReorderAppsAsync(apps.Select(a => a.Id).ToList());
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SetMenuAnchorAsync(double clientX, double clientY)
+    {
+        try
+        {
+            var anchor = await JS.InvokeAsync<double[]>("chatfishBrowser.getPanelAnchor", "#browser-panel", clientX, clientY);
+            if (anchor.Length >= 2)
+            {
+                _menuAnchorLeft = anchor[0];
+                _menuAnchorTop = anchor[1];
+                return;
+            }
+        }
+        catch { }
+
+        _menuAnchorLeft = clientX;
+        _menuAnchorTop = clientY;
+    }
+
+    private async Task OpenInSidePanel(SidebarApp app)
+    {
+        CloseAllContextMenus(keepSidePanelOpen: true);
+        await OpenSidebarAppAsync(app, OpenTarget.SidePanel);
+    }
+
+    private async Task OpenInMainBrowser(SidebarApp app)
+    {
+        CloseAllContextMenus();
+        await OpenSidebarAppAsync(app, OpenTarget.MainBrowser);
+    }
+
+    private async Task SetDefaultTarget(SidebarApp app, OpenTarget target)
+    {
+        var updated = app with { DefaultOpenTarget = target };
+        await SidebarStore.UpdateAppAsync(updated);
+        _contextMenuApp = updated;
+        StateHasChanged();
+    }
+
+    private async Task UnpinApp(SidebarApp app)
+    {
+        CloseAllContextMenus();
+        if (SidePanel.ActiveAppId == app.Id)
+            CloseSidePanel();
+
+        await SidebarStore.UnpinAppAsync(app.Id);
+    }
+
+    private async Task StartSidePanelSplitterDrag()
+    {
+        if (_dotNetRef == null)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("chatfishBrowser.startSidePanelSplitterDrag", _dotNetRef, "#browser-body");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] side panel splitter failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnSidePanelDrag(double widthPx)
+    {
+        _sidePanelWidthPx = Math.Clamp(widthPx, 240, 560);
+        await SidebarStore.SetSidePanelWidthPxAsync(_sidePanelWidthPx);
+        RefreshWebViewBounds();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void RestoreWebViewOverlayIfNeeded()
+    {
+        try
+        {
+            _ = JS.InvokeVoidAsync("chatfishBrowser.reportBoundsNow", "#browser-content-host", "#browser-side-content-host");
         }
         catch
         {
@@ -673,11 +1645,11 @@
     }
 
     [JSInvokable]
-    public void OnBrowserOverlayBounds(double x, double y, double width, double height)
+    public void OnBrowserMainOverlayBounds(double x, double y, double width, double height)
     {
-        if (ShouldHideWebViewOverlay)
+        if (ShouldHideMainWebViewOverlay)
         {
-            BrowserOverlay.SetOverlayVisible(false);
+            BrowserOverlay.SetMainOverlayVisible(false);
             return;
         }
 
@@ -688,7 +1660,19 @@
             height -= inset;
         }
 
-        BrowserOverlay.ReportBounds(x, y, width, height);
+        BrowserOverlay.ReportMainBounds(x, y, width, height);
+    }
+
+    [JSInvokable]
+    public void OnBrowserSideOverlayBounds(double x, double y, double width, double height)
+    {
+        if (ShouldHideSideWebViewOverlay || width <= 1 || height <= 1)
+        {
+            BrowserOverlay.SetSideOverlayVisible(false);
+            return;
+        }
+
+        BrowserOverlay.ReportSideBounds(x, y, width, height);
     }
 
     private void RefreshWebViewBounds() => RestoreWebViewOverlayIfNeeded();
@@ -697,7 +1681,8 @@
     {
         try { await JS.InvokeVoidAsync("chatfishBrowser.stopBoundsObserver"); } catch { }
         try { await JS.InvokeVoidAsync("chatfishBrowser.setResizeCursor", false); } catch { }
-        BrowserOverlay.SetOverlayVisible(false);
+        BrowserOverlay.SetMainOverlayVisible(false);
+        BrowserOverlay.SetSideOverlayVisible(false);
     }
 
     public void Dispose()
@@ -712,9 +1697,16 @@
             BrowserPanel.OnChanged -= _browserPanelChangedHandler;
         if (_browserStoreChangedHandler != null)
             BrowserStore.Changed -= _browserStoreChangedHandler;
+        if (_sidebarStoreChangedHandler != null)
+            SidebarStore.Changed -= _sidebarStoreChangedHandler;
+        if (_sidePanelChangedHandler != null)
+            SidePanel.OnChanged -= _sidePanelChangedHandler;
+        if (_pwaChangedHandler != null)
+            PwaDetector.Changed -= _pwaChangedHandler;
 
         try { _ = JS.InvokeVoidAsync("chatfishBrowser.stopBoundsObserver"); } catch { }
-        BrowserOverlay.SetOverlayVisible(false);
+        BrowserOverlay.SetMainOverlayVisible(false);
+        BrowserOverlay.SetSideOverlayVisible(false);
         _dotNetRef?.Dispose();
     }
 }

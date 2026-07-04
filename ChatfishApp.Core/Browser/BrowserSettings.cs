@@ -33,6 +33,7 @@ public sealed class BrowserSettings
     public bool ClearCookiesOnExit { get; set; }
     public bool ClearCacheOnExit { get; set; }
     public bool ClearHistoryOnExit { get; set; }
+    public bool ShowBookmarksBar { get; set; }
 
     public BrowserSettings Clone() => new()
     {
@@ -44,6 +45,7 @@ public sealed class BrowserSettings
         AskBeforeDownloading = AskBeforeDownloading,
         ClearCookiesOnExit = ClearCookiesOnExit,
         ClearCacheOnExit = ClearCacheOnExit,
-        ClearHistoryOnExit = ClearHistoryOnExit
+        ClearHistoryOnExit = ClearHistoryOnExit,
+        ShowBookmarksBar = ShowBookmarksBar
     };
 }

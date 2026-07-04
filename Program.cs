@@ -102,6 +102,11 @@ builder.Services.AddSingleton<ChatfishApp.Core.UI.IBrowserPanelState>(sp => sp.G
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserAgentService, ChatfishApp.Client.Services.NullBrowserAgentService>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserOverlaySync, ChatfishApp.Client.Services.NullBrowserOverlaySync>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserStore, ChatfishApp.Client.Services.NullBrowserStore>();
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserSidebarStore, ChatfishApp.Client.Services.NullBrowserSidebarStore>();
+builder.Services.AddSingleton<ChatfishApp.Client.Services.BrowserSidePanelState>();
+builder.Services.AddSingleton<ChatfishApp.Core.UI.IBrowserSidePanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.BrowserSidePanelState>());
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserSideAgentService, ChatfishApp.Client.Services.NullBrowserSideAgentService>();
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IPwaDetector, ChatfishApp.Client.Services.NullPwaDetector>();
 
 // HttpClient + shared auth/sync stubs for server-side rendering of WASM layout/components (AppLayout, SyncConnectionBootstrap, etc.).
 // The interactive WASM runtime (Client/Program.cs) provides its own scoped services when the page becomes interactive.

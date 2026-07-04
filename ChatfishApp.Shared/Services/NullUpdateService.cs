@@ -12,7 +12,12 @@ public class NullUpdateService : IUpdateService
 
     private NullUpdateService() { }
 
-    public Task<UpdateInfo?> CheckForUpdateAsync() => Task.FromResult<UpdateInfo?>(null);
+    public Task<UpdateCheckResult> CheckForUpdateAsync() =>
+        Task.FromResult(new UpdateCheckResult
+        {
+            Status = UpdateCheckStatus.Unavailable,
+            Message = "In-app updates are only available in the desktop app."
+        });
 
     public Task DownloadAndInstallAsync(UpdateInfo update) => Task.CompletedTask;
 }

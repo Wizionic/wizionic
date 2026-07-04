@@ -19,6 +19,11 @@
                  IsVisible="False"
                  AbsoluteLayout.LayoutBounds="0,0,0,0"
                  AbsoluteLayout.LayoutFlags="None" />
+
+        <WebView x:Name="browserSideWebView"
+                 IsVisible="False"
+                 AbsoluteLayout.LayoutBounds="0,0,0,0"
+                 AbsoluteLayout.LayoutFlags="None" />
     </AbsoluteLayout>
 
 </ContentPage>

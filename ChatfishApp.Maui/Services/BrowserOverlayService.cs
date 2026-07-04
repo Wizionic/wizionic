@@ -6,23 +6,46 @@ namespace ChatfishApp.Maui.Services;
 
 public sealed class BrowserOverlayService : IBrowserOverlaySync
 {
-    private WebView? _webView;
+    private WebView? _mainWebView;
+    private WebView? _sideWebView;
     private AbsoluteLayout? _layout;
-    private Rect _lastBounds = Rect.Zero;
-    private bool _visible;
+    private Rect _lastMainBounds = Rect.Zero;
+    private Rect _lastSideBounds = Rect.Zero;
+    private bool _mainVisible;
+    private bool _sideVisible;
 
-    public void Initialize(WebView webView, AbsoluteLayout layout)
+    public void Initialize(WebView mainWebView, WebView sideWebView, AbsoluteLayout layout)
     {
-        _webView = webView;
+        _mainWebView = mainWebView;
+        _sideWebView = sideWebView;
         _layout = layout;
-        _webView.IsVisible = false;
-        _webView.IsEnabled = false;
-        Console.WriteLine("[Browser] overlay service initialized");
+        _mainWebView.IsVisible = false;
+        _mainWebView.IsEnabled = false;
+        _sideWebView.IsVisible = false;
+        _sideWebView.IsEnabled = false;
+        Console.WriteLine("[Browser] dual overlay service initialized");
     }
 
-    public void ReportBounds(double x, double y, double width, double height)
+    public void ReportMainBounds(double x, double y, double width, double height) =>
+        ReportBounds(isMain: true, x, y, width, height);
+
+    public void ReportSideBounds(double x, double y, double width, double height) =>
+        ReportBounds(isMain: false, x, y, width, height);
+
+    public void SetMainOverlayVisible(bool visible) => SetOverlayVisible(isMain: true, visible);
+
+    public void SetSideOverlayVisible(bool visible) => SetOverlayVisible(isMain: false, visible);
+
+    public void RestoreCachedOverlay()
     {
-        if (_webView == null || _layout == null)
+        RestoreCached(isMain: true);
+        RestoreCached(isMain: false);
+    }
+
+    private void ReportBounds(bool isMain, double x, double y, double width, double height)
+    {
+        var webView = isMain ? _mainWebView : _sideWebView;
+        if (webView == null || _layout == null)
             return;
 
         var rounded = new Rect(
@@ -33,63 +56,79 @@ public sealed class BrowserOverlayService : IBrowserOverlaySync
 
         if (rounded.Width <= 1 || rounded.Height <= 1)
         {
-            if (_visible)
-            {
-                Console.WriteLine("[Browser] overlay hidden — invalid bounds");
-                SetOverlayVisible(false);
-            }
+            if (isMain ? _mainVisible : _sideVisible)
+                SetOverlayVisible(isMain, false);
             return;
         }
 
-        if (rounded == _lastBounds && _visible)
+        var lastBounds = isMain ? _lastMainBounds : _lastSideBounds;
+        var visible = isMain ? _mainVisible : _sideVisible;
+        if (rounded == lastBounds && visible)
             return;
 
-        _lastBounds = rounded;
+        if (isMain)
+            _lastMainBounds = rounded;
+        else
+            _lastSideBounds = rounded;
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            if (_webView == null)
+            if (webView == null)
                 return;
 
-            _webView.IsVisible = true;
-            _webView.IsEnabled = true;
-            _visible = true;
-            AbsoluteLayout.SetLayoutBounds(_webView, rounded);
-            AbsoluteLayout.SetLayoutFlags(_webView, AbsoluteLayoutFlags.None);
+            webView.IsVisible = true;
+            webView.IsEnabled = true;
+            if (isMain)
+                _mainVisible = true;
+            else
+                _sideVisible = true;
+
+            AbsoluteLayout.SetLayoutBounds(webView, rounded);
+            AbsoluteLayout.SetLayoutFlags(webView, AbsoluteLayoutFlags.None);
         });
     }
 
-    public void SetOverlayVisible(bool visible)
+    private void SetOverlayVisible(bool isMain, bool show)
     {
-        if (_webView == null)
+        var webView = isMain ? _mainWebView : _sideWebView;
+        if (webView == null)
             return;
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            _visible = visible;
-            _webView.IsVisible = visible;
-            _webView.IsEnabled = visible;
-            if (!visible)
-                AbsoluteLayout.SetLayoutBounds(_webView, new Rect(0, 0, 0, 0));
+            if (isMain)
+                _mainVisible = show;
+            else
+                _sideVisible = show;
+
+            webView.IsVisible = show;
+            webView.IsEnabled = show;
+            if (!show)
+                AbsoluteLayout.SetLayoutBounds(webView, new Rect(0, 0, 0, 0));
         });
     }
 
-    public void RestoreCachedOverlay()
+    private void RestoreCached(bool isMain)
     {
-        if (_webView == null || _layout == null || _lastBounds.Width <= 1 || _lastBounds.Height <= 1)
+        var webView = isMain ? _mainWebView : _sideWebView;
+        var bounds = isMain ? _lastMainBounds : _lastSideBounds;
+        if (webView == null || bounds.Width <= 1 || bounds.Height <= 1)
             return;
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            if (_webView == null)
+            if (webView == null)
                 return;
 
-            _visible = true;
-            _webView.IsVisible = true;
-            _webView.IsEnabled = true;
-            AbsoluteLayout.SetLayoutBounds(_webView, _lastBounds);
-            AbsoluteLayout.SetLayoutFlags(_webView, AbsoluteLayoutFlags.None);
-            Console.WriteLine($"[Browser] overlay restored from cache at {_lastBounds.Width}x{_lastBounds.Height}");
+            if (isMain)
+                _mainVisible = true;
+            else
+                _sideVisible = true;
+
+            webView.IsVisible = true;
+            webView.IsEnabled = true;
+            AbsoluteLayout.SetLayoutBounds(webView, bounds);
+            AbsoluteLayout.SetLayoutFlags(webView, AbsoluteLayoutFlags.None);
         });
     }
 }

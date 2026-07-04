@@ -25,12 +25,14 @@ public partial class MainPage : ContentPage
             return;
 
         var agent = services.GetRequiredService<MauiBrowserAgentService>();
+        var sideAgent = services.GetRequiredService<MauiSideBrowserService>();
         var overlay = services.GetRequiredService<BrowserOverlayService>();
         var panel = services.GetRequiredService<IBrowserPanelState>();
         var platform = services.GetRequiredService<BrowserWebViewPlatformService>();
 
         agent.AttachWebView(browserWebView);
-        overlay.Initialize(browserWebView, rootLayout);
+        sideAgent.AttachWebView(browserSideWebView);
+        overlay.Initialize(browserWebView, browserSideWebView, rootLayout);
         platform.Attach(browserWebView);
 
         panel.OnChanged += () =>
@@ -40,7 +42,8 @@ public partial class MainPage : ContentPage
             else
             {
                 Console.WriteLine("[Browser] panel closed — hiding overlay");
-                overlay.SetOverlayVisible(false);
+                overlay.SetMainOverlayVisible(false);
+                overlay.SetSideOverlayVisible(false);
             }
         };
 
