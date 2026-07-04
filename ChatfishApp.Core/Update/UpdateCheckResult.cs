@@ -1,0 +1,36 @@
+namespace ChatfishApp.Core.Update;
+
+public enum UpdateCheckStatus
+{
+    /// <summary>A newer version is available on the update feed.</summary>
+    UpdateAvailable,
+
+    /// <summary>Installed app is already on the latest release.</summary>
+    UpToDate,
+
+    /// <summary>App was not installed via Velopack (e.g. Debug / dotnet run).</summary>
+    NotInstalled,
+
+    /// <summary>Could not reach or parse the update feed.</summary>
+    CheckFailed,
+
+    /// <summary>Updates are not supported on this platform (WASM / host).</summary>
+    Unavailable
+}
+
+/// <summary>
+/// Outcome of an update check, including status and optional release info.
+/// </summary>
+public class UpdateCheckResult
+{
+    public UpdateCheckStatus Status { get; init; }
+
+    /// <summary>Velopack release info when <see cref="Status"/> is <see cref="UpdateCheckStatus.UpdateAvailable"/>.</summary>
+    public UpdateInfo? Update { get; init; }
+
+    /// <summary>Currently installed version, when known.</summary>
+    public string? CurrentVersion { get; init; }
+
+    /// <summary>Human-readable detail for errors or unsupported states.</summary>
+    public string? Message { get; init; }
+}

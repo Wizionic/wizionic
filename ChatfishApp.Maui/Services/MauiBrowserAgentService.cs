@@ -211,22 +211,26 @@ public sealed class MauiBrowserAgentService : IBrowserAgentService
 
     private void OnNavigated(object? sender, WebNavigatedEventArgs e)
     {
-        SetLoading(false);
         _pendingUrl = null;
 
         if (e.Result != WebNavigationResult.Success)
         {
+            SetLoading(false);
             Console.WriteLine($"[Browser] navigation failed: {e.Result} url={e.Url}");
             return;
         }
 
         var url = e.Url ?? "";
         if (string.IsNullOrWhiteSpace(url))
+        {
+            SetLoading(false);
             return;
+        }
 
         _currentUrl = url;
         Console.WriteLine($"[Browser] navigated to {url}");
         UrlChanged?.Invoke(_currentUrl);
+        SetLoading(false);
         _ = RecordVisitAsync();
     }
 

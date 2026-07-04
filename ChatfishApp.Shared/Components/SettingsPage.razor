@@ -200,19 +200,29 @@
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
             <h4>App Updates</h4>
 
-            @if (updateInfo != null)
+            @if (!string.IsNullOrEmpty(updateCheckResult?.CurrentVersion))
+            {
+                <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+                    Installed version: <strong>@updateCheckResult.CurrentVersion</strong>
+                </div>
+            }
+
+            @if (updateCheckResult?.Status == UpdateCheckStatus.UpdateAvailable && updateCheckResult.Update != null)
             {
                 <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--success, #d4edda); border: 1px solid #0a0; border-radius: 6px;">
-                    Version @updateInfo.Version is available!
+                    Version @updateCheckResult.Update.Version is available!
                 </div>
                 <button class="btn btn-primary" @onclick="InstallUpdate" disabled="@busy">
                     @(busy ? "Installing..." : "Install and Restart")
                 </button>
             }
-            else if (hasChecked)
+            else if (hasChecked && updateCheckResult != null)
             {
-                <div style="margin: 0.75rem 0; color: #555;">
-                    You're on the latest version.
+                <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; border-radius: 6px;
+                            background: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "#fff8e6" : "transparent");
+                            border: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "1px solid #e6c200" : "none");
+                            color: #555;">
+                    @updateStatusMessage
                 </div>
             }
 
@@ -220,7 +230,7 @@
             {
                 <button class="btn btn-outline-secondary" style="margin-top: 0.5rem;"
                         @onclick="CheckForUpdate" disabled="@busy">
-                    Check for Updates
+                    @(busy ? "Checking..." : "Check for Updates")
                 </button>
             }
         </div>
@@ -250,9 +260,17 @@
     private CancellationTokenSource? _saveFeedbackCts;
 
     // Update check state (used when IsMaui is true)
-    private UpdateInfo? updateInfo;
+    private UpdateCheckResult? updateCheckResult;
     private bool hasChecked;
     private bool busy;
+
+    private string updateStatusMessage => updateCheckResult?.Status switch
+    {
+        UpdateCheckStatus.UpToDate => updateCheckResult.Message ?? "You're on the latest version.",
+        UpdateCheckStatus.NotInstalled => updateCheckResult.Message ?? "In-app updates require the installed desktop app.",
+        UpdateCheckStatus.CheckFailed => updateCheckResult.Message ?? "Could not check for updates.",
+        _ => updateCheckResult?.Message ?? "Update check complete."
+    };
 
     private IEnumerable<ChatfishApp.Core.Storage.UserMemory> FilteredMemories =>
         string.IsNullOrWhiteSpace(memorySearch)
@@ -472,11 +490,11 @@
         if (UpdateService == null) return;
         busy = true;
         hasChecked = false;
-        updateInfo = null;
+        updateCheckResult = null;
         StateHasChanged();
         try
         {
-            updateInfo = await UpdateService.CheckForUpdateAsync();
+            updateCheckResult = await UpdateService.CheckForUpdateAsync();
             hasChecked = true;
         }
         finally
@@ -488,10 +506,10 @@
 
     private async Task InstallUpdate()
     {
-        if (updateInfo == null || UpdateService == null) return;
+        if (updateCheckResult?.Update == null || UpdateService == null) return;
         busy = true;
         StateHasChanged();
-        await UpdateService.DownloadAndInstallAsync(updateInfo);
+        await UpdateService.DownloadAndInstallAsync(updateCheckResult.Update);
         // ApplyUpdatesAndRestart won't return — app restarts with new version
     }
 }

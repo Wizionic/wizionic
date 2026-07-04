@@ -97,10 +97,18 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IBrowserPanelState>(sp => sp.GetRequiredService<MauiBrowserPanelState>());
 		builder.Services.AddSingleton<SqliteBrowserStore>();
 		builder.Services.AddSingleton<IBrowserStore>(sp => sp.GetRequiredService<SqliteBrowserStore>());
+		builder.Services.AddSingleton<SqliteBrowserSidebarStore>();
+		builder.Services.AddSingleton<IBrowserSidebarStore>(sp => sp.GetRequiredService<SqliteBrowserSidebarStore>());
+		builder.Services.AddSingleton<MauiBrowserSidePanelState>();
+		builder.Services.AddSingleton<IBrowserSidePanelState>(sp => sp.GetRequiredService<MauiBrowserSidePanelState>());
 		builder.Services.AddSingleton<BrowserOverlayService>();
 		builder.Services.AddSingleton<IBrowserOverlaySync>(sp => sp.GetRequiredService<BrowserOverlayService>());
 		builder.Services.AddSingleton<MauiBrowserAgentService>();
 		builder.Services.AddSingleton<IBrowserAgentService>(sp => sp.GetRequiredService<MauiBrowserAgentService>());
+		builder.Services.AddSingleton<MauiSideBrowserService>();
+		builder.Services.AddSingleton<IBrowserSideAgentService>(sp => sp.GetRequiredService<MauiSideBrowserService>());
+		builder.Services.AddSingleton<MauiPwaDetector>();
+		builder.Services.AddSingleton<IPwaDetector>(sp => sp.GetRequiredService<MauiPwaDetector>());
 		builder.Services.AddSingleton<BrowserWebViewPlatformService>();
 		builder.Services.AddSingleton<SqliteKeyStore>();
 		builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<SqliteKeyStore>());
