@@ -8,74 +8,118 @@ window.chatfishBrowser = window.chatfishBrowser || {
     },
 
     _observer: null,
-    _observedEl: null,
+    _observedEls: null,
     _resizeHandler: null,
     _debounceTimer: null,
     _dotNetRef: null,
-    _lastBoundsKey: null,
-    _activeSelector: null,
+    _lastMainBoundsKey: null,
+    _lastSideBoundsKey: null,
+    _mainSelector: null,
+    _sideSelector: null,
 
-    startBoundsObserver: function (selector, dotNetRef) {
-        if (this._activeSelector === selector && this._dotNetRef === dotNetRef && this._observer)
+    startBoundsObserver: function (mainSelector, sideSelector, dotNetRef) {
+        if (this._mainSelector === mainSelector
+            && this._sideSelector === sideSelector
+            && this._dotNetRef === dotNetRef
+            && this._observer)
             return;
 
         this.stopBoundsObserver();
-        const el = document.querySelector(selector);
-        if (!el || !dotNetRef) {
-            console.warn('[Browser] startBoundsObserver: element or dotNetRef missing for', selector);
+        const mainEl = document.querySelector(mainSelector);
+        if (!mainEl || !dotNetRef) {
+            console.warn('[Browser] startBoundsObserver: main element or dotNetRef missing for', mainSelector);
             return;
         }
 
         this._dotNetRef = dotNetRef;
-        this._activeSelector = selector;
+        this._mainSelector = mainSelector;
+        this._sideSelector = sideSelector;
 
         const sendBounds = () => {
-            const bounds = this.getContentBounds(selector);
-            if (!bounds || !this._dotNetRef)
-                return false;
+            if (!this._dotNetRef)
+                return;
 
-            const key = [bounds.x, bounds.y, bounds.width, bounds.height]
-                .map(v => Math.round(v))
-                .join(',');
-            if (key === this._lastBoundsKey)
-                return true;
+            const main = this.getContentBounds(mainSelector);
+            if (main) {
+                const mainKey = [main.x, main.y, main.width, main.height]
+                    .map(v => Math.round(v))
+                    .join(',');
+                if (mainKey !== this._lastMainBoundsKey) {
+                    this._lastMainBoundsKey = mainKey;
+                    this._dotNetRef.invokeMethodAsync(
+                        'OnBrowserMainOverlayBounds',
+                        main.x, main.y, main.width, main.height);
+                }
+            }
 
-            this._lastBoundsKey = key;
-            this._dotNetRef.invokeMethodAsync(
-                'OnBrowserOverlayBounds',
-                bounds.x, bounds.y, bounds.width, bounds.height);
-            return true;
+            const side = sideSelector ? this.getContentBounds(sideSelector) : null;
+            const sideKey = side
+                ? [side.x, side.y, side.width, side.height].map(v => Math.round(v)).join(',')
+                : '0,0,0,0';
+            if (sideKey !== this._lastSideBoundsKey) {
+                this._lastSideBoundsKey = sideKey;
+                if (side) {
+                    this._dotNetRef.invokeMethodAsync(
+                        'OnBrowserSideOverlayBounds',
+                        side.x, side.y, side.width, side.height);
+                } else {
+                    this._dotNetRef.invokeMethodAsync('OnBrowserSideOverlayBounds', 0, 0, 0, 0);
+                }
+            }
         };
 
         const report = () => {
             if (this._debounceTimer)
                 clearTimeout(this._debounceTimer);
-
             this._debounceTimer = setTimeout(() => sendBounds(), 50);
         };
 
         sendBounds();
-        this._observedEl = el;
+        this._observedEls = [mainEl];
+        const sideEl = sideSelector ? document.querySelector(sideSelector) : null;
+        if (sideEl)
+            this._observedEls.push(sideEl);
+
         this._observer = new ResizeObserver(() => report());
-        this._observer.observe(el);
+        this._observedEls.forEach(el => this._observer.observe(el));
         this._resizeHandler = report;
         window.addEventListener('resize', report);
     },
 
-    reportBoundsNow: function (selector) {
-        if (!this._dotNetRef || !selector)
+    reportBoundsNow: function (mainSelector, sideSelector) {
+        if (!this._dotNetRef)
             return;
-        const bounds = this.getContentBounds(selector);
-        if (!bounds)
-            return;
-        this._lastBoundsKey = null;
-        this._dotNetRef.invokeMethodAsync(
-            'OnBrowserOverlayBounds',
-            bounds.x, bounds.y, bounds.width, bounds.height);
+
+        this._lastMainBoundsKey = null;
+        this._lastSideBoundsKey = null;
+
+        const main = this.getContentBounds(mainSelector);
+        if (main) {
+            this._dotNetRef.invokeMethodAsync(
+                'OnBrowserMainOverlayBounds',
+                main.x, main.y, main.width, main.height);
+        }
+
+        const side = sideSelector ? this.getContentBounds(sideSelector) : null;
+        if (side) {
+            this._dotNetRef.invokeMethodAsync(
+                'OnBrowserSideOverlayBounds',
+                side.x, side.y, side.width, side.height);
+        } else {
+            this._dotNetRef.invokeMethodAsync('OnBrowserSideOverlayBounds', 0, 0, 0, 0);
+        }
     },
 
     setResizeCursor: function (active) {
         document.body.style.cursor = active ? 'ew-resize' : '';
+    },
+
+    getPanelAnchor: function (panelSelector, clientX, clientY) {
+        const panel = document.querySelector(panelSelector);
+        if (!panel)
+            return [clientX, clientY];
+        const rect = panel.getBoundingClientRect();
+        return [clientX - rect.left, clientY - rect.top];
     },
 
     getWrapperWidth: function (selector) {
@@ -106,6 +150,205 @@ window.chatfishBrowser = window.chatfishBrowser || {
         document.addEventListener('mouseup', onUp, { once: true });
     },
 
+    startSidePanelSplitterDrag: function (dotNetRef, bodySelector) {
+        const body = document.querySelector(bodySelector);
+        if (!body || !dotNetRef) return;
+
+        const onMove = (e) => {
+            const rect = body.getBoundingClientRect();
+            const toolbar = body.querySelector('.browser-vtoolbar');
+            const toolbarWidth = toolbar ? toolbar.getBoundingClientRect().width : 48;
+            const sideWidth = rect.right - e.clientX - toolbarWidth;
+            dotNetRef.invokeMethodAsync('OnSidePanelDrag', sideWidth);
+        };
+
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+
+        document.body.style.cursor = 'ew-resize';
+        document.body.style.userSelect = 'none';
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp, { once: true });
+    },
+
+    startBookmarkBarDrag: function (dotNetRef, barSelector, bookmarkId, startX, startY) {
+        const bar = document.querySelector(barSelector);
+        if (!bar || !dotNetRef || !bookmarkId)
+            return;
+
+        const threshold = 5;
+        let dragStarted = false;
+
+        const getItemAt = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            return el?.closest('[data-bookmark-id]');
+        };
+
+        const onMove = (e) => {
+            if (!dragStarted) {
+                const dx = Math.abs(e.clientX - startX);
+                const dy = Math.abs(e.clientY - startY);
+                if (dx < threshold && dy < threshold)
+                    return;
+                dragStarted = true;
+                document.body.style.userSelect = 'none';
+            }
+
+            const item = getItemAt(e.clientX, e.clientY);
+            const overId = item?.getAttribute('data-bookmark-id') || null;
+            dotNetRef.invokeMethodAsync('OnBookmarkBarDragOver', overId);
+        };
+
+        const onUp = (e) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+
+            if (!dragStarted) {
+                dotNetRef.invokeMethodAsync('OnBookmarkBarClick', bookmarkId);
+                return;
+            }
+
+            const item = getItemAt(e.clientX, e.clientY);
+            const targetId = item?.getAttribute('data-bookmark-id') || '';
+            dotNetRef.invokeMethodAsync('OnBookmarkBarDrop', bookmarkId, targetId);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    },
+
+    startVtoolbarDrag: function (dotNetRef, toolbarSelector, appId, startX, startY) {
+        const toolbar = document.querySelector(toolbarSelector);
+        if (!toolbar || !dotNetRef || !appId)
+            return;
+
+        const threshold = 5;
+        let dragStarted = false;
+
+        const getAppAt = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            return el?.closest('[data-vtoolbar-app-id]');
+        };
+
+        const onMove = (e) => {
+            if (!dragStarted) {
+                const dx = Math.abs(e.clientX - startX);
+                const dy = Math.abs(e.clientY - startY);
+                if (dx < threshold && dy < threshold)
+                    return;
+                dragStarted = true;
+                document.body.style.userSelect = 'none';
+            }
+
+            const item = getAppAt(e.clientX, e.clientY);
+            const overId = item?.getAttribute('data-vtoolbar-app-id') || null;
+            dotNetRef.invokeMethodAsync('OnVtoolbarDragOver', overId);
+        };
+
+        const onUp = (e) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+
+            if (!dragStarted) {
+                dotNetRef.invokeMethodAsync('OnVtoolbarAppClick', appId);
+                return;
+            }
+
+            const item = getAppAt(e.clientX, e.clientY);
+            const targetId = item?.getAttribute('data-vtoolbar-app-id') || '';
+            dotNetRef.invokeMethodAsync('OnVtoolbarAppDrop', appId, targetId);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    },
+
+    startSidebarDrag: function (dotNetRef, listSelector, kind, itemId, folderId, startX, startY) {
+        const list = document.querySelector(listSelector);
+        if (!list || !dotNetRef || !itemId || !kind)
+            return;
+
+        const threshold = 5;
+        let dragStarted = false;
+
+        const getDropTarget = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            const bookmarkRow = el?.closest('[data-sidebar-bookmark-id]');
+            if (bookmarkRow) {
+                return {
+                    type: 'bookmark',
+                    id: bookmarkRow.getAttribute('data-sidebar-bookmark-id'),
+                    folderId: bookmarkRow.getAttribute('data-sidebar-folder-id')
+                };
+            }
+
+            const folderHeader = el?.closest('[data-sidebar-folder-drop]');
+            if (folderHeader) {
+                const folder = folderHeader.closest('[data-sidebar-folder-id]');
+                const folderId = folder?.getAttribute('data-sidebar-folder-id');
+                if (folderId)
+                    return { type: 'folder', id: folderId, folderId };
+            }
+
+            const folderBlock = el?.closest('[data-sidebar-folder-id]');
+            if (folderBlock && kind === 'folder') {
+                const folderId = folderBlock.getAttribute('data-sidebar-folder-id');
+                if (folderId)
+                    return { type: 'folder', id: folderId, folderId };
+            }
+
+            return null;
+        };
+
+        const onMove = (e) => {
+            if (!dragStarted) {
+                const dx = Math.abs(e.clientX - startX);
+                const dy = Math.abs(e.clientY - startY);
+                if (dx < threshold && dy < threshold)
+                    return;
+                dragStarted = true;
+                document.body.style.userSelect = 'none';
+            }
+
+            const target = getDropTarget(e.clientX, e.clientY);
+            dotNetRef.invokeMethodAsync(
+                'OnSidebarDragOver',
+                target?.type || null,
+                target?.id || null,
+                target?.folderId || null);
+        };
+
+        const onUp = (e) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+
+            if (!dragStarted) {
+                if (kind === 'bookmark')
+                    dotNetRef.invokeMethodAsync('OnSidebarBookmarkClick', itemId);
+                return;
+            }
+
+            const target = getDropTarget(e.clientX, e.clientY);
+            dotNetRef.invokeMethodAsync(
+                'OnSidebarDrop',
+                kind,
+                itemId,
+                folderId,
+                target?.type || null,
+                target?.id || null,
+                target?.folderId || null);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    },
+
     stopBoundsObserver: function () {
         if (this._debounceTimer) {
             clearTimeout(this._debounceTimer);
@@ -119,9 +362,11 @@ window.chatfishBrowser = window.chatfishBrowser || {
             window.removeEventListener('resize', this._resizeHandler);
             this._resizeHandler = null;
         }
-        this._observedEl = null;
+        this._observedEls = null;
         this._dotNetRef = null;
-        this._lastBoundsKey = null;
-        this._activeSelector = null;
+        this._lastMainBoundsKey = null;
+        this._lastSideBoundsKey = null;
+        this._mainSelector = null;
+        this._sideSelector = null;
     }
 };

@@ -25,8 +25,7 @@ public class UpdateInfo
 /// </summary>
 public interface IUpdateService
 {
-    /// <returns>Non-null when a newer version is available; null when up-to-date or unavailable.</returns>
-    Task<UpdateInfo?> CheckForUpdateAsync();
+    Task<UpdateCheckResult> CheckForUpdateAsync();
 
     Task DownloadAndInstallAsync(UpdateInfo update);
 }
