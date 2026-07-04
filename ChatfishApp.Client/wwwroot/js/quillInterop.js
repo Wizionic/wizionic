@@ -22,7 +22,7 @@
     }
 
     window.QuillFunctions = {
-        createQuill: function (editorElement, toolbarElement, readOnly, placeholder, theme) {
+        createQuill: function (editorElement, toolbarElement, readOnly, placeholder, theme, dotNetHelper, textChangeMethod) {
             if (!editorElement || typeof Quill === 'undefined') return;
 
             const existing = getQuillInstance(editorElement);
@@ -51,7 +51,13 @@
                 theme: theme || 'snow'
             };
 
-            new Quill(editorElement, options);
+            const quill = new Quill(editorElement, options);
+
+            if (dotNetHelper && textChangeMethod) {
+                quill.on('text-change', function () {
+                    dotNetHelper.invokeMethodAsync(textChangeMethod, quill.root.innerHTML);
+                });
+            }
         },
 
         getQuillHTML: function (editorElement) {

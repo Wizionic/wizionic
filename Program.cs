@@ -306,6 +306,20 @@ app.UseHttpsRedirection();
 
 app.UseAntiforgery();
 
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path.Value;
+    if (path is "/service-worker.js" or "/service-worker-assets.js")
+    {
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers.CacheControl = "no-cache";
+            return Task.CompletedTask;
+        });
+    }
+    await next();
+});
+
 app.MapStaticAssets();
 
 // Serve Velopack release files from the volume-mounted releases directory.
