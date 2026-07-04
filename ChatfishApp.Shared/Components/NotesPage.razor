@@ -1,11 +1,13 @@
-@implements IDisposable
+@implements IAsyncDisposable
 @using ChatfishApp.Core.Auth
 @using ChatfishApp.Core.Storage
 @using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
+@using Microsoft.AspNetCore.Components.Routing
 @using System.Text
 
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 @inject INoteStore NoteStore
 @inject IAuthService AuthService
 @inject IGuestDataMigrationService GuestMigration
@@ -89,7 +91,7 @@
                                     }
                                     else
                                     {
-                                        <button type="button" class="menu-button note-action-btn" @onclick="() => StartEdit(capturedIndex)" title="Edit">
+                                        <button type="button" class="menu-button note-action-btn" @onclick="async () => await StartEdit(capturedIndex)" title="Edit">
                                             <i class="cf-icon bi bi-pencil"></i>
                                         </button>
                                          @if (capturedIndex > 0)
@@ -156,7 +158,8 @@
                                     {
                                         <QuillEditor @ref="quillEditor"
                                                      @key="@($"note-edit-{activeNoteId}-{capturedIndex}-{editSessionKey}")"
-                                                     InitialHtml="@editingInitialHtml" />
+                                                     InitialHtml="@editingInitialHtml"
+                                                     HtmlChanged="OnEditHtmlChanged" />
                                     }
                                     else if (NoteContentFormatter.IsHtml(msg.ContentFormat))
                                     {
@@ -286,6 +289,7 @@
 
     private int? editingMessageIndex;
     private string editingInitialHtml = "";
+    private string? _activeEditDraftHtml;
     private int editSessionKey;
     private QuillEditor? quillEditor;
 
@@ -316,6 +320,7 @@
 
     private Action? _sidebarStateChangedHandler;
     private Action? _notesSyncChangedHandler;
+    private IDisposable? _locationChangingRegistration;
 
     protected override async Task OnInitializedAsync()
     {
@@ -340,6 +345,20 @@
 
         _notesSyncChangedHandler = () => _ = RefreshNotesFromSyncAsync();
         SyncBridge.OnNotesChanged += _notesSyncChangedHandler;
+
+        _locationChangingRegistration = Nav.RegisterLocationChangingHandler(OnLocationChangingAsync);
+    }
+
+    private async ValueTask OnLocationChangingAsync(LocationChangingContext context)
+    {
+        try
+        {
+            await CommitActiveEditAsync(persistToStore: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notes] Failed to autosave before navigation: {ex.Message}");
+        }
     }
 
     private async Task RefreshNotesFromSyncAsync()
@@ -369,8 +388,19 @@
         }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        try
+        {
+            await CommitActiveEditAsync(persistToStore: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notes] Failed to autosave on dispose: {ex.Message}");
+        }
+
+        _locationChangingRegistration?.Dispose();
+
         if (_sidebarStateChangedHandler != null)
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
 
@@ -396,30 +426,26 @@
     {
         editingMessageIndex = null;
         editingInitialHtml = "";
+        _activeEditDraftHtml = null;
         quillEditor = null;
         editSessionKey++;
     }
 
-    private void StartEdit(int index)
+    private void OnEditHtmlChanged(string html) => _activeEditDraftHtml = html;
+
+    private async Task CommitActiveEditAsync(bool persistToStore = false)
     {
-        if (index < 0 || index >= currentNoteMessages.Count)
+        if (editingMessageIndex is not int index || index < 0 || index >= currentNoteMessages.Count)
             return;
 
-        CancelEdit();
+        string? html = _activeEditDraftHtml;
+        if (html is null && quillEditor is not null)
+            html = await quillEditor.GetHTML();
 
-        var msg = currentNoteMessages[index];
-        editingMessageIndex = index;
-        editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
-        editSessionKey++;
-    }
-
-    private async Task SaveEdit(int index)
-    {
-        if (editingMessageIndex != index || quillEditor is null)
+        if (html is null)
             return;
 
-        var html = await quillEditor.GetHTML();
-        if (string.IsNullOrWhiteSpace(html) || html == "<p><br></p>")
+        if (IsBlankQuillHtml(html))
             html = "";
 
         currentNoteMessages[index] = ChatMessageHelper.TouchModified(
@@ -428,7 +454,32 @@
             contentFormat: NoteContentFormatter.FormatHtml);
 
         CancelEdit();
-        await SaveCurrent();
+
+        if (persistToStore)
+            await SaveCurrent();
+    }
+
+    private async Task StartEdit(int index)
+    {
+        if (index < 0 || index >= currentNoteMessages.Count)
+            return;
+
+        if (editingMessageIndex != index)
+            await CommitActiveEditAsync(persistToStore: true);
+
+        var msg = currentNoteMessages[index];
+        editingMessageIndex = index;
+        editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
+        _activeEditDraftHtml = editingInitialHtml;
+        editSessionKey++;
+    }
+
+    private async Task SaveEdit(int index)
+    {
+        if (editingMessageIndex != index)
+            return;
+
+        await CommitActiveEditAsync(persistToStore: true);
     }
 
     private void PromptDeleteNoteEntry(int index)
@@ -477,7 +528,9 @@
     private async Task MoveNoteEntryUp(int index)
     {
         if (index <= 0 || index >= currentNoteMessages.Count) return;
-        
+
+        await CommitActiveEditAsync(persistToStore: true);
+
         var item = currentNoteMessages[index];
         currentNoteMessages.RemoveAt(index);
         currentNoteMessages.Insert(index - 1, item);
@@ -489,6 +542,8 @@
     private async Task MoveNoteEntryDown(int index)
     {
         if (index < 0 || index >= currentNoteMessages.Count - 1) return;
+
+        await CommitActiveEditAsync(persistToStore: true);
 
         var item = currentNoteMessages[index];
         currentNoteMessages.RemoveAt(index);
@@ -560,6 +615,8 @@
         openMoveNotebookDialog = false;
         StateHasChanged();
 
+        await CommitActiveEditAsync(persistToStore: true);
+
         var sourceEntries = await NoteStore.LoadNoteAsync(moveSourceNoteId);
         if (moveSourceEntryIndex < 0 || moveSourceEntryIndex >= sourceEntries.Count) return;
 
@@ -593,7 +650,11 @@
         if (index < 0 || index >= currentNoteMessages.Count)
             return;
 
-        CancelEdit();
+        if (editingMessageIndex == index)
+            CancelEdit();
+        else
+            await CommitActiveEditAsync(persistToStore: true);
+
         currentNoteMessages[index] = ChatMessageHelper.SoftDelete(currentNoteMessages[index]);
         await SaveCurrent();
         StateHasChanged();
@@ -601,7 +662,7 @@
 
     private async Task OpenCreateNoteDialog()
     {
-        CancelEdit();
+        await CommitActiveEditAsync(persistToStore: true);
         CloseMenu();
         nameDialogMode = NoteNameDialogMode.Create;
         nameDialogNoteId = null;
@@ -614,7 +675,7 @@
         if (string.IsNullOrWhiteSpace(nameDialogTitle))
             return;
 
-        CancelEdit();
+        await CommitActiveEditAsync(persistToStore: true);
         var title = nameDialogTitle.Trim();
         var id = Guid.NewGuid().ToString();
         var now = DateTime.UtcNow;
@@ -634,7 +695,7 @@
         SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(id, title);
 
         CancelNameDialog();
-        StartEdit(0);
+        await StartEdit(0);
         StateHasChanged();
     }
 
@@ -642,8 +703,7 @@
     {
         if (activeNoteId != id)
         {
-            CancelEdit();
-            await SaveCurrent();
+            await CommitActiveEditAsync(persistToStore: true);
             await LoadNote(id);
         }
         await SidebarState.CollapseIfMobileAsync(JS);
@@ -651,7 +711,6 @@
 
     private async Task LoadNote(string id)
     {
-        CancelEdit();
         activeNoteId = id;
         currentNoteMessages = await NoteStore.LoadNoteAsync(id);
         StateHasChanged();
@@ -698,13 +757,10 @@
     private async Task AddNoteEntry(string noteId)
     {
         CloseMenu();
-        CancelEdit();
+        await CommitActiveEditAsync(persistToStore: true);
 
         if (activeNoteId != noteId)
-        {
-            await SaveCurrent();
             await LoadNote(noteId);
-        }
 
         var now = DateTime.UtcNow;
         var newEntry = new ChatMessage(
@@ -717,7 +773,7 @@
 
         currentNoteMessages.Add(newEntry);
         await SaveCurrent();
-        StartEdit(currentNoteMessages.Count - 1);
+        await StartEdit(currentNoteMessages.Count - 1);
         StateHasChanged();
     }
 
@@ -768,6 +824,9 @@
 
     private static bool IsUserNoteEntry(ChatMessage msg) =>
         string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsBlankQuillHtml(string? html) =>
+        string.IsNullOrWhiteSpace(html) || string.Equals(html.Trim(), "<p><br></p>", StringComparison.OrdinalIgnoreCase);
 
     private async Task ExportNotebook(string? noteId)
     {
