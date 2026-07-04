@@ -37,7 +37,7 @@
         <ApplicationId>com.chatfish.app</ApplicationId>
 
         <!-- Versions -->
-        <ApplicationDisplayVersion>1.0.2</ApplicationDisplayVersion>
+        <ApplicationDisplayVersion>1.0.4</ApplicationDisplayVersion>
         <ApplicationVersion>1</ApplicationVersion>
 
         <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
@@ -82,6 +82,7 @@
         <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
         <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
         <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.8" />
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.8" />
         <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.8" />
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />

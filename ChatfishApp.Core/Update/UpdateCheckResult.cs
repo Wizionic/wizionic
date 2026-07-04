@@ -33,4 +33,13 @@ public class UpdateCheckResult
 
     /// <summary>Human-readable detail for errors or unsupported states.</summary>
     public string? Message { get; init; }
+
+    /// <summary>Velopack feed URL used for the check.</summary>
+    public string? FeedUrl { get; init; }
+
+    /// <summary>Highest full-release version found on the remote feed.</summary>
+    public string? LatestFeedVersion { get; init; }
+
+    /// <summary>When true, show the installer download link instead of in-app install.</summary>
+    public bool RequiresManualInstall { get; init; }
 }

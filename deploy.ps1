@@ -6,7 +6,8 @@ $SSH_USER  = "daniel"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "1.0.1"   # bump this before each release
+$VERSION      = "1.0.4"   # bump this before each release
+$UPDATE_FEED  = "https://chatfish.me/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
 
 # ==============================================================================
@@ -14,13 +15,18 @@ $WindowsBrevoKey = $env:BREVO_API_KEY
 # ==============================================================================
 Write-Host "Building MAUI Windows Installer..." -ForegroundColor Cyan
 
-if (Test-Path $MAUI_OUTPUT)  { Remove-Item -Recurse -Force $MAUI_OUTPUT }
+if (Test-Path $MAUI_OUTPUT) { Remove-Item -Recurse -Force $MAUI_OUTPUT }
 if (Test-Path $RELEASES_DIR) { Remove-Item -Recurse -Force $RELEASES_DIR }
+New-Item -ItemType Directory -Force -Path $RELEASES_DIR | Out-Null
+
+Write-Host "Downloading existing releases from $UPDATE_FEED ..." -ForegroundColor Cyan
+vpk download http --url $UPDATE_FEED --outputDir $RELEASES_DIR
 
 dotnet publish "ChatfishApp.Maui\ChatfishApp.Maui.csproj" `
     -c Release `
     -f net10.0-windows10.0.19041.0 `
     -p:RuntimeIdentifierOverride=win-x64 `
+    -p:ApplicationDisplayVersion=$VERSION `
     -o $MAUI_OUTPUT
 
 vpk pack `

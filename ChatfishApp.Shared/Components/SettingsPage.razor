@@ -200,21 +200,40 @@
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
             <h4>App Updates</h4>
 
-            @if (!string.IsNullOrEmpty(updateCheckResult?.CurrentVersion))
-            {
-                <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
-                    Installed version: <strong>@updateCheckResult.CurrentVersion</strong>
-                </div>
-            }
+            <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+                Installed version:
+                <strong>@(installedVersion ?? "unknown")</strong>
+                @if (!string.IsNullOrEmpty(latestFeedVersion))
+                {
+                    <span> · Latest on server: <strong>@latestFeedVersion</strong></span>
+                }
+            </div>
 
             @if (updateCheckResult?.Status == UpdateCheckStatus.UpdateAvailable && updateCheckResult.Update != null)
             {
                 <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--success, #d4edda); border: 1px solid #0a0; border-radius: 6px;">
-                    Version @updateCheckResult.Update.Version is available!
+                    @if (!string.IsNullOrEmpty(updateCheckResult.Message))
+                    {
+                        <div>@updateCheckResult.Message</div>
+                    }
+                    else
+                    {
+                        <div>Version @updateCheckResult.Update.Version is available!</div>
+                    }
                 </div>
-                <button class="btn btn-primary" @onclick="InstallUpdate" disabled="@busy">
-                    @(busy ? "Installing..." : "Install and Restart")
-                </button>
+
+                @if (updateCheckResult.RequiresManualInstall)
+                {
+                    <a class="btn btn-primary" href="@installerDownloadUrl" target="_blank" style="display: inline-block; margin-top: 0.25rem;">
+                        Download Installer
+                    </a>
+                }
+                else
+                {
+                    <button class="btn btn-primary" @onclick="InstallUpdate" disabled="@busy">
+                        @(busy ? "Installing..." : "Install and Restart")
+                    </button>
+                }
             }
             else if (hasChecked && updateCheckResult != null)
             {
@@ -263,6 +282,9 @@
     private UpdateCheckResult? updateCheckResult;
     private bool hasChecked;
     private bool busy;
+    private string? installedVersion;
+    private string? latestFeedVersion;
+    private string installerDownloadUrl = "/releases/windows/com.chatfish.app-win-Setup.exe";
 
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
@@ -284,6 +306,18 @@
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
         ReloadMemories();
+
+        if (AppEnvironment.IsMaui)
+            LoadInstalledVersion();
+    }
+
+    private void LoadInstalledVersion()
+    {
+        installedVersion = UpdateService.GetInstalledVersion();
+        if (!string.IsNullOrEmpty(UpdateService.UpdateFeedUrl))
+            installerDownloadUrl = UpdateService.UpdateFeedUrl!.TrimEnd('/') + "/com.chatfish.app-win-Setup.exe";
+        else
+            installerDownloadUrl = "https://chatfish.me/releases/windows/com.chatfish.app-win-Setup.exe";
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -496,6 +530,8 @@
         {
             updateCheckResult = await UpdateService.CheckForUpdateAsync();
             hasChecked = true;
+            installedVersion = updateCheckResult.CurrentVersion ?? UpdateService.GetInstalledVersion();
+            latestFeedVersion = updateCheckResult.LatestFeedVersion;
         }
         finally
         {

@@ -138,3 +138,6 @@ $RECYCLE.BIN/
 *.sqlite-shm
 *.sqlite-wal
 chatfish.db
+
+terminals/
+*.next-id
