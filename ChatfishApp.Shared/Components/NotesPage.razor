@@ -377,14 +377,30 @@
         {
             try
             {
-                var collapsedForMobile = await JS.InvokeAsync<bool>("initWasmSidebarForViewport");
-                if (collapsedForMobile)
+                if (AppEnvironment.IsMaui)
                 {
-                    SidebarState.IsCollapsed = true;
-                    StateHasChanged();
+                    if (SidebarState.IsCollapsed)
+                    {
+                        await SidebarState.SetCollapsedAsync(false, JS);
+                        StateHasChanged();
+                    }
+                }
+                else
+                {
+                    var collapsedForMobile = await JS.InvokeAsync<bool>("initWasmSidebarForViewport");
+                    if (collapsedForMobile)
+                    {
+                        await SidebarState.SetCollapsedAsync(true, JS);
+                        StateHasChanged();
+                    }
+                    else if (SidebarState.IsCollapsed)
+                    {
+                        await SidebarState.SetCollapsedAsync(false, JS);
+                        StateHasChanged();
+                    }
                 }
             }
-            catch { /* WASM-only sidebar init */ }
+            catch { /* sidebar init may be unavailable during static render */ }
         }
     }
 
@@ -412,14 +428,7 @@
     {
         SidebarState.Toggle();
         StateHasChanged();
-        try
-        {
-            await JS.InvokeVoidAsync("toggleWasmSidebar", SidebarState.IsCollapsed);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Notes] toggleSidebar failed: {ex.Message}");
-        }
+        await SidebarState.SetCollapsedAsync(SidebarState.IsCollapsed, JS);
     }
 
     private void CancelEdit()
