@@ -1,12 +1,12 @@
 # ==============================================================================
 # CHATFISH AUTOMATED DEPLOYMENT SCRIPT
 # ==============================================================================
-$SERVER_IP = "192.168.4.230"
+$SERVER_IP = "bg5.local"
 $SSH_USER  = "daniel"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "1.0.8"   # bump this before each release
+$VERSION      = "1.0.9"   # bump this before each release
 $UPDATE_FEED  = "https://chatfish.me/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
 
