@@ -2,7 +2,7 @@
 
 **Purpose:** Quick reference for humans and AI agents working on this codebase. Describes what exists today (not the future roadmap). For planned work see [ROADMAP.md](/roadmap).
 
-**Stack:** .NET 10 · Blazor Web App (Auto: server shell + Interactive WebAssembly) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI
+**Stack:** .NET 10 · Blazor Web App (Auto: server shell + Interactive WebAssembly) · Blazor Hybrid (MAUI) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI · WebView2 (MAUI browser)
 
 ---
 
@@ -12,7 +12,7 @@
 - **Local AI** — Ollama on the user's machine is a first-class provider. A logged-in device can relay AI to other devices over WebRTC.
 - **Login is optional** — Guests can chat and take notes immediately. Email + magic link is only needed for cross-device sync and encrypted key distribution.
 - **Minimal server footprint** — Server handles auth, signaling, tool proxies (CORS), and CORS-restricted AI proxies. Heavy lifting runs in the browser.
-- **Tool-rich agents** — Built-in web search / URL summarization plus user-selected MCP servers, wired through `Microsoft.Extensions.AI` function calling.
+- **Tool-rich agents** — Built-in web search / URL summarization plus user-selected MCP servers, wired through `Microsoft.Extensions.AI` function calling. On MAUI, modular tools also control Home Assistant devices and an embedded browser.
 - **Low-cost cloud** — Favor free or inexpensive models (proxied providers in `appsettings`, user API keys in browser storage).
 
 ---
@@ -146,13 +146,216 @@ Is selected model vision-capable?
 
 ## Tool Use
 
-| Source | Where it runs | How WASM reaches it |
-|--------|---------------|---------------------|
-| **AppTools** (`search_web`, `summarize_url`, `get_time`) | Server | `POST /api/tools/*` (public, no login required) |
-| **MCP servers** | Remote MCP HTTP endpoints | Browser calls MCP directly; tools discovered in `McpToolSource` |
-| **DefaultToolProvider** | Combines AppTools + MCP | Registered in both host and Client DI |
+Tools are composed by `CompositeToolProvider` from injectable **`IToolModule`** implementations plus cached MCP tools. Each module exposes `ModuleName`, `IsAvailable`, and a list of `AITool` functions via `Microsoft.Extensions.AI`.
+
+| Module | Tools | Where it runs | Availability |
+|--------|-------|---------------|--------------|
+| **Native** (`NativeToolModule`) | `search_web`, `summarize_url`, `get_time`, `calculate`, `get_current_weather` | Server via `POST /api/tools/*` | Always |
+| **HomeAssistant** (`HomeAssistantToolModule`) | `ListLights`, `ControlLight`, `GetEntityState`, `CallService` | MAUI → direct LAN HTTP to Home Assistant | MAUI only, when HA configured |
+| **BrowserAgent** (`BrowserAgentToolModule`) | `navigate_to`, `get_page_content`, `click_element`, `fill_field` | MAUI → native WebView JS eval | MAUI only, when browser panel open |
+| **MCP servers** (`McpToolSource`) | User-enabled remote tools | Client calls MCP HTTP directly | When servers enabled |
+
+**Routing:** Before each completion, `ContextualRequestRouter` classifies the last user message and may narrow the tool set to a single module (see [Home Assistant](#home-assistant-maui) and [Embedded Browser](#embedded-browser-maui)). `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
+
+On WASM, `HomeAssistantToolModule` and `BrowserAgentToolModule` are not registered; `NullSmartHomeService` and null browser services satisfy the Core interfaces but expose no agentic tools.
 
 Tool execution traces are shown in the chat UI (`ToolExecutionTrace`). Models that support function calling get an automatic multi-turn tool loop via `UseFunctionInvocation`.
+
+---
+
+## Home Assistant (MAUI)
+
+Chatfish can agentically control a local Home Assistant instance from the MAUI desktop app. Configuration lives at `/home-assistant` (`HomeAssistantPage.razor`); the chat window drives devices once a long-lived access token and base URL are saved.
+
+### Configuration & storage
+
+| Setting | Stored in | Purpose |
+|---------|-----------|---------|
+| Base URL | `IKeyStore.HomeAssistantBaseUrl` | e.g. `http://192.168.4.23:8123` |
+| Long-lived token | `IKeyStore.HomeAssistantToken` | Bearer token from HA Profile → Security |
+| Assistant name (wake word) | `IKeyStore.HomeAssistantAssistantName` | Default `Home` — user addresses this name in chat |
+| Device summary cache | `IKeyStore.HomeAssistantDeviceSummary` | Cleartext list of `light.*` entities refreshed on save/test |
+
+Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in SQLite via `SqliteKeyStore` (`HomeAssistantConfig` DTO). The settings page calls `ISmartHomeService.TestConnectionAsync` and `ListLightEntitiesAsync` to validate and refresh the device list.
+
+### Core contracts
+
+| Interface / type | Location | Role |
+|------------------|----------|------|
+| `ISmartHomeService` | `ChatfishApp.Core/SmartHome/` | `TestConnectionAsync`, `CallServiceAsync`, `GetEntityStateAsync`, `ListLightEntitiesAsync` |
+| `HomeAssistantCredentials` | `ChatfishApp.Core/SmartHome/` | URL/token normalization |
+| `HomeAssistantConfig` | `ChatfishApp.Core/Storage/` | DTO for key store persistence |
+
+### MAUI implementation
+
+`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Chatfish server or browser DevTools. It hits standard HA REST endpoints (`/api/`, `/api/states`, `/api/services/{domain}/{service}`) with `Authorization: Bearer {token}`. Proxy is disabled (`UseProxy = false`) to avoid LAN hangs.
+
+### How chat triggers Home Assistant
+
+```
+User message in ChatPage
+        │
+        ▼
+ContextualRequestRouter.ClassifyRequest()
+        ├── HomeAssistant module available (IsConfigured)?
+        ├── Wake word present?  e.g. "Home, turn off kitchen light"
+        │       OR active HA session in this conversation (15 min TTL)?
+        └── Yes → route TargetModule = "HomeAssistant"
+        │
+        ▼
+ChatCompletionService
+        ├── Tool set = HomeAssistant tools + Native tools only
+        ├── System prompt: BuildHomeAssistantPrompt() (device summary + session context)
+        ├── Model calls tools via UseFunctionInvocation
+        └── On success → IRoutingSessionStore records invocation (enables follow-ups)
+```
+
+**Wake word:** `ContextualRequestRouter.ContainsWakeWord` matches the configured assistant name as a whole word (regex word boundary). Multi-word names use substring match.
+
+**Follow-ups:** After a successful HA tool call, follow-up messages like *"make it blue"* work for **15 minutes** in the same conversation without repeating the wake word (`InMemoryRoutingSessionStore` + `RoutingSession.SessionTtl`).
+
+**Enforcement:** If the model replies without calling HA tools but claims it changed a device, `ChatCompletionService` retries with a tool-required prompt and may replace the response with an honest failure message.
+
+### Agent tools (function names exposed to the model)
+
+| Tool | Purpose | Example user intent |
+|------|---------|---------------------|
+| `ListLights` | List `light.*` entities with friendly names | "Home, what lights do you know?" |
+| `ControlLight` | Turn on/off, brightness (0–255), color name or hex | "Home, turn off the kitchen light" / "make it blue" |
+| `GetEntityState` | Read any entity state JSON | "Home, is the garage door open?" |
+| `CallService` | Generic `domain.service` with JSON `service_data` | Scenes, switches, climate, etc. |
+
+**Key files:** `HomeAssistantPage.razor`, `HomeAssistantService.cs`, `HomeAssistantToolModule.cs`, `ContextualRequestRouter.cs`, `ChatCompletionService.cs` (`BuildHomeAssistantPrompt`, `RecordHomeAssistantSessionIfNeeded`)
+
+---
+
+## Embedded Browser (MAUI)
+
+The MAUI chat page can show a split view: chat on the left, embedded browser on the right. Toggle via the globe icon in `AppTopBar.razor` (`IBrowserPanelState`). When open, the model can navigate, read page text, click elements, and fill form fields agentically.
+
+### WebView architecture (hybrid shell + native overlay)
+
+Chatfish uses a **two-layer** pattern on Windows:
+
+1. **Blazor Hybrid shell** — `BlazorWebView` in `MainPage.xaml` renders all Razor UI (chat, toolbar, browser chrome).
+2. **Native WebView overlays** — two `Microsoft.Maui.Controls.WebView` controls (`browserWebView`, `browserSideWebView`) sit in the same `AbsoluteLayout`, positioned on top of placeholder `<div>` hosts in the Blazor DOM.
+
+On **Windows**, MAUI's `WebView` maps to **WebView2** (Chromium/Edge). `BrowserWebViewPlatformService` configures the underlying `CoreWebView2` for new-window behavior, download prompts, and clear-on-exit. This is **not** an in-DOM `<iframe>` — it is a **native platform WebView** overlaid at pixel coordinates reported from JavaScript.
+
+```
+MainPage.xaml (AbsoluteLayout)
+├── BlazorWebView          ← chat + EmbeddedBrowser.razor chrome (HTML/CSS)
+├── browserWebView         ← native WebView2, main browsing area
+└── browserSideWebView     ← native WebView2, side-panel apps / bookmarks web view
+
+EmbeddedBrowser.razor
+├── #browser-content-host      ← empty div; bounds sent to MAUI
+└── #browser-side-content-host ← empty div for side panel web content
+
+browserInterop.js (ResizeObserver)
+        │ getBoundingClientRect()
+        ▼
+BrowserOverlayService.ReportMainBounds / ReportSideBounds
+        │ AbsoluteLayout.SetLayoutBounds(native WebView)
+        ▼
+Native WebView visible at correct position under Blazor toolbar
+```
+
+`BrowserOverlayService` implements `IBrowserOverlaySync`: it shows/hides overlays and caches bounds when dialogs (bookmark modal, PWA install) cover the web content area.
+
+### Core contracts
+
+| Interface | Location | Role |
+|-----------|----------|------|
+| `IBrowserAgentService` | `ChatfishApp.Core/Browser/` | Navigation, history, `EvaluateScriptAsync`, page text/HTML |
+| `IBrowserContext` | `ChatfishApp.Core/Browser/` | Agent tool bridge (`NavigateAsync`, `GetPageContentAsync`, `ClickElementAsync`, `FillFieldAsync`) |
+| `IBrowserStore` | `ChatfishApp.Core/Browser/` | Bookmarks, history, settings (SQLite on MAUI) |
+| `IBrowserSidebarStore` | `ChatfishApp.Core/Browser/` | Pinned apps / vertical toolbar entries |
+| `IBrowserPanelState` | `ChatfishApp.Core/UI/` | Browser panel open/closed, chat column width |
+| `IBrowserSidePanelState` | `ChatfishApp.Core/UI/` | Side panel content (bookmarks, settings, web app) |
+| `IBrowserOverlaySync` | `ChatfishApp.Core/Browser/` | Native overlay bounds + visibility |
+| `IBrowserSideAgentService` | `ChatfishApp.Core/Browser/` | Side-panel WebView navigation |
+| `IPwaDetector` | `ChatfishApp.Core/Browser/` | PWA manifest detection for install/pin |
+
+### MAUI implementations
+
+| Service | File | Role |
+|---------|------|------|
+| `MauiBrowserAgentService` | `MauiBrowserAgentService.cs` | Main WebView: `WebView.Source`, `EvaluateJavaScriptAsync` for agent actions |
+| `MauiSideBrowserService` | `MauiSideBrowserService.cs` | Side-panel WebView |
+| `MauiBrowserContext` | `MauiBrowserContext.cs` | `IBrowserContext` — available when panel open **and** WebView attached |
+| `BrowserAgentToolModule` | `BrowserAgentToolModule.cs` | Exposes agent tools to the model |
+| `BrowserOverlayService` | `BrowserOverlayService.cs` | Positions native WebViews |
+| `BrowserWebViewPlatformService` | `BrowserWebViewPlatformService.cs` | WebView2 platform hooks (Windows) |
+| `SqliteBrowserStore` / `SqliteBrowserSidebarStore` | MAUI Services | Persistent bookmarks, history, pinned apps |
+
+Wiring happens in `MainPage.xaml.cs` on load: `agent.AttachWebView(browserWebView)`, `overlay.Initialize(...)`, `platform.Attach(browserWebView)`.
+
+### JS interop (`browserInterop.js`)
+
+JS is used for **layout and drag UX**, not for loading web pages:
+
+| JS function | Called from | Purpose |
+|-------------|-------------|---------|
+| `chatfishBrowser.startBoundsObserver` | `EmbeddedBrowser.razor` | `ResizeObserver` → `[JSInvokable] OnBrowserMainOverlayBounds` / `OnBrowserSideOverlayBounds` |
+| `chatfishBrowser.reportBoundsNow` | Overlay refresh | Force bounds recalc after dialogs close |
+| `chatfishBrowser.startSplitterDrag` | Chat/browser split | Resize chat column |
+| `chatfishBrowser.startSidePanelSplitterDrag` | Side panel split | Resize bookmarks/web side column |
+| `chatfishBrowser.startBookmarkBarDrag` / `startSidebarDrag` / `startVtoolbarDrag` | Bookmark & PWA toolbar | Reorder via drag-drop |
+| `chatfishBrowser.getWrapperWidth` / `getPanelAnchor` | Layout helpers | Split width, context menu positioning |
+
+Agentic page interaction uses **`WebView.EvaluateJavaScriptAsync`** in C# (`MauiBrowserAgentService`): `document.querySelector`, `click()`, `innerText`, etc.
+
+### How chat triggers browser control
+
+Unlike Home Assistant, **no wake word** is required. When `IBrowserPanelState.IsOpen` and `BrowserAgentToolModule.IsAvailable`:
+
+1. `ContextualRequestRouter` routes to `TargetModule = "BrowserAgent"`.
+2. `ChatCompletionService` appends `BuildBrowserPrompt()` with current URL and page title.
+3. Tool set = BrowserAgent tools + Native tools.
+4. Chat placeholder changes to *"Ask about this page, or say 'navigate to…'"*.
+
+### Agent tools (what users can ask)
+
+| Tool | What it does | Example user requests |
+|------|--------------|----------------------|
+| `navigate_to` | Open a URL in the main embedded browser | "Go to wikipedia.org", "navigate to github.com" |
+| `get_page_content` | Return visible text of the current page (scripts/styles stripped) | "Summarize this page", "What's on this page?", "Extract the prices" |
+| `click_element` | `document.querySelector(selector).click()` | "Click the Sign in button", "Press #submit" |
+| `fill_field` | Set input value + dispatch input/change events | "Fill the search box with 'cats'", "Enter my email in #email" |
+
+The model chooses CSS selectors; complex multi-step flows combine `get_page_content` → `click_element` / `fill_field` → `navigate_to`. Native tools (`search_web`, `summarize_url`) remain available alongside browser tools.
+
+### Browser UI features (non-agentic)
+
+`EmbeddedBrowser.razor` provides a full mini-browser chrome:
+
+- Toolbar: back/forward/refresh, URL bar with history suggestions, bookmarks menu, external open, settings
+- Bookmarks bar + folders (stored in `IBrowserStore`)
+- Side panel: bookmark manager, browser settings (search engine, homepage, clear data on exit)
+- **Vertical toolbar (PWA bar):** pinned sites and installed PWAs (`IBrowserSidebarStore`)
+
+### PWA vertical toolbar
+
+The right-hand `browser-vtoolbar` lists pinned apps from `SidebarStore`. `MauiPwaDetector` watches navigation and detects `<link rel="manifest">` via in-page JS + HTML parse + HTTP guesses. When a manifest is found, the **+** button offers **Install app** (PWA metadata: name, icons, `start_url`, `display`, theme colors) or **Pin page only**. PWAs open in the side panel or main browser per `OpenTarget` (configurable via context menu). Drag-reorder uses `chatfishBrowser.startVtoolbarDrag`.
+
+**Key files:** `EmbeddedBrowser.razor`, `ChatPage.razor`, `browserInterop.js`, `MainPage.xaml`, `MauiBrowserAgentService.cs`, `BrowserAgentToolModule.cs`, `MauiPwaDetector.cs`, `ContextualRequestRouter.cs`
+
+---
+
+## Themes & MAUI UI customization
+
+Color themes are shared across WASM and MAUI via `ThemeService` + `ThemeBootstrap.razor`:
+
+| Piece | Location | Role |
+|-------|----------|------|
+| `ThemeService` | `ChatfishApp.Shared/Services/ThemeService.cs` | Catalog: system, light, dark, bella-purple, catppuccin-latte, dracula, github-light, nord, solarized-light |
+| `ThemeInterop` | `ThemeInterop.cs` → `themeInterop.js` | `localStorage` persistence, `data-theme` on `<html>`, OS scheme listener |
+| Settings UI | `SettingsPage.razor` | Theme dropdown |
+
+**MAUI-only:** Settings also exposes **navigation bar position** (`INavLayoutState` / `NavLayoutService`) — top bar vs left vertical icon rail.
+
+CSS variables live in `ChatfishApp.Shared/wwwroot/css/chatfish.css` (theme blocks keyed by `data-theme`).
 
 ---
 
@@ -236,7 +439,11 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
  | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences |
  | `Components/ToolsPage.razor` | `/tools` | Enable MCP servers and tokens |
+ | `Components/HomeAssistantPage.razor` | `/home-assistant` | HA URL, token, wake word, device list (MAUI) |
+ | `Components/EmbeddedBrowser.razor` | (in `/chat` split) | Embedded browser chrome, PWA toolbar (MAUI) |
+ | `Components/ThemeBootstrap.razor` | (layout) | Applies saved theme on load |
  | `Layout/AppLayout.razor` | - | Main cohesive layout for both WASM & MAUI |
+ | `Layout/AppTopBar.razor` | - | Browser toggle, HA nav link (MAUI) |
  
  ### Shared Logic (`ChatfishApp.Shared`)
  
@@ -245,7 +452,9 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Services/ChatCompletionService.cs` | Core completion loop + tool execution logic |
  | `Services/ChatModelCatalogService.cs` | Manage available AI models across providers |
  | `Services/Mcp/McpToolSource.cs` | Discover and cache MCP tools from enabled servers |
- | `Services/Tools/AppTools.cs` | Core built-in tool implementations (`search_web`, etc.) |
+ | `Services/Tools/NativeToolModule.cs` | Server-proxied built-in tools (`search_web`, weather, etc.) |
+ | `Services/Tools/CompositeToolProvider.cs` | Composes `IToolModule` + MCP tools |
+ | `Services/Tools/ContextualRequestRouter.cs` | Wake-word / session / browser-panel routing |
  
  ### Business Contracts (`ChatfishApp.Core`)
  
@@ -255,6 +464,10 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Storage/INoteStore.cs` | Interface for notes persistence |
  | `Storage/ICryptoService.cs` | Interface for AES-GCM encryption/decryption |
  | `Sync/ISyncService.cs` | Interface for cross-device synchronization |
+ | `SmartHome/ISmartHomeService.cs` | Home Assistant REST client contract |
+ | `Browser/IBrowserAgentService.cs` | Embedded WebView navigation & script eval |
+ | `Browser/IBrowserContext.cs` | Agent tool bridge for browser control |
+ | `Tools/IRoutingSessionStore.cs` | Per-conversation HA follow-up session (15 min TTL) |
  
  ### Client Implementations (WASM vs MAUI)
  
@@ -265,6 +478,8 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | **Encryption** | `Services/WasmCryptoService.cs` (WebCrypto JS) | `Services/MauiCryptoService.cs` (Native .NET) |
  | **Sync** | `Services/WasmSyncService.cs` | `Services/MauiSyncService.cs` |
  | **Keys/Settings** | `Services/WasmKeyStore.cs` (localStorage) | `Services/SqliteKeyStore.cs` (SQLite) |
+ | **Home Assistant** | `NullSmartHomeService` (no-op) | `Services/HomeAssistantService.cs` |
+ | **Embedded browser** | Null browser services (`NullBrowserAgentService`, etc.) | `MauiBrowserAgentService`, `BrowserOverlayService`, `SqliteBrowserStore` |
 
 
 ---
@@ -277,9 +492,12 @@ A phone/tablet without Ollama can designate another online device as **AI server
  4. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
  5. For **sync** → `ISyncService` (Core), `SyncPresencePage.razor`, and platform implementations of `ISyncService`.
  6. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
- 7. For **tools/MCP** → `AppTools.cs`, `McpToolSource` (Shared), `ToolsPage.razor`.
+ 7. For **tools/MCP** → `NativeToolModule`, `CompositeToolProvider`, `McpToolSource`, `ToolsPage.razor`.
+ 8. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `ContextualRequestRouter`, `ChatCompletionService`.
+ 9. For **embedded browser** → `IBrowserAgentService` / `IBrowserContext` (Core), `EmbeddedBrowser.razor`, `browserInterop.js`, `MainPage.xaml`, `BrowserAgentToolModule`.
+ 10. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
 
 
 ---
 
-*Last updated: June 2026 — reflects the WASM-first local-storage architecture.*
+*Last updated: July 2026 — reflects WASM local-storage architecture plus MAUI Home Assistant, embedded browser, themes, and PWA toolbar.*
