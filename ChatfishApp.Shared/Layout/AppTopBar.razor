@@ -1,84 +1,165 @@
-@implements IDisposable
+@implements IAsyncDisposable
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject ISidebarState SidebarState
 @inject IBrowserPanelState BrowserPanel
 @inject IChatPanelState ChatPanel
 @inject INotesPanelState NotesPanel
+@inject INavLayoutState NavLayout
 @using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
 
-<div class="top-row px-4">
-    <div class="top-left">
-        @if (AppEnvironment.IsMaui)
+<div class="top-row app-nav px-4 @(NavLayout.Mode == NavLayoutMode.Left ? "app-nav--left" : "app-nav--top")"
+     @oncontextmenu="OnNavContextMenu"
+     @oncontextmenu:preventDefault>
+    <div class="app-nav-left">
+        @if (ShowSidebarToggle)
         {
-            <button type="button" @onclick="ToggleChat" title="Chat"
-                    class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
-                <img src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
-            </button>
+            @if (AppEnvironment.IsMaui)
+            {
+                <button type="button" @onclick="ToggleSidebar"
+                        class="topbar-toggle-btn topbar-sidebar-toggle @(!SidebarState.IsCollapsed ? "active" : "")"
+                        title="Toggle sidebar">
+                    @if (SidebarState.IsCollapsed)
+                    {
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
+                        </svg>
+                    }
+                    else
+                    {
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
+                        </svg>
+                    }
+                </button>
+            }
+            else
+            {
+                @* WASM: AppTopBar is static (no render mode) — Blazor @onclick does not run. JS delegation handles clicks. *@
+                <button type="button"
+                        data-wasm-sidebar-toggle="true"
+                        class="topbar-toggle-btn topbar-sidebar-toggle active"
+                        title="Toggle sidebar">
+                    <span class="sidebar-toggle-icon sidebar-toggle-icon--collapsed" style="display:none">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
+                        </svg>
+                    </span>
+                    <span class="sidebar-toggle-icon sidebar-toggle-icon--expanded">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
+                        </svg>
+                    </span>
+                </button>
+            }
         }
-        else
-        {
-            <a class="cf-brand" href="/chat">
-                <img width="50" src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
-            </a>
-        }
-        @if (AppEnvironment.IsMaui)
-        {
-            <button type="button" @onclick="ToggleNotes" title="Notes"
-                    class="topbar-toggle-btn @(IsNotesActive ? "active" : "")">
-                <i class="bi bi-journal-text" style="font-size: 24px;"></i>
-            </button>
-        }
-        else
-        {
-            <a href="/notes" title="Notes">
-                <i class="bi bi-journal-text" style="font-size: 24px;"></i>
-            </a>
-        }
-        @if (AppEnvironment.IsMaui)
-        {
-            <button type="button" @onclick="ToggleBrowser" title="Browser"
-                    class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
-                <i class="bi bi-globe" style="font-size: 24px;"></i>
-            </button>
-        }
+
+        <div class="app-nav-primary">
+            @if (AppEnvironment.IsMaui)
+            {
+                <button type="button" @onclick="ToggleChat" title="Chat"
+                        class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
+                    <img src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
+                </button>
+            }
+            else
+            {
+                <a class="cf-brand" href="/chat">
+                    <img width="50" src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
+                </a>
+            }
+            @if (AppEnvironment.IsMaui)
+            {
+                <button type="button" @onclick="ToggleNotes" title="Notes"
+                        class="topbar-toggle-btn @(IsNotesActive ? "active" : "")">
+                    <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+                </button>
+            }
+            else
+            {
+                <a href="/notes" title="Notes">
+                    <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+                </a>
+            }
+            @if (AppEnvironment.IsMaui)
+            {
+                <button type="button" @onclick="ToggleBrowser" title="Browser"
+                        class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
+                    <i class="bi bi-globe" style="font-size: 24px;"></i>
+                </button>
+            }
+        </div>
     </div>
-    <div class="top-row-right">
-        <a href="/local-ai" title="Local AI Setup">
-            <i class="bi bi-cpu"></i>
-        </a>
-        <a href="/cloud-providers" title="Cloud Providers">
-            <i class="bi bi-cloud"></i>
-        </a>
-        @if (AppEnvironment.IsMaui)
-        {
-            <a href="/home-assistant" title="Home Assistant">
-                <i class="bi bi-house-gear"></i>
+
+    <div class="app-nav-right">
+        <div class="app-nav-secondary">
+            <a href="/local-ai" title="Local AI Setup">
+                <i class="bi bi-cpu"></i>
             </a>
-        }
-        <a href="/settings" title="Settings">
-            <i class="bi bi-gear"></i>
-        </a>
-        <a href="/sync" title="Devices & Sync">
-            <i class="bi bi-arrow-repeat"></i>
-        </a>
-        <a href="/tools" title="Tools (MCP Servers)">
-            <i class="bi bi-tools"></i>
-        </a>
-        <a href="/account" title="Account / Login">
-            <i class="bi bi-person-circle"></i>
-        </a>
+            <a href="/cloud-providers" title="Cloud Providers">
+                <i class="bi bi-cloud"></i>
+            </a>
+            @if (AppEnvironment.IsMaui)
+            {
+                <a href="/home-assistant" title="Home Assistant">
+                    <i class="bi bi-house-gear"></i>
+                </a>
+            }
+            <a href="/settings" title="Settings">
+                <i class="bi bi-gear"></i>
+            </a>
+            <a href="/sync" title="Devices & Sync">
+                <i class="bi bi-arrow-repeat"></i>
+            </a>
+            <a href="/tools" title="Tools (MCP Servers)">
+                <i class="bi bi-tools"></i>
+            </a>
+        </div>
+
+        <div class="app-nav-account">
+            <a href="/account" title="Account / Login">
+                <i class="bi bi-person-circle"></i>
+            </a>
+        </div>
     </div>
 </div>
+
+@if (AppEnvironment.IsMaui && _showNavContextMenu)
+{
+    <div class="app-nav-context-menu" style="@_navContextMenuStyle" @onclick:stopPropagation>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.Mode == NavLayoutMode.Top ? "is-selected" : "")"
+                @onclick="() => SetNavLayoutAsync(NavLayoutMode.Top)">
+            Top navigation bar
+        </button>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.Mode == NavLayoutMode.Left ? "is-selected" : "")"
+                @onclick="() => SetNavLayoutAsync(NavLayoutMode.Left)">
+            Left navigation bar
+        </button>
+    </div>
+    <div class="menu-overlay" @onclick="CloseNavContextMenu"></div>
+}
 
 @code {
     private Action? _browserPanelChangedHandler;
     private Action? _chatPanelChangedHandler;
     private Action? _notesPanelChangedHandler;
+    private Action? _sidebarStateChangedHandler;
+    private Action? _navLayoutChangedHandler;
+
+    private bool _showNavContextMenu;
+    private string _navContextMenuStyle = "";
 
     private bool IsChatActive => IsOnChatPage() && ChatPanel.IsOpen;
     private bool IsNotesActive => IsOnNotesPage() && NotesPanel.IsOpen;
+    private bool ShowSidebarToggle =>
+        IsOnNotesPage() || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));
 
     protected override void OnInitialized()
     {
@@ -90,6 +171,12 @@
 
         _notesPanelChangedHandler = () => InvokeAsync(StateHasChanged);
         NotesPanel.OnChanged += _notesPanelChangedHandler;
+
+        _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
+        SidebarState.OnChanged += _sidebarStateChangedHandler;
+
+        _navLayoutChangedHandler = () => InvokeAsync(StateHasChanged);
+        NavLayout.OnChanged += _navLayoutChangedHandler;
 
         Nav.LocationChanged += OnLocationChanged;
         SyncPanelStateFromRoute();
@@ -112,11 +199,36 @@
         else if (IsOnChatPage())
         {
             NotesPanel.IsOpen = false;
+            ChatPanel.IsOpen = true;
         }
         else
         {
             NotesPanel.IsOpen = false;
         }
+    }
+
+    private async Task ToggleSidebar()
+    {
+        var collapsed = !SidebarState.IsCollapsed;
+        await SidebarState.SetCollapsedAsync(collapsed, JS);
+        StateHasChanged();
+    }
+
+    private void OnNavContextMenu(MouseEventArgs e)
+    {
+        if (!AppEnvironment.IsMaui)
+            return;
+
+        _navContextMenuStyle = $"position: fixed; top: {e.ClientY}px; left: {e.ClientX}px; z-index: 10001;";
+        _showNavContextMenu = true;
+    }
+
+    private void CloseNavContextMenu() => _showNavContextMenu = false;
+
+    private async Task SetNavLayoutAsync(NavLayoutMode mode)
+    {
+        CloseNavContextMenu();
+        await NavLayout.SetModeAsync(mode, JS);
     }
 
     private async Task ToggleChat()
@@ -193,7 +305,7 @@
         }
     }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
         Nav.LocationChanged -= OnLocationChanged;
 
@@ -205,5 +317,13 @@
 
         if (_notesPanelChangedHandler != null)
             NotesPanel.OnChanged -= _notesPanelChangedHandler;
+
+        if (_sidebarStateChangedHandler != null)
+            SidebarState.OnChanged -= _sidebarStateChangedHandler;
+
+        if (_navLayoutChangedHandler != null)
+            NavLayout.OnChanged -= _navLayoutChangedHandler;
+
+        return ValueTask.CompletedTask;
     }
 }

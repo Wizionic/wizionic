@@ -99,6 +99,8 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IChatPanelState>(sp => sp.GetRequiredService<MauiChatPanelState>());
 		builder.Services.AddSingleton<MauiNotesPanelState>();
 		builder.Services.AddSingleton<INotesPanelState>(sp => sp.GetRequiredService<MauiNotesPanelState>());
+		builder.Services.AddSingleton<NavLayoutService>();
+		builder.Services.AddSingleton<INavLayoutState>(sp => sp.GetRequiredService<NavLayoutService>());
 		builder.Services.AddSingleton<SqliteBrowserStore>();
 		builder.Services.AddSingleton<IBrowserStore>(sp => sp.GetRequiredService<SqliteBrowserStore>());
 		builder.Services.AddSingleton<SqliteBrowserSidebarStore>();
