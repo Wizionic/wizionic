@@ -1,0 +1,66 @@
+@implements IAsyncDisposable
+@using ChatfishApp.Core.UI
+@using ChatfishApp.Shared.Services
+@using Microsoft.JSInterop
+@inject ISidebarState SidebarState
+@inject IJSRuntime JS
+
+@code {
+    private DotNetObjectReference<WasmSidebarSync>? _dotNetRef;
+    private bool _initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || AppEnvironment.IsMaui || _initialized)
+            return;
+
+        _initialized = true;
+
+        try
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("chatfishSidebar.registerListener", _dotNetRef, GetType().Name);
+
+            var collapsedForMobile = await JS.InvokeAsync<bool>("chatfishSidebar.initForViewport");
+            var collapsed = collapsedForMobile
+                ? true
+                : await JS.InvokeAsync<bool>("chatfishSidebar.getCollapsed");
+
+            SidebarState.SetCollapsedSilently(collapsed);
+            await JS.InvokeVoidAsync("chatfishSidebar.setCollapsed", collapsed, new { source = "WasmSidebarSync.init", skipNotify = true });
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSidebarSync] init failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public void OnSidebarCollapsedChanged(bool collapsed)
+    {
+        if (SidebarState.IsCollapsed == collapsed)
+            return;
+
+        SidebarState.SetCollapsedSilently(collapsed);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_dotNetRef is null)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("chatfishSidebar.unregisterListener", _dotNetRef, GetType().Name);
+        }
+        catch
+        {
+            // Circuit may already be torn down.
+        }
+
+        _dotNetRef.Dispose();
+        _dotNetRef = null;
+    }
+}

@@ -2,6 +2,7 @@
 @inject ChatfishApp.Core.Storage.IKeyStore KeyStore
 @inject ChatfishApp.Core.Update.IUpdateService UpdateService
 @inject ChatfishApp.Shared.Services.ThemeService Theme
+@inject INavLayoutState NavLayout
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @using ChatfishApp.Core.Update
@@ -37,6 +38,24 @@
                 }
             </select>
         </div>
+
+        @if (AppEnvironment.IsMaui)
+        {
+            <div class="theme-setting-row">
+                <div class="theme-setting-info">
+                    <p class="theme-setting-label">Navigation bar position</p>
+                    <p class="theme-setting-desc">
+                        Show the main navigation across the top, or as a vertical icon rail on the left.
+                    </p>
+                </div>
+                <select class="form-select form-select-sm theme-setting-select"
+                        value="@NavLayoutModeValue"
+                        @onchange="OnNavLayoutChanged">
+                    <option value="top">Top (default)</option>
+                    <option value="left">Left (vertical)</option>
+                </select>
+            </div>
+        }
     </div>
 
     <!-- About you -->
@@ -299,9 +318,14 @@
             ? memories
             : memories.Where(m => m.Text.Contains(memorySearch.Trim(), StringComparison.OrdinalIgnoreCase));
 
+    private string NavLayoutModeValue =>
+        NavLayout.Mode == NavLayoutMode.Left ? "left" : "top";
+
     protected override async Task OnInitializedAsync()
     {
         Theme.OnChanged += OnThemeChangedFromService;
+        if (AppEnvironment.IsMaui)
+            NavLayout.OnChanged += OnNavLayoutChangedFromService;
         await KeyStore.LoadAsync();
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
@@ -326,9 +350,12 @@
             return;
 
         await Theme.SyncFromStorageAndApplyAsync(JS);
+        if (AppEnvironment.IsMaui)
+            await NavLayout.SyncFromStorageAndApplyAsync(JS);
     }
 
     private void OnThemeChangedFromService() => InvokeAsync(StateHasChanged);
+    private void OnNavLayoutChangedFromService() => InvokeAsync(StateHasChanged);
 
 
 
@@ -338,7 +365,20 @@
         await Theme.SetThemeAsync(theme, JS);
     }
 
-    public void Dispose() => Theme.OnChanged -= OnThemeChangedFromService;
+    private async Task OnNavLayoutChanged(ChangeEventArgs e)
+    {
+        var mode = string.Equals(e.Value?.ToString(), "left", StringComparison.OrdinalIgnoreCase)
+            ? NavLayoutMode.Left
+            : NavLayoutMode.Top;
+        await NavLayout.SetModeAsync(mode, JS);
+    }
+
+    public void Dispose()
+    {
+        Theme.OnChanged -= OnThemeChangedFromService;
+        if (AppEnvironment.IsMaui)
+            NavLayout.OnChanged -= OnNavLayoutChangedFromService;
+    }
 
     private void ReloadMemories() => memories = KeyStore.GetMemories().ToList();
 

@@ -1,11 +1,33 @@
 @inherits LayoutComponentBase
+@implements IDisposable
+@inject INavLayoutState NavLayout
 
 <ThemeBootstrap />
+<NavLayoutBootstrap />
 <SyncConnectionBootstrap />
 
-<div style="height: 100vh; display: flex; flex-direction: column;">
+<div class="app-shell" data-nav-layout="@NavLayoutModeString">
     <AppTopBar />
-    <div style="flex: 1; overflow: visible; padding-top: 3.5rem; height: 100%; position: relative;">
+    <div class="app-body">
         @Body
     </div>
 </div>
+
+@code {
+    private Action? _navLayoutChangedHandler;
+
+    private string NavLayoutModeString =>
+        NavLayout.Mode == NavLayoutMode.Left ? "left" : "top";
+
+    protected override void OnInitialized()
+    {
+        _navLayoutChangedHandler = () => InvokeAsync(StateHasChanged);
+        NavLayout.OnChanged += _navLayoutChangedHandler;
+    }
+
+    public void Dispose()
+    {
+        if (_navLayoutChangedHandler != null)
+            NavLayout.OnChanged -= _navLayoutChangedHandler;
+    }
+}

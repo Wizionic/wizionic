@@ -25,6 +25,8 @@ builder.Services.AddSingleton<ChatPanelState>();
 builder.Services.AddSingleton<IChatPanelState>(sp => sp.GetRequiredService<ChatPanelState>());
 builder.Services.AddSingleton<NotesPanelState>();
 builder.Services.AddSingleton<INotesPanelState>(sp => sp.GetRequiredService<NotesPanelState>());
+builder.Services.AddSingleton<NavLayoutService>();
+builder.Services.AddSingleton<INavLayoutState>(sp => sp.GetRequiredService<NavLayoutService>());
 builder.Services.AddSingleton<IBrowserAgentService, NullBrowserAgentService>();
 builder.Services.AddSingleton<IBrowserOverlaySync, NullBrowserOverlaySync>();
 builder.Services.AddSingleton<IBrowserStore, NullBrowserStore>();

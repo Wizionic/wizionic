@@ -102,6 +102,10 @@ a:hover {
     --line-relaxed: 1.7;
 
     --topbar-height: 56px;
+    --app-nav-size: 3.5rem;
+    --app-nav-width: 0px;
+    --app-nav-height: var(--app-nav-size);
+    --app-nav-offset-x: 0px;
 
     /* Component Tokens — Sidebar */
     --sidebar-bg: var(--light-blue-2);
@@ -425,7 +429,7 @@ a:hover {
 .chat-wrapper {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 3.5rem);
+    height: calc(100vh - var(--app-nav-height));
     width: 100%;               /* fills the parent <main> perfectly */
     background: var(--color-chat-bg);
 }
@@ -1544,6 +1548,47 @@ a:hover {
     box-shadow: inset 0 0 0 1px var(--topbar-toggle-border-active, var(--topbar-toggle-border-hover));
 }
 
+.topbar-sidebar-toggle svg {
+    width: 1.35rem;
+    height: 1.35rem;
+    display: block;
+}
+
+.app-nav-context-menu {
+    min-width: 200px;
+    background: var(--cf-bg-surface, var(--color-bg-surface));
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 4px 0;
+}
+
+.app-nav-context-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    color: var(--color-text);
+    cursor: pointer;
+}
+
+.app-nav-context-menu-item:hover {
+    background: var(--topbar-toggle-bg-hover, rgba(0, 0, 0, 0.06));
+}
+
+.app-nav-context-menu-item.is-selected {
+    font-weight: 600;
+    color: var(--primary-dark);
+}
+
+.app-nav-context-menu-item.is-selected::before {
+    content: "✓ ";
+    font-size: 0.75rem;
+}
+
 .chat-wrapper.chat-panel-closed .chat-column {
     display: none !important;
 }
@@ -2463,20 +2508,160 @@ a:hover {
     color: #b91c1c;
 }
 
+/* App shell + navigation bar layout */
+html[data-nav-layout="left"] {
+    --app-nav-width: var(--app-nav-size);
+    --app-nav-height: 0px;
+    --app-nav-offset-x: var(--app-nav-size);
+}
+
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+html[data-nav-layout="left"] .app-shell {
+    flex-direction: row;
+}
+
+.app-body {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    padding-top: var(--app-nav-height);
+    height: 100%;
+    position: relative;
+    overflow: visible;
+    box-sizing: border-box;
+}
+
+html[data-nav-layout="left"] .app-body {
+    padding-top: 0;
+    padding-left: var(--app-nav-width);
+}
+
+.app-nav-left,
+.app-nav-right,
+.app-nav-primary,
+.app-nav-secondary,
+.app-nav-account {
+    display: flex;
+    align-items: center;
+}
+
+.app-nav.app-nav--top {
+    justify-content: flex-start;
+}
+
+.app-nav--top .app-nav-left {
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.app-nav--top .app-nav-primary {
+    gap: 1.5rem;
+    margin-left: 0;
+}
+
+.app-nav--top .app-nav-right {
+    gap: 0.6rem;
+    margin-left: auto;
+}
+
+.app-nav--top .app-nav-secondary {
+    gap: 0.6rem;
+}
+
+.app-nav .topbar-sidebar-toggle {
+    position: static;
+    top: auto;
+    left: auto;
+    z-index: auto;
+    flex-shrink: 0;
+    color: var(--color-text);
+}
+
+html[data-nav-layout="left"] .app-nav.top-row {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    width: var(--app-nav-size);
+    height: 100vh;
+    top: 0;
+    left: 0;
+    right: auto;
+    bottom: 0;
+    border-bottom: none;
+    border-right: 1px solid var(--color-border);
+    padding: 0.5rem 0;
+    gap: 0.35rem;
+}
+
+html[data-nav-layout="left"] .app-nav-left {
+    flex-direction: column;
+    gap: 0.35rem;
+    width: 100%;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+html[data-nav-layout="left"] .app-nav-right {
+    flex-direction: column;
+    gap: 0.35rem;
+    width: 100%;
+    align-items: center;
+    margin-top: auto;
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    padding-bottom: 0.5rem;
+}
+
+html[data-nav-layout="left"] .app-nav-primary,
+html[data-nav-layout="left"] .app-nav-secondary,
+html[data-nav-layout="left"] .app-nav-account {
+    flex-direction: column;
+    gap: 0.35rem;
+    width: 100%;
+    align-items: center;
+    margin-left: 0;
+}
+
+html[data-nav-layout="left"] .app-nav-secondary {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    padding-top: 0;
+}
+
+html[data-nav-layout="left"] .app-nav-account {
+    margin-top: 0;
+    padding-bottom: 0;
+}
+
+html[data-nav-layout="left"] .app-nav-secondary a,
+html[data-nav-layout="left"] .app-nav-account a,
+html[data-nav-layout="left"] .app-nav-primary a,
+html[data-nav-layout="left"] .app-nav-primary .topbar-toggle-btn {
+    justify-content: center;
+}
+
 /* Top bar / page / sidebar structure (previously copied; now in unified global so WASM + any server pages share) */
 .top-row {
     background: var(--color-topbar-bg);
     border-bottom: 1px solid var(--color-border);
-    height: 3.5rem;
+    height: var(--app-nav-size);
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     padding: 0 var(--space-4);
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     z-index: 1000;
+    box-sizing: border-box;
 }
 
 .top-row a,
@@ -2552,21 +2737,23 @@ a:hover {
 .top-row-right a i,
 .top-row-right a .bi,
 .top-row > div:last-child a i,
-.top-row > div:last-child a .bi {
+.top-row > div:last-child a .bi,
+.app-nav-secondary a i,
+.app-nav-secondary a .bi,
+.app-nav-account a i,
+.app-nav-account a .bi,
+.app-nav-primary a i,
+.app-nav-primary a .bi {
     font-size: 1.35rem;
 }
 
+/* Legacy sidebar-toggle (no longer used on pages; top bar uses .topbar-sidebar-toggle) */
 .sidebar-toggle {
     background: none;
     border: none;
     padding: 6px;
     cursor: pointer;
-    color: black;
-    /* Absolute placement... (comments preserved for the WasmChat absolute toggle) */
-    position: absolute;
-    top: 8px;
-    left: 0px;
-    z-index: 1100;
+    color: var(--color-text);
 }
 
 /* Basic page and sidebar for WASM layout to mimic main */
@@ -2586,8 +2773,9 @@ a:hover {
     border-right: 1px solid var(--color-sidebar-border);
     overflow-y: auto;
     position: fixed;
-    top: 3.5rem;
-    height: calc(100vh - 3.5rem);
+    top: var(--app-nav-height);
+    left: var(--app-nav-offset-x);
+    height: calc(100vh - var(--app-nav-height));
     z-index: 900;
     box-sizing: border-box;
 }
@@ -2601,8 +2789,12 @@ main {
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 3.5rem);
+    height: calc(100vh - var(--app-nav-height));
     box-sizing: border-box;
+}
+
+html[data-nav-layout="left"] main {
+    height: 100vh;
 }
 
 /* Chat area flex to keep input at bottom */
@@ -2774,9 +2966,9 @@ body .top-row,
 .top-row {
     background: var(--color-topbar-bg) !important;
     display: flex !important;
-    justify-content: space-between !important;
+    justify-content: flex-start !important;
     align-items: center !important;
-    height: 3.5rem !important;
+    height: var(--app-nav-size) !important;
     position: fixed !important;
     top: 0 !important;
     left: 0 !important;
@@ -2784,6 +2976,81 @@ body .top-row,
     z-index: 1000 !important;
     padding: 0 1rem !important;
     box-sizing: border-box !important;
+}
+
+.app-nav--top .app-nav-right {
+    margin-left: auto !important;
+}
+
+html[data-nav-layout="left"] body .app-nav.top-row,
+html[data-nav-layout="left"] .app-nav.top-row {
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    width: var(--app-nav-size) !important;
+    height: 100vh !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: auto !important;
+    border-bottom: none !important;
+    border-right: 1px solid var(--color-border) !important;
+    padding: 0.5rem 0 !important;
+    gap: 0.35rem !important;
+}
+
+html[data-nav-layout="left"] .app-nav-left {
+    flex-direction: column !important;
+    align-items: center !important;
+    width: 100% !important;
+    flex-shrink: 0 !important;
+}
+
+html[data-nav-layout="left"] .app-nav-right {
+    flex-direction: column !important;
+    align-items: center !important;
+    margin-left: 0 !important;
+    margin-top: auto !important;
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    justify-content: flex-end !important;
+    padding-bottom: 0.5rem !important;
+}
+
+html[data-nav-layout="left"] .app-nav-primary,
+html[data-nav-layout="left"] .app-nav-secondary,
+html[data-nav-layout="left"] .app-nav-account {
+    flex-direction: column !important;
+    align-items: center !important;
+    margin-left: 0 !important;
+    width: 100% !important;
+}
+
+html[data-nav-layout="left"] .app-nav-secondary {
+    flex: 0 0 auto !important;
+}
+
+html[data-nav-layout="left"] .app-nav-account {
+    margin-top: 0 !important;
+}
+
+.app-nav .topbar-sidebar-toggle,
+body .app-nav .topbar-sidebar-toggle,
+.topbar-sidebar-toggle {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: auto !important;
+    color: var(--color-text) !important;
+    flex-shrink: 0 !important;
+}
+
+html[data-nav-layout="left"] .app-body {
+    padding-top: 0 !important;
+    padding-left: var(--app-nav-width) !important;
+}
+
+html[data-nav-layout="left"] main {
+    height: 100vh !important;
 }
 
 /* Left side (logo area) */
@@ -2827,7 +3094,10 @@ body .top-left,
     background: rgba(189, 147, 249, 0.2) !important;
 }
 
-[data-theme="dracula"] .top-left a:hover {
+[data-theme="dracula"] .top-left a:hover,
+[data-theme="dracula"] .app-nav-primary a:hover,
+[data-theme="dracula"] .app-nav-secondary a:hover,
+[data-theme="dracula"] .app-nav-account a:hover {
     background: rgba(189, 147, 249, 0.15) !important;
 }
 
@@ -2837,7 +3107,10 @@ body .top-left,
     background: rgba(124, 203, 255, 0.18) !important;
 }
 
-[data-theme="chatfish-dark"] .top-left a:hover {
+[data-theme="chatfish-dark"] .top-left a:hover,
+[data-theme="chatfish-dark"] .app-nav-primary a:hover,
+[data-theme="chatfish-dark"] .app-nav-secondary a:hover,
+[data-theme="chatfish-dark"] .app-nav-account a:hover {
     background: rgba(124, 203, 255, 0.12) !important;
 }
 
@@ -2847,7 +3120,10 @@ body .top-left,
     background: rgba(136, 192, 208, 0.15) !important;
 }
 
-[data-theme="nord"] .top-left a:hover {
+[data-theme="nord"] .top-left a:hover,
+[data-theme="nord"] .app-nav-primary a:hover,
+[data-theme="nord"] .app-nav-secondary a:hover,
+[data-theme="nord"] .app-nav-account a:hover {
     background: rgba(136, 192, 208, 0.1) !important;
 }
 
@@ -2857,7 +3133,10 @@ body .top-left,
     background: rgba(38, 139, 210, 0.1) !important;
 }
 
-[data-theme="solarized-light"] .top-left a:hover {
+[data-theme="solarized-light"] .top-left a:hover,
+[data-theme="solarized-light"] .app-nav-primary a:hover,
+[data-theme="solarized-light"] .app-nav-secondary a:hover,
+[data-theme="solarized-light"] .app-nav-account a:hover {
     background: rgba(38, 139, 210, 0.07) !important;
 }
 
@@ -2898,8 +3177,9 @@ body .sidebar,
     border-right: 1px solid var(--color-sidebar-border) !important;
     color: var(--color-text) !important;
     position: fixed !important;
-    top: 3.5rem !important;
-    height: calc(100vh - 3.5rem) !important;
+    top: var(--app-nav-height) !important;
+    left: var(--app-nav-offset-x) !important;
+    height: calc(100vh - var(--app-nav-height)) !important;
     z-index: 900 !important;
     overflow-y: auto !important;
     box-sizing: border-box !important;
@@ -3156,18 +3436,13 @@ body .send-btn,
     flex-shrink: 0 !important;
 }
 
-/* Sidebar toggle (absolute over topbar) */
-body .sidebar-toggle,
-.sidebar-toggle {
-    background: none !important;
-    border: none !important;
-    padding: 6px !important;
-    cursor: pointer !important;
-    color: var(--color-text) !important;
-    position: absolute !important;
-    top: 8px !important;
-    left: 0cap !important;
-    z-index: 1100 !important;
+/* Sidebar toggle in app nav uses topbar-toggle-btn layout (in-flow, not absolute) */
+body .app-nav .topbar-sidebar-toggle,
+.app-nav .topbar-sidebar-toggle {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: auto !important;
 }
 
 /* Basic convo and nav items for sidebar in chat */

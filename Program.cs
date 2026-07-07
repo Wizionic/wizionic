@@ -103,6 +103,8 @@ builder.Services.AddSingleton<ChatfishApp.Client.Services.ChatPanelState>();
 builder.Services.AddSingleton<ChatfishApp.Core.UI.IChatPanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.ChatPanelState>());
 builder.Services.AddSingleton<ChatfishApp.Client.Services.NotesPanelState>();
 builder.Services.AddSingleton<ChatfishApp.Core.UI.INotesPanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.NotesPanelState>());
+builder.Services.AddSingleton<ChatfishApp.Shared.Services.NavLayoutService>();
+builder.Services.AddSingleton<ChatfishApp.Core.UI.INavLayoutState>(sp => sp.GetRequiredService<ChatfishApp.Shared.Services.NavLayoutService>());
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserAgentService, ChatfishApp.Client.Services.NullBrowserAgentService>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserOverlaySync, ChatfishApp.Client.Services.NullBrowserOverlaySync>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserStore, ChatfishApp.Client.Services.NullBrowserStore>();
