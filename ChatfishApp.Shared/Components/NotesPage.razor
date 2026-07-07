@@ -14,24 +14,9 @@
 @inject INotesSyncBridge SyncBridge
 @inject ISidebarState SidebarState
 
-<div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
-    <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
-        @if (SidebarState.IsCollapsed)
-        {
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
-            </svg>
-        }
-        else
-        {
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
-            </svg>
-        }
-    </button>
+<WasmSidebarSync />
 
+<div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
     <div class="sidebar">
         <nav class="cf-nav cf-column">
             <div class="cf-item">
@@ -373,35 +358,18 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        if (!firstRender || !AppEnvironment.IsMaui)
+            return;
+
+        try
         {
-            try
+            if (SidebarState.IsCollapsed)
             {
-                if (AppEnvironment.IsMaui)
-                {
-                    if (SidebarState.IsCollapsed)
-                    {
-                        await SidebarState.SetCollapsedAsync(false, JS);
-                        StateHasChanged();
-                    }
-                }
-                else
-                {
-                    var collapsedForMobile = await JS.InvokeAsync<bool>("initWasmSidebarForViewport");
-                    if (collapsedForMobile)
-                    {
-                        await SidebarState.SetCollapsedAsync(true, JS);
-                        StateHasChanged();
-                    }
-                    else if (SidebarState.IsCollapsed)
-                    {
-                        await SidebarState.SetCollapsedAsync(false, JS);
-                        StateHasChanged();
-                    }
-                }
+                await SidebarState.SetCollapsedAsync(false, JS);
+                StateHasChanged();
             }
-            catch { /* sidebar init may be unavailable during static render */ }
         }
+        catch { /* sidebar init may be unavailable during static render */ }
     }
 
     public async ValueTask DisposeAsync()
@@ -422,13 +390,6 @@
 
         if (_notesSyncChangedHandler != null)
             SyncBridge.OnNotesChanged -= _notesSyncChangedHandler;
-    }
-
-    private async Task ToggleSidebar()
-    {
-        SidebarState.Toggle();
-        StateHasChanged();
-        await SidebarState.SetCollapsedAsync(SidebarState.IsCollapsed, JS);
     }
 
     private void CancelEdit()

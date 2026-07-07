@@ -24,12 +24,12 @@ public class MauiSidebarState : ISidebarState
 
     public void Toggle() => IsCollapsed = !IsCollapsed;
 
+    public void SetCollapsedSilently(bool collapsed) => _isCollapsed = collapsed;
+
     public async Task SetCollapsedAsync(bool collapsed, IJSRuntime? js = null, CancellationToken ct = default)
     {
-        if (IsCollapsed == collapsed)
-            return;
-
-        IsCollapsed = collapsed;
+        if (IsCollapsed != collapsed)
+            IsCollapsed = collapsed;
 
         if (js is null)
             return;

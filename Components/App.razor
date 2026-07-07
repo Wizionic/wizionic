@@ -23,7 +23,9 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
     <link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet" />
     <script src="_content/ChatfishApp.Shared/js/themeInterop.js"></script>
-    <script>window.chatfishTheme.applyEarly();</script>
+    <script src="_content/ChatfishApp.Shared/js/navLayoutInterop.js"></script>
+    <script src="_content/ChatfishApp.Shared/js/sidebarInterop.js"></script>
+    <script>window.chatfishTheme.applyEarly(); window.chatfishNavLayout && window.chatfishNavLayout.apply('top');</script>
 
     <HeadOutlet />
 </head>
@@ -128,41 +130,6 @@
                     }
                 }
             });
-        };
-
-        // On mobile, start with the conversation sidebar collapsed so chat content is full width.
-        window.initWasmSidebarForViewport = function () {
-            if (!window.isMobileViewport()) return false;
-            window.toggleWasmSidebar(true);
-            return true;
-        };
-
-        // WASM sidebar toggle (for /chat page). Button + handler colocated in Chat.razor (owns the .page).
-        // JS receives desired collapsed state and *sets* the class on .page (plus clears inlines); Blazor binding also updates class attr.
-        // CSS rules (.page.sidebar-collapsed .sidebar {display:none!important} etc) do the actual hide + margin shift.
-        window.toggleWasmSidebar = function (collapsed) {
-            console.log('[WasmSidebar] toggleWasmSidebar called, collapsed=', collapsed);
-            const pageEl = document.querySelector('.page');
-            const sidebar = document.querySelector('.sidebar');
-            const mainEl = document.querySelector('main');
-            if (pageEl) {
-                if (collapsed) {
-                    pageEl.classList.add('sidebar-collapsed');
-                } else {
-                    pageEl.classList.remove('sidebar-collapsed');
-                }
-            }
-            // Clear any previous inline styles so CSS (base + !important collapsed) fully controls computed display/margin.
-            if (sidebar) {
-                sidebar.style.display = '';
-            }
-            if (mainEl) {
-                mainEl.style.marginLeft = '';
-            }
-            // Log resulting state for easy diagnosis in DevTools console
-            console.log('[WasmSidebar] after: page has sidebar-collapsed?', !!(pageEl && pageEl.classList.contains('sidebar-collapsed')),
-                'sidebar display=', sidebar ? sidebar.style.display : 'n/a',
-                'main marginLeft=', mainEl ? mainEl.style.marginLeft : 'n/a');
         };
 
         window.getMenuPopupPosition = function (buttonId) {

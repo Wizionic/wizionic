@@ -1,0 +1,27 @@
+@implements IAsyncDisposable
+@using ChatfishApp.Core.UI
+@using ChatfishApp.Shared.Services
+@inject INavLayoutState NavLayout
+@inject IJSRuntime JS
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        try
+        {
+            if (AppEnvironment.IsMaui)
+                await NavLayout.SyncFromStorageAndApplyAsync(JS);
+            else
+                await NavLayout.SetModeAsync(NavLayoutMode.Top, JS);
+        }
+        catch
+        {
+            // JS interop may be unavailable during static render passes.
+        }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

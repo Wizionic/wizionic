@@ -27,19 +27,19 @@ public class SidebarState : ISidebarState
 
     public void Toggle() => IsCollapsed = !IsCollapsed;
 
+    public void SetCollapsedSilently(bool collapsed) => _isCollapsed = collapsed;
+
     public async Task SetCollapsedAsync(bool collapsed, IJSRuntime? js = null, CancellationToken ct = default)
     {
-        if (IsCollapsed == collapsed)
-            return;
-
-        IsCollapsed = collapsed;
+        if (IsCollapsed != collapsed)
+            IsCollapsed = collapsed;
 
         if (js is null)
             return;
 
         try
         {
-            await js.InvokeVoidAsync("toggleWasmSidebar", ct, collapsed);
+            await js.InvokeVoidAsync("chatfishSidebar.setCollapsed", ct, collapsed, new { source = "SidebarState.SetCollapsedAsync", skipNotify = true });
         }
         catch (Exception ex)
         {
