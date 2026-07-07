@@ -169,6 +169,15 @@ a:hover {
     /* Topbar */
     --color-topbar-bg:     var(--light-blue-2);
 
+    /* Topbar panel toggles (Chat / Notes / Browser) */
+    --topbar-toggle-border:        var(--color-border-strong);
+    --topbar-toggle-border-hover:  var(--grey-400);
+    --topbar-toggle-border-active: var(--color-accent-dark, var(--primary-dark));
+    --topbar-toggle-bg:            transparent;
+    --topbar-toggle-bg-hover:      color-mix(in srgb, var(--color-accent, var(--primary-blue)) 10%, transparent);
+    --topbar-toggle-bg-active:     color-mix(in srgb, var(--color-accent, var(--primary-blue)) 22%, transparent);
+    --topbar-toggle-color:         var(--primary-dark);
+
     /* Accents (shared across themes) */
     --color-accent:        var(--primary-blue);
     --color-accent-dark:   var(--primary-dark);
@@ -1502,22 +1511,63 @@ a:hover {
     opacity: 0.35;
 }
 
-.browser-toggle-btn {
-    display: flex;
+.topbar-toggle-btn {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: none;
-    background: transparent;
-    color: var(--primary-dark);
-    cursor: pointer;
+    box-sizing: border-box;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0.35rem;
+    border: 1px solid var(--topbar-toggle-border, var(--color-border-strong));
     border-radius: var(--radius-md);
-    padding: 0.25rem;
-    transition: background 0.2s ease;
+    background: var(--topbar-toggle-bg, transparent);
+    color: var(--topbar-toggle-color, var(--primary-dark));
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.browser-toggle-btn:hover,
-.browser-toggle-btn.active {
-    background: rgba(0, 0, 0, 0.05);
+.topbar-toggle-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.topbar-toggle-btn:hover {
+    background: var(--topbar-toggle-bg-hover, color-mix(in srgb, var(--color-accent, var(--primary-blue)) 10%, transparent));
+    border-color: var(--topbar-toggle-border-hover, var(--topbar-toggle-border, var(--color-border-strong)));
+}
+
+.topbar-toggle-btn.active {
+    background: var(--topbar-toggle-bg-active, var(--topbar-toggle-bg-hover));
+    border-color: var(--topbar-toggle-border-active, var(--topbar-toggle-border-hover));
+    box-shadow: inset 0 0 0 1px var(--topbar-toggle-border-active, var(--topbar-toggle-border-hover));
+}
+
+.chat-wrapper.chat-panel-closed .chat-column {
+    display: none !important;
+}
+
+.chat-wrapper.chat-panel-closed .browser-splitter {
+    display: none !important;
+}
+
+.chat-wrapper.chat-panel-closed.browser-panel-open {
+    flex-direction: row !important;
+}
+
+.chat-wrapper.chat-panel-closed.browser-panel-open .browser-panel {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+}
+
+.page.chat-panel-closed .sidebar {
+    display: none !important;
+}
+
+.page.chat-panel-closed main {
+    margin-left: 0 !important;
 }
 
 @keyframes browser-spin {
@@ -2811,6 +2861,27 @@ body .top-left,
     background: rgba(38, 139, 210, 0.07) !important;
 }
 
+/* Topbar panel toggles — theme-aware borders/backgrounds (dark themes need accent contrast) */
+body .topbar-toggle-btn,
+.topbar-toggle-btn {
+    border: 1px solid var(--topbar-toggle-border, var(--color-border-strong)) !important;
+    background: var(--topbar-toggle-bg, transparent) !important;
+    color: var(--topbar-toggle-color, var(--primary-dark)) !important;
+}
+
+body .topbar-toggle-btn:hover,
+.topbar-toggle-btn:hover {
+    background: var(--topbar-toggle-bg-hover) !important;
+    border-color: var(--topbar-toggle-border-hover, var(--topbar-toggle-border)) !important;
+}
+
+body .topbar-toggle-btn.active,
+.topbar-toggle-btn.active {
+    background: var(--topbar-toggle-bg-active) !important;
+    border-color: var(--topbar-toggle-border-active, var(--topbar-toggle-border-hover)) !important;
+    box-shadow: inset 0 0 0 1px var(--topbar-toggle-border-active, var(--topbar-toggle-border-hover)) !important;
+}
+
 .top-row-right a i,
 .top-row-right a .bi,
 .top-row > div:last-child a i,
@@ -2985,6 +3056,33 @@ body .browser-panel,
     display: flex !important;
     flex-direction: column !important;
     overflow: hidden !important;
+}
+
+body .chat-wrapper.chat-panel-closed .chat-column,
+.chat-wrapper.chat-panel-closed .chat-column {
+    display: none !important;
+}
+
+body .chat-wrapper.chat-panel-closed .browser-splitter,
+.chat-wrapper.chat-panel-closed .browser-splitter {
+    display: none !important;
+}
+
+body .chat-wrapper.chat-panel-closed.browser-panel-open .browser-panel,
+.chat-wrapper.chat-panel-closed.browser-panel-open .browser-panel {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+}
+
+body .page.chat-panel-closed .sidebar,
+.page.chat-panel-closed .sidebar {
+    display: none !important;
+}
+
+body .page.chat-panel-closed main,
+.page.chat-panel-closed main {
+    margin-left: 0 !important;
 }
 
 body .chat-container,
@@ -3552,6 +3650,12 @@ body .message-bot,
 
     --color-topbar-bg:     #16213e;
 
+    --topbar-toggle-border:        #4a5568;
+    --topbar-toggle-border-hover:  #7CCBFF;
+    --topbar-toggle-border-active: #7CCBFF;
+    --topbar-toggle-bg-hover:      rgba(124, 203, 255, 0.18);
+    --topbar-toggle-bg-active:     rgba(124, 203, 255, 0.32);
+
     --color-error:         #f87171;
     --color-error-bg:      #3d1f1f;
     --color-warning-bg:    #3f3f1e;
@@ -3602,6 +3706,12 @@ body .message-bot,
     --color-bubble-ai:     #1e1f29;
 
     --color-topbar-bg:     #1e1f29;
+
+    --topbar-toggle-border:        #6272a4;
+    --topbar-toggle-border-hover:  #bd93f9;
+    --topbar-toggle-border-active: #bd93f9;
+    --topbar-toggle-bg-hover:      rgba(189, 147, 249, 0.22);
+    --topbar-toggle-bg-active:     rgba(189, 147, 249, 0.38);
 
     --color-accent:        #bd93f9;
     --color-accent-dark:   #9d73d9;
@@ -3663,6 +3773,12 @@ body .message-bot,
     --color-bubble-ai:     #3b4252;
 
     --color-topbar-bg:     #3b4252;
+
+    --topbar-toggle-border:        #616e88;
+    --topbar-toggle-border-hover:  #88c0d0;
+    --topbar-toggle-border-active: #88c0d0;
+    --topbar-toggle-bg-hover:      rgba(136, 192, 208, 0.18);
+    --topbar-toggle-bg-active:     rgba(136, 192, 208, 0.32);
 
     --color-accent:        #88c0d0;
     --color-accent-dark:   #5e9db0;

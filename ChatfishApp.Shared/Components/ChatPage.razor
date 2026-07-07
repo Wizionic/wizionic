@@ -27,27 +27,31 @@
 @inject INoteStore NoteStore
 @inject ISidebarState SidebarState
 @inject IBrowserPanelState BrowserPanel
+@inject IChatPanelState ChatPanel
 
-<div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+<div class="page @((SidebarState.IsCollapsed || !ChatPanel.IsOpen) ? "sidebar-collapsed" : "") @(!ChatPanel.IsOpen ? "chat-panel-closed" : "")">
         <!-- Sidebar toggle button is here (in Chat.razor) so @onclick + StateHasChanged reliably update the .page class binding and icon.
          Positioned absolutely (via WasmLayout body container) to overlay the top bar near the fish logo (user's red box location).
          See .sidebar-toggle rule in chatfish.css for the absolute top/left/z-index values. -->
-    <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
-        @if (SidebarState.IsCollapsed)
-        {
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
-            </svg>
-        }
-        else
-        {
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
-            </svg>
-        }
-    </button>
+    @if (ChatPanel.IsOpen)
+    {
+        <button @onclick="ToggleSidebar" class="sidebar-toggle" title="Toggle sidebar">
+            @if (SidebarState.IsCollapsed)
+            {
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <rect x="3" y="3" width="6" height="18" rx="2" fill="none" />
+                </svg>
+            }
+            else
+            {
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.55">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" />
+                </svg>
+            }
+        </button>
+    }
 
     <!-- Sidebar -->
     <div class="sidebar">
@@ -85,7 +89,7 @@
 
     <!-- Main content -->
     <main>
-        <div id="chat-split-wrapper" class="chat-wrapper @(BrowserPanel.IsOpen ? "browser-panel-open" : "")" @ref="_splitWrapper">
+        <div id="chat-split-wrapper" class="chat-wrapper @(BrowserPanel.IsOpen ? "browser-panel-open" : "") @(!ChatPanel.IsOpen ? "chat-panel-closed" : "")" @ref="_splitWrapper">
             <div class="chat-column" style="@ChatColumnStyle">
             @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
@@ -547,7 +551,7 @@
     {
         get
         {
-            if (!BrowserPanel.IsOpen)
+            if (!ChatPanel.IsOpen || !BrowserPanel.IsOpen)
                 return "";
 
             var width = BrowserPanel.ChatPaneWidthPx;
@@ -561,6 +565,7 @@
 
     private Action? _sidebarStateChangedHandler;
     private Action? _browserPanelChangedHandler;
+    private Action? _chatPanelChangedHandler;
     private Action? _syncChangedHandler;
     private string? _lastSyncedAiServerId;
     private int _lastSyncedRemoteModelCount = -1;
@@ -587,6 +592,9 @@
 
         _browserPanelChangedHandler = () => InvokeAsync(OnBrowserPanelChangedAsync);
         BrowserPanel.OnChanged += _browserPanelChangedHandler;
+
+        _chatPanelChangedHandler = () => InvokeAsync(OnChatPanelChangedAsync);
+        ChatPanel.OnChanged += _chatPanelChangedHandler;
 
         SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
 
@@ -709,6 +717,9 @@
         if (_browserPanelChangedHandler != null)
             BrowserPanel.OnChanged -= _browserPanelChangedHandler;
 
+        if (_chatPanelChangedHandler != null)
+            ChatPanel.OnChanged -= _chatPanelChangedHandler;
+
         SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
 
         if (_syncChangedHandler != null)
@@ -733,32 +744,24 @@
     private async Task ToggleSidebar()
     {
         SidebarState.Toggle();
-        StateHasChanged();  // immediate re-render of this component (including .page class and button icon) since handler is local
-        try
-        {
-            // Pass the target state so JS can *set* (not toggle) the class exactly; avoids parity issues with Blazor render timing.
-            await JS.InvokeVoidAsync("toggleWasmSidebar", SidebarState.IsCollapsed);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Chat] toggleSidebar failed: {ex.Message}");
-        }
+        StateHasChanged();
+        await SidebarState.SetCollapsedAsync(SidebarState.IsCollapsed, JS);
     }
 
     private async Task OnBrowserPanelChangedAsync()
     {
-        if (BrowserPanel.IsOpen && !SidebarState.IsCollapsed)
-        {
-            SidebarState.IsCollapsed = true;
-            try
-            {
-                await JS.InvokeVoidAsync("toggleWasmSidebar", true);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Chat] browser panel sidebar collapse failed: {ex.Message}");
-            }
-        }
+        if (BrowserPanel.IsOpen && ChatPanel.IsOpen && !SidebarState.IsCollapsed)
+            await SidebarState.SetCollapsedAsync(true, JS);
+
+        StateHasChanged();
+    }
+
+    private async Task OnChatPanelChangedAsync()
+    {
+        if (ChatPanel.IsOpen && AppEnvironment.IsMaui)
+            await SidebarState.SetCollapsedAsync(false, JS);
+        else if (!ChatPanel.IsOpen && !SidebarState.IsCollapsed)
+            await SidebarState.SetCollapsedAsync(true, JS);
 
         StateHasChanged();
     }

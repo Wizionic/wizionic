@@ -3,21 +3,43 @@
 @inject NavigationManager Nav
 @inject ISidebarState SidebarState
 @inject IBrowserPanelState BrowserPanel
+@inject IChatPanelState ChatPanel
+@inject INotesPanelState NotesPanel
 @using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
 
 <div class="top-row px-4">
     <div class="top-left">
-        <a class="cf-brand" href="/chat">
-            <img width="50" src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
-        </a>
-        <a href="/notes" title="Notes">
-            <i class="bi bi-journal-text" style="font-size: 24px;"></i>
-        </a>
+        @if (AppEnvironment.IsMaui)
+        {
+            <button type="button" @onclick="ToggleChat" title="Chat"
+                    class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
+                <img src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
+            </button>
+        }
+        else
+        {
+            <a class="cf-brand" href="/chat">
+                <img width="50" src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
+            </a>
+        }
+        @if (AppEnvironment.IsMaui)
+        {
+            <button type="button" @onclick="ToggleNotes" title="Notes"
+                    class="topbar-toggle-btn @(IsNotesActive ? "active" : "")">
+                <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+            </button>
+        }
+        else
+        {
+            <a href="/notes" title="Notes">
+                <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+            </a>
+        }
         @if (AppEnvironment.IsMaui)
         {
             <button type="button" @onclick="ToggleBrowser" title="Browser"
-                    class="browser-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
+                    class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
                 <i class="bi bi-globe" style="font-size: 24px;"></i>
             </button>
         }
@@ -52,44 +74,111 @@
 
 @code {
     private Action? _browserPanelChangedHandler;
+    private Action? _chatPanelChangedHandler;
+    private Action? _notesPanelChangedHandler;
+
+    private bool IsChatActive => IsOnChatPage() && ChatPanel.IsOpen;
+    private bool IsNotesActive => IsOnNotesPage() && NotesPanel.IsOpen;
 
     protected override void OnInitialized()
     {
         _browserPanelChangedHandler = () => InvokeAsync(StateHasChanged);
         BrowserPanel.OnChanged += _browserPanelChangedHandler;
+
+        _chatPanelChangedHandler = () => InvokeAsync(StateHasChanged);
+        ChatPanel.OnChanged += _chatPanelChangedHandler;
+
+        _notesPanelChangedHandler = () => InvokeAsync(StateHasChanged);
+        NotesPanel.OnChanged += _notesPanelChangedHandler;
+
+        Nav.LocationChanged += OnLocationChanged;
+        SyncPanelStateFromRoute();
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        SyncPanelStateFromRoute();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void SyncPanelStateFromRoute()
+    {
+        if (IsOnNotesPage())
+        {
+            NotesPanel.IsOpen = true;
+            ChatPanel.IsOpen = false;
+            BrowserPanel.IsOpen = false;
+        }
+        else if (IsOnChatPage())
+        {
+            NotesPanel.IsOpen = false;
+        }
+        else
+        {
+            NotesPanel.IsOpen = false;
+        }
+    }
+
+    private async Task ToggleChat()
+    {
+        NotesPanel.IsOpen = false;
+
+        if (!IsOnChatPage())
+        {
+            ChatPanel.IsOpen = true;
+            Nav.NavigateTo("/chat");
+            if (AppEnvironment.IsMaui)
+                await SidebarState.SetCollapsedAsync(false, JS);
+            return;
+        }
+
+        ChatPanel.Toggle();
+        if (ChatPanel.IsOpen && AppEnvironment.IsMaui)
+            await SidebarState.SetCollapsedAsync(false, JS);
+        else if (!ChatPanel.IsOpen)
+            await SidebarState.SetCollapsedAsync(true, JS);
+    }
+
+    private async Task ToggleNotes()
+    {
+        ChatPanel.IsOpen = false;
+        BrowserPanel.IsOpen = false;
+        NotesPanel.IsOpen = true;
+
+        if (!IsOnNotesPage())
+            Nav.NavigateTo("/notes");
+
+        await SidebarState.SetCollapsedAsync(false, JS);
     }
 
     private async Task ToggleBrowser()
     {
-        var uri = Nav.ToAbsoluteUri(Nav.Uri);
-        if (!uri.AbsolutePath.TrimEnd('/').Equals("/chat", StringComparison.OrdinalIgnoreCase))
+        NotesPanel.IsOpen = false;
+
+        if (!IsOnChatPage())
         {
             if (!BrowserPanel.IsOpen)
                 BrowserPanel.IsOpen = true;
             Nav.NavigateTo("/chat");
-            await CollapseSidebarIfNeededAsync();
+            await SidebarState.SetCollapsedAsync(true, JS);
             return;
         }
 
         BrowserPanel.Toggle();
         if (BrowserPanel.IsOpen)
-            await CollapseSidebarIfNeededAsync();
+            await SidebarState.SetCollapsedAsync(true, JS);
     }
 
-    private async Task CollapseSidebarIfNeededAsync()
+    private bool IsOnChatPage()
     {
-        if (!SidebarState.IsCollapsed)
-        {
-            SidebarState.IsCollapsed = true;
-            try
-            {
-                await JS.InvokeVoidAsync("toggleWasmSidebar", true);
-            }
-            catch
-            {
-                // JS interop may be unavailable during static render passes.
-            }
-        }
+        var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
+        return path.Equals("/chat", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsOnNotesPage()
+    {
+        var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
+        return path.Equals("/notes", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -106,7 +195,15 @@
 
     public void Dispose()
     {
+        Nav.LocationChanged -= OnLocationChanged;
+
         if (_browserPanelChangedHandler != null)
             BrowserPanel.OnChanged -= _browserPanelChangedHandler;
+
+        if (_chatPanelChangedHandler != null)
+            ChatPanel.OnChanged -= _chatPanelChangedHandler;
+
+        if (_notesPanelChangedHandler != null)
+            NotesPanel.OnChanged -= _notesPanelChangedHandler;
     }
 }
