@@ -24,5 +24,25 @@ public class MauiSidebarState : ISidebarState
 
     public void Toggle() => IsCollapsed = !IsCollapsed;
 
+    public async Task SetCollapsedAsync(bool collapsed, IJSRuntime? js = null, CancellationToken ct = default)
+    {
+        if (IsCollapsed == collapsed)
+            return;
+
+        IsCollapsed = collapsed;
+
+        if (js is null)
+            return;
+
+        try
+        {
+            await js.InvokeVoidAsync("toggleWasmSidebar", ct, collapsed);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MauiSidebarState] SetCollapsedAsync failed: {ex.Message}");
+        }
+    }
+
     public Task CollapseIfMobileAsync(IJSRuntime? js = null, CancellationToken ct = default) => Task.CompletedTask;
 }
