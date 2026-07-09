@@ -2,7 +2,7 @@
 
 **Purpose:** Quick reference for humans and AI agents working on this codebase. Describes what exists today (not the future roadmap). For planned work see [ROADMAP.md](/roadmap).
 
-**Stack:** .NET 10 · Blazor Web App (Auto: server shell + Interactive WebAssembly) · Blazor Hybrid (MAUI) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI · WebView2 (MAUI browser)
+**Stack:** .NET 10 · Blazor Web App (Auto: server shell + Interactive WebAssembly) · Blazor Hybrid (MAUI Windows/mobile) · Linux desktop (GirCore Adwaita + WebKit) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI · WebView2 (Windows browser) / WebKitGTK (Linux browser)
 
 ---
 
@@ -25,7 +25,7 @@
  ├── ChatfishApp.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
  ├── ChatfishApp.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)
  ├── ChatfishApp.Client/         # WASM Implementation: Browser-specific implementations (IndexedDB, JS Crypto)
- ├── ChatfishApp.Maui/           # MAUI App: Native shell, native storage (SQLite), native sync
+ ├── ChatfishApp.Maui/           # Desktop/mobile clients: MAUI (Win/iOS/Android) + Linux desktop (net10.0)
  ├── Components/                 # Server shell for Blazor Web App (App.razor, Routes.razor)
  ├── Apis/                       # Host API endpoints (WasmApiEndpoints, SyncHub, etc.)
  ├── Data/                       # Server-side EF Core entities + ChatfishDbContext
@@ -34,14 +34,14 @@
  └── wwwroot/                    # Static assets and documentation
  ```
  
- ### Project Sharing Model: WASM vs MAUI
+ ### Project Sharing Model: WASM vs desktop clients
  
  | Layer | Shared? | Role |
  |-------|---------|------|
  | **`ChatfishApp.Core`** | ✅ Yes | Defines the "what": Interfaces (`IConversationStore`, `ISyncService`) and DTOs. No platform-specific code. |
- | **`ChatfishApp.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to both clients. |
+ | **`ChatfishApp.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to WASM & desktop. |
  | **`ChatfishApp.Client`** | ❌ No | WASM-specific: Implements Core interfaces using browser APIs (IndexedDB, WebCrypto). |
- | **`ChatfishApp.Maui`** | ❌ No | MAUI-specific: Implements Core interfaces using native APIs (SQLite, platform storage), hosts the Shared UI in a WebView/Blazor Hybrid shell. |
+ | **`ChatfishApp.Maui`** | ❌ No | Native desktop/mobile: SQLite storage, SIPSorcery WebRTC, platform browser hosts. **Windows/mobile** = MAUI Blazor Hybrid + WebView2; **Linux** = GirCore Adwaita + WebKit (not full MAUI). |
 
 
 ---
@@ -229,18 +229,23 @@ ChatCompletionService
 
 ---
 
-## Embedded Browser (MAUI)
+## Embedded Browser (desktop)
 
-The MAUI chat page can show a split view: chat on the left, embedded browser on the right. Toggle via the globe icon in `AppTopBar.razor` (`IBrowserPanelState`). When open, the model can navigate, read page text, click elements, and fill form fields agentically.
+The chat page can show a split view: chat on the left, embedded browser on the right. Toggle via the globe icon in `AppTopBar.razor` (`IBrowserPanelState`). When open, the model can navigate, read page text, click elements, and fill form fields agentically. Available on **Windows MAUI** and **Linux desktop**; WASM uses null browser services.
 
 ### WebView architecture (hybrid shell + native overlay)
 
-Chatfish uses a **two-layer** pattern on Windows:
+Chatfish uses a **two-layer** pattern on every desktop host:
 
-1. **Blazor Hybrid shell** — `BlazorWebView` in `MainPage.xaml` renders all Razor UI (chat, toolbar, browser chrome).
-2. **Native WebView overlays** — two `Microsoft.Maui.Controls.WebView` controls (`browserWebView`, `browserSideWebView`) sit in the same `AbsoluteLayout`, positioned on top of placeholder `<div>` hosts in the Blazor DOM.
+1. **Blazor shell** — renders all Razor UI (chat, toolbar, browser chrome).
+2. **Native WebView overlays** — two platform WebViews sit on top of placeholder `<div>` hosts in the Blazor DOM, positioned from JS bounds.
 
-On **Windows**, MAUI's `WebView` maps to **WebView2** (Chromium/Edge). `BrowserWebViewPlatformService` configures the underlying `CoreWebView2` for new-window behavior, download prompts, and clear-on-exit. This is **not** an in-DOM `<iframe>` — it is a **native platform WebView** overlaid at pixel coordinates reported from JavaScript.
+| Platform | Blazor host | Overlay WebViews | Engine |
+|----------|-------------|------------------|--------|
+| **Windows** | MAUI `BlazorWebView` in `MainPage.xaml` | MAUI `WebView` → **WebView2** | Chromium/Edge |
+| **Linux** | `WebKit.BlazorWebView.GirCore` in Adwaita window | GirCore `WebKit.WebView` in `Gtk.Overlay` | **WebKitGTK 6** |
+
+On **Windows**, `BrowserWebViewPlatformService` configures `CoreWebView2` for new-window behavior, download prompts, and clear-on-exit. On **Linux**, see [Linux Desktop](#linux-desktop-maui-project-net100). This is **not** an in-DOM `<iframe>` — native views are overlaid at pixel coordinates reported from JavaScript.
 
 ```
 MainPage.xaml (AbsoluteLayout)
@@ -277,19 +282,22 @@ Native WebView visible at correct position under Blazor toolbar
 | `IBrowserSideAgentService` | `ChatfishApp.Core/Browser/` | Side-panel WebView navigation |
 | `IPwaDetector` | `ChatfishApp.Core/Browser/` | PWA manifest detection for install/pin |
 
-### MAUI implementations
+### Platform implementations
 
-| Service | File | Role |
-|---------|------|------|
-| `MauiBrowserAgentService` | `MauiBrowserAgentService.cs` | Main WebView: `WebView.Source`, `EvaluateJavaScriptAsync` for agent actions |
-| `MauiSideBrowserService` | `MauiSideBrowserService.cs` | Side-panel WebView |
-| `MauiBrowserContext` | `MauiBrowserContext.cs` | `IBrowserContext` — available when panel open **and** WebView attached |
-| `BrowserAgentToolModule` | `BrowserAgentToolModule.cs` | Exposes agent tools to the model |
-| `BrowserOverlayService` | `BrowserOverlayService.cs` | Positions native WebViews |
-| `BrowserWebViewPlatformService` | `BrowserWebViewPlatformService.cs` | WebView2 platform hooks (Windows) |
-| `SqliteBrowserStore` / `SqliteBrowserSidebarStore` | MAUI Services | Persistent bookmarks, history, pinned apps |
+| Service | Windows MAUI | Linux desktop | Role |
+|---------|--------------|---------------|------|
+| Main browser agent | `MauiBrowserAgentService` | `LinuxBrowserAgentService` | Navigation, history, `EvaluateScriptAsync` |
+| Side browser agent | `MauiSideBrowserService` | `LinuxSideBrowserService` | Side-panel WebView |
+| Overlay positioning | `BrowserOverlayService` | `LinuxBrowserOverlayService` | Bounds + visibility for native views |
+| Host / layout | `MainPage.xaml` AbsoluteLayout | `LinuxBrowserHost` (`Gtk.Overlay`) | Places Blazor + two WebViews |
+| Platform hooks | `BrowserWebViewPlatformService` (WebView2) | (WebKit settings in host) | Engine-specific config |
+| Context / tools | `MauiBrowserContext`, `BrowserAgentToolModule` | same (shared) | Agent tool bridge |
+| Persistence | `SqliteBrowserStore` / `SqliteBrowserSidebarStore` | same | Bookmarks, history, pinned PWAs |
+| PWA detect | `MauiPwaDetector` | same (uses agent JS eval) | Manifest discovery |
 
-Wiring happens in `MainPage.xaml.cs` on load: `agent.AttachWebView(browserWebView)`, `overlay.Initialize(...)`, `platform.Attach(browserWebView)`.
+**Windows wiring** (`MainPage.xaml.cs`): `agent.AttachWebView(browserWebView)`, `overlay.Initialize(...)`, `platform.Attach(browserWebView)`.
+
+**Linux wiring** (`Platforms/Linux/Program.cs` + `LinuxBrowserHost`): Adwaita window content is `LinuxBrowserHost.BuildRoot(blazorWebView)`; main/side `WebKit.WebView`s attach to `LinuxBrowserAgentService` / `LinuxSideBrowserService`.
 
 ### JS interop (`browserInterop.js`)
 
@@ -304,7 +312,7 @@ JS is used for **layout and drag UX**, not for loading web pages:
 | `chatfishBrowser.startBookmarkBarDrag` / `startSidebarDrag` / `startVtoolbarDrag` | Bookmark & PWA toolbar | Reorder via drag-drop |
 | `chatfishBrowser.getWrapperWidth` / `getPanelAnchor` | Layout helpers | Split width, context menu positioning |
 
-Agentic page interaction uses **`WebView.EvaluateJavaScriptAsync`** in C# (`MauiBrowserAgentService`): `document.querySelector`, `click()`, `innerText`, etc.
+Agentic page interaction uses native JS eval in C#: Windows `WebView.EvaluateJavaScriptAsync` (`MauiBrowserAgentService`); Linux `WebView.EvaluateJavascriptAsync` (`LinuxBrowserAgentService`).
 
 ### How chat triggers browser control
 
@@ -339,7 +347,125 @@ The model chooses CSS selectors; complex multi-step flows combine `get_page_cont
 
 The right-hand `browser-vtoolbar` lists pinned apps from `SidebarStore`. `MauiPwaDetector` watches navigation and detects `<link rel="manifest">` via in-page JS + HTML parse + HTTP guesses. When a manifest is found, the **+** button offers **Install app** (PWA metadata: name, icons, `start_url`, `display`, theme colors) or **Pin page only**. PWAs open in the side panel or main browser per `OpenTarget` (configurable via context menu). Drag-reorder uses `chatfishBrowser.startVtoolbarDrag`.
 
-**Key files:** `EmbeddedBrowser.razor`, `ChatPage.razor`, `browserInterop.js`, `MainPage.xaml`, `MauiBrowserAgentService.cs`, `BrowserAgentToolModule.cs`, `MauiPwaDetector.cs`, `ContextualRequestRouter.cs`
+**URL resolution:** Manifest members (`start_url`, icon `src`) resolve via `PwaManifestHelper.ResolveUrl`. On Linux/.NET, root-relative paths like `"/"` must **not** be passed to `Uri.TryCreate(..., UriKind.Absolute)` alone — that yields `file:///` and the browser normalizer turns them into a Brave search. Resolution always uses the manifest/page base URL; non-http(s) start URLs are refused at pin/open time. Broken pins from earlier builds are healed on load when a valid icon origin exists (`HealPinnedApp`).
+
+**Key files:** `EmbeddedBrowser.razor`, `ChatPage.razor`, `browserInterop.js`, `MainPage.xaml` (Windows), `LinuxBrowserHost.cs` (Linux), `MauiBrowserAgentService.cs` / `LinuxBrowserAgentService.cs`, `BrowserAgentToolModule.cs`, `MauiPwaDetector.cs`, `PwaManifestHelper.cs`, `ContextualRequestRouter.cs`
+
+---
+
+## Linux Desktop (`ChatfishApp.Maui` / `net10.0`)
+
+Linux is a **first-class desktop target** in the same `ChatfishApp.Maui` project, but it does **not** use the MAUI window stack (`UseMaui` is off for `net10.0`). The shell is a native **GTK4 / libadwaita** app hosting Blazor and browser overlays via **GirCore** bindings and **WebKitGTK**.
+
+### Why not full MAUI on Linux?
+
+| Constraint | Consequence |
+|------------|-------------|
+| .NET MAUI workload does not ship a supported Linux desktop TFM the way Windows/iOS/Android do | Target framework is plain **`net10.0`** with `#define LINUX_DESKTOP` |
+| `UseMaui` / SingleProject / `MainPage.xaml` are disabled for that TFM | No MAUI `Application` / `BlazorWebView` (Maui package) |
+| Embedded browser still needs a real WebView | Host **WebKitGTK 6** directly; Blazor UI via `WebKit.BlazorWebView.GirCore` |
+
+Shared UI (`ChatfishApp.Shared`), Core contracts, SQLite stores, SIPSorcery sync, Home Assistant, and BrowserAgent tools are the same as Windows; only the **window host** and **WebView implementation** differ.
+
+### Target frameworks (host OS)
+
+Defined in `ChatfishApp.Maui.csproj`:
+
+| Host OS | Typical TFMs |
+|---------|----------------|
+| **Linux** | `net10.0` (always); `net10.0-android` if Android SDK present |
+| **Windows** | `net10.0-windows10.0.19041.0` (+ mobile TFMs when configured) |
+| **macOS** | `net10.0-ios`, `net10.0-maccatalyst` (when not on Linux) |
+
+Linux-only sources: `Platforms/Linux/**`, `Services/Linux/**`. Windows/mobile platforms and `MainPage`/`App` XAML are **removed from compile** when `TargetFramework == net10.0`.
+
+### NuGet packages (Linux TFM)
+
+| Package | Version (as of writing) | Role |
+|---------|-------------------------|------|
+| **`WebKit.BlazorWebView.GirCore`** | `10.0.0-rc.1` | Blazor Hybrid host on WebKitGTK — `BlazorWebView`, DI registration, GLib dispatcher |
+| **`GirCore.WebKit-6.0`** | `0.7.0-preview.2` | C# bindings for WebKitGTK 6 (`WebKit.WebView`, JS eval, load events) |
+| **`GirCore.Adw-1`** | `0.7.0-preview.2` | libadwaita (`Adw.Application`, `ApplicationWindow`, `HeaderBar`, `ToolbarView`) |
+| **`GirCore.Gtk-4.0`** | `0.7.0-preview.2` | GTK4 widgets (`Gtk.Overlay`, layout, window chrome) |
+| **`Microsoft.AspNetCore.Components.WebView`** | `10.0.0` | Shared Blazor WebView abstractions (not the MAUI package) |
+| **`Microsoft.Maui.Controls`** | `$(MauiVersion)` e.g. 10.0.80 | Still referenced for shared types / assets; **not** the window host |
+| **`Microsoft.Data.Sqlite`**, SignalR client, **SIPSorcery**, **Velopack**, config/logging packages | various | Same as other Maui TFMs |
+
+**Not used on Linux:** `Microsoft.AspNetCore.Components.WebView.Maui` (Windows/mobile only).
+
+**Native system deps (distro packages):** GTK 4, libadwaita-1, WebKitGTK 6 (`libwebkitgtk-6.0`), and transitive GLib/GObject stack. GirCore is P/Invoke over those shared libraries — they must be installed on the machine.
+
+### Process / UI tree
+
+```
+Platforms/Linux/Program.cs  (Main)
+        │
+        ├── Adw.Module / Gtk.Module / WebKit.Module.Initialize()
+        ├── Adw.Application.New("com.chatfish.app")
+        │       └── RunWithSynchronizationContext(args)   ← GLib main loop + SyncContext
+        │
+        └── OnActivate
+                ├── Adw.ApplicationWindow (title "Chatfish", min/max/close)
+                │     └── Adw.ToolbarView
+                │           ├── Adw.HeaderBar  (decoration layout :minimize,maximize,close)
+                │           └── LinuxBrowserHost.BuildRoot(BlazorWebView)
+                │                 └── Gtk.Overlay
+                │                       ├── BlazorWebView (WebKit)  ← Shared Routes / chat UI
+                │                       ├── WebKit.WebView          ← main embedded browser
+                │                       └── WebKit.WebView          ← side-panel browser
+                ├── MauiProgram.CreateLinuxServiceProvider()
+                └── LinuxDesktopIcon.Apply(window)  ← dock icon + .desktop entry
+```
+
+**Important:** `RunWithSynchronizationContext` is required so Blazor/`IDispatcher` and GirCore callbacks share the GLib main loop. Objects that outlive the activate handler are **GC-pinned** (`GCHandle` + `LifetimeRoots`) to avoid AsyncReadyCallback / GObject lifetime crashes.
+
+### DI (`MauiProgram.CreateLinuxServiceProvider`)
+
+Registers the same Chatfish services as Windows (SQLite stores, sync, HA, tools, themes), then:
+
+1. `services.AddBlazorWebView(new BlazorWebViewOptions { RootComponent = typeof(Routes), HostPath = "wwwroot/index.html" })`
+2. Linux browser stack: `LinuxBrowserHost`, `LinuxBrowserAgentService`, `LinuxSideBrowserService`, `LinuxBrowserOverlayService` as the `IBrowser*` implementations
+
+`wwwroot/**` is copied to the output directory (GirCore serves the host page from disk next to the executable).
+
+### Browser overlays (Linux-specific layout)
+
+`LinuxBrowserHost` places the two WebKit views in a `Gtk.Overlay` over the Blazor surface. Bounds come from the same `browserInterop.js` observers as Windows (`IBrowserOverlaySync` → `LinuxBrowserOverlayService`). Layout uses **clamp + margins** so the side WebView stays in the bookmarks/app column and does not cover the chat sidebar.
+
+`IBrowserAgentService.IsAvailable` is true only when the browser panel is open **and** a WebView is attached — same gate as Windows for BrowserAgent tools.
+
+### Desktop integration (dock / launch bar)
+
+`MauiIcon` does not apply without the MAUI window stack. `LinuxDesktopIcon` on startup:
+
+1. Copies the full-res mascot (`chatfish-appicon.png` from `Resources/AppIcon/chatfish.png`) into `~/.local/share/icons/hicolor/*/apps/com.chatfish.app.png`
+2. Writes `~/.local/share/applications/com.chatfish.app.desktop` (`Icon=com.chatfish.app`, `Exec=` apphost path)
+3. Sets `Gtk.Window.SetDefaultIconName` / `SetIconName` and optionally `Gdk.Toplevel.SetIconList`
+
+Application id: **`com.chatfish.app`**. Local data: typically `~/.local/share/Chatfish/` (SQLite settings, browser history, pinned apps).
+
+### Build & run
+
+```bash
+# From repo root (Linux host)
+dotnet build ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0
+dotnet run --project ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0
+# Or run the apphost:
+./ChatfishApp.Maui/bin/Debug/net10.0/Chatfish
+```
+
+### Key Linux files
+
+| Path | Role |
+|------|------|
+| `Platforms/Linux/Program.cs` | Entry point, Adwaita window, BlazorWebView, GC pins |
+| `MauiProgram.cs` (`CreateLinuxServiceProvider`, `LINUX_DESKTOP` branches) | DI |
+| `Services/Linux/LinuxBrowserHost.cs` | Gtk.Overlay + main/side WebKit views |
+| `Services/Linux/LinuxBrowserAgentService.cs` | Main browser agent (LoadUri, EvaluateJavascript, history) |
+| `Services/Linux/LinuxSideBrowserService.cs` | Side-panel WebView |
+| `Services/Linux/LinuxBrowserOverlayService.cs` | Bounds / visibility from Blazor JS |
+| `Services/Linux/LinuxDesktopIcon.cs` | Icon theme + .desktop + window icon |
+| `ChatfishApp.Maui.csproj` | Multi-target, GirCore packages, Linux compile filters |
 
 ---
 
@@ -479,7 +605,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | **Sync** | `Services/WasmSyncService.cs` | `Services/MauiSyncService.cs` |
  | **Keys/Settings** | `Services/WasmKeyStore.cs` (localStorage) | `Services/SqliteKeyStore.cs` (SQLite) |
  | **Home Assistant** | `NullSmartHomeService` (no-op) | `Services/HomeAssistantService.cs` |
- | **Embedded browser** | Null browser services (`NullBrowserAgentService`, etc.) | `MauiBrowserAgentService`, `BrowserOverlayService`, `SqliteBrowserStore` |
+ | **Embedded browser** | Null browser services (`NullBrowserAgentService`, etc.) | **Windows:** `MauiBrowserAgentService`, `BrowserOverlayService`, WebView2. **Linux:** `LinuxBrowserAgentService`, `LinuxBrowserHost`, WebKitGTK. Shared: `SqliteBrowserStore`, `MauiPwaDetector`. |
 
 
 ---
@@ -494,10 +620,11 @@ A phone/tablet without Ollama can designate another online device as **AI server
  6. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
  7. For **tools/MCP** → `NativeToolModule`, `CompositeToolProvider`, `McpToolSource`, `ToolsPage.razor`.
  8. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `ContextualRequestRouter`, `ChatCompletionService`.
- 9. For **embedded browser** → `IBrowserAgentService` / `IBrowserContext` (Core), `EmbeddedBrowser.razor`, `browserInterop.js`, `MainPage.xaml`, `BrowserAgentToolModule`.
- 10. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
+ 9. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
+ 10. For **embedded browser / shell (Linux)** → `Platforms/Linux/Program.cs`, `Services/Linux/*`, `WebKit.BlazorWebView.GirCore`, `MauiProgram.CreateLinuxServiceProvider`, section [Linux Desktop](#linux-desktop-maui-project-net100).
+ 11. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
 
 
 ---
 
-*Last updated: July 2026 — reflects WASM local-storage architecture plus MAUI Home Assistant, embedded browser, themes, and PWA toolbar.*
+*Last updated: July 2026 — WASM local-storage architecture; MAUI Windows Home Assistant & WebView2 browser; Linux desktop (GirCore Adwaita + WebKitGTK Blazor + browser overlays); themes and PWA toolbar.*
