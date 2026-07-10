@@ -12,7 +12,7 @@ public sealed class SqliteHistoryDatabase
 
     public SqliteHistoryDatabase()
     {
-        var dbPath = Path.Combine(FileSystem.AppDataDirectory, "chatfish_local.db");
+        var dbPath = Path.Combine(MauiAppData.Directory, "chatfish_local.db");
         _connectionString = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
     }
 

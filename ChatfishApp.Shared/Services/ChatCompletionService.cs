@@ -145,6 +145,9 @@ public sealed class ChatCompletionService : IChatCompletionService
                     AppendSystemInstruction(chatHistory, BuildHomeAssistantPrompt(session));
                 }
 
+                if (ContextualRequestRouter.ShouldEnforceBrowserTools(route))
+                    AppendSystemInstruction(chatHistory, BuildBrowserToolEnforcementPrompt());
+
                 chatOptions = new ChatOptions { Tools = _currentTools.ToList() };
             }
             else
@@ -229,6 +232,43 @@ public sealed class ChatCompletionService : IChatCompletionService
                                     $"I wasn't able to control your Home Assistant devices — the model answered without calling the Home Assistant tools. " +
                                     $"Start with your assistant name (e.g. \"{assistantName}, turn off the kitchen light\") or continue within 15 minutes of a successful command. " +
                                     "Try a model with stronger tool support (e.g. Llama 3.3 or Qwen) if this keeps happening.";
+                            }
+                        }
+                    }
+
+                    if (ContextualRequestRouter.ShouldEnforceBrowserTools(_currentRoute) &&
+                        !BrowserToolsWereInvoked() &&
+                        LooksLikeBrowserNavigationRequest(lastUserMessage))
+                    {
+                        _trace.Record("⚠️ Model replied without calling browser tools — retrying with tool-required prompt.");
+
+                        var retryHistory = BuildRetryHistoryForBrowser(chatHistory);
+                        if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var (retryText, retrySource) = await TryOllamaRawCompletionAsync(
+                                modelId, retryHistory, supportsTools: true, contextSize, ct);
+                            if (!string.IsNullOrWhiteSpace(retryText))
+                            {
+                                responseText = retryText;
+                                extractSource = retrySource;
+                            }
+                        }
+                        else
+                        {
+                            var retryResponse = await client.GetResponseAsync(retryHistory, chatOptions ?? new ChatOptions(), ct);
+                            var retryText = ExtractFinalDisplayText(retryResponse);
+                            if (!string.IsNullOrWhiteSpace(retryText) && !IsBogusExtractedText(retryText))
+                                responseText = retryText;
+                        }
+
+                        if (!BrowserToolsWereInvoked())
+                        {
+                            _trace.Record("⚠️ Browser navigation was NOT performed — no browser tool was called.");
+                            if (ResponseClaimsCannotBrowse(responseText))
+                            {
+                                responseText =
+                                    "I wasn't able to drive the embedded browser — the model answered without calling NavigateTo. " +
+                                    "Keep the browser panel open and try again, or use a model with stronger tool calling.";
                             }
                         }
                     }
@@ -525,18 +565,41 @@ public sealed class ChatCompletionService : IChatCompletionService
         return retryHistory;
     }
 
+    private static List<AiChatMessage> BuildRetryHistoryForBrowser(IList<AiChatMessage> chatHistory)
+    {
+        var retryHistory = chatHistory.ToList();
+        AppendSystemInstruction(
+            retryHistory,
+            "CRITICAL: Call NavigateTo now with the full http(s) URL the user requested. " +
+            "Do not answer with text only — you must invoke NavigateTo. " +
+            "Never claim you cannot navigate or open websites.");
+        return retryHistory;
+    }
+
     private string BuildBrowserPrompt()
     {
         var url = string.IsNullOrWhiteSpace(_browserAgent.CurrentUrl) ? "(none)" : _browserAgent.CurrentUrl;
         var title = string.IsNullOrWhiteSpace(_browserAgent.PageTitle) ? "(none)" : _browserAgent.PageTitle;
 
         return $"""
+            EMBEDDED BROWSER IS ACTIVE in this Chatfish desktop app.
             Current browser URL: {url}
             Page title: "{title}"
-            The user may ask you to summarize this page, extract information,
-            or navigate to other URLs. Use the available browser tools.
+
+            You control that real embedded browser via tools (NavigateTo, GetPageContent, ClickElement, FillField).
+            When the user asks to open, go to, visit, load, or navigate to a site or URL:
+            - You MUST call NavigateTo with a full http(s) URL (prepend https:// if the user omitted the scheme).
+            - Do NOT say you cannot browse, navigate, or open websites.
+            - Do NOT only use SearchWeb for a navigation request — call NavigateTo first.
+            After NavigateTo succeeds, confirm the destination briefly. Use GetPageContent when asked about the page.
             """;
     }
+
+    private static string BuildBrowserToolEnforcementPrompt() =>
+        """
+        CRITICAL: Browser tools are enabled for this turn. For any request to open or navigate to a website,
+        you MUST invoke NavigateTo (and optionally GetPageContent). Never claim you lack browser capability.
+        """;
 
     private string BuildHomeAssistantPrompt(RoutingSession session)
     {
@@ -595,6 +658,47 @@ public sealed class ChatCompletionService : IChatCompletionService
 
     private bool HaToolsWereInvoked() =>
         _trace.GetCurrentTrace().Any(line => line.Contains("🏠", StringComparison.Ordinal));
+
+    private bool BrowserToolsWereInvoked() =>
+        _trace.GetCurrentTrace().Any(line => line.Contains("🌐", StringComparison.Ordinal));
+
+    private static bool LooksLikeBrowserNavigationRequest(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var lower = message.ToLowerInvariant();
+        string[] markers =
+        [
+            "navigate", "go to", "open ", "open\t", "visit ", "browse to", "load ",
+            "take me to", "bring up", "pull up", "http://", "https://", "www."
+        ];
+        if (markers.Any(m => lower.Contains(m, StringComparison.Ordinal)))
+            return true;
+
+        // Bare domain-ish tokens: google.com, usatt.org
+        return Regex.IsMatch(
+            message,
+            @"\b[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static bool ResponseClaimsCannotBrowse(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var lower = text.ToLowerInvariant();
+        string[] markers =
+        [
+            "can't navigate", "cannot navigate", "can't browse", "cannot browse",
+            "don't have the capability", "do not have the capability",
+            "not designed to", "can't open websites", "cannot open websites",
+            "i'm not able to navigate", "i am not able to navigate",
+            "can't directly navigate", "cannot directly navigate"
+        ];
+        return markers.Any(m => lower.Contains(m, StringComparison.Ordinal));
+    }
 
     private static bool ResponseClaimsHomeAssistantAction(string? text)
     {

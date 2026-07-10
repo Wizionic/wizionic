@@ -28,7 +28,13 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
         {
             var loaded = JsonSerializer.Deserialize<List<SidebarApp>>(appsJson);
             if (loaded != null)
-                _apps = loaded;
+            {
+                // Heal Linux Uri bug: root-relative start_url ("/") was stored as file:///.
+                var healed = loaded.Select(PwaManifestHelper.HealPinnedApp).ToList();
+                _apps = healed;
+                if (!healed.SequenceEqual(loaded))
+                    await SaveAppsAsync(ct);
+            }
         }
 
         var widthStr = await _db.GetStringAsync(SideWidthKey, ct);

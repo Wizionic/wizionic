@@ -80,10 +80,23 @@ window.chatfishBrowser = window.chatfishBrowser || {
         if (sideEl)
             this._observedEls.push(sideEl);
 
+        // Also watch the browser body / side column so opening the settings/bookmarks
+        // panel (which shrinks the main host via flex) always re-reports main bounds.
+        const bodyEl = document.getElementById('browser-body');
+        if (bodyEl)
+            this._observedEls.push(bodyEl);
+        const sideCol = document.querySelector('.browser-side-column');
+        if (sideCol)
+            this._observedEls.push(sideCol);
+
         this._observer = new ResizeObserver(() => report());
         this._observedEls.forEach(el => this._observer.observe(el));
         this._resizeHandler = report;
         window.addEventListener('resize', report);
+
+        // Second tick after layout settles (side panel open/close).
+        setTimeout(() => sendBounds(), 0);
+        setTimeout(() => sendBounds(), 100);
     },
 
     reportBoundsNow: function (mainSelector, sideSelector) {

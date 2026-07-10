@@ -52,12 +52,12 @@ public sealed class MauiPwaDetector : IPwaDetector
         })()
         """;
 
-    private readonly MauiBrowserAgentService _agent;
+    private readonly IBrowserAgentService _agent;
     private readonly IBrowserSidebarStore _sidebar;
     private readonly HttpClient _http = new();
     private CancellationTokenSource? _detectCts;
 
-    public MauiPwaDetector(MauiBrowserAgentService agent, IBrowserSidebarStore sidebar)
+    public MauiPwaDetector(IBrowserAgentService agent, IBrowserSidebarStore sidebar)
     {
         _agent = agent;
         _sidebar = sidebar;

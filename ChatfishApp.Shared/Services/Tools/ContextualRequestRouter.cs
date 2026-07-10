@@ -56,6 +56,9 @@ public sealed class ContextualRequestRouter : IRequestRouter
     public static bool ShouldEnforceHomeAssistantTools(RequestRoute? route) =>
         route?.TargetModule == "HomeAssistant";
 
+    public static bool ShouldEnforceBrowserTools(RequestRoute? route) =>
+        route?.TargetModule == "BrowserAgent";
+
     public static bool ContainsWakeWord(string message, string assistantName)
     {
         if (string.IsNullOrWhiteSpace(message) || string.IsNullOrWhiteSpace(assistantName))
