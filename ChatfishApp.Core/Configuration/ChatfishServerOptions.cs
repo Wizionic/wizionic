@@ -22,18 +22,28 @@ public class ChatfishServerOptions
 
     /// <summary>
     /// Platform-specific Velopack channel directory under the site root.
+    /// Uses RuntimeInformation (not OperatingSystem) so the Core assembly stays safe if ever
+    /// loaded into a browser WASM context where OperatingSystem may be unavailable.
     /// </summary>
     public static string DefaultUpdateFeedPath =>
-        OperatingSystem.IsLinux() ? "releases/linux" : "releases/windows";
+        IsLinuxDesktop() ? "releases/linux" : "releases/windows";
 
     /// <summary>
     /// Velopack releases index file for the current platform (e.g. releases.win.json / releases.linux.json).
     /// </summary>
     public static string VelopackReleasesIndexFile =>
-        OperatingSystem.IsLinux() ? "releases.linux.json" : "releases.win.json";
+        IsLinuxDesktop() ? "releases.linux.json" : "releases.win.json";
 
     public string GetUpdateFeedUrl() =>
         string.IsNullOrWhiteSpace(UpdateFeedUrl)
             ? BaseUrl.TrimEnd('/') + "/" + DefaultUpdateFeedPath
             : UpdateFeedUrl.TrimEnd('/');
+
+    private static bool IsLinuxDesktop()
+    {
+        // Prefer RuntimeInformation — more reliable across runtimes than OperatingSystem.IsLinux()
+        // when assemblies are shared with Blazor WebAssembly.
+        return System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+            System.Runtime.InteropServices.OSPlatform.Linux);
+    }
 }

@@ -13,10 +13,9 @@
     <!-- No debug symbols in production -->
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <!-- Enable trimming for smaller Blazor WASM output -->
-    <PublishTrimmed>true</PublishTrimmed>
-    <!-- Optional: More aggressive trimming (use with caution, test thoroughly) -->
-    <!-- <TrimMode>full</TrimMode> -->
+    <!-- Do not trim the ASP.NET host (EF Core / Razor are not trim-safe).
+         WASM size is controlled by ChatfishApp.Client PublishTrimmed. -->
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
   <!-- Exclude development config files from publish -->

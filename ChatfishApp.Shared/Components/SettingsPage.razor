@@ -303,11 +303,9 @@
     private bool busy;
     private string? installedVersion;
     private string? latestFeedVersion;
-    // Platform-specific default; refined in LoadInstalledVersion from the update feed URL.
-    // Velopack packId is "Chatfish" → Chatfish.AppImage / Chatfish-win-Setup.exe
-    private string installerDownloadUrl = OperatingSystem.IsLinux()
-        ? "/releases/linux/Chatfish.AppImage"
-        : "/releases/windows/Chatfish-win-Setup.exe";
+    // Default download link for manual install; refined in LoadInstalledVersion on MAUI.
+    // Avoid OperatingSystem.* here — that type can fail to resolve in trimmed WASM builds.
+    private string installerDownloadUrl = "/releases/windows/Chatfish-win-Setup.exe";
 
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
@@ -342,17 +340,15 @@
     private void LoadInstalledVersion()
     {
         installedVersion = UpdateService.GetInstalledVersion();
-        // Velopack packId "Chatfish": Windows Setup.exe; Linux AppImage (no separate installer).
-        var packageFile = OperatingSystem.IsLinux()
-            ? "Chatfish.AppImage"
-            : "Chatfish-win-Setup.exe";
+        // Prefer the platform-specific feed URL from MauiUpdateService (already linux vs windows).
+        // Infer package name from the feed path so we never call OperatingSystem APIs in Shared UI.
+        var feed = UpdateService.UpdateFeedUrl?.TrimEnd('/');
+        if (string.IsNullOrEmpty(feed))
+            feed = "https://chatfish.me/releases/windows";
 
-        if (!string.IsNullOrEmpty(UpdateService.UpdateFeedUrl))
-            installerDownloadUrl = UpdateService.UpdateFeedUrl!.TrimEnd('/') + "/" + packageFile;
-        else if (OperatingSystem.IsLinux())
-            installerDownloadUrl = "https://chatfish.me/releases/linux/" + packageFile;
-        else
-            installerDownloadUrl = "https://chatfish.me/releases/windows/" + packageFile;
+        var isLinuxFeed = feed.Contains("/linux", StringComparison.OrdinalIgnoreCase);
+        var packageFile = isLinuxFeed ? "Chatfish.AppImage" : "Chatfish-win-Setup.exe";
+        installerDownloadUrl = feed + "/" + packageFile;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

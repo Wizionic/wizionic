@@ -13,6 +13,8 @@
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
+    <!-- Trim for smaller first download. Keep code free of trim-hostile APIs
+         (FormattableString.Invariant, OperatingSystem in Shared UI, AsyncLocal in traces). -->
     <PublishTrimmed>true</PublishTrimmed>
   </PropertyGroup>
 
