@@ -3,19 +3,33 @@ using ChatfishApp.Core.Tools;
 namespace ChatfishApp.Shared.Services.Tools;
 
 /// <summary>
-/// Per-async-context tool trace using AsyncLocal so it works with both
-/// scoped (WASM) and singleton (MAUI) ChatCompletionService lifetimes.
+/// In-memory tool execution log for the current completion.
+/// Uses instance storage (not AsyncLocal) so the type loads on Blazor WebAssembly —
+/// AsyncLocal&lt;T&gt; fails to resolve from System.Threading in the browser runtime and
+/// aborts WASM bootstrap (empty app-body / topbar-only UI).
+/// Register as scoped with ChatCompletionService, or accept interleaved traces if
+/// concurrent completions share a singleton.
 /// </summary>
 public sealed class ToolExecutionTrace : IToolExecutionTrace
 {
-    private static readonly AsyncLocal<List<string>?> _steps = new();
+    private readonly object _gate = new();
+    private List<string> _steps = [];
 
-    private List<string> Steps => _steps.Value ??= new();
+    public void Clear()
+    {
+        lock (_gate)
+            _steps = [];
+    }
 
-    public void Clear() => Steps.Clear();
+    public void Record(string message)
+    {
+        lock (_gate)
+            _steps.Add($"[{DateTime.UtcNow:HH:mm:ss.fff}] {message}");
+    }
 
-    public void Record(string message) =>
-        Steps.Add($"[{DateTime.UtcNow:HH:mm:ss.fff}] {message}");
-
-    public IReadOnlyList<string> GetCurrentTrace() => Steps.ToList();
+    public IReadOnlyList<string> GetCurrentTrace()
+    {
+        lock (_gate)
+            return _steps.ToList();
+    }
 }

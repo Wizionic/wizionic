@@ -26,6 +26,8 @@ builder.Services.AddRazorComponents()
 
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+// Ensure SQLite parent directory exists (e.g. "data/chatfish.db" for local/dev).
+EnsureSqliteDirectory(connectionString);
 builder.Services.AddDbContext<ChatfishDbContext>(options =>
 {
     options.UseSqlite(connectionString);
@@ -397,4 +399,41 @@ app.MapRazorComponents<App>()
 
 
 app.Run();
+
+/// <summary>
+/// Create the parent folder for a SQLite "Data Source=..." path so first-run
+/// local/dev doesn't crash with "unable to open database file".
+/// </summary>
+static void EnsureSqliteDirectory(string? connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+        return;
+
+    // "Data Source=data/chatfish.db" or "Data Source=./data/chatfish.db"
+    const string prefix = "Data Source=";
+    var idx = connectionString.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+    if (idx < 0)
+        return;
+
+    var path = connectionString[(idx + prefix.Length)..].Trim();
+    // Strip trailing ";Mode=..." etc.
+    var semi = path.IndexOf(';');
+    if (semi >= 0)
+        path = path[..semi].Trim();
+
+    if (string.IsNullOrWhiteSpace(path))
+        return;
+
+    try
+    {
+        var full = Path.GetFullPath(path);
+        var dir = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[DB] WARNING: could not create SQLite directory for '{path}': {ex.Message}");
+    }
+}
 
