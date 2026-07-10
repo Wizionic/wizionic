@@ -331,8 +331,27 @@
         _notesSyncChangedHandler = () => _ = RefreshNotesFromSyncAsync();
         SyncBridge.OnNotesChanged += _notesSyncChangedHandler;
 
-        _locationChangingRegistration = Nav.RegisterLocationChangingHandler(OnLocationChangingAsync);
+        // Prefer location-changing (save before leave). Fall back to LocationChanged if the
+        // method is missing from the loaded Components assembly (trim / version skew).
+        try
+        {
+            _locationChangingRegistration = Nav.RegisterLocationChangingHandler(OnLocationChangingAsync);
+        }
+        catch (MissingMethodException)
+        {
+            Console.WriteLine("[Notes] RegisterLocationChangingHandler unavailable; using LocationChanged fallback.");
+            Nav.LocationChanged += OnLocationChangedFallback;
+            _useLocationChangedFallback = true;
+        }
+        catch (Exception ex) when (ex is TypeLoadException or NotSupportedException)
+        {
+            Console.WriteLine($"[Notes] Location-changing registration failed ({ex.GetType().Name}); using LocationChanged fallback.");
+            Nav.LocationChanged += OnLocationChangedFallback;
+            _useLocationChangedFallback = true;
+        }
     }
+
+    private bool _useLocationChangedFallback;
 
     private async ValueTask OnLocationChangingAsync(LocationChangingContext context)
     {
@@ -343,6 +362,18 @@
         catch (Exception ex)
         {
             Console.WriteLine($"[Notes] Failed to autosave before navigation: {ex.Message}");
+        }
+    }
+
+    private async void OnLocationChangedFallback(object? sender, LocationChangedEventArgs e)
+    {
+        try
+        {
+            await CommitActiveEditAsync(persistToStore: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notes] Failed to autosave after navigation: {ex.Message}");
         }
     }
 
@@ -384,6 +415,8 @@
         }
 
         _locationChangingRegistration?.Dispose();
+        if (_useLocationChangedFallback)
+            Nav.LocationChanged -= OnLocationChangedFallback;
 
         if (_sidebarStateChangedHandler != null)
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
