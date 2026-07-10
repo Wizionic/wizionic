@@ -13,10 +13,17 @@
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <!-- Trim for smaller first download. Keep code free of trim-hostile APIs
-         (FormattableString.Invariant, OperatingSystem in Shared UI, AsyncLocal in traces). -->
+    <!-- Always trim this WASM client for production size. Code must stay free of trim-hostile
+         APIs (no FormattableString.Invariant, OperatingSystem in UI, AsyncLocal, catch MissingMethodException). -->
     <PublishTrimmed>true</PublishTrimmed>
   </PropertyGroup>
+
+  <!-- Re-assert trim if a parent publish set PublishTrimmed=false as a global property. -->
+  <Target Name="ForceClientWasmTrim" BeforeTargets="PrepareForILLink;_InitializeBasicAppProperties">
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+      <PublishTrimmed>true</PublishTrimmed>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <ServiceWorker Include="wwwroot\service-worker.js"

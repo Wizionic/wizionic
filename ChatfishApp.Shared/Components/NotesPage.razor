@@ -305,7 +305,6 @@
 
     private Action? _sidebarStateChangedHandler;
     private Action? _notesSyncChangedHandler;
-    private IDisposable? _locationChangingRegistration;
 
     protected override async Task OnInitializedAsync()
     {
@@ -331,41 +330,12 @@
         _notesSyncChangedHandler = () => _ = RefreshNotesFromSyncAsync();
         SyncBridge.OnNotesChanged += _notesSyncChangedHandler;
 
-        // Prefer location-changing (save before leave). Fall back to LocationChanged if the
-        // method is missing from the loaded Components assembly (trim / version skew).
-        try
-        {
-            _locationChangingRegistration = Nav.RegisterLocationChangingHandler(OnLocationChangingAsync);
-        }
-        catch (MissingMethodException)
-        {
-            Console.WriteLine("[Notes] RegisterLocationChangingHandler unavailable; using LocationChanged fallback.");
-            Nav.LocationChanged += OnLocationChangedFallback;
-            _useLocationChangedFallback = true;
-        }
-        catch (Exception ex) when (ex is TypeLoadException or NotSupportedException)
-        {
-            Console.WriteLine($"[Notes] Location-changing registration failed ({ex.GetType().Name}); using LocationChanged fallback.");
-            Nav.LocationChanged += OnLocationChangedFallback;
-            _useLocationChangedFallback = true;
-        }
+        // Autosave when navigating away. Use LocationChanged only — do not catch
+        // MissingMethodException (that type can be stripped under WASM trim and crash OnInitialized).
+        Nav.LocationChanged += OnLocationChanged;
     }
 
-    private bool _useLocationChangedFallback;
-
-    private async ValueTask OnLocationChangingAsync(LocationChangingContext context)
-    {
-        try
-        {
-            await CommitActiveEditAsync(persistToStore: true);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Notes] Failed to autosave before navigation: {ex.Message}");
-        }
-    }
-
-    private async void OnLocationChangedFallback(object? sender, LocationChangedEventArgs e)
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         try
         {
@@ -414,9 +384,7 @@
             Console.WriteLine($"[Notes] Failed to autosave on dispose: {ex.Message}");
         }
 
-        _locationChangingRegistration?.Dispose();
-        if (_useLocationChangedFallback)
-            Nav.LocationChanged -= OnLocationChangedFallback;
+        Nav.LocationChanged -= OnLocationChanged;
 
         if (_sidebarStateChangedHandler != null)
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
