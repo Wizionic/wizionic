@@ -1,6 +1,7 @@
 @inject IAuthService Auth
 @inject IGuestDataMigrationService? GuestMigration
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
     <h2>Chatfish</h2>
@@ -10,13 +11,28 @@
     @if (!AppEnvironment.IsMaui)
     {
     <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--success); border: 1px solid var(--color-success-border); border-radius: 6px;">
-        <a href="/releases/windows/Chatfish-win-Setup.exe" download>
-            Download Chatfish App for Windows
-        </a>
-        <span style="margin: 0 0.5rem; color: var(--color-text-muted);">·</span>
-        <a href="/releases/linux/Chatfish.AppImage" download>
-            Download for Linux (AppImage)
-        </a>
+        <div style="margin-bottom: 0.5rem;">
+            <a href="/releases/windows/Chatfish-win-Setup.exe" download>
+                Download Chatfish App for Windows
+            </a>
+        </div>
+        <div style="font-size: 0.9em; color: var(--color-text-muted); margin-bottom: 0.35rem;">
+            Linux install (Debian/Ubuntu .deb, or AppImage fallback):
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+            <code id="linux-install-cmd"
+                  style="flex: 1 1 16rem; display: block; padding: 0.45rem 0.6rem; border-radius: 4px;
+                         background: var(--color-surface, #0f172a); color: var(--color-text, #e2e8f0);
+                         font-size: 0.82em; overflow-x: auto; white-space: nowrap;">@LinuxInstallCommand</code>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyLinuxInstallCommand">
+                @(_linuxInstallCopied ? "Copied" : "Copy")
+            </button>
+        </div>
+        <div style="margin-top: 0.4rem; font-size: 0.8em;">
+            <a href="/releases/linux/Chatfish.AppImage" download>AppImage only</a>
+            <span style="margin: 0 0.35rem; color: var(--color-text-muted);">·</span>
+            <a href="/releases/linux/install.sh">install.sh</a>
+        </div>
     </div>
     }
     <p style="color: var(--color-text-muted);">Chat history and settings are stored entirely in your browser / or on device in the Chatfish app. Log in with an email <em>only</em> if you want:
@@ -117,11 +133,31 @@
     /// </summary>
     [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
 
+    private const string LinuxInstallCommand = "curl -fsSL https://chatfish.me/install.sh | bash";
+    private bool _linuxInstallCopied;
+
     string email = "";
     string loginCode = "";
     bool loginSent;
     bool busy;
     string? error;
+
+    private async Task CopyLinuxInstallCommand()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", LinuxInstallCommand);
+            _linuxInstallCopied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _linuxInstallCopied = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Clipboard may be blocked; user can still select the code block.
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
