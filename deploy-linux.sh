@@ -274,20 +274,9 @@ cleanup() { rm -rf "\$TMP"; }
 trap cleanup EXIT
 cd "\$TMP"
 
-http_ok() {
-  local url="\$1"
-  local code
-  code="\$(curl -sS -o /dev/null -w '%{http_code}' -L --head "\$url" 2>/dev/null || echo 000)"
-  [[ "\$code" == "200" ]]
-}
-
-install_deb() {
-  echo "Downloading .deb package..."
-  curl -fsSL -o "\$DEB" "\$BASE_URL/\$DEB"
+install_deb_file() {
   echo "Installing with dpkg (may prompt for sudo)..."
-  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-    sudo dpkg -i "./\$DEB" || sudo apt-get install -f -y
-  elif command -v sudo >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1; then
     sudo dpkg -i "./\$DEB" || sudo apt-get install -f -y
   else
     dpkg -i "./\$DEB" || apt-get install -f -y
@@ -298,8 +287,12 @@ install_deb() {
 }
 
 install_appimage() {
-  echo "Downloading AppImage..."
-  curl -fsSL -o "\$INSTALL_DIR/\$APPIMAGE" "\$BASE_URL/\$APPIMAGE"
+  echo "Downloading AppImage from \$BASE_URL/\$APPIMAGE ..."
+  # Do not use HEAD — release endpoints historically returned 405 for HEAD.
+  if ! curl -fL --progress-bar -o "\$INSTALL_DIR/\$APPIMAGE" "\$BASE_URL/\$APPIMAGE"; then
+    echo "ERROR: could not download \$BASE_URL/\$APPIMAGE" >&2
+    exit 1
+  fi
   chmod +x "\$INSTALL_DIR/\$APPIMAGE"
 
   mkdir -p "\${HOME}/.local/share/applications"
@@ -316,7 +309,6 @@ Categories=Network;Office;Chat;Utility;
 StartupNotify=true
 DESKTOP
 
-  # Best-effort user icon
   if command -v curl >/dev/null 2>&1; then
     ICON_DIR="\${HOME}/.local/share/icons/hicolor/256x256/apps"
     mkdir -p "\$ICON_DIR"
@@ -334,14 +326,17 @@ DESKTOP
   echo "  Launch from your app menu, or run: \$INSTALL_DIR/\$APPIMAGE"
 }
 
-# Prefer .deb on Debian/Ubuntu when the package is available
-if command -v dpkg >/dev/null 2>&1 && http_ok "\$BASE_URL/\$DEB"; then
-  install_deb
-else
-  if ! http_ok "\$BASE_URL/\$APPIMAGE"; then
-    echo "ERROR: could not find \$BASE_URL/\$APPIMAGE" >&2
-    exit 1
+# Prefer .deb on Debian/Ubuntu: try download; on failure fall back to AppImage.
+# Avoid HEAD existence checks (405 on some hosts).
+if command -v dpkg >/dev/null 2>&1; then
+  echo "Trying .deb package \$BASE_URL/\$DEB ..."
+  if curl -fL --progress-bar -o "\$DEB" "\$BASE_URL/\$DEB"; then
+    install_deb_file
+  else
+    echo ".deb not available; falling back to AppImage."
+    install_appimage
   fi
+else
   install_appimage
 fi
 

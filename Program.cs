@@ -385,17 +385,27 @@ static string ReleaseContentType(string path) =>
         _ => "application/octet-stream"
     };
 
-app.MapGet("/releases/{**path}", (string path) =>
+// GET + HEAD: install.sh uses existence checks; HEAD must not 405.
+app.MapMethods("/releases/{**path}", new[] { "GET", "HEAD" }, (string path, HttpContext ctx) =>
 {
     var safePath = ResolveReleaseFile(path);
     if (safePath is null)
         return Results.NotFound();
 
-    return Results.File(safePath, ReleaseContentType(safePath));
+    var contentType = ReleaseContentType(safePath);
+    if (HttpMethods.IsHead(ctx.Request.Method))
+    {
+        var info = new FileInfo(safePath);
+        ctx.Response.ContentType = contentType;
+        ctx.Response.ContentLength = info.Length;
+        return Results.Empty;
+    }
+
+    return Results.File(safePath, contentType);
 });
 
 // curl -fsSL https://chatfish.me/install.sh | bash
-app.MapGet("/install.sh", (HttpContext ctx) =>
+app.MapMethods("/install.sh", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
 {
     var safePath = ResolveReleaseFile(Path.Combine("linux", "install.sh"));
     // Also accept site-root copy next to wwwroot (deploy-linux may scp here)
@@ -420,7 +430,15 @@ app.MapGet("/install.sh", (HttpContext ctx) =>
         return Results.NotFound("Linux install script not found. Run deploy-linux.sh to publish it.");
 
     ctx.Response.Headers.CacheControl = "no-cache";
-    return Results.File(safePath, "text/x-shellscript; charset=utf-8", fileDownloadName: "install.sh");
+    var contentType = "text/x-shellscript; charset=utf-8";
+    if (HttpMethods.IsHead(ctx.Request.Method))
+    {
+        ctx.Response.ContentType = contentType;
+        ctx.Response.ContentLength = new FileInfo(safePath).Length;
+        return Results.Empty;
+    }
+
+    return Results.File(safePath, contentType, fileDownloadName: "install.sh");
 });
 
 app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks) =>
