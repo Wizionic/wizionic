@@ -330,28 +330,97 @@ app.Use(async (context, next) =>
 
 app.MapStaticAssets();
 
-// Serve Velopack release files from the volume-mounted releases directory.
+// Serve Velopack / Linux installer files from the volume-mounted releases directory.
 // MapStaticAssets() only serves files in the build-time manifest, so volume-mounted
 // paths need an explicit endpoint.
-app.MapGet("/releases/{**path}", async (string path, HttpContext ctx) =>
+static string? ResolveReleaseFile(string relativePath)
 {
-    // Sanitize path to prevent directory traversal
-    var safePath = Path.GetFullPath(Path.Combine("/app/wwwroot/releases", path));
-    if (!safePath.StartsWith("/app/wwwroot/releases"))
-        return Results.BadRequest();
-
-    if (!File.Exists(safePath)) return Results.NotFound();
-
-    var contentType = Path.GetExtension(safePath).ToLower() switch
+    // Prefer container layout used in production, then local wwwroot / content root.
+    var candidates = new[]
     {
-        ".exe"   => "application/octet-stream",
-        ".nupkg" => "application/octet-stream",
-        ".zip"   => "application/zip",
-        ".json"  => "application/json",
-        _        => "application/octet-stream"
+        Path.GetFullPath(Path.Combine("/app/wwwroot/releases", relativePath)),
+        Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "releases", relativePath)),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "wwwroot", "releases", relativePath)),
     };
 
-    return Results.File(safePath, contentType);
+    var releasesRoots = new[]
+    {
+        Path.GetFullPath("/app/wwwroot/releases"),
+        Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "releases")),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "wwwroot", "releases")),
+    };
+
+    foreach (var safePath in candidates)
+    {
+        var allowed = false;
+        foreach (var root in releasesRoots)
+        {
+            if (safePath.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || string.Equals(safePath, root, StringComparison.Ordinal))
+            {
+                allowed = true;
+                break;
+            }
+        }
+
+        if (!allowed)
+            continue;
+        if (File.Exists(safePath))
+            return safePath;
+    }
+
+    return null;
+}
+
+static string ReleaseContentType(string path) =>
+    Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".exe" => "application/octet-stream",
+        ".nupkg" => "application/octet-stream",
+        ".appimage" => "application/octet-stream",
+        ".deb" => "application/vnd.debian.binary-package",
+        ".zip" => "application/zip",
+        ".json" => "application/json",
+        ".sh" => "text/x-shellscript; charset=utf-8",
+        _ => "application/octet-stream"
+    };
+
+app.MapGet("/releases/{**path}", (string path) =>
+{
+    var safePath = ResolveReleaseFile(path);
+    if (safePath is null)
+        return Results.NotFound();
+
+    return Results.File(safePath, ReleaseContentType(safePath));
+});
+
+// curl -fsSL https://chatfish.me/install.sh | bash
+app.MapGet("/install.sh", (HttpContext ctx) =>
+{
+    var safePath = ResolveReleaseFile(Path.Combine("linux", "install.sh"));
+    // Also accept site-root copy next to wwwroot (deploy-linux may scp here)
+    if (safePath is null)
+    {
+        foreach (var candidate in new[]
+                 {
+                     "/app/wwwroot/install.sh",
+                     Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "install.sh"),
+                     Path.Combine(Directory.GetCurrentDirectory(), "install.sh"),
+                 })
+        {
+            if (File.Exists(candidate))
+            {
+                safePath = candidate;
+                break;
+            }
+        }
+    }
+
+    if (safePath is null)
+        return Results.NotFound("Linux install script not found. Run deploy-linux.sh to publish it.");
+
+    ctx.Response.Headers.CacheControl = "no-cache";
+    return Results.File(safePath, "text/x-shellscript; charset=utf-8", fileDownloadName: "install.sh");
 });
 
 app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks) =>
