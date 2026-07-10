@@ -55,6 +55,8 @@ Write-Host "Starting Production Build for Chatfish..." -ForegroundColor Cyan
 if (Test-Path $OUTPUT_DIR) { Remove-Item -Recurse -Force $OUTPUT_DIR }
 
 # 2. Compile a pristine, framework-dependent binary tree targeting Linux
+# PublishTrimmed is set per project: host=false (EF), Client=true (WASM size).
+# Do not pass /p:PublishTrimmed=... here — a global false would disable Client trim.
 dotnet publish "ChatfishApp.csproj" `
     -c Release `
     -o $OUTPUT_DIR `
@@ -62,7 +64,6 @@ dotnet publish "ChatfishApp.csproj" `
     --self-contained false `
     /p:DebugType=None `
     /p:DebugSymbols=false `
-    /p:PublishTrimmed=false `
     /p:BlazorEnableCompression=true `
     /p:SelectBlazorWebAssemblyRazorConfiguration=Release `
     /p:BuildProjectReferences=true
