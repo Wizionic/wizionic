@@ -18,7 +18,7 @@ RUN dotnet restore "ChatfishApp.csproj"
 # Copy remaining source (MAUI omitted by .dockerignore)
 COPY . .
 
-# Publish the ASP.NET host + Blazor WASM client assets (trimmed; code avoids trim-hostile APIs).
+# Publish host + WASM client. Trim is per-project (Client=true, host=false) — do not force global.
 RUN dotnet publish "ChatfishApp.csproj" -c Release -o /app/publish \
     /p:BuildProjectReferences=true
 

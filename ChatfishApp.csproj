@@ -13,8 +13,7 @@
     <!-- No debug symbols in production -->
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <!-- Do not trim the ASP.NET host (EF Core / Razor are not trim-safe).
-         WASM size is controlled by ChatfishApp.Client PublishTrimmed. -->
+    <!-- Host is not trim-safe (EF/Razor). WASM client sets its own PublishTrimmed. -->
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
