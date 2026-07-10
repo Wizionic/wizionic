@@ -537,8 +537,10 @@
             if (width <= 0)
                 return "flex: 0 0 32%; min-width: 280px; max-width: none;";
 
-            return FormattableString.Invariant(
-                $"flex: 0 0 {width}px; width: {width}px; min-width: 280px; max-width: none;");
+            // Avoid FormattableString.Invariant — it requires FormattableStringFactory,
+            // which aggressive WASM IL trimming can strip (TypeLoadException in production).
+            var w = width.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return "flex: 0 0 " + w + "px; width: " + w + "px; min-width: 280px; max-width: none;";
         }
     }
 
