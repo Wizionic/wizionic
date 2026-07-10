@@ -61,7 +61,9 @@ builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationSer
 builder.Services.AddScoped<WasmGuestDataMigrationService>();
 builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
 
-builder.Services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
+// Scoped with ChatCompletionService so each completion owns its tool trace
+// (ToolExecutionTrace no longer uses AsyncLocal — that type fails on WASM).
+builder.Services.AddScoped<IToolExecutionTrace, ToolExecutionTrace>();
 builder.Services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
 builder.Services.AddSingleton<IRequestRouter, ContextualRequestRouter>();
 builder.Services.AddSingleton<ISmartHomeService, NullSmartHomeService>();
