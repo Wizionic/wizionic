@@ -5,10 +5,10 @@ namespace ChatfishApp.Maui.Services;
 
 public sealed class MauiBrowserContext : IBrowserContext
 {
-    private readonly MauiBrowserAgentService _agent;
+    private readonly IBrowserAgentService _agent;
     private readonly IBrowserPanelState _panel;
 
-    public MauiBrowserContext(MauiBrowserAgentService agent, IBrowserPanelState panel)
+    public MauiBrowserContext(IBrowserAgentService agent, IBrowserPanelState panel)
     {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _panel = panel ?? throw new ArgumentNullException(nameof(panel));
@@ -18,9 +18,12 @@ public sealed class MauiBrowserContext : IBrowserContext
 
     public async Task<string> NavigateAsync(string url, CancellationToken ct = default)
     {
+        if (!IsAvailable)
+            return "Browser agent is not available. Open the browser panel in Chatfish first, then try again.";
+
         await _agent.NavigateAsync(url, ct);
         return string.IsNullOrWhiteSpace(_agent.CurrentUrl)
-            ? "Navigation failed."
+            ? $"Navigation started for {url}."
             : $"Navigated to {_agent.CurrentUrl}";
     }
 

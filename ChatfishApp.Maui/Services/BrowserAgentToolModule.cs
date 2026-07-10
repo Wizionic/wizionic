@@ -25,26 +25,34 @@ public sealed class BrowserAgentToolModule : IToolModule
 
         _tools =
         [
-            AIFunctionFactory.Create(NavigateTo),
-            AIFunctionFactory.Create(GetPageContent),
-            AIFunctionFactory.Create(ClickElement),
-            AIFunctionFactory.Create(FillField)
+            AIFunctionFactory.Create(NavigateTo, name: "NavigateTo"),
+            AIFunctionFactory.Create(GetPageContent, name: "GetPageContent"),
+            AIFunctionFactory.Create(ClickElement, name: "ClickElement"),
+            AIFunctionFactory.Create(FillField, name: "FillField")
         ];
     }
 
     public IReadOnlyList<AITool> GetTools() => IsAvailable ? _tools : [];
 
-    [Description("Navigate the embedded browser to a URL.")]
+    [Description("REQUIRED for navigation: open a URL in the Chatfish embedded browser panel. Pass a full http(s) URL (add https:// if the user only gave a domain like google.com).")]
     private async Task<string> NavigateTo(
-        [Description("Full http(s) URL to open")] string url)
+        [Description("Full http(s) URL to open in the embedded browser")] string url)
     {
         _trace.Record($"🌐 navigate_to(url=\"{url}\")");
-        var result = await _browser.NavigateAsync(url);
+        if (string.IsNullOrWhiteSpace(url))
+            return "Navigation failed: empty URL.";
+
+        // Normalize bare domains so tool calls like "google.com" still work.
+        var target = url.Trim();
+        if (!target.Contains("://", StringComparison.Ordinal))
+            target = "https://" + target.TrimStart('/');
+
+        var result = await _browser.NavigateAsync(target);
         _trace.Record($"   {(result.Contains("not available", StringComparison.OrdinalIgnoreCase) ? "❌" : "✅")} {result}");
         return result;
     }
 
-    [Description("Get the text content of the current browser page.")]
+    [Description("Read the visible text of the page currently shown in the embedded browser.")]
     private async Task<string> GetPageContent()
     {
         _trace.Record("🌐 get_page_content()");
@@ -53,7 +61,7 @@ public sealed class BrowserAgentToolModule : IToolModule
         return result;
     }
 
-    [Description("Click an element on the current page by CSS selector.")]
+    [Description("Click an element on the current embedded-browser page by CSS selector.")]
     private async Task<string> ClickElement(
         [Description("CSS selector, e.g. '#submit' or 'button.login'")] string selector)
     {
@@ -63,7 +71,7 @@ public sealed class BrowserAgentToolModule : IToolModule
         return result;
     }
 
-    [Description("Fill a form field on the current page by CSS selector.")]
+    [Description("Fill a form field on the current embedded-browser page by CSS selector.")]
     private async Task<string> FillField(
         [Description("CSS selector for the input field")] string selector,
         [Description("Value to type into the field")] string value)

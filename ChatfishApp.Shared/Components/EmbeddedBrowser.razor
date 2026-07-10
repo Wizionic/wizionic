@@ -708,7 +708,21 @@
     {
         _pendingOverlaySync = true;
         StateHasChanged();
+        // Let flex layout apply the new side-column width before measuring hosts.
+        await Task.Yield();
         await SyncOverlayAsync();
+        await Task.Delay(50);
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "chatfishBrowser.reportBoundsNow",
+                "#browser-content-host",
+                "#browser-side-content-host");
+        }
+        catch
+        {
+            // Ignore if JS not ready.
+        }
     }
 
     private void ApplyOverlayVisibility()
@@ -1374,10 +1388,19 @@
         if (manifest == null || string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
             return;
 
+        // Prefer manifest start_url resolved against the manifest URL; never store file://
+        // (Linux .NET treats root-relative "/" as an absolute file URI).
         var startUrl = PwaManifestHelper.ResolveStartUrl(manifest, BrowserAgent.CurrentUrl);
+        if (!PwaManifestHelper.IsWebUrl(startUrl))
+            startUrl = BrowserAgent.CurrentUrl;
+
         var name = manifest.ShortName ?? manifest.Name ?? _pinName;
         if (string.IsNullOrWhiteSpace(name))
             name = startUrl;
+
+        var iconUrl = PwaManifestHelper.PickBestIcon(manifest);
+        if (!PwaManifestHelper.IsWebUrl(iconUrl))
+            iconUrl = BrowserFaviconUrl.Get(startUrl);
 
         var suggestedTarget = PwaManifestHelper.SuggestOpenTarget(manifest);
         var app = new SidebarApp(
@@ -1385,7 +1408,7 @@
             name,
             manifest.ShortName ?? name,
             startUrl,
-            PwaManifestHelper.PickBestIcon(manifest) ?? BrowserFaviconUrl.Get(startUrl),
+            iconUrl,
             manifest.BackgroundColor,
             manifest.ThemeColor,
             false,
@@ -1404,6 +1427,23 @@
     {
         CloseAllContextMenus();
 
+        // Never feed file:// (or other non-web) start URLs into the normalizer — it turns
+        // them into a Brave/search query containing "file:///".
+        var startUrl = app.StartUrl;
+        if (!PwaManifestHelper.IsWebUrl(startUrl))
+        {
+            var healed = PwaManifestHelper.HealPinnedApp(app);
+            startUrl = healed.StartUrl;
+            if (healed != app)
+                await SidebarStore.UpdateAppAsync(healed);
+        }
+
+        if (!PwaManifestHelper.IsWebUrl(startUrl))
+        {
+            Console.WriteLine($"[Browser/PWA] refuse open — bad StartUrl '{app.StartUrl}' for '{app.Name}'");
+            return;
+        }
+
         var target = overrideTarget ?? app.DefaultOpenTarget;
         if (target == OpenTarget.LastUsed)
             target = SidebarStore.GetLastOpenTarget(app.Id);
@@ -1411,7 +1451,7 @@
         if (target == OpenTarget.MainBrowser)
         {
             _showStartPage = false;
-            await BrowserAgent.NavigateAsync(app.StartUrl);
+            await BrowserAgent.NavigateAsync(startUrl);
             await SidebarStore.SetLastOpenTargetAsync(app.Id, OpenTarget.MainBrowser);
             RefreshWebViewBounds();
             return;
@@ -1422,7 +1462,7 @@
         SidePanel.ActiveAppId = app.Id;
         SidePanel.NotifyChanged();
 
-        await SideAgent.NavigateAsync(app.StartUrl);
+        await SideAgent.NavigateAsync(startUrl);
         await SidebarStore.SetLastOpenTargetAsync(app.Id, OpenTarget.SidePanel);
         _pendingOverlaySync = true;
         await SyncOverlayAsync();
