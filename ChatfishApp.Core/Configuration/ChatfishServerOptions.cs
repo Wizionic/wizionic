@@ -12,7 +12,7 @@ public class ChatfishServerOptions
 
     /// <summary>
     /// Optional override for the Velopack feed URL. When unset, defaults to
-    /// {BaseUrl}/releases/windows/
+    /// {BaseUrl}/releases/windows on Windows and {BaseUrl}/releases/linux on Linux.
     /// </summary>
     public string? UpdateFeedUrl { get; set; }
 
@@ -20,8 +20,20 @@ public class ChatfishServerOptions
 
     public string SyncHubUrl => new Uri(BaseUri, "sync-hub").ToString();
 
+    /// <summary>
+    /// Platform-specific Velopack channel directory under the site root.
+    /// </summary>
+    public static string DefaultUpdateFeedPath =>
+        OperatingSystem.IsLinux() ? "releases/linux" : "releases/windows";
+
+    /// <summary>
+    /// Velopack releases index file for the current platform (e.g. releases.win.json / releases.linux.json).
+    /// </summary>
+    public static string VelopackReleasesIndexFile =>
+        OperatingSystem.IsLinux() ? "releases.linux.json" : "releases.win.json";
+
     public string GetUpdateFeedUrl() =>
         string.IsNullOrWhiteSpace(UpdateFeedUrl)
-            ? BaseUrl.TrimEnd('/') + "/releases/windows"
+            ? BaseUrl.TrimEnd('/') + "/" + DefaultUpdateFeedPath
             : UpdateFeedUrl.TrimEnd('/');
 }

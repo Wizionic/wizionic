@@ -140,3 +140,10 @@ $RECYCLE.BIN/
 chatfish.db
 
 terminals/
+
+# Local Velopack / publish output
+linux_publish/
+linux_releases/
+maui_publish/
+maui_releases/
+publish_output/

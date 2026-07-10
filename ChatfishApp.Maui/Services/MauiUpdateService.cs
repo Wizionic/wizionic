@@ -150,13 +150,13 @@ public class MauiUpdateService : IUpdateService
     {
         try
         {
-            var feedUrl = _updateUrl.TrimEnd('/') + "/releases.win.json";
+            var feedUrl = _updateUrl.TrimEnd('/') + "/" + ChatfishServerOptions.VelopackReleasesIndexFile;
             var feed = await _http.GetFromJsonAsync<VelopackFeed>(feedUrl);
             if (feed?.Assets == null || feed.Assets.Length == 0)
                 return null;
 
             return feed.Assets
-                .Where(a => a.Type == "Full" && a.PackageId == "com.chatfish.app")
+                .Where(a => a.Type == "Full" && a.PackageId is "Chatfish" or "com.chatfish.app")
                 .Select(a => a.Version)
                 .OrderByDescending(ParseVersion)
                 .FirstOrDefault();

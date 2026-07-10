@@ -303,7 +303,11 @@
     private bool busy;
     private string? installedVersion;
     private string? latestFeedVersion;
-    private string installerDownloadUrl = "/releases/windows/com.chatfish.app-win-Setup.exe";
+    // Platform-specific default; refined in LoadInstalledVersion from the update feed URL.
+    // Velopack packId is "Chatfish" → Chatfish.AppImage / Chatfish-win-Setup.exe
+    private string installerDownloadUrl = OperatingSystem.IsLinux()
+        ? "/releases/linux/Chatfish.AppImage"
+        : "/releases/windows/Chatfish-win-Setup.exe";
 
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
@@ -338,10 +342,17 @@
     private void LoadInstalledVersion()
     {
         installedVersion = UpdateService.GetInstalledVersion();
+        // Velopack packId "Chatfish": Windows Setup.exe; Linux AppImage (no separate installer).
+        var packageFile = OperatingSystem.IsLinux()
+            ? "Chatfish.AppImage"
+            : "Chatfish-win-Setup.exe";
+
         if (!string.IsNullOrEmpty(UpdateService.UpdateFeedUrl))
-            installerDownloadUrl = UpdateService.UpdateFeedUrl!.TrimEnd('/') + "/com.chatfish.app-win-Setup.exe";
+            installerDownloadUrl = UpdateService.UpdateFeedUrl!.TrimEnd('/') + "/" + packageFile;
+        else if (OperatingSystem.IsLinux())
+            installerDownloadUrl = "https://chatfish.me/releases/linux/" + packageFile;
         else
-            installerDownloadUrl = "https://chatfish.me/releases/windows/com.chatfish.app-win-Setup.exe";
+            installerDownloadUrl = "https://chatfish.me/releases/windows/" + packageFile;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
