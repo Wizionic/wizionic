@@ -439,10 +439,10 @@ Registers the same Chatfish services as Windows (SQLite stores, sync, HA, tools,
 `MauiIcon` does not apply without the MAUI window stack. `LinuxDesktopIcon` on startup:
 
 1. Copies the full-res mascot (`chatfish-appicon.png` from `Resources/AppIcon/chatfish.png`) into `~/.local/share/icons/hicolor/*/apps/com.chatfish.app.png`
-2. Writes `~/.local/share/applications/com.chatfish.app.desktop` (`Icon=com.chatfish.app`, `Exec=` apphost path)
+2. Writes `~/.local/share/applications/com.chatfish.app.desktop` (`Name=Chatfish`, `Icon=com.chatfish.app`, `Exec=` apphost path)
 3. Sets `Gtk.Window.SetDefaultIconName` / `SetIconName` and optionally `Gdk.Toplevel.SetIconList`
 
-Application id: **`com.chatfish.app`**. Local data: typically `~/.local/share/Chatfish/` (SQLite settings, browser history, pinned apps).
+GApplication id: **`com.chatfish.app`** (D-Bus / GTK require reverse-DNS). Velopack **packId** is **`Chatfish`** so artifacts are `Chatfish.AppImage` / `Chatfish-*.nupkg` (display name **Chatfish**). Local data: typically `~/.local/share/Chatfish/`.
 
 ### Build & run
 

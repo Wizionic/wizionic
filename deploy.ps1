@@ -6,7 +6,7 @@ $SSH_USER  = "daniel"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "1.1.1"   # bump this before each release
+$VERSION      = "0.0.1"   # bump this before each release
 $UPDATE_FEED  = "https://chatfish.me/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
 
@@ -30,7 +30,9 @@ dotnet publish "ChatfishApp.Maui\ChatfishApp.Maui.csproj" `
     -o $MAUI_OUTPUT
 
 vpk pack `
-    --packId "com.chatfish.app" `
+    --packId "Chatfish" `
+    --packTitle "Chatfish" `
+    --packAuthors "Chatfish" `
     --packVersion $VERSION `
     --packDir $MAUI_OUTPUT `
     --mainExe Chatfish.exe `
