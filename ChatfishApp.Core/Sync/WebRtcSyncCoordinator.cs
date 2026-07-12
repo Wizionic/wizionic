@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+using System.Text.Json;
+using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
 
@@ -13,6 +14,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     private readonly IWebRtcTransport _webrtc;
     private readonly IConversationStore _conversationStore;
     private readonly INoteStore _noteStore;
+    private readonly IBrowserStore? _browserStore;
+    private readonly IBrowserSidebarStore? _sidebarStore;
     private readonly ISyncPreferencesStore _prefs;
     private readonly Func<string, string, string, Task> _sendSignalingAsync;
     private readonly Func<bool> _isHubConnected;
@@ -25,7 +28,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         ISyncPreferencesStore prefs,
         Func<string, string, string, Task> sendSignalingAsync,
         Func<bool> isHubConnected,
-        IWebRtcTransportCallbacks? transportCallbacks = null)
+        IWebRtcTransportCallbacks? transportCallbacks = null,
+        IBrowserStore? browserStore = null,
+        IBrowserSidebarStore? sidebarStore = null)
     {
         _webrtc = webrtc;
         _conversationStore = conversationStore;
@@ -34,10 +39,14 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         _sendSignalingAsync = sendSignalingAsync;
         _isHubConnected = isHubConnected;
         _transportCallbacks = transportCallbacks ?? this;
+        _browserStore = browserStore;
+        _sidebarStore = sidebarStore;
     }
 
     public bool AutoSyncChatHistory { get; set; }
     public bool AutoSyncNotes { get; set; }
+    public bool AutoSyncBookmarks { get; set; }
+    public bool AutoSyncInstalledApps { get; set; }
     public IReadOnlyCollection<string> SyncTargetDeviceIds { get; set; } = Array.Empty<string>();
     public Func<string, bool>? IsSelf { get; set; }
     public Func<bool>? IsAuthenticated { get; set; }
@@ -46,6 +55,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
     public event Action? OnConversationsChanged;
     public event Action? OnNotesChanged;
+    public event Action? OnBookmarksChanged;
+    public event Action? OnInstalledAppsChanged;
     public event Action<string, string, string>? OnSyncPayloadReceived;
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;
@@ -93,7 +104,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     private const int MaxSyncRetries = 2;
     private sealed class ChunkAssembly
     {
-        public required bool IsNote { get; init; }
+        public required SyncItemKind Kind { get; init; }
         public required string ItemId { get; init; }
         public required int ChunkCount { get; init; }
         public required string[] Parts { get; init; }
@@ -102,7 +113,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
     private sealed class SyncQueueItem
     {
-        public required bool IsNote { get; init; }
+        public required SyncItemKind Kind { get; init; }
         public required string ItemId { get; init; }
         public string? NoteTitle { get; init; }
         public required string DataJson { get; init; }
@@ -112,12 +123,17 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         public bool IsManifestExchange { get; init; }
         public bool IncludeConvosInManifest { get; init; }
         public bool IncludeNotesInManifest { get; init; }
+        public bool IncludeBookmarksInManifest { get; init; }
+        public bool IncludeSidebarAppsInManifest { get; init; }
         public int RetryCount { get; set; }
     }
 
     private record SyncManifestOffer(
         List<SyncManifestEntry> Convos,
-        List<SyncManifestEntry> Notes);
+        List<SyncManifestEntry> Notes,
+        List<SyncManifestEntry>? Bookmarks = null,
+        List<SyncManifestEntry>? BookmarkFolders = null,
+        List<SyncManifestEntry>? SidebarApps = null);
 
     private record SyncManifestResponse(
         List<string> NeededConvos,
@@ -125,7 +141,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         int UpToDateConvos,
         int UpToDateNotes,
         List<DeleteSyncPayload>? SenderShouldDeleteConvos = null,
-        List<DeleteSyncPayload>? SenderShouldDeleteNotes = null);
+        List<DeleteSyncPayload>? SenderShouldDeleteNotes = null,
+        List<string>? NeededBookmarks = null,
+        List<string>? NeededBookmarkFolders = null,
+        List<string>? NeededSidebarApps = null,
+        int UpToDateBookmarks = 0,
+        int UpToDateBookmarkFolders = 0,
+        int UpToDateSidebarApps = 0,
+        List<DeleteSyncPayload>? SenderShouldDeleteBookmarks = null,
+        List<DeleteSyncPayload>? SenderShouldDeleteBookmarkFolders = null,
+        List<DeleteSyncPayload>? SenderShouldDeleteSidebarApps = null);
 
     private const string SyncAckStateKey = "chatfish-sync-ack-state";
     private const string SyncManifestVerifiedKey = "chatfish-sync-manifest-verified";
@@ -158,6 +183,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public Task StartWebRtcNoteSyncAsync(string targetDeviceId, string noteId, string title, List<ChatMessage> entries) =>
         EnqueueNoteSyncAsync(targetDeviceId, noteId, title, entries);
 
+    public Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark) =>
+        EnqueueBookmarkSyncAsync(targetDeviceId, bookmark);
+
+    public Task StartWebRtcFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder) =>
+        EnqueueFolderSyncAsync(targetDeviceId, folder);
+
+    public Task StartWebRtcSidebarAppSyncAsync(string targetDeviceId, SidebarApp app) =>
+        EnqueueSidebarAppSyncAsync(targetDeviceId, app);
+
     public async Task EnqueueConvoSyncAsync(
         string targetDeviceId,
         string convoId,
@@ -180,7 +214,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var dataJson = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom);
         var item = new SyncQueueItem
         {
-            IsNote = false,
+            Kind = SyncItemKind.Conversation,
             ItemId = convoId,
             DataJson = dataJson,
             ContentFingerprint = SyncFingerprint.ForConversation(convoId, title, messages)
@@ -202,11 +236,77 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var dataJson = NoteSyncPayload.Serialize(noteId, title, entries);
         var item = new SyncQueueItem
         {
-            IsNote = true,
+            Kind = SyncItemKind.Note,
             ItemId = noteId,
             NoteTitle = title,
             DataJson = dataJson,
             ContentFingerprint = SyncFingerprint.ForNote(noteId, title, entries)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || _browserStore == null)
+            return;
+
+        if (!_isHubConnected())
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Cannot enqueue bookmark {bookmark.Id}: hub not connected.");
+            return;
+        }
+
+        var dataJson = BookmarkSyncPayload.Serialize(bookmark);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.Bookmark,
+            ItemId = bookmark.Id,
+            DataJson = dataJson,
+            ContentFingerprint = SyncFingerprint.ForBookmark(bookmark)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || _browserStore == null)
+            return;
+
+        if (!_isHubConnected())
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Cannot enqueue folder {folder.Id}: hub not connected.");
+            return;
+        }
+
+        var dataJson = BookmarkFolderSyncPayload.Serialize(folder);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.BookmarkFolder,
+            ItemId = folder.Id,
+            DataJson = dataJson,
+            ContentFingerprint = SyncFingerprint.ForBookmarkFolder(folder)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueSidebarAppSyncAsync(string targetDeviceId, SidebarApp app)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || _sidebarStore == null)
+            return;
+
+        if (!_isHubConnected())
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Cannot enqueue sidebar app {app.Id}: hub not connected.");
+            return;
+        }
+
+        var dataJson = SidebarAppSyncPayload.Serialize(app);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.SidebarApp,
+            ItemId = app.Id,
+            DataJson = dataJson,
+            ContentFingerprint = SyncFingerprint.ForSidebarApp(app)
         };
         await EnqueueSyncAsync(targetDeviceId, item);
     }
@@ -217,14 +317,21 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public async Task<int> StartDeltaSyncToDevicesAsync(
         IEnumerable<string> targetDeviceIds,
         bool includeConvos,
-        bool includeNotes)
+        bool includeNotes,
+        bool includeBookmarks = false,
+        bool includeSidebarApps = false)
     {
+        if (_browserStore == null)
+            includeBookmarks = false;
+        if (_sidebarStore == null)
+            includeSidebarApps = false;
+
         var targets = targetDeviceIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (targets.Count == 0 || !_isHubConnected())
             return 0;
 
         foreach (var targetId in targets)
-            await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes);
+            await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes, includeBookmarks, includeSidebarApps);
 
         return targets.Count;
     }
@@ -235,23 +342,58 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public Task<int> SyncAllNotesToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
         StartDeltaSyncToDevicesAsync(targetDeviceIds, includeConvos: false, includeNotes: true);
 
-    private async Task EnqueueManifestExchangeAsync(string targetDeviceId, bool includeConvos, bool includeNotes)
+    public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
+        StartDeltaSyncToDevicesAsync(FilterBrowserCapable(targetDeviceIds), false, false, true, false);
+
+    public Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
+        StartDeltaSyncToDevicesAsync(FilterBrowserCapable(targetDeviceIds), false, false, false, true);
+
+    private IEnumerable<string> FilterBrowserCapable(IEnumerable<string> targetDeviceIds)
+    {
+        var targets = targetDeviceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var devices = GetDevices?.Invoke();
+        if (devices == null)
+            return targets;
+
+        var browserCapable = new HashSet<string>(
+            devices.Where(d => d.SupportsBrowserSync).Select(d => d.DeviceId),
+            StringComparer.OrdinalIgnoreCase);
+        return targets.Where(id => browserCapable.Contains(id));
+    }
+
+    private async Task EnqueueManifestExchangeAsync(
+        string targetDeviceId,
+        bool includeConvos,
+        bool includeNotes,
+        bool includeBookmarks = false,
+        bool includeSidebarApps = false)
     {
         if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
             return;
 
-        if (!includeConvos && !includeNotes)
+        if (_browserStore == null)
+            includeBookmarks = false;
+        if (_sidebarStore == null)
+            includeSidebarApps = false;
+
+        if (!includeConvos && !includeNotes && !includeBookmarks && !includeSidebarApps)
             return;
 
-        var manifest = await BuildLocalManifestAsync(includeConvos, includeNotes);
+        var manifest = await BuildLocalManifestAsync(includeConvos, includeNotes, includeBookmarks, includeSidebarApps);
         var item = new SyncQueueItem
         {
             IsManifestExchange = true,
-            IsNote = false,
+            Kind = SyncItemKind.Conversation,
             ItemId = "__manifest__",
             DataJson = System.Text.Json.JsonSerializer.Serialize(manifest),
             IncludeConvosInManifest = includeConvos,
-            IncludeNotesInManifest = includeNotes
+            IncludeNotesInManifest = includeNotes,
+            IncludeBookmarksInManifest = includeBookmarks,
+            IncludeSidebarAppsInManifest = includeSidebarApps
         };
 
         if (IsManifestSyncPending(targetDeviceId))
@@ -272,7 +414,11 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                && queue.Any(i => i.IsManifestExchange);
     }
 
-    private async Task<SyncManifestOffer> BuildLocalManifestAsync(bool includeConvos, bool includeNotes)
+    private async Task<SyncManifestOffer> BuildLocalManifestAsync(
+        bool includeConvos,
+        bool includeNotes,
+        bool includeBookmarks,
+        bool includeSidebarApps)
     {
         var convos = includeConvos
             ? await _conversationStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true)
@@ -280,7 +426,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var notes = includeNotes
             ? await _noteStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true)
             : new List<SyncManifestEntry>();
-        return new SyncManifestOffer(convos, notes);
+        var bookmarks = includeBookmarks && _browserStore != null
+            ? await _browserStore.LoadBookmarkManifestEntriesAsync(backfillMissingFingerprints: true)
+            : null;
+        var folders = includeBookmarks && _browserStore != null
+            ? await _browserStore.LoadFolderManifestEntriesAsync(backfillMissingFingerprints: true)
+            : null;
+        var apps = includeSidebarApps && _sidebarStore != null
+            ? await _sidebarStore.LoadSidebarAppManifestEntriesAsync(backfillMissingFingerprints: true)
+            : null;
+        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps);
     }
 
     private static bool ManifestEntryNeedsSync(
@@ -320,8 +475,55 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         && local.IsDeleted
         && local.DeletedAtTicks!.Value > remote.LastUpdatedTicks;
 
-    private static string GetAckItemKey(bool isNote, string itemId) =>
-        isNote ? $"n:{itemId}" : $"c:{itemId}";
+    private static string GetAckItemKey(SyncItemKind kind, string itemId) => kind switch
+    {
+        SyncItemKind.Conversation => $"c:{itemId}",
+        SyncItemKind.Note => $"n:{itemId}",
+        SyncItemKind.Bookmark => $"b:{itemId}",
+        SyncItemKind.BookmarkFolder => $"f:{itemId}",
+        SyncItemKind.SidebarApp => $"a:{itemId}",
+        _ => $"c:{itemId}"
+    };
+
+    private static string KindLabel(SyncItemKind kind) => kind switch
+    {
+        SyncItemKind.Conversation => "convo",
+        SyncItemKind.Note => "note",
+        SyncItemKind.Bookmark => "bookmark",
+        SyncItemKind.BookmarkFolder => "folder",
+        SyncItemKind.SidebarApp => "app",
+        _ => "item"
+    };
+
+    private static string ChannelLabelFor(SyncItemKind kind) => kind switch
+    {
+        SyncItemKind.Conversation => "chatfish-sync",
+        SyncItemKind.Note => "chatfish-note-sync",
+        SyncItemKind.Bookmark => "chatfish-bookmark-sync",
+        SyncItemKind.BookmarkFolder => "chatfish-folder-sync",
+        SyncItemKind.SidebarApp => "chatfish-app-sync",
+        _ => "chatfish-sync"
+    };
+
+    private static string DeleteTypeFor(SyncItemKind kind) => kind switch
+    {
+        SyncItemKind.Conversation => "convo-delete",
+        SyncItemKind.Note => "note-delete",
+        SyncItemKind.Bookmark => "bookmark-delete",
+        SyncItemKind.BookmarkFolder => "folder-delete",
+        SyncItemKind.SidebarApp => "app-delete",
+        _ => "convo-delete"
+    };
+
+    private static string DataTypeFor(SyncItemKind kind) => kind switch
+    {
+        SyncItemKind.Conversation => "sync-data",
+        SyncItemKind.Note => "note-sync-data",
+        SyncItemKind.Bookmark => "bookmark-sync-data",
+        SyncItemKind.BookmarkFolder => "folder-sync-data",
+        SyncItemKind.SidebarApp => "app-sync-data",
+        _ => "sync-data"
+    };
 
     private async Task<Dictionary<string, string>> LoadPeerAckStateAsync(string peerId)
     {
@@ -358,13 +560,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         catch { }
     }
 
-    private async Task<bool> IsItemAcknowledgedAsync(string peerId, bool isNote, string itemId, string? fingerprint)
+    private async Task<bool> IsItemAcknowledgedAsync(string peerId, SyncItemKind kind, string itemId, string? fingerprint)
     {
         if (string.IsNullOrEmpty(fingerprint))
             return false;
 
         var state = await LoadPeerAckStateAsync(peerId);
-        var key = GetAckItemKey(isNote, itemId);
+        var key = GetAckItemKey(kind, itemId);
         return state.TryGetValue(key, out var ackFp)
                && string.Equals(ackFp, fingerprint, StringComparison.Ordinal);
     }
@@ -375,11 +577,11 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             return;
 
         var state = await LoadPeerAckStateAsync(peerId);
-        state[GetAckItemKey(item.IsNote, item.ItemId)] = item.ContentFingerprint;
+        state[GetAckItemKey(item.Kind, item.ItemId)] = item.ContentFingerprint;
         await SavePeerAckStateAsync(peerId, state);
     }
 
-    private async Task ClearPeerAckForItemAsync(bool isNote, string itemId)
+    private async Task ClearPeerAckForItemAsync(SyncItemKind kind, string itemId)
     {
         try
         {
@@ -391,7 +593,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             if (all == null || all.Count == 0)
                 return;
 
-            var key = GetAckItemKey(isNote, itemId);
+            var key = GetAckItemKey(kind, itemId);
             var changed = false;
             foreach (var peerState in all.Values)
             {
@@ -414,7 +616,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         var item = new SyncQueueItem
         {
-            IsNote = false,
+            Kind = SyncItemKind.Conversation,
             IsDelete = true,
             ItemId = convoId,
             DataJson = DeleteSyncPayload.Serialize(convoId, deletedAtUtc.Ticks),
@@ -431,10 +633,61 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         var item = new SyncQueueItem
         {
-            IsNote = true,
+            Kind = SyncItemKind.Note,
             IsDelete = true,
             ItemId = noteId,
             DataJson = DeleteSyncPayload.Serialize(noteId, deletedAtUtc.Ticks),
+            ContentFingerprint = DeleteSyncPayload.AckValue(deletedAtUtc.Ticks),
+            DeletedAtTicks = deletedAtUtc.Ticks
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueBookmarkDeleteAsync(string targetDeviceId, string bookmarkId, DateTime deletedAtUtc)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
+            return;
+
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.Bookmark,
+            IsDelete = true,
+            ItemId = bookmarkId,
+            DataJson = DeleteSyncPayload.Serialize(bookmarkId, deletedAtUtc.Ticks),
+            ContentFingerprint = DeleteSyncPayload.AckValue(deletedAtUtc.Ticks),
+            DeletedAtTicks = deletedAtUtc.Ticks
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueFolderDeleteAsync(string targetDeviceId, string folderId, DateTime deletedAtUtc)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
+            return;
+
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.BookmarkFolder,
+            IsDelete = true,
+            ItemId = folderId,
+            DataJson = DeleteSyncPayload.Serialize(folderId, deletedAtUtc.Ticks),
+            ContentFingerprint = DeleteSyncPayload.AckValue(deletedAtUtc.Ticks),
+            DeletedAtTicks = deletedAtUtc.Ticks
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueSidebarAppDeleteAsync(string targetDeviceId, string appId, DateTime deletedAtUtc)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
+            return;
+
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.SidebarApp,
+            IsDelete = true,
+            ItemId = appId,
+            DataJson = DeleteSyncPayload.Serialize(appId, deletedAtUtc.Ticks),
             ContentFingerprint = DeleteSyncPayload.AckValue(deletedAtUtc.Ticks),
             DeletedAtTicks = deletedAtUtc.Ticks
         };
@@ -454,7 +707,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             var item = new SyncQueueItem
             {
-                IsNote = false,
+                Kind = SyncItemKind.Conversation,
                 ItemId = convoId,
                 DataJson = dataJson,
                 ContentFingerprint = fingerprint
@@ -476,7 +729,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             var item = new SyncQueueItem
             {
-                IsNote = true,
+                Kind = SyncItemKind.Note,
                 ItemId = noteId,
                 NoteTitle = title,
                 DataJson = dataJson,
@@ -489,10 +742,81 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
         }
 
+        // Folders first so bookmarks can resolve folder membership on the peer.
+        if (_browserStore != null)
+        {
+            foreach (var folderId in (response.NeededBookmarkFolders ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var folder = await _browserStore.GetFolderByIdAsync(folderId);
+                if (folder == null)
+                    continue;
+
+                var dataJson = BookmarkFolderSyncPayload.Serialize(folder);
+                var item = new SyncQueueItem
+                {
+                    Kind = SyncItemKind.BookmarkFolder,
+                    ItemId = folder.Id,
+                    DataJson = dataJson,
+                    ContentFingerprint = SyncFingerprint.ForBookmarkFolder(folder)
+                };
+                if (!IsAlreadyQueuedOrActive(peerId, item))
+                {
+                    await EnqueueSyncAsync(peerId, item, allowDuplicate: true);
+                    queued++;
+                }
+            }
+
+            foreach (var bookmarkId in (response.NeededBookmarks ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var bookmark = await _browserStore.GetBookmarkByIdAsync(bookmarkId);
+                if (bookmark == null)
+                    continue;
+
+                var dataJson = BookmarkSyncPayload.Serialize(bookmark);
+                var item = new SyncQueueItem
+                {
+                    Kind = SyncItemKind.Bookmark,
+                    ItemId = bookmark.Id,
+                    DataJson = dataJson,
+                    ContentFingerprint = SyncFingerprint.ForBookmark(bookmark)
+                };
+                if (!IsAlreadyQueuedOrActive(peerId, item))
+                {
+                    await EnqueueSyncAsync(peerId, item, allowDuplicate: true);
+                    queued++;
+                }
+            }
+        }
+
+        if (_sidebarStore != null)
+        {
+            foreach (var appId in (response.NeededSidebarApps ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var app = await _sidebarStore.GetAppByIdAsync(appId);
+                if (app == null)
+                    continue;
+
+                var dataJson = SidebarAppSyncPayload.Serialize(app);
+                var item = new SyncQueueItem
+                {
+                    Kind = SyncItemKind.SidebarApp,
+                    ItemId = app.Id,
+                    DataJson = dataJson,
+                    ContentFingerprint = SyncFingerprint.ForSidebarApp(app)
+                };
+                if (!IsAlreadyQueuedOrActive(peerId, item))
+                {
+                    await EnqueueSyncAsync(peerId, item, allowDuplicate: true);
+                    queued++;
+                }
+            }
+        }
+
         Console.WriteLine(
             $"[WebRtcSyncCoordinator] Manifest result for {peerId}: " +
-            $"{response.UpToDateConvos} convo(s) and {response.UpToDateNotes} note(s) up to date; " +
-            $"queued {queued} item(s)");
+            $"{response.UpToDateConvos} convo(s), {response.UpToDateNotes} note(s), " +
+            $"{response.UpToDateBookmarkFolders} folder(s), {response.UpToDateBookmarks} bookmark(s), " +
+            $"{response.UpToDateSidebarApps} app(s) up to date; queued {queued} item(s)");
 
         return queued;
     }
@@ -502,7 +826,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         if (!allowDuplicate && IsAlreadyQueuedOrActive(targetDeviceId, item))
         {
             Console.WriteLine(
-                $"[WebRtcSyncCoordinator] Skipping duplicate {(item.IsNote ? "note" : "convo")} " +
+                $"[WebRtcSyncCoordinator] Skipping duplicate {KindLabel(item.Kind)} " +
                 $"{item.ItemId} for {targetDeviceId}");
             return;
         }
@@ -517,8 +841,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var itemLabel = item.IsManifestExchange
             ? "manifest"
             : item.IsDelete
-                ? $"{(item.IsNote ? "note" : "convo")} delete {item.ItemId}"
-                : $"{(item.IsNote ? "note" : "convo")} {item.ItemId}";
+                ? $"{KindLabel(item.Kind)} delete {item.ItemId}"
+                : $"{KindLabel(item.Kind)} {item.ItemId}";
         Console.WriteLine(
             $"[WebRtcSyncCoordinator] Enqueued {itemLabel} for {targetDeviceId} (queue depth: {queue.Count})");
         await ProcessSyncQueueAsync(targetDeviceId);
@@ -546,12 +870,12 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         {
             var channelLabel = item.IsManifestExchange
                 ? "chatfish-sync-manifest"
-                : item.IsNote ? "chatfish-note-sync" : "chatfish-sync";
+                : ChannelLabelFor(item.Kind);
             var label = item.IsManifestExchange
                 ? "manifest"
                 : item.IsDelete
-                    ? $"{(item.IsNote ? "note" : "convo")} delete {item.ItemId}"
-                    : $"{(item.IsNote ? "note" : "convo")} {item.ItemId}";
+                    ? $"{KindLabel(item.Kind)} delete {item.ItemId}"
+                    : $"{KindLabel(item.Kind)} {item.ItemId}";
             Console.WriteLine($"[WebRtcSyncCoordinator] Starting WebRTC sync for {targetDeviceId}: {label}");
             await StartWebRtcDataChannelAsync(targetDeviceId, channelLabel);
         }
@@ -614,7 +938,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             queue.Enqueue(failedItem);
             Console.WriteLine(
-                $"[WebRtcSyncCoordinator] Re-queued {(failedItem.IsNote ? "note" : "convo")} {failedItem.ItemId} " +
+                $"[WebRtcSyncCoordinator] Re-queued {KindLabel(failedItem.Kind)} {failedItem.ItemId} " +
                 $"for {peerId} (retry {failedItem.RetryCount}/{MaxSyncRetries})");
         }
 
@@ -636,8 +960,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         if (item.IsManifestExchange)
             return "manifest";
         if (item.IsDelete)
-            return $"{(item.IsNote ? "note" : "convo")} delete {item.ItemId}";
-        return $"{(item.IsNote ? "note" : "convo")} {item.ItemId}";
+            return $"{KindLabel(item.Kind)} delete {item.ItemId}";
+        return $"{KindLabel(item.Kind)} {item.ItemId}";
     }
 
     private static bool ItemsMatchForDedup(SyncQueueItem a, SyncQueueItem b)
@@ -645,7 +969,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         if (a.IsManifestExchange || b.IsManifestExchange)
             return a.IsManifestExchange && b.IsManifestExchange;
 
-        return a.IsNote == b.IsNote
+        return a.Kind == b.Kind
                && a.IsDelete == b.IsDelete
                && string.Equals(a.ItemId, b.ItemId, StringComparison.Ordinal);
     }
@@ -668,7 +992,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 return;
 
             if (forceTitleSync)
-                await ClearPeerAckForItemAsync(isNote: false, convoId);
+                await ClearPeerAckForItemAsync(SyncItemKind.Conversation, convoId);
 
             var manifest = await _conversationStore.LoadManifestEntriesAsync();
             var entry = manifest.FirstOrDefault(c => c.Id == convoId);
@@ -678,7 +1002,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             foreach (var targetId in GetOnlineSyncTargetIdsInternal())
             {
                 if (!forceTitleSync
-                    && await IsItemAcknowledgedAsync(targetId, isNote: false, convoId, fingerprint))
+                    && await IsItemAcknowledgedAsync(targetId, SyncItemKind.Conversation, convoId, fingerprint))
                 {
                     Console.WriteLine($"[WebRtcSyncCoordinator] Skipping convo {convoId} for {targetId} (unchanged since last ack)");
                     continue;
@@ -706,7 +1030,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             foreach (var targetId in GetOnlineSyncTargetIdsInternal())
             {
-                if (await IsItemAcknowledgedAsync(targetId, isNote: false, convoId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Conversation, convoId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
                 {
                     Console.WriteLine($"[WebRtcSyncCoordinator] Skipping convo delete {convoId} for {targetId} (already acknowledged)");
                     continue;
@@ -731,7 +1055,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             foreach (var targetId in GetOnlineSyncTargetIdsInternal())
             {
-                if (await IsItemAcknowledgedAsync(targetId, isNote: true, noteId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Note, noteId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
                 {
                     Console.WriteLine($"[WebRtcSyncCoordinator] Skipping note delete {noteId} for {targetId} (already acknowledged)");
                     continue;
@@ -761,7 +1085,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             var entries = await _noteStore.LoadNoteAsync(noteId);
             foreach (var targetId in GetOnlineSyncTargetIdsInternal())
             {
-                if (await IsItemAcknowledgedAsync(targetId, isNote: true, noteId, fingerprint))
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Note, noteId, fingerprint))
                 {
                     Console.WriteLine($"[WebRtcSyncCoordinator] Skipping note {noteId} for {targetId} (unchanged since last ack)");
                     continue;
@@ -772,12 +1096,196 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         });
     }
 
+    public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId)
+    {
+        if (!AutoSyncBookmarks || _browserStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"bookmark:{bookmarkId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected() || _browserStore == null)
+                return;
+
+            var bookmark = await _browserStore.GetBookmarkByIdAsync(bookmarkId);
+            if (bookmark == null)
+                return;
+
+            var fingerprint = SyncFingerprint.ForBookmark(bookmark);
+            foreach (var targetId in GetOnlineBrowserSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Bookmark, bookmarkId, fingerprint))
+                {
+                    Console.WriteLine($"[WebRtcSyncCoordinator] Skipping bookmark {bookmarkId} for {targetId} (unchanged since last ack)");
+                    continue;
+                }
+
+                await EnqueueBookmarkSyncAsync(targetId, bookmark);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(string bookmarkId, DateTime deletedAtUtc)
+    {
+        if (!AutoSyncBookmarks || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"bookmark-delete:{bookmarkId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected())
+                return;
+
+            foreach (var targetId in GetOnlineBrowserSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Bookmark, bookmarkId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                {
+                    Console.WriteLine($"[WebRtcSyncCoordinator] Skipping bookmark delete {bookmarkId} for {targetId} (already acknowledged)");
+                    continue;
+                }
+
+                await EnqueueBookmarkDeleteAsync(targetId, bookmarkId, deletedAtUtc);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncFolderAfterLocalSave(string folderId)
+    {
+        if (!AutoSyncBookmarks || _browserStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"folder:{folderId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected() || _browserStore == null)
+                return;
+
+            var folder = await _browserStore.GetFolderByIdAsync(folderId);
+            if (folder == null)
+                return;
+
+            var fingerprint = SyncFingerprint.ForBookmarkFolder(folder);
+            foreach (var targetId in GetOnlineBrowserSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.BookmarkFolder, folderId, fingerprint))
+                {
+                    Console.WriteLine($"[WebRtcSyncCoordinator] Skipping folder {folderId} for {targetId} (unchanged since last ack)");
+                    continue;
+                }
+
+                await EnqueueFolderSyncAsync(targetId, folder);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncFolderDeleteAfterLocalDelete(string folderId, DateTime deletedAtUtc)
+    {
+        if (!AutoSyncBookmarks || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"folder-delete:{folderId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected())
+                return;
+
+            foreach (var targetId in GetOnlineBrowserSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.BookmarkFolder, folderId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                {
+                    Console.WriteLine($"[WebRtcSyncCoordinator] Skipping folder delete {folderId} for {targetId} (already acknowledged)");
+                    continue;
+                }
+
+                await EnqueueFolderDeleteAsync(targetId, folderId, deletedAtUtc);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncSidebarAppAfterLocalSave(string appId)
+    {
+        if (!AutoSyncInstalledApps || _sidebarStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"app:{appId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected() || _sidebarStore == null)
+                return;
+
+            var app = await _sidebarStore.GetAppByIdAsync(appId);
+            if (app == null)
+                return;
+
+            var fingerprint = SyncFingerprint.ForSidebarApp(app);
+            foreach (var targetId in GetOnlineBrowserSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.SidebarApp, appId, fingerprint))
+                {
+                    Console.WriteLine($"[WebRtcSyncCoordinator] Skipping sidebar app {appId} for {targetId} (unchanged since last ack)");
+                    continue;
+                }
+
+                await EnqueueSidebarAppSyncAsync(targetId, app);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(string appId, DateTime deletedAtUtc)
+    {
+        if (!AutoSyncInstalledApps || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"app-delete:{appId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected())
+                return;
+
+            foreach (var targetId in GetOnlineBrowserSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.SidebarApp, appId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                {
+                    Console.WriteLine($"[WebRtcSyncCoordinator] Skipping sidebar app delete {appId} for {targetId} (already acknowledged)");
+                    continue;
+                }
+
+                await EnqueueSidebarAppDeleteAsync(targetId, appId, deletedAtUtc);
+            }
+        });
+    }
+
     private IEnumerable<string> GetOnlineSyncTargetIdsInternal() =>
         (GetDevices?.Invoke() ?? Array.Empty<SyncDeviceInfo>())
             .Where(d => d.IsOnline
                         && IsSelf?.Invoke(d.DeviceId) == false
                         && SyncTargetDeviceIds.Any(id => string.Equals(id, d.DeviceId, StringComparison.OrdinalIgnoreCase)))
             .Select(d => d.DeviceId);
+
+    private IEnumerable<string> GetOnlineBrowserSyncTargetIdsInternal() =>
+        (GetDevices?.Invoke() ?? Array.Empty<SyncDeviceInfo>())
+            .Where(d => d.IsOnline
+                        && d.SupportsBrowserSync
+                        && IsSelf?.Invoke(d.DeviceId) == false
+                        && SyncTargetDeviceIds.Any(id => string.Equals(id, d.DeviceId, StringComparison.OrdinalIgnoreCase)))
+            .Select(d => d.DeviceId);
+
+    private bool DeviceSupportsBrowserSync(string deviceId)
+    {
+        var devices = GetDevices?.Invoke();
+        if (devices == null)
+            return false;
+
+        return devices.Any(d =>
+            string.Equals(d.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase)
+            && d.SupportsBrowserSync);
+    }
 
     private async Task DebouncedAutoSyncAsync(string key, Func<Task> action)
     {
@@ -804,54 +1312,62 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         }
     }
 
-    private async Task<bool> HasPendingOutboundSyncAsync(string peerId, bool includeConvos, bool includeNotes)
+    private static bool ManifestEntryHasPendingAck(
+        Dictionary<string, string> ackState,
+        SyncItemKind kind,
+        SyncManifestEntry entry)
+    {
+        var key = GetAckItemKey(kind, entry.Id);
+        var expectedAck = entry.IsDeleted && entry.DeletedAtTicks.HasValue
+            ? DeleteSyncPayload.AckValue(entry.DeletedAtTicks.Value)
+            : entry.ContentFingerprint;
+
+        if (string.IsNullOrEmpty(expectedAck))
+            return !ackState.ContainsKey(key);
+
+        return !ackState.TryGetValue(key, out var ackFp)
+               || !string.Equals(ackFp, expectedAck, StringComparison.Ordinal);
+    }
+
+    private async Task<bool> HasPendingOutboundSyncAsync(
+        string peerId,
+        bool includeConvos,
+        bool includeNotes,
+        bool includeBookmarks = false,
+        bool includeSidebarApps = false)
     {
         var ackState = await LoadPeerAckStateAsync(peerId);
 
         if (includeConvos)
         {
             var convos = await _conversationStore.LoadManifestEntriesAsync();
-            foreach (var convo in convos)
-            {
-                var key = GetAckItemKey(isNote: false, convo.Id);
-                var expectedAck = convo.IsDeleted && convo.DeletedAtTicks.HasValue
-                    ? DeleteSyncPayload.AckValue(convo.DeletedAtTicks.Value)
-                    : convo.ContentFingerprint;
-
-                if (string.IsNullOrEmpty(expectedAck))
-                {
-                    if (!ackState.ContainsKey(key))
-                        return true;
-                    continue;
-                }
-
-                if (!ackState.TryGetValue(key, out var ackFp)
-                    || !string.Equals(ackFp, expectedAck, StringComparison.Ordinal))
-                    return true;
-            }
+            if (convos.Any(c => ManifestEntryHasPendingAck(ackState, SyncItemKind.Conversation, c)))
+                return true;
         }
 
         if (includeNotes)
         {
             var notes = await _noteStore.LoadManifestEntriesAsync();
-            foreach (var note in notes)
-            {
-                var key = GetAckItemKey(isNote: true, note.Id);
-                var expectedAck = note.IsDeleted && note.DeletedAtTicks.HasValue
-                    ? DeleteSyncPayload.AckValue(note.DeletedAtTicks.Value)
-                    : note.ContentFingerprint;
+            if (notes.Any(n => ManifestEntryHasPendingAck(ackState, SyncItemKind.Note, n)))
+                return true;
+        }
 
-                if (string.IsNullOrEmpty(expectedAck))
-                {
-                    if (!ackState.ContainsKey(key))
-                        return true;
-                    continue;
-                }
+        if (includeBookmarks && _browserStore != null)
+        {
+            var folders = await _browserStore.LoadFolderManifestEntriesAsync();
+            if (folders.Any(f => ManifestEntryHasPendingAck(ackState, SyncItemKind.BookmarkFolder, f)))
+                return true;
 
-                if (!ackState.TryGetValue(key, out var ackFp)
-                    || !string.Equals(ackFp, expectedAck, StringComparison.Ordinal))
-                    return true;
-            }
+            var bookmarks = await _browserStore.LoadBookmarkManifestEntriesAsync();
+            if (bookmarks.Any(b => ManifestEntryHasPendingAck(ackState, SyncItemKind.Bookmark, b)))
+                return true;
+        }
+
+        if (includeSidebarApps && _sidebarStore != null)
+        {
+            var apps = await _sidebarStore.LoadSidebarAppManifestEntriesAsync();
+            if (apps.Any(a => ManifestEntryHasPendingAck(ackState, SyncItemKind.SidebarApp, a)))
+                return true;
         }
 
         return false;
@@ -927,12 +1443,21 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             || !SyncTargetDeviceIds.Any(id => string.Equals(id, deviceId, StringComparison.OrdinalIgnoreCase)))
             return;
 
-        if (!AutoSyncChatHistory && !AutoSyncNotes)
+        var supportsBrowser = DeviceSupportsBrowserSync(deviceId);
+        var includeBookmarks = AutoSyncBookmarks && supportsBrowser && _browserStore != null;
+        var includeApps = AutoSyncInstalledApps && supportsBrowser && _sidebarStore != null;
+
+        if (!AutoSyncChatHistory && !AutoSyncNotes && !includeBookmarks && !includeApps)
             return;
 
         try
         {
-            if (!await HasPendingOutboundSyncAsync(deviceId, AutoSyncChatHistory, AutoSyncNotes))
+            if (!await HasPendingOutboundSyncAsync(
+                    deviceId,
+                    AutoSyncChatHistory,
+                    AutoSyncNotes,
+                    includeBookmarks,
+                    includeApps))
             {
                 Console.WriteLine($"[WebRtcSyncCoordinator] Skipping auto-sync for {deviceId} (all items already acknowledged)");
                 return;
@@ -948,7 +1473,12 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 return;
             }
 
-            await EnqueueManifestExchangeAsync(deviceId, AutoSyncChatHistory, AutoSyncNotes);
+            await EnqueueManifestExchangeAsync(
+                deviceId,
+                AutoSyncChatHistory,
+                AutoSyncNotes,
+                includeBookmarks,
+                includeApps);
             Console.WriteLine($"[WebRtcSyncCoordinator] Auto-sync manifest queued for {deviceId}");
         }
         catch (Exception ex)
@@ -1001,10 +1531,10 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             var channelLabel = nextItem.IsManifestExchange
                 ? "chatfish-sync-manifest"
-                : nextItem.IsNote ? "chatfish-note-sync" : "chatfish-sync";
+                : ChannelLabelFor(nextItem.Kind);
             var label = nextItem.IsManifestExchange
                 ? "manifest"
-                : $"{(nextItem.IsNote ? "note" : "convo")} {nextItem.ItemId}";
+                : $"{KindLabel(nextItem.Kind)} {nextItem.ItemId}";
             Console.WriteLine($"[WebRtcSyncCoordinator] Starting WebRTC sync for {peerId}: {label}");
             await StartWebRtcDataChannelAsync(peerId, channelLabel);
         }
@@ -1025,7 +1555,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             _chunkAssemblies.Remove(key);
     }
 
-    private async Task<bool> SendSyncPayloadAsync(string peerId, bool isNote, string itemId, string contentJson)
+    private async Task<bool> SendSyncPayloadAsync(string peerId, SyncItemKind kind, string itemId, string contentJson)
     {
         var maxMessageSize = await _webrtc.GetMaxMessageSizeAsync(peerId);
         var chunkPayloadBytes = Math.Max(4096, (int)(maxMessageSize * 0.7) - 256);
@@ -1033,14 +1563,27 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         if (contentBytes.Length <= chunkPayloadBytes)
         {
-            var msg = isNote
-                ? new DataChannelMessage("note-sync-data", content: contentJson)
-                : new DataChannelMessage("sync-data", itemId, contentJson);
-            return await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(msg));
+            var dataType = DataTypeFor(kind);
+            var msg = kind switch
+            {
+                SyncItemKind.Conversation => new DataChannelMessage(dataType, convoId: itemId, content: contentJson),
+                SyncItemKind.Note => new DataChannelMessage(dataType, content: contentJson),
+                _ => new DataChannelMessage(dataType, content: contentJson, itemId: itemId)
+            };
+            return await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(msg));
         }
 
+        var chunkType = kind switch
+        {
+            SyncItemKind.Conversation => "sync-chunk",
+            SyncItemKind.Note => "note-sync-chunk",
+            SyncItemKind.Bookmark => "bookmark-sync-chunk",
+            SyncItemKind.BookmarkFolder => "folder-sync-chunk",
+            SyncItemKind.SidebarApp => "app-sync-chunk",
+            _ => "sync-chunk"
+        };
+
         var chunkCount = (contentBytes.Length + chunkPayloadBytes - 1) / chunkPayloadBytes;
-        var chunkType = isNote ? "note-sync-chunk" : "sync-chunk";
         Console.WriteLine(
             $"[WebRtcSyncCoordinator] Chunking sync payload for {itemId}: {contentBytes.Length} bytes -> {chunkCount} chunk(s)");
 
@@ -1052,13 +1595,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             var chunkMsg = new DataChannelMessage(
                 chunkType,
-                convoId: isNote ? null : itemId,
-                noteId: isNote ? itemId : null,
+                convoId: kind == SyncItemKind.Conversation ? itemId : null,
+                noteId: kind == SyncItemKind.Note ? itemId : null,
                 chunkIndex: i,
                 chunkCount: chunkCount,
-                chunkData: slice);
+                chunkData: slice,
+                itemId: kind is SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp
+                    ? itemId
+                    : null);
 
-            var sent = await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(chunkMsg));
+            var sent = await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(chunkMsg));
             if (!sent)
                 return false;
         }
@@ -1072,7 +1618,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     private bool TryAddChunk(
         string peerId,
         string itemId,
-        bool isNote,
+        SyncItemKind kind,
         int? chunkIndex,
         int? chunkCount,
         string? chunkData,
@@ -1082,12 +1628,12 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         if (chunkIndex is null or < 0 || chunkCount is null or < 1 || string.IsNullOrEmpty(chunkData))
             return false;
 
-        var key = $"{peerId}:{(isNote ? "note" : "convo")}:{itemId}";
+        var key = $"{peerId}:{kind}:{itemId}";
         if (!_chunkAssemblies.TryGetValue(key, out var assembly))
         {
             assembly = new ChunkAssembly
             {
-                IsNote = isNote,
+                Kind = kind,
                 ItemId = itemId,
                 ChunkCount = chunkCount.Value,
                 Parts = new string[chunkCount.Value]
@@ -1212,11 +1758,11 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         {
             if (item.IsDelete)
             {
-                var deleteType = item.IsNote ? "note-delete" : "convo-delete";
+                var deleteType = DeleteTypeFor(item.Kind);
                 Console.WriteLine(
-                    $"[WebRtcSyncCoordinator] Sending {(item.IsNote ? "note" : "convo")} delete for {item.ItemId} to {peerId}");
+                    $"[WebRtcSyncCoordinator] Sending {KindLabel(item.Kind)} delete for {item.ItemId} to {peerId}");
                 var msg = new DataChannelMessage(deleteType, content: item.DataJson);
-                var sent = await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(msg));
+                var sent = await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(msg));
                 if (!sent)
                 {
                     await FailActiveSyncAsync(peerId, "data channel not ready for delete");
@@ -1229,10 +1775,10 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(item.DataJson);
             Console.WriteLine(
-                $"[WebRtcSyncCoordinator] Preparing {(item.IsNote ? "note" : "convo")} sync payload " +
+                $"[WebRtcSyncCoordinator] Preparing {KindLabel(item.Kind)} sync payload " +
                 $"for {item.ItemId} ({payloadBytes} bytes)");
 
-            var payloadSent = await SendSyncPayloadAsync(peerId, item.IsNote, item.ItemId, item.DataJson);
+            var payloadSent = await SendSyncPayloadAsync(peerId, item.Kind, item.ItemId, item.DataJson);
             if (!payloadSent)
             {
                 Console.WriteLine($"[WebRtcSyncCoordinator] webrtcSendData failed (channel not ready) for {peerId}");
@@ -1241,7 +1787,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
 
             Console.WriteLine(
-                $"[WebRtcSyncCoordinator] Sent {(item.IsNote ? "note-sync-data" : "sync-data")} " +
+                $"[WebRtcSyncCoordinator] Sent {DataTypeFor(item.Kind)} " +
                 $"over DataChannel to {peerId} for {item.ItemId}");
         }
         catch (Exception ex)
@@ -1273,7 +1819,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 var contentJson = msg.content;
                 if (msg.type == "sync-chunk")
                 {
-                    if (!TryAddChunk(peerId, msg.convoId, isNote: false, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                    if (!TryAddChunk(peerId, msg.convoId, SyncItemKind.Conversation, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
                         return;
                 }
 
@@ -1283,7 +1829,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 await HandleIncomingSyncPayload(msg.convoId, contentJson, peerId);
 
                 var ack = new DataChannelMessage("sync-ack", msg.convoId);
-                await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(ack));
+                await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
             }
             else if (msg.type == "sync-ack" && msg.convoId != null)
             {
@@ -1298,7 +1844,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 if (msg.type == "note-sync-chunk")
                 {
                     if (noteId == null
-                        || !TryAddChunk(peerId, noteId, isNote: true, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        || !TryAddChunk(peerId, noteId, SyncItemKind.Note, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
                         return;
                 }
 
@@ -1311,12 +1857,93 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 if (payload?.NoteId != null)
                 {
                     var ack = new DataChannelMessage("note-sync-ack", noteId: payload.NoteId);
-                    await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(ack));
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
                 }
             }
             else if (msg.type == "note-sync-ack" && msg.noteId != null)
             {
                 HandleNoteSyncAck(msg.noteId, peerId);
+            }
+            else if ((msg.type == "bookmark-sync-data" || msg.type == "bookmark-sync-chunk")
+                     && (msg.content != null || msg.itemId != null))
+            {
+                var contentJson = msg.content;
+                if (msg.type == "bookmark-sync-chunk")
+                {
+                    if (msg.itemId == null
+                        || !TryAddChunk(peerId, msg.itemId, SyncItemKind.Bookmark, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingBookmarkSyncPayload(contentJson, peerId);
+
+                var payload = BookmarkSyncPayload.Deserialize(contentJson);
+                if (payload?.Bookmark?.Id != null)
+                {
+                    var ack = new DataChannelMessage("bookmark-sync-ack", itemId: payload.Bookmark.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "bookmark-sync-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("bookmark-sync-ack", msg.itemId, peerId);
+            }
+            else if ((msg.type == "folder-sync-data" || msg.type == "folder-sync-chunk")
+                     && (msg.content != null || msg.itemId != null))
+            {
+                var contentJson = msg.content;
+                if (msg.type == "folder-sync-chunk")
+                {
+                    if (msg.itemId == null
+                        || !TryAddChunk(peerId, msg.itemId, SyncItemKind.BookmarkFolder, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingFolderSyncPayload(contentJson, peerId);
+
+                var payload = BookmarkFolderSyncPayload.Deserialize(contentJson);
+                if (payload?.Folder?.Id != null)
+                {
+                    var ack = new DataChannelMessage("folder-sync-ack", itemId: payload.Folder.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "folder-sync-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("folder-sync-ack", msg.itemId, peerId);
+            }
+            else if ((msg.type == "app-sync-data" || msg.type == "app-sync-chunk")
+                     && (msg.content != null || msg.itemId != null))
+            {
+                var contentJson = msg.content;
+                if (msg.type == "app-sync-chunk")
+                {
+                    if (msg.itemId == null
+                        || !TryAddChunk(peerId, msg.itemId, SyncItemKind.SidebarApp, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingSidebarAppSyncPayload(contentJson, peerId);
+
+                var payload = SidebarAppSyncPayload.Deserialize(contentJson);
+                if (payload?.App?.Id != null)
+                {
+                    var ack = new DataChannelMessage("app-sync-ack", itemId: payload.App.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "app-sync-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("app-sync-ack", msg.itemId, peerId);
             }
             else if (msg.type == "convo-delete" && msg.content != null)
             {
@@ -1325,7 +1952,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 if (deletePayload != null)
                 {
                     var ack = new DataChannelMessage("convo-delete-ack", convoId: deletePayload.Id);
-                    await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(ack));
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
                 }
             }
             else if (msg.type == "convo-delete-ack" && msg.convoId != null)
@@ -1339,12 +1966,54 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 if (deletePayload != null)
                 {
                     var ack = new DataChannelMessage("note-delete-ack", noteId: deletePayload.Id);
-                    await _webrtc.SendDataAsync( peerId, SerializeDataChannelMessage(ack));
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
                 }
             }
             else if (msg.type == "note-delete-ack" && msg.noteId != null)
             {
                 HandleNoteDeleteAck(msg.noteId, peerId);
+            }
+            else if (msg.type == "bookmark-delete" && msg.content != null)
+            {
+                await HandleIncomingBookmarkDeleteAsync(msg.content, peerId);
+                var deletePayload = DeleteSyncPayload.Deserialize(msg.content);
+                if (deletePayload != null)
+                {
+                    var ack = new DataChannelMessage("bookmark-delete-ack", itemId: deletePayload.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "bookmark-delete-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("bookmark-delete-ack", msg.itemId, peerId);
+            }
+            else if (msg.type == "folder-delete" && msg.content != null)
+            {
+                await HandleIncomingFolderDeleteAsync(msg.content, peerId);
+                var deletePayload = DeleteSyncPayload.Deserialize(msg.content);
+                if (deletePayload != null)
+                {
+                    var ack = new DataChannelMessage("folder-delete-ack", itemId: deletePayload.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "folder-delete-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("folder-delete-ack", msg.itemId, peerId);
+            }
+            else if (msg.type == "app-delete" && msg.content != null)
+            {
+                await HandleIncomingSidebarAppDeleteAsync(msg.content, peerId);
+                var deletePayload = DeleteSyncPayload.Deserialize(msg.content);
+                if (deletePayload != null)
+                {
+                    var ack = new DataChannelMessage("app-delete-ack", itemId: deletePayload.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "app-delete-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("app-delete-ack", msg.itemId, peerId);
             }
             else if (msg.type == "sync-manifest-offer" && msg.content != null)
             {
@@ -1369,6 +2038,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         var localConvos = await _conversationStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true);
         var localNotes = await _noteStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true);
+        var remoteBookmarks = offer.Bookmarks ?? [];
+        var remoteFolders = offer.BookmarkFolders ?? [];
+        var remoteApps = offer.SidebarApps ?? [];
 
         var neededConvos = new List<string>();
         var senderShouldDeleteConvos = new List<DeleteSyncPayload>();
@@ -1428,10 +2100,111 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 upToDateNotes++;
         }
 
+        var neededBookmarks = new List<string>();
+        var neededFolders = new List<string>();
+        var neededApps = new List<string>();
+        var senderShouldDeleteBookmarks = new List<DeleteSyncPayload>();
+        var senderShouldDeleteFolders = new List<DeleteSyncPayload>();
+        var senderShouldDeleteApps = new List<DeleteSyncPayload>();
+        var upToDateBookmarks = 0;
+        var upToDateFolders = 0;
+        var upToDateApps = 0;
+        var appliedBookmarkDeletes = 0;
+        var appliedFolderDeletes = 0;
+        var appliedAppDeletes = 0;
+
+        if (_browserStore != null)
+        {
+            var localFolders = await _browserStore.LoadFolderManifestEntriesAsync(backfillMissingFingerprints: true);
+            foreach (var remote in remoteFolders)
+            {
+                var local = localFolders.FirstOrDefault(f => string.Equals(f.Id, remote.Id, StringComparison.Ordinal));
+
+                if (remote.IsDeleted)
+                {
+                    if (await _browserStore.TryApplyRemoteFolderDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
+                        appliedFolderDeletes++;
+                    upToDateFolders++;
+                    continue;
+                }
+
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteFolders.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateFolders++;
+                    continue;
+                }
+
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededFolders.Add(remote.Id);
+                else
+                    upToDateFolders++;
+            }
+
+            var localBookmarks = await _browserStore.LoadBookmarkManifestEntriesAsync(backfillMissingFingerprints: true);
+            foreach (var remote in remoteBookmarks)
+            {
+                var local = localBookmarks.FirstOrDefault(b => string.Equals(b.Id, remote.Id, StringComparison.Ordinal));
+
+                if (remote.IsDeleted)
+                {
+                    if (await _browserStore.TryApplyRemoteBookmarkDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
+                        appliedBookmarkDeletes++;
+                    upToDateBookmarks++;
+                    continue;
+                }
+
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteBookmarks.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateBookmarks++;
+                    continue;
+                }
+
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededBookmarks.Add(remote.Id);
+                else
+                    upToDateBookmarks++;
+            }
+        }
+
+        if (_sidebarStore != null)
+        {
+            var localApps = await _sidebarStore.LoadSidebarAppManifestEntriesAsync(backfillMissingFingerprints: true);
+            foreach (var remote in remoteApps)
+            {
+                var local = localApps.FirstOrDefault(a => string.Equals(a.Id, remote.Id, StringComparison.Ordinal));
+
+                if (remote.IsDeleted)
+                {
+                    if (await _sidebarStore.TryApplyRemoteSidebarAppDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
+                        appliedAppDeletes++;
+                    upToDateApps++;
+                    continue;
+                }
+
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteApps.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateApps++;
+                    continue;
+                }
+
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededApps.Add(remote.Id);
+                else
+                    upToDateApps++;
+            }
+        }
+
         if (appliedConvoDeletes > 0)
             OnConversationsChanged?.Invoke();
         if (appliedNoteDeletes > 0)
             OnNotesChanged?.Invoke();
+        if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
+            OnBookmarksChanged?.Invoke();
+        if (appliedAppDeletes > 0)
+            OnInstalledAppsChanged?.Invoke();
 
         var response = new SyncManifestResponse(
             neededConvos,
@@ -1439,7 +2212,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             upToDateConvos,
             upToDateNotes,
             senderShouldDeleteConvos,
-            senderShouldDeleteNotes);
+            senderShouldDeleteNotes,
+            neededBookmarks,
+            neededFolders,
+            neededApps,
+            upToDateBookmarks,
+            upToDateFolders,
+            upToDateApps,
+            senderShouldDeleteBookmarks,
+            senderShouldDeleteFolders,
+            senderShouldDeleteApps);
         var responseJson = System.Text.Json.JsonSerializer.Serialize(response);
         await _webrtc.SendDataAsync(
             peerId,
@@ -1447,9 +2229,11 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         Console.WriteLine(
             $"[WebRtcSyncCoordinator] Manifest offer from {peerId}: " +
-            $"{upToDateConvos}/{offer.Convos.Count} convos and {upToDateNotes}/{offer.Notes.Count} notes up to date" +
-            (appliedConvoDeletes + appliedNoteDeletes > 0
-                ? $" (applied {appliedConvoDeletes} convo and {appliedNoteDeletes} note delete(s))"
+            $"{upToDateConvos}/{offer.Convos.Count} convos, {upToDateNotes}/{offer.Notes.Count} notes, " +
+            $"{upToDateFolders}/{remoteFolders.Count} folders, {upToDateBookmarks}/{remoteBookmarks.Count} bookmarks, " +
+            $"{upToDateApps}/{remoteApps.Count} apps up to date" +
+            (appliedConvoDeletes + appliedNoteDeletes + appliedBookmarkDeletes + appliedFolderDeletes + appliedAppDeletes > 0
+                ? $" (applied {appliedConvoDeletes} convo, {appliedNoteDeletes} note, {appliedFolderDeletes} folder, {appliedBookmarkDeletes} bookmark, {appliedAppDeletes} app delete(s))"
                 : ""));
     }
 
@@ -1476,13 +2260,50 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 appliedNoteDeletes++;
         }
 
+        var appliedBookmarkDeletes = 0;
+        var appliedFolderDeletes = 0;
+        if (_browserStore != null)
+        {
+            foreach (var del in response.SenderShouldDeleteBookmarkFolders ?? [])
+            {
+                if (await _browserStore.TryApplyRemoteFolderDeleteAsync(del.Id, del.DeletedAtTicks))
+                    appliedFolderDeletes++;
+            }
+
+            foreach (var del in response.SenderShouldDeleteBookmarks ?? [])
+            {
+                if (await _browserStore.TryApplyRemoteBookmarkDeleteAsync(del.Id, del.DeletedAtTicks))
+                    appliedBookmarkDeletes++;
+            }
+        }
+
+        var appliedAppDeletes = 0;
+        if (_sidebarStore != null)
+        {
+            foreach (var del in response.SenderShouldDeleteSidebarApps ?? [])
+            {
+                if (await _sidebarStore.TryApplyRemoteSidebarAppDeleteAsync(del.Id, del.DeletedAtTicks))
+                    appliedAppDeletes++;
+            }
+        }
+
         if (appliedConvoDeletes > 0)
             OnConversationsChanged?.Invoke();
         if (appliedNoteDeletes > 0)
             OnNotesChanged?.Invoke();
+        if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
+            OnBookmarksChanged?.Invoke();
+        if (appliedAppDeletes > 0)
+            OnInstalledAppsChanged?.Invoke();
 
         var queued = await QueueNeededItemsFromManifestAsync(peerId, response);
-        if (response.NeededConvos.Count == 0 && response.NeededNotes.Count == 0)
+        var noNeeded =
+            response.NeededConvos.Count == 0
+            && response.NeededNotes.Count == 0
+            && (response.NeededBookmarks?.Count ?? 0) == 0
+            && (response.NeededBookmarkFolders?.Count ?? 0) == 0
+            && (response.NeededSidebarApps?.Count ?? 0) == 0;
+        if (noNeeded)
             await RecordManifestVerifiedAsync(peerId);
         if (queued == 0)
             Console.WriteLine($"[WebRtcSyncCoordinator] Delta sync complete for {peerId} - peer is up to date");
@@ -1512,6 +2333,17 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
     private void HandleNoteSyncAck(string noteId, string peerId) =>
         _ = HandleNoteSyncAckAsync(noteId, peerId);
+
+    private async Task HandleGenericItemAckAsync(string type, string itemId, string peerId)
+    {
+        Console.WriteLine($"[WebRtcSyncCoordinator] Received {type} for {itemId} from peer {peerId}");
+        if (_activeSyncByPeer.TryGetValue(peerId, out var item))
+            await RecordSuccessfulSyncAsync(peerId, item);
+        await AdvanceSyncQueueAsync(peerId);
+    }
+
+    private void HandleGenericItemAck(string type, string itemId, string peerId) =>
+        _ = HandleGenericItemAckAsync(type, itemId, peerId);
 
     private async Task HandleConvoDeleteAckAsync(string convoId, string peerId)
     {
@@ -1567,6 +2399,87 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         }
     }
 
+    private async Task HandleIncomingBookmarkSyncPayload(string json, string fromDeviceId)
+    {
+        if (_browserStore == null)
+            return;
+
+        try
+        {
+            var payload = BookmarkSyncPayload.Deserialize(json);
+            if (payload?.Bookmark == null || string.IsNullOrEmpty(payload.Bookmark.Id))
+                return;
+
+            if (!await _browserStore.ShouldAcceptIncomingBookmarkAsync(payload.Bookmark))
+            {
+                Console.WriteLine($"[WebRtcSyncCoordinator] Ignoring stale bookmark sync for {payload.Bookmark.Id}");
+                return;
+            }
+
+            await _browserStore.ApplyBookmarkPayloadAsync(payload.Bookmark);
+            OnBookmarksChanged?.Invoke();
+            Console.WriteLine($"[WebRtcSyncCoordinator] Applied incoming bookmark sync for {payload.Bookmark.Id} from {fromDeviceId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Failed to persist incoming bookmark sync: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingFolderSyncPayload(string json, string fromDeviceId)
+    {
+        if (_browserStore == null)
+            return;
+
+        try
+        {
+            var payload = BookmarkFolderSyncPayload.Deserialize(json);
+            if (payload?.Folder == null || string.IsNullOrEmpty(payload.Folder.Id))
+                return;
+
+            if (!await _browserStore.ShouldAcceptIncomingFolderAsync(payload.Folder))
+            {
+                Console.WriteLine($"[WebRtcSyncCoordinator] Ignoring stale folder sync for {payload.Folder.Id}");
+                return;
+            }
+
+            await _browserStore.ApplyFolderPayloadAsync(payload.Folder);
+            OnBookmarksChanged?.Invoke();
+            Console.WriteLine($"[WebRtcSyncCoordinator] Applied incoming folder sync for {payload.Folder.Id} from {fromDeviceId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Failed to persist incoming folder sync: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingSidebarAppSyncPayload(string json, string fromDeviceId)
+    {
+        if (_sidebarStore == null)
+            return;
+
+        try
+        {
+            var payload = SidebarAppSyncPayload.Deserialize(json);
+            if (payload?.App == null || string.IsNullOrEmpty(payload.App.Id))
+                return;
+
+            if (!await _sidebarStore.ShouldAcceptIncomingSidebarAppAsync(payload.App))
+            {
+                Console.WriteLine($"[WebRtcSyncCoordinator] Ignoring stale sidebar app sync for {payload.App.Id}");
+                return;
+            }
+
+            await _sidebarStore.ApplySidebarAppPayloadAsync(payload.App);
+            OnInstalledAppsChanged?.Invoke();
+            Console.WriteLine($"[WebRtcSyncCoordinator] Applied incoming sidebar app sync for {payload.App.Id} from {fromDeviceId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Failed to persist incoming sidebar app sync: {ex.Message}");
+        }
+    }
+
     private async Task HandleIncomingConvoDeleteAsync(string json, string fromDeviceId)
     {
         try
@@ -1604,6 +2517,75 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         catch (Exception ex)
         {
             Console.WriteLine($"[WebRtcSyncCoordinator] Failed to apply note delete: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingBookmarkDeleteAsync(string json, string fromDeviceId)
+    {
+        if (_browserStore == null)
+            return;
+
+        try
+        {
+            var payload = DeleteSyncPayload.Deserialize(json);
+            if (payload == null || string.IsNullOrEmpty(payload.Id))
+                return;
+
+            if (await _browserStore.TryApplyRemoteBookmarkDeleteAsync(payload.Id, payload.DeletedAtTicks))
+            {
+                OnBookmarksChanged?.Invoke();
+                Console.WriteLine($"[WebRtcSyncCoordinator] Applied remote bookmark delete for {payload.Id} from {fromDeviceId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Failed to apply bookmark delete: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingFolderDeleteAsync(string json, string fromDeviceId)
+    {
+        if (_browserStore == null)
+            return;
+
+        try
+        {
+            var payload = DeleteSyncPayload.Deserialize(json);
+            if (payload == null || string.IsNullOrEmpty(payload.Id))
+                return;
+
+            if (await _browserStore.TryApplyRemoteFolderDeleteAsync(payload.Id, payload.DeletedAtTicks))
+            {
+                OnBookmarksChanged?.Invoke();
+                Console.WriteLine($"[WebRtcSyncCoordinator] Applied remote folder delete for {payload.Id} from {fromDeviceId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Failed to apply folder delete: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingSidebarAppDeleteAsync(string json, string fromDeviceId)
+    {
+        if (_sidebarStore == null)
+            return;
+
+        try
+        {
+            var payload = DeleteSyncPayload.Deserialize(json);
+            if (payload == null || string.IsNullOrEmpty(payload.Id))
+                return;
+
+            if (await _sidebarStore.TryApplyRemoteSidebarAppDeleteAsync(payload.Id, payload.DeletedAtTicks))
+            {
+                OnInstalledAppsChanged?.Invoke();
+                Console.WriteLine($"[WebRtcSyncCoordinator] Applied remote sidebar app delete for {payload.Id} from {fromDeviceId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WebRtcSyncCoordinator] Failed to apply sidebar app delete: {ex.Message}");
         }
     }
 
@@ -1682,7 +2664,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         string? noteId = null,
         int? chunkIndex = null,
         int? chunkCount = null,
-        string? chunkData = null);
+        string? chunkData = null,
+        string? itemId = null);
 
     public async ValueTask DisposeAsync()
     {

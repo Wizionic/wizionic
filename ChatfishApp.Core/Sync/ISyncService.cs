@@ -1,3 +1,4 @@
+using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Storage;
 
 namespace ChatfishApp.Core.Sync;
@@ -19,6 +20,8 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
 
     bool AutoSyncChatHistory { get; }
     bool AutoSyncNotes { get; }
+    bool AutoSyncBookmarks { get; }
+    bool AutoSyncInstalledApps { get; }
     IReadOnlyCollection<string> SyncTargetDeviceIds { get; }
 
     event Action? OnChanged;
@@ -27,6 +30,8 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
     event Action<string, string>? OnSyncAckReceived;
     event Action<string, string, string>? OnNoteSyncPayloadReceived;
     event Action<string, string>? OnNoteSyncAckReceived;
+    event Action? OnBookmarksChanged;
+    event Action? OnInstalledAppsChanged;
 
     Task InitializeAsync();
     Task EnsureConnectedAndRegisteredAsync();
@@ -37,17 +42,31 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
     Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds);
     Task SetAutoSyncChatHistoryAsync(bool enabled);
     Task SetAutoSyncNotesAsync(bool enabled);
+    Task SetAutoSyncBookmarksAsync(bool enabled);
+    Task SetAutoSyncInstalledAppsAsync(bool enabled);
 
     Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages);
 
     Task StartWebRtcSyncAsync(string targetDeviceId, string convoId, List<ChatMessage> messages);
     Task StartWebRtcNoteSyncAsync(string targetDeviceId, string noteId, string title, List<ChatMessage> entries);
+    Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark);
+    Task StartWebRtcFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder);
+    Task StartWebRtcSidebarAppSyncAsync(string targetDeviceId, SidebarApp app);
 
     Task<int> SyncAllConversationsToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllNotesToDevicesAsync(IEnumerable<string> targetDeviceIds);
+    Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds);
+    Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds);
 
     void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null);
     void ScheduleAutoSyncConvoDeleteAfterLocalDelete(string convoId, DateTime deletedAtUtc);
+
+    void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId);
+    void ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(string bookmarkId, DateTime deletedAtUtc);
+    void ScheduleAutoSyncFolderAfterLocalSave(string folderId);
+    void ScheduleAutoSyncFolderDeleteAfterLocalDelete(string folderId, DateTime deletedAtUtc);
+    void ScheduleAutoSyncSidebarAppAfterLocalSave(string appId);
+    void ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(string appId, DateTime deletedAtUtc);
 
     string? GetAiServerDeviceName();
     Task SetAiServerDeviceAsync(string? deviceId);

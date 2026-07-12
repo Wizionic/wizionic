@@ -33,7 +33,8 @@ public class DevicePresenceService
         DateTime LastActiveUtc,
         bool IsOnline,
         bool CanRelayAi = false,
-        int AiModelCount = 0);
+        int AiModelCount = 0,
+        bool SupportsBrowserSync = false);
 
     private class DeviceEntry
     {
@@ -41,6 +42,7 @@ public class DevicePresenceService
         public DateTime LastActiveUtc { get; set; } = DateTime.UtcNow;
         public bool CanRelayAi { get; set; }
         public int AiModelCount { get; set; }
+        public bool SupportsBrowserSync { get; set; }
         public HashSet<string> ConnectionIds { get; } = new(StringComparer.Ordinal);
     }
 
@@ -86,6 +88,21 @@ public class DevicePresenceService
         {
             entry.AiModelCount = Math.Max(0, modelCount);
             entry.CanRelayAi = entry.AiModelCount > 0;
+            entry.LastActiveUtc = DateTime.UtcNow;
+        }
+        return GetDevicesSnapshot(userKey);
+    }
+
+    /// <summary>
+    /// MAUI clients report browser bookmark/PWA sync support so peers can target them only.
+    /// </summary>
+    public IReadOnlyList<DeviceInfo> UpdateBrowserCapabilities(string? userId, string? email, string deviceId, bool supportsBrowserSync)
+    {
+        var userKey = GetUserKey(userId, email);
+        if (_users.TryGetValue(userKey, out var bucket) &&
+            bucket.TryGetValue(deviceId, out var entry))
+        {
+            entry.SupportsBrowserSync = supportsBrowserSync;
             entry.LastActiveUtc = DateTime.UtcNow;
         }
         return GetDevicesSnapshot(userKey);
@@ -186,7 +203,8 @@ public class DevicePresenceService
                 LastActiveUtc: entry.LastActiveUtc,
                 IsOnline: isOnline,
                 CanRelayAi: entry.CanRelayAi,
-                AiModelCount: entry.AiModelCount
+                AiModelCount: entry.AiModelCount,
+                SupportsBrowserSync: entry.SupportsBrowserSync
             ));
         }
 
