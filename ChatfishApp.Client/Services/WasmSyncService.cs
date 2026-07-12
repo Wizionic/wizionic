@@ -1,4 +1,5 @@
 ﻿using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Chat;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
@@ -68,6 +69,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 
     public bool AutoSyncChatHistory { get; private set; }
     public bool AutoSyncNotes { get; private set; }
+    public bool AutoSyncBookmarks => false;
+    public bool AutoSyncInstalledApps => false;
     public IReadOnlyCollection<string> SyncTargetDeviceIds => _syncTargetDeviceIds;
 
     public event Action? OnChanged;
@@ -287,6 +290,9 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
+
+    public Task SetAutoSyncBookmarksAsync(bool enabled) => Task.CompletedTask;
+    public Task SetAutoSyncInstalledAppsAsync(bool enabled) => Task.CompletedTask;
 
     private static string DeriveFriendlyName(string ua)
     {
@@ -584,6 +590,15 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         return _coordinator.StartWebRtcNoteSyncAsync(targetDeviceId, noteId, title, entries);
     }
 
+    public Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark) =>
+        Task.CompletedTask;
+
+    public Task StartWebRtcFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder) =>
+        Task.CompletedTask;
+
+    public Task StartWebRtcSidebarAppSyncAsync(string targetDeviceId, SidebarApp app) =>
+        Task.CompletedTask;
+
     public Task<int> SyncAllConversationsToDevicesAsync(IEnumerable<string> targetDeviceIds)
     {
         EnsureCoordinatorWired();
@@ -595,6 +610,12 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinatorWired();
         return _coordinator.SyncAllNotesToDevicesAsync(targetDeviceIds);
     }
+
+    public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
+        Task.FromResult(0);
+
+    public Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
+        Task.FromResult(0);
 
     public void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null)
     {
@@ -619,6 +640,16 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinatorWired();
         _coordinator.ScheduleAutoSyncNoteDeleteAfterLocalDelete(noteId, deletedAtUtc);
     }
+
+    public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId) { }
+    public void ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(string bookmarkId, DateTime deletedAtUtc) { }
+    public void ScheduleAutoSyncFolderAfterLocalSave(string folderId) { }
+    public void ScheduleAutoSyncFolderDeleteAfterLocalDelete(string folderId, DateTime deletedAtUtc) { }
+    public void ScheduleAutoSyncSidebarAppAfterLocalSave(string appId) { }
+    public void ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(string appId, DateTime deletedAtUtc) { }
+
+    public event Action? OnBookmarksChanged;
+    public event Action? OnInstalledAppsChanged;
 
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;

@@ -12,5 +12,8 @@ public record SidebarApp(
     OpenTarget DefaultOpenTarget,
     DateTime PinnedAt,
     int SortOrder = 0,
-    bool IsPwa = false
-);
+    bool IsPwa = false,
+    DateTime? UpdatedAtUtc = null)
+{
+    public DateTime EffectiveUpdatedAtUtc => UpdatedAtUtc ?? PinnedAt;
+}

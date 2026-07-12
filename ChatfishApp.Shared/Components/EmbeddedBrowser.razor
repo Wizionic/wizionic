@@ -12,6 +12,8 @@
 @inject IBrowserSidePanelState SidePanel
 @inject IBrowserSideAgentService SideAgent
 @inject IPwaDetector PwaDetector
+@inject ISyncService SyncService
+@using ChatfishApp.Core.Sync
 
 <div class="browser-splitter"
      title="Drag to resize"
@@ -435,6 +437,8 @@
             <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">@(_bookmarkIsEditMode ? "Edit Bookmark" : "Add Bookmark")</h4>
             <label class="browser-settings-label">Name</label>
             <input class="newnote-input" @bind="_bookmarkTitle" placeholder="Bookmark name..." />
+            <label class="browser-settings-label">URL</label>
+            <input class="newnote-input" @bind="_bookmarkUrl" placeholder="https://..." />
             <label class="browser-settings-label">Folder</label>
             <select class="newnote-select" @bind="_bookmarkFolderId">
                 @foreach (var folder in BrowserStore.GetFolders())
@@ -524,6 +528,7 @@
     private bool _bookmarkIsEditMode;
     private string? _editingBookmarkId;
     private string _bookmarkTitle = "";
+    private string _bookmarkUrl = "";
     private string _bookmarkFolderId = "default";
     private string _newFolderName = "";
 
@@ -954,6 +959,7 @@
         _bookmarkIsEditMode = false;
         _editingBookmarkId = null;
         _bookmarkTitle = string.IsNullOrWhiteSpace(_browserPageTitle) ? _browserUrl : _browserPageTitle;
+        _bookmarkUrl = BrowserAgent.CurrentUrl ?? _browserUrl ?? "";
         _bookmarkFolderId = ShowBookmarksBar
             && BrowserStore.GetFolders().Any(f => f.Id == BrowserBookmarkFolders.BookmarksBarFolderId)
             ? BrowserBookmarkFolders.BookmarksBarFolderId
@@ -968,6 +974,7 @@
         _bookmarkIsEditMode = true;
         _editingBookmarkId = bookmark.Id;
         _bookmarkTitle = bookmark.Title;
+        _bookmarkUrl = bookmark.Url;
         _bookmarkFolderId = bookmark.FolderId;
         _newFolderName = "";
         _showBookmarkDialog = true;
@@ -987,6 +994,7 @@
         if (string.IsNullOrWhiteSpace(_newFolderName))
             return;
         var folder = await BrowserStore.AddFolderAsync(_newFolderName);
+        SyncService.ScheduleAutoSyncFolderAfterLocalSave(folder.Id);
         _bookmarkFolderId = folder.Id;
         _newFolderName = "";
         StateHasChanged();
@@ -994,6 +1002,10 @@
 
     private async Task SaveBookmark()
     {
+        var url = (_bookmarkUrl ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+
         if (_bookmarkIsEditMode)
         {
             if (string.IsNullOrWhiteSpace(_editingBookmarkId))
@@ -1006,15 +1018,16 @@
             var updated = existing with
             {
                 Title = _bookmarkTitle?.Trim() ?? "",
+                Url = url,
                 FolderId = _bookmarkFolderId
             };
             await BrowserStore.UpdateBookmarkAsync(updated);
+            SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(updated.Id);
         }
         else
         {
-            if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
-                return;
-            await BrowserStore.AddBookmarkAsync(BrowserAgent.CurrentUrl, _bookmarkTitle, _bookmarkFolderId);
+            var added = await BrowserStore.AddBookmarkAsync(url, _bookmarkTitle, _bookmarkFolderId);
+            SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(added.Id);
         }
 
         CloseBookmarkDialog();
@@ -1025,7 +1038,9 @@
         if (string.IsNullOrWhiteSpace(_editingBookmarkId))
             return;
 
-        await BrowserStore.RemoveBookmarkAsync(_editingBookmarkId);
+        var id = _editingBookmarkId;
+        await BrowserStore.RemoveBookmarkAsync(id);
+        SyncService.ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(id, DateTime.UtcNow);
         CloseBookmarkDialog();
     }
 
@@ -1137,6 +1152,8 @@
         await BrowserStore.ReorderBookmarksAsync(
             BrowserBookmarkFolders.BookmarksBarFolderId,
             items.Select(b => b.Id).ToList());
+        foreach (var id in items.Select(b => b.Id))
+            SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(id);
 
         await InvokeAsync(StateHasChanged);
     }
@@ -1159,7 +1176,8 @@
         if (string.IsNullOrWhiteSpace(_sideNewFolderName))
             return;
 
-        await BrowserStore.AddFolderAsync(_sideNewFolderName);
+        var folder = await BrowserStore.AddFolderAsync(_sideNewFolderName);
+        SyncService.ScheduleAutoSyncFolderAfterLocalSave(folder.Id);
         _sideNewFolderName = "";
         _showSideNewFolderInput = false;
         StateHasChanged();
@@ -1192,6 +1210,7 @@
     {
         _selectedBookmarkIds.Remove(bookmarkId);
         await BrowserStore.RemoveBookmarkAsync(bookmarkId);
+        SyncService.ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(bookmarkId, DateTime.UtcNow);
         StateHasChanged();
     }
 
@@ -1203,6 +1222,9 @@
         var ids = _selectedBookmarkIds.ToList();
         _selectedBookmarkIds.Clear();
         await BrowserStore.RemoveBookmarksAsync(ids);
+        var deletedAt = DateTime.UtcNow;
+        foreach (var id in ids)
+            SyncService.ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(id, deletedAt);
         StateHasChanged();
     }
 
@@ -1289,9 +1311,15 @@
         if (fromKind == "bookmark")
         {
             if (targetKind == "bookmark" && fromId != targetId && !string.IsNullOrWhiteSpace(targetFolderId))
+            {
                 await BrowserStore.MoveBookmarkAsync(fromId, targetFolderId, targetId);
+                SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(fromId);
+            }
             else if (targetKind == "folder" && fromFolderId != targetId)
+            {
                 await BrowserStore.MoveBookmarkAsync(fromId, targetId);
+                SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(fromId);
+            }
         }
         else if (fromKind == "folder" && targetKind == "folder" && fromId != targetId)
         {
@@ -1304,6 +1332,8 @@
                 folders.RemoveAt(fromIndex);
                 folders.Insert(toIndex, moved);
                 await BrowserStore.ReorderFoldersAsync(folders.Select(f => f.Id).ToList());
+                foreach (var f in folders)
+                    SyncService.ScheduleAutoSyncFolderAfterLocalSave(f.Id);
             }
         }
 
@@ -1378,6 +1408,7 @@
             IsPwa: false);
 
         await SidebarStore.PinAppAsync(app);
+        SyncService.ScheduleAutoSyncSidebarAppAfterLocalSave(app.Id);
         ClosePinDialog();
         await OpenSidebarAppAsync(app, OpenTarget.SidePanel);
     }
@@ -1417,6 +1448,7 @@
             IsPwa: true);
 
         await SidebarStore.PinAppAsync(app);
+        SyncService.ScheduleAutoSyncSidebarAppAfterLocalSave(app.Id);
         ClosePinDialog();
         await OpenSidebarAppAsync(app, suggestedTarget);
     }
@@ -1546,6 +1578,8 @@
         apps.RemoveAt(fromIndex);
         apps.Insert(toIndex, moved);
         await SidebarStore.ReorderAppsAsync(apps.Select(a => a.Id).ToList());
+        foreach (var app in apps.Where(a => !a.IsBuiltIn))
+            SyncService.ScheduleAutoSyncSidebarAppAfterLocalSave(app.Id);
         await InvokeAsync(StateHasChanged);
     }
 
@@ -1583,6 +1617,7 @@
     {
         var updated = app with { DefaultOpenTarget = target };
         await SidebarStore.UpdateAppAsync(updated);
+        SyncService.ScheduleAutoSyncSidebarAppAfterLocalSave(updated.Id);
         _contextMenuApp = updated;
         StateHasChanged();
     }
@@ -1594,6 +1629,7 @@
             CloseSidePanel();
 
         await SidebarStore.UnpinAppAsync(app.Id);
+        SyncService.ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(app.Id, DateTime.UtcNow);
     }
 
     private async Task StartSidePanelSplitterDrag()

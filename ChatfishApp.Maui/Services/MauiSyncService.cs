@@ -1,5 +1,6 @@
 using System.Net;
 using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Chat;
 using ChatfishApp.Core.Configuration;
 using ChatfishApp.Core.Storage;
@@ -23,6 +24,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string SyncTargetDevicesKey = "chatfish-sync-target-devices";
     private const string AutoSyncChatKey = "chatfish-auto-sync-chat";
     private const string AutoSyncNotesKey = "chatfish-auto-sync-notes";
+    private const string AutoSyncBookmarksKey = "chatfish-auto-sync-bookmarks";
+    private const string AutoSyncAppsKey = "chatfish-auto-sync-apps";
 
     private readonly MauiAuthCookieStore _cookieStore;
     private readonly SqliteSettingsDatabase _settings;
@@ -32,6 +35,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private readonly ISyncPreferencesStore _prefs;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IKeyStore _keyStore;
+    private readonly IBrowserStore _browserStore;
+    private readonly IBrowserSidebarStore _sidebarStore;
     private readonly ChatModelCatalogService _modelCatalog;
     private readonly ChatCompletionService _chatCompletion;
     private readonly AiProxyRelay _aiProxy;
@@ -57,11 +62,15 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
     public bool AutoSyncChatHistory { get; private set; }
     public bool AutoSyncNotes { get; private set; }
+    public bool AutoSyncBookmarks { get; private set; }
+    public bool AutoSyncInstalledApps { get; private set; }
     public IReadOnlyCollection<string> SyncTargetDeviceIds => _syncTargetDeviceIds;
 
     public event Action? OnChanged;
     public event Action? OnConversationsChanged;
     public event Action? OnNotesChanged;
+    public event Action? OnBookmarksChanged;
+    public event Action? OnInstalledAppsChanged;
     public event Action<string, string, string>? OnSyncPayloadReceived;
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;
@@ -76,6 +85,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         ISyncPreferencesStore prefs,
         IServiceScopeFactory scopeFactory,
         IKeyStore keyStore,
+        IBrowserStore browserStore,
+        IBrowserSidebarStore sidebarStore,
         ChatModelCatalogService modelCatalog,
         ChatCompletionService chatCompletion)
     {
@@ -87,6 +98,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _prefs = prefs;
         _scopeFactory = scopeFactory;
         _keyStore = keyStore;
+        _browserStore = browserStore;
+        _sidebarStore = sidebarStore;
         _modelCatalog = modelCatalog;
         _chatCompletion = chatCompletion;
 
@@ -315,6 +328,22 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinatorWired();
     }
 
+    public async Task SetAutoSyncBookmarksAsync(bool enabled)
+    {
+        AutoSyncBookmarks = enabled;
+        await _settings.SetStringAsync(AutoSyncBookmarksKey, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    public async Task SetAutoSyncInstalledAppsAsync(bool enabled)
+    {
+        AutoSyncInstalledApps = enabled;
+        await _settings.SetStringAsync(AutoSyncAppsKey, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
     public Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages) =>
         Task.CompletedTask;
 
@@ -330,6 +359,24 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         return Coordinator.StartWebRtcNoteSyncAsync(targetDeviceId, noteId, title, entries);
     }
 
+    public Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.StartWebRtcBookmarkSyncAsync(targetDeviceId, bookmark);
+    }
+
+    public Task StartWebRtcFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.StartWebRtcFolderSyncAsync(targetDeviceId, folder);
+    }
+
+    public Task StartWebRtcSidebarAppSyncAsync(string targetDeviceId, SidebarApp app)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.StartWebRtcSidebarAppSyncAsync(targetDeviceId, app);
+    }
+
     public Task<int> SyncAllConversationsToDevicesAsync(IEnumerable<string> targetDeviceIds)
     {
         EnsureCoordinatorWired();
@@ -340,6 +387,18 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         return Coordinator.SyncAllNotesToDevicesAsync(targetDeviceIds);
+    }
+
+    public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.SyncAllBookmarksToDevicesAsync(targetDeviceIds);
+    }
+
+    public Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.SyncAllInstalledAppsToDevicesAsync(targetDeviceIds);
     }
 
     public void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null)
@@ -364,6 +423,42 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         Coordinator.ScheduleAutoSyncNoteDeleteAfterLocalDelete(noteId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncBookmarkAfterLocalSave(bookmarkId);
+    }
+
+    public void ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(string bookmarkId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(bookmarkId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncFolderAfterLocalSave(string folderId)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncFolderAfterLocalSave(folderId);
+    }
+
+    public void ScheduleAutoSyncFolderDeleteAfterLocalDelete(string folderId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncFolderDeleteAfterLocalDelete(folderId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncSidebarAppAfterLocalSave(string appId)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncSidebarAppAfterLocalSave(appId);
+    }
+
+    public void ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(string appId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(appId, deletedAtUtc);
     }
 
     public string? GetAiServerDeviceName()
@@ -476,10 +571,14 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                     await _hub.InvokeAsync("SendToDevice", target, type, payload);
             },
             () => _hub?.State == HubConnectionState.Connected,
-            transportCallbacks: this);
+            transportCallbacks: this,
+            browserStore: _browserStore,
+            sidebarStore: _sidebarStore);
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
+        _coordinator.OnBookmarksChanged += () => OnBookmarksChanged?.Invoke();
+        _coordinator.OnInstalledAppsChanged += () => OnInstalledAppsChanged?.Invoke();
         _coordinator.OnSyncPayloadReceived += (c, j, f) => OnSyncPayloadReceived?.Invoke(c, j, f);
         _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
         _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => OnNoteSyncPayloadReceived?.Invoke(n, j, f);
@@ -491,6 +590,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinator();
         _coordinator!.AutoSyncChatHistory = AutoSyncChatHistory;
         _coordinator.AutoSyncNotes = AutoSyncNotes;
+        _coordinator.AutoSyncBookmarks = AutoSyncBookmarks;
+        _coordinator.AutoSyncInstalledApps = AutoSyncInstalledApps;
         _coordinator.SyncTargetDeviceIds = _syncTargetDeviceIds;
         _coordinator.IsSelf = IsSelf;
         _coordinator.IsAuthenticated = () => _auth.IsAuthenticated;
@@ -566,12 +667,28 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         try
         {
             await _hub.InvokeAsync("RegisterDevice", MyDeviceId ?? "", MyDeviceName);
+            await PublishBrowserCapabilitiesAsync();
             return true;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[MauiSyncService] RegisterDevice failed: {ex.Message}");
             return false;
+        }
+    }
+
+    private async Task PublishBrowserCapabilitiesAsync()
+    {
+        if (_hub?.State != HubConnectionState.Connected || string.IsNullOrEmpty(MyDeviceId))
+            return;
+
+        try
+        {
+            await _hub.InvokeAsync("UpdateBrowserCapabilities", MyDeviceId, true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MauiSyncService] UpdateBrowserCapabilities failed: {ex.Message}");
         }
     }
 
@@ -611,6 +728,14 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                 StringComparison.Ordinal);
             AutoSyncNotes = string.Equals(
                 await _settings.GetStringAsync(AutoSyncNotesKey),
+                "true",
+                StringComparison.Ordinal);
+            AutoSyncBookmarks = string.Equals(
+                await _settings.GetStringAsync(AutoSyncBookmarksKey),
+                "true",
+                StringComparison.Ordinal);
+            AutoSyncInstalledApps = string.Equals(
+                await _settings.GetStringAsync(AutoSyncAppsKey),
                 "true",
                 StringComparison.Ordinal);
         }

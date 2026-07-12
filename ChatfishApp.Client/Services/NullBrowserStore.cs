@@ -1,4 +1,5 @@
 using ChatfishApp.Core.Browser;
+using ChatfishApp.Core.Storage;
 
 namespace ChatfishApp.Client.Services;
 
@@ -39,4 +40,27 @@ public sealed class NullBrowserStore : IBrowserStore
             BrowserBookmarkFolders.BookmarksBarFolderName,
             null,
             DateTime.UtcNow));
+
+    public Task<List<SyncManifestEntry>> LoadBookmarkManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default) =>
+        Task.FromResult(new List<SyncManifestEntry>());
+    public Task<List<SyncManifestEntry>> LoadFolderManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default) =>
+        Task.FromResult(new List<SyncManifestEntry>());
+    public Task<BrowserBookmark?> GetBookmarkByIdAsync(string id, CancellationToken ct = default) =>
+        Task.FromResult<BrowserBookmark?>(null);
+    public Task<BrowserBookmarkFolder?> GetFolderByIdAsync(string id, CancellationToken ct = default) =>
+        Task.FromResult<BrowserBookmarkFolder?>(null);
+    public Task ApplyBookmarkPayloadAsync(BrowserBookmark bookmark, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ApplyFolderPayloadAsync(BrowserBookmarkFolder folder, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> ShouldAcceptIncomingBookmarkAsync(BrowserBookmark bookmark, CancellationToken ct = default) =>
+        Task.FromResult(false);
+    public Task<bool> ShouldAcceptIncomingFolderAsync(BrowserBookmarkFolder folder, CancellationToken ct = default) =>
+        Task.FromResult(false);
+    public Task<DateTime> TombstoneBookmarkAsync(string id, CancellationToken ct = default) =>
+        Task.FromResult(DateTime.UtcNow);
+    public Task<DateTime> TombstoneFolderAsync(string id, CancellationToken ct = default) =>
+        Task.FromResult(DateTime.UtcNow);
+    public Task<bool> TryApplyRemoteBookmarkDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default) =>
+        Task.FromResult(false);
+    public Task<bool> TryApplyRemoteFolderDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default) =>
+        Task.FromResult(false);
 }

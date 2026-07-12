@@ -9,4 +9,5 @@ public record SyncDeviceInfo(
     DateTime LastActiveUtc,
     bool IsOnline,
     bool CanRelayAi = false,
-    int AiModelCount = 0);
+    int AiModelCount = 0,
+    bool SupportsBrowserSync = false);

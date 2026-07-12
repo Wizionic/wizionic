@@ -140,6 +140,18 @@ public class SyncHub : Hub
     }
 
     /// <summary>
+    /// MAUI clients report that they can sync browser bookmarks / installed PWAs over WebRTC.
+    /// </summary>
+    public async Task UpdateBrowserCapabilities(string deviceId, bool supportsBrowserSync)
+    {
+        var userId = GetUserId();
+        var email = GetEmail();
+
+        var list = _presence.UpdateBrowserCapabilities(userId, email, deviceId, supportsBrowserSync);
+        await Clients.Group(GetUserGroup()).SendAsync("DevicesUpdated", list);
+    }
+
+    /// <summary>
     /// User renamed the device from the Sync page. Update server-side record and broadcast.
     /// </summary>
     public async Task UpdateDeviceName(string deviceId, string newName)

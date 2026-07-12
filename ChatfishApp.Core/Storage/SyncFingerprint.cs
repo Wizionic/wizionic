@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using ChatfishApp.Core.Browser;
 
 namespace ChatfishApp.Core.Storage;
 
@@ -20,6 +21,15 @@ public static class SyncFingerprint
 
     public static string ForNote(string noteId, string title, List<ChatMessage> entries) =>
         Compute(NoteSyncPayload.Serialize(noteId, title, entries));
+
+    public static string ForBookmark(BrowserBookmark bookmark) =>
+        Compute(BookmarkSyncPayload.Serialize(bookmark));
+
+    public static string ForBookmarkFolder(BrowserBookmarkFolder folder) =>
+        Compute(BookmarkFolderSyncPayload.Serialize(folder));
+
+    public static string ForSidebarApp(SidebarApp app) =>
+        Compute(SidebarAppSyncPayload.Serialize(app));
 }
 
 public record ConvoSyncPayload(string ConvoId, string Title, List<ChatMessage> Messages, bool? TitleIsCustom = null)
@@ -69,4 +79,76 @@ public record NoteSyncPayload(string NoteId, string Title, List<ChatMessage> Ent
 
     public static NoteSyncPayload? Deserialize(string json) =>
         JsonSerializer.Deserialize<NoteSyncPayload>(json);
+}
+
+public record BookmarkSyncPayload(BrowserBookmark Bookmark)
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public static string Serialize(BrowserBookmark bookmark) =>
+        JsonSerializer.Serialize(new BookmarkSyncPayload(bookmark), JsonOpts);
+
+    public static BookmarkSyncPayload? Deserialize(string json)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<BookmarkSyncPayload>(json, JsonOpts);
+            return string.IsNullOrEmpty(payload?.Bookmark?.Id) ? null : payload;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+public record BookmarkFolderSyncPayload(BrowserBookmarkFolder Folder)
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public static string Serialize(BrowserBookmarkFolder folder) =>
+        JsonSerializer.Serialize(new BookmarkFolderSyncPayload(folder), JsonOpts);
+
+    public static BookmarkFolderSyncPayload? Deserialize(string json)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<BookmarkFolderSyncPayload>(json, JsonOpts);
+            return string.IsNullOrEmpty(payload?.Folder?.Id) ? null : payload;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+public record SidebarAppSyncPayload(SidebarApp App)
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public static string Serialize(SidebarApp app) =>
+        JsonSerializer.Serialize(new SidebarAppSyncPayload(app), JsonOpts);
+
+    public static SidebarAppSyncPayload? Deserialize(string json)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<SidebarAppSyncPayload>(json, JsonOpts);
+            return string.IsNullOrEmpty(payload?.App?.Id) ? null : payload;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
