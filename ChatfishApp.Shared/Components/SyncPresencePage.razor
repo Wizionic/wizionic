@@ -12,6 +12,7 @@
 @inject IBrowserStore BrowserStore
 @inject IBrowserSidebarStore SidebarStore
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <div class="settings-content sync-page-content">
     @if (!string.IsNullOrEmpty(PendingDataSyncMessage))
@@ -82,6 +83,10 @@
                                     @if (d.IsOnline)
                                     {
                                         <span class="online-text">online</span>
+                                    }
+                                    @if (d.SupportsBrowserSync)
+                                    {
+                                        <span class="sync-cap-badge" title="Can sync bookmarks &amp; installed apps">browser</span>
                                     }
                                 </td>
                                 <td class="cf-sync-cell">
@@ -342,6 +347,34 @@
             <div class="cf-sync-info-card mt-3">@statusMessage</div>
         }
 
+        @* Sync debug log (MAUI + WASM) *@
+        <div class="sync-debug-panel mt-4">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <h3 style="margin:0;font-size:1.05rem;">Sync debug log</h3>
+                <label class="sync-auto-sync-label">
+                    <input type="checkbox" checked="@_syncDebugEnabled" @onchange="ToggleSyncDebug" />
+                    Write log file
+                </label>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="RefreshSyncDebug">Refresh</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearSyncDebug">Clear</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopySyncDebug">
+                    @(_syncDebugCopied ? "Copied" : "Copy")
+                </button>
+            </div>
+            <p class="sync-desc-text mb-1 mt-1">
+                Live ring buffer of hub / WebRTC / browser sync events.
+                @if (!string.IsNullOrEmpty(_syncLogFilePath))
+                {
+                    <span> File (when enabled): <code>@_syncLogFilePath</code></span>
+                }
+                else
+                {
+                    <span> Console: start the app from a terminal to see stdout.</span>
+                }
+            </p>
+            <pre class="sync-debug-log">@(_syncDebugText.Length == 0 ? "(no events yet — enable targets, then Sync All on bookmarks)" : _syncDebugText)</pre>
+        </div>
+
         @if (ShowBackToChat)
         {
             <div class="mt-3 d-flex gap-2 align-items-center">
@@ -368,7 +401,11 @@
     private bool isBulkSyncing;
 
     private Action? _syncChangedHandler, _authChangedHandler, _conversationsChangedHandler, _notesChangedHandler;
-    private Action? _bookmarksChangedHandler, _appsChangedHandler;
+    private Action? _bookmarksChangedHandler, _appsChangedHandler, _syncDebugHandler;
+    private bool _syncDebugEnabled;
+    private bool _syncDebugCopied;
+    private string _syncDebugText = "";
+    private string? _syncLogFilePath;
 
     protected override async Task OnInitializedAsync()
     {
@@ -376,6 +413,10 @@
         await SyncService.InitializeAsync();
         localConvos = await ConversationStore.LoadIndexAsync();
         localNotes = await NoteStore.LoadIndexAsync();
+
+        _syncDebugEnabled = SyncDebugLog.Enabled;
+        _syncLogFilePath = SyncDebugLog.LogFilePath;
+        RefreshSyncDebug();
 
         if (AppEnvironment.IsMaui)
         {
@@ -396,6 +437,8 @@
         SyncService.OnBookmarksChanged += _bookmarksChangedHandler;
         _appsChangedHandler = () => _ = RefreshAppsAsync();
         SyncService.OnInstalledAppsChanged += _appsChangedHandler;
+        _syncDebugHandler = () => InvokeAsync(() => { RefreshSyncDebug(); StateHasChanged(); });
+        SyncDebugLog.Changed += _syncDebugHandler;
 
         SyncService.OnSyncPayloadReceived += HandleIncomingSyncPayload;
         SyncService.OnSyncAckReceived += HandleSyncAckReceived;
@@ -490,6 +533,20 @@
         finally { isBulkSyncing = false; StateHasChanged(); }
     }
 
+    /// <summary>
+    /// Prefer peers that advertised browser sync; if none have the flag yet (hub race),
+    /// use all selected targets so first Sync All is not a no-op.
+    /// </summary>
+    private List<string> ResolveBrowserSyncTargets()
+    {
+        var selected = selectedTargetDeviceIds.ToList();
+        var capable = selected
+            .Where(id => devices.Any(d =>
+                string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync))
+            .ToList();
+        return capable.Count > 0 ? capable : selected;
+    }
+
     private async Task SyncAllBookmarks()
     {
         if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
@@ -498,17 +555,16 @@
         {
             await SyncService.EnsureConnectedAndRegisteredAsync();
             if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
-            var capable = selectedTargetDeviceIds
-                .Where(id => devices.Any(d => string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync))
-                .ToList();
-            if (!capable.Any())
-            {
-                statusMessage = "No selected targets support browser sync (Chatfish desktop apps only).";
-                return;
-            }
-            var queued = await SyncService.SyncAllBookmarksToDevicesAsync(capable);
-            var targetNames = devices.Where(d => capable.Contains(d.DeviceId)).Select(d => d.Name).ToList();
-            statusMessage = $"Checking {queued} device(s) for bookmarks that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
+            await BrowserStore.LoadAsync();
+            var targets = ResolveBrowserSyncTargets();
+            var advertised = targets.Count(id => devices.Any(d =>
+                string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync));
+            var queued = await SyncService.SyncAllBookmarksToDevicesAsync(targets);
+            var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
+            var note = advertised == 0
+                ? " (peers had not advertised browser sync yet — still attempting)"
+                : "";
+            statusMessage = $"Checking {queued} device(s) for bookmarks that need sync ({string.Join(", ", targetNames)}){note}. Only changed items are transferred.";
         }
         finally { isBulkSyncing = false; StateHasChanged(); }
     }
@@ -521,17 +577,16 @@
         {
             await SyncService.EnsureConnectedAndRegisteredAsync();
             if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
-            var capable = selectedTargetDeviceIds
-                .Where(id => devices.Any(d => string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync))
-                .ToList();
-            if (!capable.Any())
-            {
-                statusMessage = "No selected targets support browser sync (Chatfish desktop apps only).";
-                return;
-            }
-            var queued = await SyncService.SyncAllInstalledAppsToDevicesAsync(capable);
-            var targetNames = devices.Where(d => capable.Contains(d.DeviceId)).Select(d => d.Name).ToList();
-            statusMessage = $"Checking {queued} device(s) for installed apps that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
+            await SidebarStore.LoadAsync();
+            var targets = ResolveBrowserSyncTargets();
+            var advertised = targets.Count(id => devices.Any(d =>
+                string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync));
+            var queued = await SyncService.SyncAllInstalledAppsToDevicesAsync(targets);
+            var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
+            var note = advertised == 0
+                ? " (peers had not advertised browser sync yet — still attempting)"
+                : "";
+            statusMessage = $"Checking {queued} device(s) for installed apps that need sync ({string.Join(", ", targetNames)}){note}. Only changed items are transferred.";
         }
         finally { isBulkSyncing = false; StateHasChanged(); }
     }
@@ -541,8 +596,8 @@
         if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         await SyncService.EnsureConnectedAndRegisteredAsync();
         var folder = BrowserStore.GetFolders().FirstOrDefault(f => f.Id == bm.FolderId);
-        foreach (var targetId in selectedTargetDeviceIds.Where(id =>
-                     devices.Any(d => string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync)))
+        var targets = ResolveBrowserSyncTargets();
+        foreach (var targetId in targets)
         {
             if (folder != null)
                 await SyncService.StartWebRtcFolderSyncAsync(targetId, folder);
@@ -556,11 +611,8 @@
     {
         if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         await SyncService.EnsureConnectedAndRegisteredAsync();
-        foreach (var targetId in selectedTargetDeviceIds.Where(id =>
-                     devices.Any(d => string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync)))
-        {
+        foreach (var targetId in ResolveBrowserSyncTargets())
             await SyncService.StartWebRtcSidebarAppSyncAsync(targetId, app);
-        }
         statusMessage = $"Syncing app \"{app.Name}\"…";
         StateHasChanged();
     }
@@ -657,6 +709,44 @@
         });
     }
 
+    private void RefreshSyncDebug()
+    {
+        _syncDebugText = SyncDebugLog.SnapshotText();
+        _syncLogFilePath = SyncDebugLog.LogFilePath;
+    }
+
+    private void ToggleSyncDebug(ChangeEventArgs e)
+    {
+        _syncDebugEnabled = e.Value is bool b && b;
+        SyncDebugLog.Enabled = _syncDebugEnabled;
+        RefreshSyncDebug();
+        StateHasChanged();
+    }
+
+    private void ClearSyncDebug()
+    {
+        SyncDebugLog.Clear();
+        RefreshSyncDebug();
+        StateHasChanged();
+    }
+
+    private async Task CopySyncDebug()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _syncDebugText);
+            _syncDebugCopied = true;
+            StateHasChanged();
+            await Task.Delay(1500);
+            _syncDebugCopied = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Clipboard may be blocked
+        }
+    }
+
     public void Dispose()
     {
         if (_syncChangedHandler is not null) SyncService.OnChanged -= _syncChangedHandler;
@@ -665,6 +755,7 @@
         if (_notesChangedHandler is not null) SyncService.OnNotesChanged -= _notesChangedHandler;
         if (_bookmarksChangedHandler is not null) SyncService.OnBookmarksChanged -= _bookmarksChangedHandler;
         if (_appsChangedHandler is not null) SyncService.OnInstalledAppsChanged -= _appsChangedHandler;
+        if (_syncDebugHandler is not null) SyncDebugLog.Changed -= _syncDebugHandler;
         SyncService.OnSyncPayloadReceived -= HandleIncomingSyncPayload;
         SyncService.OnSyncAckReceived -= HandleSyncAckReceived;
         SyncService.OnNoteSyncPayloadReceived -= HandleIncomingNoteSyncPayload;

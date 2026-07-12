@@ -144,8 +144,28 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _aiProxy.AiServerDeviceId = string.IsNullOrWhiteSpace(savedAiServer) ? null : savedAiServer;
 
         await LoadSyncPreferencesAsync();
+
+        // File log when sync debug is enabled (toggle on Sync page).
+        SyncDebugLog.LogFilePath = Path.Combine(MauiAppData.Directory, "sync-debug.log");
+        SyncDebugLog.Hub($"MauiSync Initialize deviceId={MyDeviceId} name={MyDeviceName} dataDir={MauiAppData.Directory}");
+
         EnsureCoordinator();
         EnsureCoordinatorWired();
+
+        try
+        {
+            await _browserStore.LoadAsync();
+            await _sidebarStore.LoadAsync();
+            SyncDebugLog.Browser(
+                $"Local browser store loaded: {_browserStore.GetBookmarks().Count} bookmarks, " +
+                $"{_browserStore.GetFolders().Count} folders, " +
+                $"{_sidebarStore.GetPinnedApps().Count(a => !a.IsBuiltIn)} pinned apps");
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Error($"Browser store load failed: {ex.Message}");
+        }
+
         OnChanged?.Invoke();
     }
 
@@ -197,6 +217,20 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
                 Devices = list ?? Array.Empty<SyncDeviceInfo>();
+                SyncDebugLog.Hub(
+                    $"DevicesUpdated count={Devices.Count}: " +
+                    string.Join("; ", Devices.Select(d =>
+                        $"{d.Name} online={d.IsOnline} browser={d.SupportsBrowserSync} ai={d.CanRelayAi}")));
+
+                // If hub still shows us without browser sync (register race), re-publish once.
+                // Avoid looping: only when self entry exists and is false.
+                if (!string.IsNullOrEmpty(MyDeviceId)
+                    && Devices.Any(d =>
+                        string.Equals(d.DeviceId, MyDeviceId, StringComparison.OrdinalIgnoreCase)
+                        && !d.SupportsBrowserSync))
+                {
+                    _ = PublishBrowserCapabilitiesAsync();
+                }
 
                 if (!_devicesSnapshotInitialized)
                 {
@@ -685,10 +719,11 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         try
         {
             await _hub.InvokeAsync("UpdateBrowserCapabilities", MyDeviceId, true);
+            SyncDebugLog.Hub($"Published SupportsBrowserSync=true for {MyDeviceId}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[MauiSyncService] UpdateBrowserCapabilities failed: {ex.Message}");
+            SyncDebugLog.Error($"UpdateBrowserCapabilities failed: {ex.Message}");
         }
     }
 

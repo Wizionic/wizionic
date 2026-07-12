@@ -265,13 +265,52 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService
 	private async Task RecordVisitAsync()
 	{
 		await _store.AddHistoryEntryAsync(_currentUrl, _pageTitle);
+		// SPAs (e.g. Blazor on chatfish.me) often set document.title after first paint.
 		await UpdateTitleAsync();
+		_ = RefreshTitleAfterSpaSettleAsync();
+	}
+
+	private async Task RefreshTitleAfterSpaSettleAsync()
+	{
+		foreach (var delayMs in new[] { 400, 1200, 2500 })
+		{
+			try
+			{
+				await Task.Delay(delayMs);
+				if (string.IsNullOrWhiteSpace(_currentUrl))
+					return;
+				await UpdateTitleAsync();
+			}
+			catch
+			{
+				// WebView may have been detached.
+			}
+		}
 	}
 
 	private async Task UpdateTitleAsync()
 	{
-		var title = await EvaluateScriptAsync("document.title");
-		_pageTitle = UnquoteJsString(title);
+		var title = await EvaluateScriptAsync(BrowserPageMetadata.ReadTitleScript);
+		var resolved = BrowserPageMetadata.ResolveBookmarkTitle(UnquoteJsString(title), _currentUrl);
+
+		// Capture real page favicon (same-origin as a desktop browser would use).
+		try
+		{
+			var iconRaw = await EvaluateScriptAsync(BrowserPageMetadata.ReadFaviconHrefScript);
+			var icon = UnquoteJsString(iconRaw);
+			if (!string.IsNullOrWhiteSpace(icon) && !string.IsNullOrWhiteSpace(_currentUrl))
+				BrowserFaviconUrl.Remember(_currentUrl, icon);
+		}
+		catch { /* non-fatal */ }
+
+		if (string.Equals(_pageTitle, resolved, StringComparison.Ordinal))
+		{
+			if (!string.IsNullOrWhiteSpace(_currentUrl))
+				await _store.AddHistoryEntryAsync(_currentUrl, _pageTitle);
+			return;
+		}
+
+		_pageTitle = resolved;
 		TitleChanged?.Invoke(_pageTitle);
 
 		if (!string.IsNullOrWhiteSpace(_currentUrl))
@@ -284,6 +323,10 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService
 			return "";
 
 		var trimmed = value.Trim();
+		if (trimmed.Equals("null", StringComparison.OrdinalIgnoreCase)
+			|| trimmed.Equals("undefined", StringComparison.OrdinalIgnoreCase))
+			return "";
+
 		if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
 			return trimmed[1..^1].Replace("\\\"", "\"").Replace("\\n", "\n");
 

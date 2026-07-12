@@ -21,8 +21,8 @@ public sealed class NullBrowserStore : IBrowserStore
         Task.CompletedTask;
     public Task MoveBookmarkAsync(string bookmarkId, string targetFolderId, string? beforeBookmarkId = null, CancellationToken ct = default) =>
         Task.CompletedTask;
-    public Task<BrowserBookmark> AddBookmarkAsync(string url, string title, string folderId, CancellationToken ct = default) =>
-        Task.FromResult(new BrowserBookmark("", url, title, folderId, DateTime.UtcNow));
+    public Task<BrowserBookmark> AddBookmarkAsync(string url, string title, string folderId, string? iconUrl = null, CancellationToken ct = default) =>
+        Task.FromResult(new BrowserBookmark("", url, title, folderId, DateTime.UtcNow, IconUrl: iconUrl));
     public Task UpdateBookmarkAsync(BrowserBookmark bookmark, CancellationToken ct = default) => Task.CompletedTask;
     public Task RemoveBookmarkAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
     public Task RemoveBookmarksAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => Task.CompletedTask;

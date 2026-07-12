@@ -44,7 +44,14 @@ public sealed class SqliteBrowserStore : IBrowserStore
         {
             var loaded = JsonSerializer.Deserialize<List<BrowserBookmark>>(bookmarksJson);
             if (loaded != null)
+            {
                 _bookmarks = loaded;
+                foreach (var b in _bookmarks)
+                {
+                    if (!string.IsNullOrWhiteSpace(b.IconUrl))
+                        BrowserFaviconUrl.Remember(b.Url, b.IconUrl);
+                }
+            }
         }
 
         var foldersJson = await _db.GetStringAsync(FoldersKey, ct);
@@ -138,13 +145,22 @@ public sealed class SqliteBrowserStore : IBrowserStore
         return _bookmarks.FirstOrDefault(b => b.Url.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
     }
 
-    public async Task<BrowserBookmark> AddBookmarkAsync(string url, string title, string folderId, CancellationToken ct = default)
+    public async Task<BrowserBookmark> AddBookmarkAsync(
+        string url,
+        string title,
+        string folderId,
+        string? iconUrl = null,
+        CancellationToken ct = default)
     {
         EnsureDefaultFolder();
         if (string.IsNullOrWhiteSpace(folderId) || _folders.All(f => f.Id != folderId))
             folderId = BrowserBookmarkFolders.DefaultFolderId;
 
         var now = DateTime.UtcNow;
+        var icon = string.IsNullOrWhiteSpace(iconUrl) ? null : iconUrl.Trim();
+        if (!string.IsNullOrEmpty(icon))
+            BrowserFaviconUrl.Remember(url, icon);
+
         var bookmark = new BrowserBookmark(
             Guid.NewGuid().ToString("N"),
             url.Trim(),
@@ -152,7 +168,8 @@ public sealed class SqliteBrowserStore : IBrowserStore
             folderId,
             now,
             _bookmarks.Count(b => b.FolderId == folderId),
-            now);
+            now,
+            icon);
 
         _bookmarks.Add(bookmark);
         UpsertLiveBookmarkMeta(bookmark);
@@ -232,6 +249,8 @@ public sealed class SqliteBrowserStore : IBrowserStore
         var existing = _bookmarks[index];
         var folderChanged = !existing.FolderId.Equals(bookmark.FolderId, StringComparison.Ordinal);
         var now = DateTime.UtcNow;
+        if (!string.IsNullOrWhiteSpace(bookmark.IconUrl))
+            BrowserFaviconUrl.Remember(bookmark.Url, bookmark.IconUrl);
         var updated = bookmark with { UpdatedAtUtc = bookmark.UpdatedAtUtc ?? now };
         _bookmarks[index] = updated;
 
@@ -490,6 +509,9 @@ public sealed class SqliteBrowserStore : IBrowserStore
         EnsureDefaultFolder();
         if (string.IsNullOrWhiteSpace(bookmark.FolderId) || _folders.All(f => f.Id != bookmark.FolderId))
             bookmark = bookmark with { FolderId = BrowserBookmarkFolders.DefaultFolderId };
+
+        if (!string.IsNullOrWhiteSpace(bookmark.IconUrl))
+            BrowserFaviconUrl.Remember(bookmark.Url, bookmark.IconUrl);
 
         var index = _bookmarks.FindIndex(b => b.Id == bookmark.Id);
         if (index >= 0)
