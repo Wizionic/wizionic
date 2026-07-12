@@ -48,12 +48,15 @@ window.chatfishTheme = window.chatfishTheme || {
     },
 
     initPersistentHooks: function () {
-        // Retry until window.Blazor exists (it loads after this script on some paths)
+        // Enhanced navigation's 'enhancedload' exists on Blazor Web only.
+        // MAUI/WebView Blazor has window.Blazor but no addEventListener — skip cleanly.
         const tryRegister = (attempts) => {
             if (window.Blazor) {
-                window.Blazor.addEventListener('enhancedload', () => {
-                    this.apply(this.getTheme());
-                });
+                if (typeof window.Blazor.addEventListener === 'function') {
+                    window.Blazor.addEventListener('enhancedload', () => {
+                        this.apply(this.getTheme());
+                    });
+                }
                 return;
             }
             if (attempts > 0)

@@ -32,7 +32,7 @@ SSH_USER="${SSH_USER:-daniel}"
 OUTPUT_DIR="${OUTPUT_DIR:-./linux_publish}"
 RELEASES_DIR="${RELEASES_DIR:-./linux_releases}"
 DEB_BUILD_DIR="${DEB_BUILD_DIR:-./linux_deb_build}"
-VERSION="${VERSION:-0.0.6}"
+VERSION="${VERSION:-0.0.7"
 UPDATE_FEED="${UPDATE_FEED:-https://chatfish.me/releases/linux}"
 REMOTE_RELEASES="${REMOTE_RELEASES:-/var/www/chatfish/releases/linux}"
 REMOTE_WWWROOT="${REMOTE_WWWROOT:-/var/www/chatfish}"
@@ -42,7 +42,7 @@ MAIN_EXE="Chatfish"
 ICON_PATH="ChatfishApp.Maui/Resources/AppIcon/chatfish.png"
 ICON_FALLBACKS=(
   "wwwroot/images/icon512.png"
-  "wwwroot/images/chatfish.png"
+  "wwwroot/images/chatfi}sh.png"
 )
 
 SKIP_UPLOAD=false
