@@ -5,6 +5,37 @@ window.scrollChatToBottom = function () {
     }
 };
 
+// Used by ChatPage / NotesPage ⋮ menus. Also defined in host App.razor for WASM;
+// MAUI loads this file only, so it must be available here too.
+window.getMenuPopupPosition = function (buttonId) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return { top: 120, left: 260 };
+    const rect = btn.getBoundingClientRect();
+    const popupWidth = 120;
+    let left = rect.right + 5;
+    if (left + popupWidth > window.innerWidth) {
+        left = rect.left - popupWidth - 5;
+    }
+    return {
+        top: rect.bottom + 2,
+        left: left
+    };
+};
+
+// Align popup below the ⋮ button with right edges flush (message menus).
+window.getBotMenuPopupPosition = function (buttonId) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return { top: 120, left: 260 };
+    const rect = btn.getBoundingClientRect();
+    const popupWidth = 160;
+    let left = rect.right - popupWidth;
+    if (left < 8) left = 8;
+    return {
+        top: rect.bottom + 2,
+        left: left
+    };
+};
+
 window.isMobileViewport = function () {
     return window.innerWidth <= 640.98;
 };

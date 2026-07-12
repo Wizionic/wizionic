@@ -66,6 +66,10 @@
                         class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
                     <img src="/images/chatfish50.png" title="Chatfish" alt="Chatfish" />
                 </button>
+                <button type="button" @onclick="ToggleBrowser" title="Browser"
+                        class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
+                    <i class="bi bi-globe" style="font-size: 24px;"></i>
+                </button>
             }
             else
             {
@@ -85,13 +89,6 @@
                 <a href="/notes" title="Notes">
                     <i class="bi bi-journal-text" style="font-size: 24px;"></i>
                 </a>
-            }
-            @if (AppEnvironment.IsMaui)
-            {
-                <button type="button" @onclick="ToggleBrowser" title="Browser"
-                        class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
-                    <i class="bi bi-globe" style="font-size: 24px;"></i>
-                </button>
             }
         </div>
     </div>

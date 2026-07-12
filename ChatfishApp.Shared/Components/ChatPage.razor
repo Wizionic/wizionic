@@ -1158,7 +1158,9 @@
         {
             openMenuId = menuKey;
             _userMenuMessageIndex = index;
-            _ = PositionPopupAtButton($"user-menu-btn-{index}");
+            // MAUI: pin under ⋮ with right edges flush (menu sits just left of the dots).
+            // WASM keeps getMenuPopupPosition via default alignMessageMenu=false path below.
+            _ = PositionPopupAtButton($"user-menu-btn-{index}", alignMessageMenu: AppEnvironment.IsMaui);
         }
     }
 
@@ -1174,7 +1176,7 @@
         {
             openMenuId = menuKey;
             _botMenuMessageIndex = index;
-            _ = PositionPopupAtButton($"bot-menu-btn-{index}");
+            _ = PositionPopupAtButton($"bot-menu-btn-{index}", alignMessageMenu: AppEnvironment.IsMaui);
         }
     }
 
@@ -1341,11 +1343,14 @@
         StateHasChanged();
     }
 
-    private async Task PositionPopupAtButton(string buttonId)
+    private async Task PositionPopupAtButton(string buttonId, bool alignMessageMenu = false)
     {
         try
         {
-            var pos = await JS.InvokeAsync<PopupPosition>("getMenuPopupPosition", buttonId);
+            // Message ⋮ menus on MAUI use right-edge alignment under the button.
+            // Sidebar/other menus (and all WASM menus) keep getMenuPopupPosition.
+            var fn = alignMessageMenu ? "getBotMenuPopupPosition" : "getMenuPopupPosition";
+            var pos = await JS.InvokeAsync<PopupPosition>(fn, buttonId);
             activePopupStyle = $"position: fixed; top: {pos.top}px; left: {pos.left}px; z-index: 10000;";
             StateHasChanged();
         }
