@@ -34,9 +34,7 @@
                      @onmousedown="(e) => StartTabStripDragAsync(e, tabId)"
                      @onmousedown:preventDefault="true"
                      @onmouseenter="() => OnTabMouseEnterAsync(tabId, isActive)"
-                     @onmouseleave="OnTabMouseLeave"
-                     @onauxclick="(e) => OnTabAuxClick(e, tabId)"
-                     @onauxclick:preventDefault="true">
+                     @onmouseleave="OnTabMouseLeave">
                     @if (!string.IsNullOrWhiteSpace(tab.FaviconUrl) || !string.IsNullOrWhiteSpace(tab.Url))
                     {
                         <img class="browser-tab-icon"
@@ -782,13 +780,6 @@
         StateHasChanged();
     }
 
-    private async Task OnTabAuxClick(MouseEventArgs e, string tabId)
-    {
-        // Middle-click closes the tab.
-        if (e.Button == 1)
-            await CloseTabAsync(tabId);
-    }
-
     private static string TruncateTabUrl(string? url, int maxLen = 72)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -866,6 +857,15 @@
 
     private async Task StartTabStripDragAsync(MouseEventArgs e, string tabId)
     {
+        // Middle-click (button 1) closes the tab. Prefer mousedown over @onauxclick:
+        // auxclick is not a built-in Blazor event; WebKit throws InvalidCharacterError
+        // when the renderer tries to apply '@onauxclick' as a DOM attribute.
+        if (e.Button == 1)
+        {
+            await CloseTabAsync(tabId);
+            return;
+        }
+
         if (_dotNetRef == null || e.Button != 0)
             return;
 
