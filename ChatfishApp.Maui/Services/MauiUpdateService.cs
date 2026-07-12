@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Text.Json.Serialization;
 using ChatfishApp.Core.Configuration;
 
@@ -44,6 +45,13 @@ public class MauiUpdateService : IUpdateService
         var mgr = CreateManager();
         var currentVersion = mgr.CurrentVersion?.ToString();
         var latestFeedVersion = await GetLatestFeedVersionAsync();
+        var appImagePath = GetLinuxAppImagePath();
+        var appImageWritable = IsLinuxAppImageReplaceable(appImagePath);
+
+        _logger.LogInformation(
+            "[Update] AppImage path={AppImage} writable={Writable}",
+            appImagePath ?? "(none)",
+            appImageWritable);
 
         try
         {
@@ -61,11 +69,43 @@ public class MauiUpdateService : IUpdateService
                 "[Update] Checking feed at {FeedUrl} (installed: {CurrentVersion}, feed latest: {FeedLatest})",
                 _updateUrl, currentVersion ?? "unknown", latestFeedVersion ?? "unknown");
 
+            // Root-owned AppImages (e.g. /opt/chatfish from .deb) cannot be replaced in-process.
+            // Force the manual install path so Settings does not claim a successful update.
+            if (!appImageWritable && IsFeedNewer(currentVersion, latestFeedVersion))
+            {
+                _pendingUpdateInfo = null;
+                return BuildResult(
+                    UpdateCheckStatus.UpdateAvailable,
+                    currentVersion,
+                    latestFeedVersion,
+                    update: new UpdateInfo
+                    {
+                        TargetRelease = new UpdateInfo.Release { Version = latestFeedVersion! }
+                    },
+                    requiresManualInstall: true,
+                    message: BuildNonWritableAppImageMessage(appImagePath, latestFeedVersion!));
+            }
+
             Velopack.UpdateInfo? vi = await mgr.CheckForUpdatesAsync();
             if (vi != null)
             {
-                _pendingUpdateInfo = vi;
                 var availableVersion = vi.TargetFullRelease.Version.ToString();
+                if (!appImageWritable)
+                {
+                    _pendingUpdateInfo = null;
+                    return BuildResult(
+                        UpdateCheckStatus.UpdateAvailable,
+                        currentVersion,
+                        latestFeedVersion,
+                        update: new UpdateInfo
+                        {
+                            TargetRelease = new UpdateInfo.Release { Version = availableVersion }
+                        },
+                        requiresManualInstall: true,
+                        message: BuildNonWritableAppImageMessage(appImagePath, availableVersion));
+                }
+
+                _pendingUpdateInfo = vi;
                 return BuildResult(
                     UpdateCheckStatus.UpdateAvailable,
                     currentVersion,
@@ -127,6 +167,58 @@ public class MauiUpdateService : IUpdateService
                 message: $"Could not check for updates: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// AppImage runtime mounts under /tmp/.mount_* for execution; APPIMAGE env points at the real file on disk.
+    /// Velopack must replace that on-disk file. System installs under /opt are root-owned and not replaceable.
+    /// </summary>
+    private static string? GetLinuxAppImagePath()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return null;
+
+        var path = Environment.GetEnvironmentVariable("APPIMAGE");
+        return string.IsNullOrWhiteSpace(path) ? null : path.Trim();
+    }
+
+    private static bool IsLinuxAppImageReplaceable(string? appImagePath)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return true;
+
+        // Not running as AppImage (e.g. unpackaged debug) — let Velopack decide.
+        if (string.IsNullOrWhiteSpace(appImagePath))
+            return true;
+
+        try
+        {
+            var full = Path.GetFullPath(appImagePath);
+            if (full.StartsWith("/opt/", StringComparison.Ordinal)
+                || full.StartsWith("/usr/", StringComparison.Ordinal))
+                return false;
+
+            var dir = Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+                return false;
+
+            // Probe parent directory write access (required to replace the AppImage file).
+            var probe = Path.Combine(dir, $".chatfish-update-write-test-{Environment.ProcessId}");
+            File.WriteAllText(probe, "ok");
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string BuildNonWritableAppImageMessage(string? appImagePath, string availableVersion) =>
+        $"Version {availableVersion} is available, but this install is not user-writable "
+        + $"({appImagePath ?? "system AppImage"}). "
+        + "System packages under /opt cannot be replaced in-app. "
+        + "Reinstall with the user AppImage installer for automatic updates: "
+        + "curl -fsSL https://chatfish.me/install.sh | bash";
 
     private UpdateCheckResult BuildResult(
         UpdateCheckStatus status,
@@ -192,6 +284,13 @@ public class MauiUpdateService : IUpdateService
 
     public async Task DownloadAndInstallAsync(UpdateInfo update)
     {
+        var appImagePath = GetLinuxAppImagePath();
+        if (!IsLinuxAppImageReplaceable(appImagePath))
+        {
+            throw new InvalidOperationException(
+                BuildNonWritableAppImageMessage(appImagePath, update.TargetRelease?.Version ?? "latest"));
+        }
+
         var mgr = CreateManager();
         if (_pendingUpdateInfo == null)
             throw new InvalidOperationException("No update available. Check for updates first.");
