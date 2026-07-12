@@ -187,6 +187,7 @@ public static class MauiProgram
 		services.AddSingleton<IBrowserOverlaySync>(sp => sp.GetRequiredService<LinuxBrowserOverlayService>());
 		services.AddSingleton<LinuxBrowserAgentService>();
 		services.AddSingleton<IBrowserAgentService>(sp => sp.GetRequiredService<LinuxBrowserAgentService>());
+		services.AddSingleton<IBrowserTabManager>(sp => sp.GetRequiredService<LinuxBrowserAgentService>());
 		services.AddSingleton<LinuxSideBrowserService>();
 		services.AddSingleton<IBrowserSideAgentService>(sp => sp.GetRequiredService<LinuxSideBrowserService>());
 		services.AddSingleton<LinuxBrowserHost>();
@@ -195,6 +196,7 @@ public static class MauiProgram
 		services.AddSingleton<IBrowserOverlaySync>(sp => sp.GetRequiredService<BrowserOverlayService>());
 		services.AddSingleton<MauiBrowserAgentService>();
 		services.AddSingleton<IBrowserAgentService>(sp => sp.GetRequiredService<MauiBrowserAgentService>());
+		services.AddSingleton<IBrowserTabManager>(sp => sp.GetRequiredService<MauiBrowserAgentService>());
 		services.AddSingleton<MauiSideBrowserService>();
 		services.AddSingleton<IBrowserSideAgentService>(sp => sp.GetRequiredService<MauiSideBrowserService>());
 		services.AddSingleton<BrowserWebViewPlatformService>();

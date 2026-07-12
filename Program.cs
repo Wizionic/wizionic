@@ -108,6 +108,7 @@ builder.Services.AddSingleton<ChatfishApp.Core.UI.INotesPanelState>(sp => sp.Get
 builder.Services.AddSingleton<ChatfishApp.Shared.Services.NavLayoutService>();
 builder.Services.AddSingleton<ChatfishApp.Core.UI.INavLayoutState>(sp => sp.GetRequiredService<ChatfishApp.Shared.Services.NavLayoutService>());
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserAgentService, ChatfishApp.Client.Services.NullBrowserAgentService>();
+builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserTabManager, ChatfishApp.Client.Services.NullBrowserTabManager>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserOverlaySync, ChatfishApp.Client.Services.NullBrowserOverlaySync>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserStore, ChatfishApp.Client.Services.NullBrowserStore>();
 builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserSidebarStore, ChatfishApp.Client.Services.NullBrowserSidebarStore>();

@@ -6,6 +6,7 @@
 @inject IJSRuntime JS
 @inject IBrowserPanelState BrowserPanel
 @inject IBrowserAgentService BrowserAgent
+@inject IBrowserTabManager TabManager
 @inject IBrowserOverlaySync BrowserOverlay
 @inject IBrowserStore BrowserStore
 @inject IBrowserSidebarStore SidebarStore
@@ -22,6 +23,63 @@
      @onmousedown="StartSplitterDrag"
      @onmousedown:preventDefault></div>
 <div id="browser-panel" class="browser-panel">
+    <div class="browser-tabstrip" @onclick:stopPropagation="true">
+        <div class="browser-tabstrip-tabs">
+            @foreach (var tab in TabManager.Tabs)
+            {
+                var tabId = tab.Id;
+                var isActive = tabId == TabManager.ActiveTabId;
+                <div class="browser-tab @(isActive ? "active" : "") @(_dragOverTabId == tabId ? "drag-over" : "")"
+                     data-tab-id="@tabId"
+                     @onmousedown="(e) => StartTabStripDragAsync(e, tabId)"
+                     @onmousedown:preventDefault="true"
+                     @onmouseenter="() => OnTabMouseEnterAsync(tabId, isActive)"
+                     @onmouseleave="OnTabMouseLeave"
+                     @onauxclick="(e) => OnTabAuxClick(e, tabId)"
+                     @onauxclick:preventDefault="true">
+                    @if (!string.IsNullOrWhiteSpace(tab.FaviconUrl) || !string.IsNullOrWhiteSpace(tab.Url))
+                    {
+                        <img class="browser-tab-icon"
+                             src="@BrowserFaviconUrl.Get(tab.Url, tab.FaviconUrl)"
+                             alt=""
+                             loading="lazy"
+                             draggable="false"
+                             onerror="this.style.display='none'; this.nextElementSibling && (this.nextElementSibling.style.display='inline-flex');" />
+                        <i class="bi bi-globe2 browser-tab-icon-fallback" style="display:none;" aria-hidden="true"></i>
+                    }
+                    else
+                    {
+                        <i class="bi bi-globe2 browser-tab-icon-fallback" aria-hidden="true"></i>
+                    }
+                    <span class="browser-tab-title">@tab.DisplayTitle</span>
+                    <button type="button"
+                            class="browser-tab-close"
+                            title="Close tab"
+                            @onclick="() => CloseTabAsync(tabId)"
+                            @onclick:stopPropagation="true"
+                            @onmousedown:stopPropagation="true"
+                            @onmouseenter:stopPropagation="true">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+            }
+        </div>
+        <button type="button" class="browser-tab-new" title="New tab" @onclick="OpenNewTabAsync">
+            <i class="bi bi-plus-lg"></i>
+        </button>
+    </div>
+    @if (_tabHoverTooltipVisible)
+    {
+        <div class="browser-tab-tooltip-fixed"
+             style="left:@($"{_tabHoverTooltipLeft:F0}px");top:@($"{_tabHoverTooltipTop:F0}px");"
+             aria-hidden="true">
+            <div class="browser-tab-tooltip-title">@_tabHoverTooltipTitle</div>
+            @if (!string.IsNullOrWhiteSpace(_tabHoverTooltipUrl))
+            {
+                <div class="browser-tab-tooltip-url">@_tabHoverTooltipUrl</div>
+            }
+        </div>
+    }
     <div class="browser-toolbar">
         <button type="button" class="browser-toolbar-btn" @onclick="GoHomeAsync" title="Home">
             <i class="bi bi-house"></i>
@@ -138,10 +196,6 @@
     }
     <div class="browser-body" id="browser-body" @onclick="() => CloseAllContextMenus()">
         <div class="browser-main-column">
-            @if (!string.IsNullOrEmpty(_browserPageTitle) && !_showStartPage)
-            {
-                <div class="browser-page-title">@_browserPageTitle</div>
-            }
             <div id="browser-content-host" class="browser-content browser-content-host">
                 @if (_showStartPage)
                 {
@@ -536,6 +590,13 @@
     private double _menuAnchorTop;
 
     private string? _dragOverBookmarkId;
+    private string? _dragOverTabId;
+    private bool _tabHoverTooltipVisible;
+    private double _tabHoverTooltipLeft;
+    private double _tabHoverTooltipTop;
+    private string _tabHoverTooltipTitle = "";
+    private string _tabHoverTooltipUrl = "";
+    private string? _tabHoverTabId;
     private string? _sidebarDragOverBookmarkId;
     private string? _sidebarDragOverFolderId;
     private readonly HashSet<string> _selectedBookmarkIds = new(StringComparer.Ordinal);
@@ -598,6 +659,7 @@
     private Action? _sidebarStoreChangedHandler;
     private Action? _sidePanelChangedHandler;
     private Action? _pwaChangedHandler;
+    private Action? _tabsChangedHandler;
 
     protected override async Task OnInitializedAsync()
     {
@@ -619,6 +681,9 @@
 
         _pwaChangedHandler = () => InvokeAsync(StateHasChanged);
         PwaDetector.Changed += _pwaChangedHandler;
+
+        _tabsChangedHandler = () => InvokeAsync(OnTabsChangedAsync);
+        TabManager.Changed += _tabsChangedHandler;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -637,7 +702,7 @@
             _browserUrl = url;
             _canGoBack = BrowserAgent.CanGoBack;
             _canGoForward = BrowserAgent.CanGoForward;
-            _showStartPage = false;
+            SyncStartPageFromActiveTab();
             InvokeAsync(StateHasChanged);
         };
         _titleChangedHandler = title =>
@@ -658,6 +723,211 @@
 
         _browserPanelChangedHandler = () => InvokeAsync(OnPanelChangedAsync);
         BrowserPanel.OnChanged += _browserPanelChangedHandler;
+    }
+
+    private Task OnTabsChangedAsync()
+    {
+        var wasStartPage = _showStartPage;
+        SyncStartPageFromActiveTab();
+        RestoreBrowserUiState();
+        ApplyOverlayVisibility();
+        // Leaving the bookmarks start page (or switching tabs) needs a bounds remeasure.
+        if (wasStartPage != _showStartPage || !_showStartPage)
+            RefreshWebViewBounds();
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void SyncStartPageFromActiveTab()
+    {
+        _showStartPage = TabManager.ActiveTab?.IsStartPage == true;
+    }
+
+    private async Task OpenNewTabAsync()
+    {
+        await TabManager.OpenTabAsync(url: null, activate: true);
+        SyncStartPageFromActiveTab();
+        RestoreBrowserUiState();
+        _pendingOverlaySync = true;
+        await SyncOverlayAsync();
+    }
+
+    private async Task ActivateTabAsync(string tabId)
+    {
+        await TabManager.ActivateTabAsync(tabId);
+        SyncStartPageFromActiveTab();
+        RestoreBrowserUiState();
+        if (_showStartPage)
+            BrowserOverlay.SetMainOverlayVisible(false);
+        else
+        {
+            _pendingOverlaySync = true;
+            await SyncOverlayAsync();
+        }
+        StateHasChanged();
+    }
+
+    private async Task CloseTabAsync(string tabId)
+    {
+        await TabManager.CloseTabAsync(tabId);
+        SyncStartPageFromActiveTab();
+        RestoreBrowserUiState();
+        if (_showStartPage)
+            BrowserOverlay.SetMainOverlayVisible(false);
+        else
+        {
+            _pendingOverlaySync = true;
+            await SyncOverlayAsync();
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnTabAuxClick(MouseEventArgs e, string tabId)
+    {
+        // Middle-click closes the tab.
+        if (e.Button == 1)
+            await CloseTabAsync(tabId);
+    }
+
+    private static string TruncateTabUrl(string? url, int maxLen = 72)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return "";
+        var u = url.Trim();
+        if (u.Length <= maxLen)
+            return u;
+        return u[..(maxLen - 1)] + "…";
+    }
+
+    private async Task OnTabMouseEnterAsync(string tabId, bool isActive)
+    {
+        if (isActive)
+        {
+            HideTabHoverTooltip();
+            return;
+        }
+
+        var tab = TabManager.Tabs.FirstOrDefault(t => t.Id == tabId);
+        if (tab == null)
+        {
+            HideTabHoverTooltip();
+            return;
+        }
+
+        _tabHoverTabId = tabId;
+        _tabHoverTooltipTitle = tab.DisplayTitle;
+        _tabHoverTooltipUrl = TruncateTabUrl(tab.Url);
+
+        try
+        {
+            var anchor = await JS.InvokeAsync<TabTooltipAnchor>(
+                "chatfishBrowser.getTabTooltipAnchor",
+                tabId);
+            if (anchor != null && !string.IsNullOrEmpty(_tabHoverTabId) && _tabHoverTabId == tabId)
+            {
+                _tabHoverTooltipLeft = Math.Max(8, anchor.X);
+                _tabHoverTooltipTop = anchor.Y + 6;
+                _tabHoverTooltipVisible = true;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] tab tooltip anchor failed: {ex.Message}");
+            // Fallback near top of panel.
+            _tabHoverTooltipLeft = 12;
+            _tabHoverTooltipTop = 40;
+            _tabHoverTooltipVisible = true;
+            StateHasChanged();
+        }
+    }
+
+    private void OnTabMouseLeave()
+    {
+        HideTabHoverTooltip();
+    }
+
+    private void HideTabHoverTooltip()
+    {
+        if (!_tabHoverTooltipVisible && _tabHoverTabId == null)
+            return;
+        _tabHoverTooltipVisible = false;
+        _tabHoverTabId = null;
+        StateHasChanged();
+    }
+
+    private sealed class TabTooltipAnchor
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+    }
+
+    private async Task StartTabStripDragAsync(MouseEventArgs e, string tabId)
+    {
+        if (_dotNetRef == null || e.Button != 0)
+            return;
+
+        HideTabHoverTooltip();
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "chatfishBrowser.startTabStripDrag",
+                _dotNetRef,
+                ".browser-tabstrip-tabs",
+                tabId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] tab strip drag failed: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnTabStripClick(string tabId)
+    {
+        await ActivateTabAsync(tabId);
+    }
+
+    [JSInvokable]
+    public void OnTabStripDragOver(string? overId)
+    {
+        _dragOverTabId = overId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnTabStripDrop(string fromId, string targetId)
+    {
+        _dragOverTabId = null;
+
+        if (string.IsNullOrWhiteSpace(fromId)
+            || string.IsNullOrWhiteSpace(targetId)
+            || fromId == targetId)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var tabs = TabManager.Tabs.ToList();
+        var fromIndex = tabs.FindIndex(t => t.Id == fromId);
+        var toIndex = tabs.FindIndex(t => t.Id == targetId);
+        if (fromIndex < 0 || toIndex < 0)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var moved = tabs[fromIndex];
+        tabs.RemoveAt(fromIndex);
+        tabs.Insert(toIndex, moved);
+
+        await TabManager.ReorderTabsAsync(tabs.Select(t => t.Id).ToList());
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task OnPanelChangedAsync()
@@ -696,15 +966,23 @@
 
         ApplyOverlayVisibility();
 
-        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
+        if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl) && TabManager.ActiveTab?.IsStartPage != true
+            && string.IsNullOrWhiteSpace(TabManager.ActiveTab?.Url))
         {
             var navigated = await BrowserAgent.NavigateHomeAsync();
+            SyncStartPageFromActiveTab();
             if (!navigated)
             {
                 _showStartPage = true;
                 BrowserOverlay.SetMainOverlayVisible(false);
             }
             RestoreBrowserUiState();
+        }
+        else
+        {
+            SyncStartPageFromActiveTab();
+            if (_showStartPage)
+                BrowserOverlay.SetMainOverlayVisible(false);
         }
     }
 
@@ -739,8 +1017,11 @@
 
     private void RestoreBrowserUiState()
     {
+        SyncStartPageFromActiveTab();
         if (!string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
             _browserUrl = BrowserAgent.CurrentUrl;
+        else if (_showStartPage)
+            _browserUrl = "";
         _browserPageTitle = BrowserAgent.PageTitle;
         _canGoBack = BrowserAgent.CanGoBack;
         _canGoForward = BrowserAgent.CanGoForward;
@@ -833,6 +1114,7 @@
         _showUrlSuggestions = false;
         _showStartPage = false;
         await BrowserAgent.NavigateAsync(_browserUrl);
+        SyncStartPageFromActiveTab();
         _browserUrl = BrowserAgent.CurrentUrl;
         _canGoBack = BrowserAgent.CanGoBack;
         _canGoForward = BrowserAgent.CanGoForward;
@@ -846,7 +1128,8 @@
         _showBookmarkMenu = false;
 
         var navigated = await BrowserAgent.NavigateHomeAsync();
-        if (!navigated)
+        SyncStartPageFromActiveTab();
+        if (!navigated || _showStartPage)
         {
             _showStartPage = true;
             _browserUrl = "";
@@ -1850,6 +2133,8 @@
             SidePanel.OnChanged -= _sidePanelChangedHandler;
         if (_pwaChangedHandler != null)
             PwaDetector.Changed -= _pwaChangedHandler;
+        if (_tabsChangedHandler != null)
+            TabManager.Changed -= _tabsChangedHandler;
 
         try { _ = JS.InvokeVoidAsync("chatfishBrowser.stopBoundsObserver"); } catch { }
         BrowserOverlay.SetMainOverlayVisible(false);
