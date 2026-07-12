@@ -28,6 +28,7 @@ builder.Services.AddSingleton<INotesPanelState>(sp => sp.GetRequiredService<Note
 builder.Services.AddSingleton<NavLayoutService>();
 builder.Services.AddSingleton<INavLayoutState>(sp => sp.GetRequiredService<NavLayoutService>());
 builder.Services.AddSingleton<IBrowserAgentService, NullBrowserAgentService>();
+builder.Services.AddSingleton<IBrowserTabManager, NullBrowserTabManager>();
 builder.Services.AddSingleton<IBrowserOverlaySync, NullBrowserOverlaySync>();
 builder.Services.AddSingleton<IBrowserStore, NullBrowserStore>();
 builder.Services.AddSingleton<IBrowserSidebarStore, NullBrowserSidebarStore>();
