@@ -14,6 +14,8 @@
 #   Chatfish.AppImage
 #   chatfish_${VERSION}_amd64.deb
 #   install.sh          → also served at https://chatfish.me/install.sh
+#                         default: user AppImage (~/Applications) for Velopack self-update
+#                         --system: .deb under /opt (upgrade via reinstall)
 #   releases.linux.json (Velopack feed)
 #
 # Prerequisites:
@@ -30,7 +32,7 @@ SSH_USER="${SSH_USER:-daniel}"
 OUTPUT_DIR="${OUTPUT_DIR:-./linux_publish}"
 RELEASES_DIR="${RELEASES_DIR:-./linux_releases}"
 DEB_BUILD_DIR="${DEB_BUILD_DIR:-./linux_deb_build}"
-VERSION="${VERSION:-0.0.3}"
+VERSION="${VERSION:-0.0.4}"
 UPDATE_FEED="${UPDATE_FEED:-https://chatfish.me/releases/linux}"
 REMOTE_RELEASES="${REMOTE_RELEASES:-/var/www/chatfish/releases/linux}"
 REMOTE_WWWROOT="${REMOTE_WWWROOT:-/var/www/chatfish}"
@@ -251,30 +253,68 @@ echo "Deb: $RELEASES_DIR/$DEB_NAME"
 
 # ------------------------------------------------------------------------------
 # install.sh (curl | bash)
+#
+# Default: user-local AppImage under ~/Applications (Velopack can self-update).
+# Optional: --system installs the .deb under /opt (root-owned; use apt/dpkg or
+# re-run install.sh --system to upgrade — in-app Velopack replace usually fails).
 # ------------------------------------------------------------------------------
 echo ""
 echo "Writing install.sh ..."
 cat > "$RELEASES_DIR/install.sh" << EOF
 #!/usr/bin/env bash
 # Chatfish Linux installer
-# curl -fsSL https://chatfish.me/install.sh | bash
+#   curl -fsSL https://chatfish.me/install.sh | bash              # AppImage (recommended)
+#   curl -fsSL https://chatfish.me/install.sh | bash -s -- --system  # .deb under /opt
 set -euo pipefail
 
 VERSION="${VERSION}"
 BASE_URL="${UPDATE_FEED}"
-INSTALL_DIR="\${HOME}/Applications"
+INSTALL_DIR="\${CHATFISH_INSTALL_DIR:-\${HOME}/Applications}"
 APPIMAGE="Chatfish.AppImage"
 DEB="chatfish_\${VERSION}_amd64.deb"
+MODE="appimage"
 
-echo "Installing Chatfish \${VERSION}..."
+usage() {
+  cat <<USAGE
+Chatfish Linux installer
 
-mkdir -p "\$INSTALL_DIR"
+Usage:
+  curl -fsSL https://chatfish.me/install.sh | bash
+  curl -fsSL https://chatfish.me/install.sh | bash -s -- [options]
+
+Options:
+  --appimage, --user   Install AppImage to ~/Applications (default; supports in-app updates)
+  --system, --deb      Install system-wide .deb to /opt/chatfish (updates via reinstall)
+  -h, --help           Show this help
+USAGE
+}
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --appimage|--user) MODE="appimage"; shift ;;
+    --system|--deb)    MODE="system"; shift ;;
+    -h|--help)         usage; exit 0 ;;
+    *)
+      echo "Unknown option: \$1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+echo "Installing Chatfish \${VERSION} (mode: \$MODE)..."
+
 TMP="\$(mktemp -d)"
 cleanup() { rm -rf "\$TMP"; }
 trap cleanup EXIT
 cd "\$TMP"
 
 install_deb_file() {
+  echo "Downloading .deb from \$BASE_URL/\$DEB ..."
+  if ! curl -fL --progress-bar -o "\$DEB" "\$BASE_URL/\$DEB"; then
+    echo "ERROR: could not download \$BASE_URL/\$DEB" >&2
+    exit 1
+  fi
   echo "Installing with dpkg (may prompt for sudo)..."
   if command -v sudo >/dev/null 2>&1; then
     sudo dpkg -i "./\$DEB" || sudo apt-get install -f -y
@@ -282,11 +322,18 @@ install_deb_file() {
     dpkg -i "./\$DEB" || apt-get install -f -y
   fi
   echo ""
-  echo "Chatfish installed system-wide."
+  echo "Chatfish installed system-wide under /opt/chatfish."
   echo "  Launch from your app menu, or run: chatfish"
+  echo ""
+  echo "NOTE: System installs are root-owned. In-app updates usually cannot replace"
+  echo "      /opt/chatfish/Chatfish.AppImage. To upgrade later either:"
+  echo "        curl -fsSL https://chatfish.me/install.sh | bash -s -- --system"
+  echo "      or use the user AppImage install (recommended for auto-update):"
+  echo "        curl -fsSL https://chatfish.me/install.sh | bash"
 }
 
 install_appimage() {
+  mkdir -p "\$INSTALL_DIR"
   echo "Downloading AppImage from \$BASE_URL/\$APPIMAGE ..."
   # Do not use HEAD — release endpoints historically returned 405 for HEAD.
   if ! curl -fL --progress-bar -o "\$INSTALL_DIR/\$APPIMAGE" "\$BASE_URL/\$APPIMAGE"; then
@@ -307,6 +354,7 @@ Icon=chatfish
 Terminal=false
 Categories=Network;Office;Chat;Utility;
 StartupNotify=true
+StartupWMClass=com.chatfish.app
 DESKTOP
 
   if command -v curl >/dev/null 2>&1; then
@@ -321,24 +369,33 @@ DESKTOP
     update-desktop-database "\${HOME}/.local/share/applications" 2>/dev/null || true
   fi
 
+  # Prefer user desktop entry over a leftover system .deb entry in menus.
+  if [[ -f /usr/share/applications/chatfish.desktop ]]; then
+    echo ""
+    echo "NOTE: A system install was also detected (/usr/share/applications/chatfish.desktop)."
+    echo "      Prefer launching: \$INSTALL_DIR/\$APPIMAGE"
+    echo "      or remove the .deb if you only want the user AppImage:"
+    echo "        sudo apt remove chatfish   # or: sudo dpkg -r chatfish"
+  fi
+
   echo ""
-  echo "Chatfish AppImage installed."
-  echo "  Launch from your app menu, or run: \$INSTALL_DIR/\$APPIMAGE"
+  echo "Chatfish AppImage installed (user-local — supports in-app updates)."
+  echo "  Path:   \$INSTALL_DIR/\$APPIMAGE"
+  echo "  Launch: from your app menu, or: \$INSTALL_DIR/\$APPIMAGE"
 }
 
-# Prefer .deb on Debian/Ubuntu: try download; on failure fall back to AppImage.
-# Avoid HEAD existence checks (405 on some hosts).
-if command -v dpkg >/dev/null 2>&1; then
-  echo "Trying .deb package \$BASE_URL/\$DEB ..."
-  if curl -fL --progress-bar -o "\$DEB" "\$BASE_URL/\$DEB"; then
+case "\$MODE" in
+  system)
+    if ! command -v dpkg >/dev/null 2>&1; then
+      echo "ERROR: --system requires dpkg (Debian/Ubuntu). Use default AppImage install instead." >&2
+      exit 1
+    fi
     install_deb_file
-  else
-    echo ".deb not available; falling back to AppImage."
+    ;;
+  *)
     install_appimage
-  fi
-else
-  install_appimage
-fi
+    ;;
+esac
 
 echo "Done."
 EOF
@@ -381,7 +438,8 @@ scp "$RELEASES_DIR/install.sh" "${SSH_USER}@${SERVER_IP}:${REMOTE_WWWROOT}/insta
 
 echo ""
 echo "Linux deployment complete."
-echo "  Install:    curl -fsSL https://chatfish.me/install.sh | bash"
+echo "  Install (AppImage, in-app updates): curl -fsSL https://chatfish.me/install.sh | bash"
+echo "  Install (system .deb):              curl -fsSL https://chatfish.me/install.sh | bash -s -- --system"
 echo "  (alt)       curl -fsSL $UPDATE_FEED/install.sh | bash"
 echo "  AppImage:   $UPDATE_FEED/$APPIMAGE_NAME"
 echo "  Deb:        $UPDATE_FEED/$DEB_NAME"
