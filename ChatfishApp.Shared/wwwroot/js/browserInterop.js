@@ -187,6 +187,62 @@ window.chatfishBrowser = window.chatfishBrowser || {
         document.addEventListener('mouseup', onUp, { once: true });
     },
 
+    getTabTooltipAnchor: function (tabId) {
+        const el = document.querySelector('[data-tab-id="' + CSS.escape(tabId) + '"]');
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.left, y: r.bottom, width: r.width, height: r.height };
+    },
+
+    startTabStripDrag: function (dotNetRef, stripSelector, tabId, startX, startY) {
+        const strip = document.querySelector(stripSelector);
+        if (!strip || !dotNetRef || !tabId)
+            return;
+
+        const threshold = 5;
+        let dragStarted = false;
+
+        const getTabAt = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            return el?.closest('[data-tab-id]');
+        };
+
+        const onMove = (e) => {
+            if (!dragStarted) {
+                const dx = Math.abs(e.clientX - startX);
+                const dy = Math.abs(e.clientY - startY);
+                if (dx < threshold && dy < threshold)
+                    return;
+                dragStarted = true;
+                document.body.style.userSelect = 'none';
+                document.body.style.cursor = 'grabbing';
+            }
+
+            const item = getTabAt(e.clientX, e.clientY);
+            const overId = item?.getAttribute('data-tab-id') || null;
+            dotNetRef.invokeMethodAsync('OnTabStripDragOver', overId);
+        };
+
+        const onUp = (e) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+
+            if (!dragStarted) {
+                dotNetRef.invokeMethodAsync('OnTabStripClick', tabId);
+                return;
+            }
+
+            const item = getTabAt(e.clientX, e.clientY);
+            const targetId = item?.getAttribute('data-tab-id') || '';
+            dotNetRef.invokeMethodAsync('OnTabStripDrop', tabId, targetId);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    },
+
     startBookmarkBarDrag: function (dotNetRef, barSelector, bookmarkId, startX, startY) {
         const bar = document.querySelector(barSelector);
         if (!bar || !dotNetRef || !bookmarkId)
