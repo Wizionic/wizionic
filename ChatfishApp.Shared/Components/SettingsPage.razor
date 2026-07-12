@@ -347,8 +347,10 @@
             feed = "https://chatfish.me/releases/windows";
 
         var isLinuxFeed = feed.Contains("/linux", StringComparison.OrdinalIgnoreCase);
-        var packageFile = isLinuxFeed ? "Chatfish.AppImage" : "Chatfish-win-Setup.exe";
-        installerDownloadUrl = feed + "/" + packageFile;
+        // Linux: install.sh defaults to user AppImage (in-app updates). Windows: Setup.exe.
+        installerDownloadUrl = isLinuxFeed
+            ? "https://chatfish.me/install.sh"
+            : feed + "/Chatfish-win-Setup.exe";
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
