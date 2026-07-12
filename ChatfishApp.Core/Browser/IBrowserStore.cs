@@ -1,3 +1,5 @@
+using ChatfishApp.Core.Storage;
+
 namespace ChatfishApp.Core.Browser;
 
 public interface IBrowserStore
@@ -26,6 +28,20 @@ public interface IBrowserStore
     BrowserSettings GetSettings();
     Task SaveSettingsAsync(BrowserSettings settings, CancellationToken ct = default);
     Task<BrowserBookmarkFolder> EnsureBookmarksBarFolderAsync(CancellationToken ct = default);
+
+    // --- Cross-device sync (MAUI) ---
+    Task<List<SyncManifestEntry>> LoadBookmarkManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default);
+    Task<List<SyncManifestEntry>> LoadFolderManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default);
+    Task<BrowserBookmark?> GetBookmarkByIdAsync(string id, CancellationToken ct = default);
+    Task<BrowserBookmarkFolder?> GetFolderByIdAsync(string id, CancellationToken ct = default);
+    Task ApplyBookmarkPayloadAsync(BrowserBookmark bookmark, CancellationToken ct = default);
+    Task ApplyFolderPayloadAsync(BrowserBookmarkFolder folder, CancellationToken ct = default);
+    Task<bool> ShouldAcceptIncomingBookmarkAsync(BrowserBookmark bookmark, CancellationToken ct = default);
+    Task<bool> ShouldAcceptIncomingFolderAsync(BrowserBookmarkFolder folder, CancellationToken ct = default);
+    Task<DateTime> TombstoneBookmarkAsync(string id, CancellationToken ct = default);
+    Task<DateTime> TombstoneFolderAsync(string id, CancellationToken ct = default);
+    Task<bool> TryApplyRemoteBookmarkDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default);
+    Task<bool> TryApplyRemoteFolderDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default);
 
     event Action? Changed;
 }
