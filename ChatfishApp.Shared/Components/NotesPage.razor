@@ -319,10 +319,6 @@
             activeNoteId = notes.OrderByDescending(n => n.LastUpdated).First().Id;
             await LoadNote(activeNoteId);
         }
-        else
-        {
-            await OpenCreateNoteDialog();
-        }
 
         _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
         SidebarState.OnChanged += _sidebarStateChangedHandler;

@@ -6,32 +6,45 @@
 <div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
     <h2>Chatfish</h2>
     <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--bubble-blue); border: 1px solid var(--primary-dark); border-radius: 6px;">
-        Connect to local AI and keep all your data private!
+        Connect to local AI and keep all your data local and private!  Download the Chatfish app for easy connection to local AI, integration with Home Assistant for your smart home, and an agentically controlled web browser. 
     </div>
     @if (!AppEnvironment.IsMaui)
     {
-    <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--success); border: 1px solid var(--color-success-border); border-radius: 6px;">
-        <div style="margin-bottom: 0.5rem;">
-            <a href="/releases/windows/Chatfish-win-Setup.exe" download>
-                Download Chatfish App for Windows
+    <div class="login-download-stack">
+        <div class="login-download-card @(_detectedOs == "windows" ? "login-download-card--active" : _detectedOs == "linux" ? "login-download-card--muted" : null)">
+            @if (_detectedOs == "windows")
+            {
+                <div class="login-download-badge">Recommended for this device</div>
+            }
+            <div class="login-download-title">
+                <a href="/releases/windows/Chatfish-win-Setup.exe" download>
+                    Download Chatfish App for Windows
+                </a>
+            </div>
+            <p class="login-download-desc">Windows installer (.exe) — works on Windows 10 and 11.</p>
+            <a class="btn btn-primary btn-sm login-download-btn" href="/releases/windows/Chatfish-win-Setup.exe" download>
+                Download for Windows
             </a>
         </div>
-        <div style="font-size: 0.9em; color: var(--color-text-muted); margin-bottom: 0.35rem;">
-            Linux install (Debian/Ubuntu .deb, or AppImage fallback):
-        </div>
-        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
-            <code id="linux-install-cmd"
-                  style="flex: 1 1 16rem; display: block; padding: 0.45rem 0.6rem; border-radius: 4px;
-                         background: var(--color-surface, #0f172a); color: var(--color-text, #e2e8f0);
-                         font-size: 0.82em; overflow-x: auto; white-space: nowrap;">@LinuxInstallCommand</code>
-            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyLinuxInstallCommand">
-                @(_linuxInstallCopied ? "Copied" : "Copy")
-            </button>
-        </div>
-        <div style="margin-top: 0.4rem; font-size: 0.8em;">
-            <a href="/releases/linux/Chatfish.AppImage" download>AppImage only</a>
-            <span style="margin: 0 0.35rem; color: var(--color-text-muted);">·</span>
-            <a href="/releases/linux/install.sh">install.sh</a>
+
+        <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : _detectedOs == "windows" ? "login-download-card--muted" : null)">
+            @if (_detectedOs == "linux")
+            {
+                <div class="login-download-badge">Recommended for this device</div>
+            }
+            <div class="login-download-title">Download Chatfish App for Linux</div>
+            <p class="login-download-desc">Debian/Ubuntu .deb, with AppImage fallback. Run in a terminal:</p>
+            <div class="login-install-cmd-row">
+                <pre class="login-install-cmd" id="linux-install-cmd"><code>@LinuxInstallCommand</code></pre>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyLinuxInstallCommand">
+                    @(_linuxInstallCopied ? "Copied" : "Copy")
+                </button>
+            </div>
+            <div class="login-download-links">
+                <a href="/releases/linux/Chatfish.AppImage" download>AppImage only</a>
+                <span class="login-download-sep">·</span>
+                <a href="/releases/linux/install.sh">install.sh</a>
+            </div>
         </div>
     </div>
     }
@@ -135,6 +148,8 @@
 
     private const string LinuxInstallCommand = "curl -fsSL https://chatfish.me/install.sh | bash";
     private bool _linuxInstallCopied;
+    /// <summary>"windows", "linux", "mac", or null until detected.</summary>
+    private string? _detectedOs;
 
     string email = "";
     string loginCode = "";
@@ -157,6 +172,44 @@
         {
             // Clipboard may be blocked; user can still select the code block.
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || AppEnvironment.IsMaui || _detectedOs is not null)
+            return;
+
+        try
+        {
+            // Prefer modern platform hint, fall back to userAgent.
+            var platform = await JS.InvokeAsync<string>(
+                "eval",
+                "(navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || ''");
+            _detectedOs = DetectOsFromUserAgent(platform);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            _detectedOs = "unknown";
+        }
+    }
+
+    private static string DetectOsFromUserAgent(string? ua)
+    {
+        if (string.IsNullOrWhiteSpace(ua))
+            return "unknown";
+
+        var s = ua.ToLowerInvariant();
+        if (s.Contains("win"))
+            return "windows";
+        // Android UAs often include "Linux" — treat as non-desktop.
+        if (s.Contains("android") || s.Contains("iphone") || s.Contains("ipad"))
+            return "unknown";
+        if (s.Contains("linux") || s.Contains("x11") || s.Contains("cros"))
+            return "linux";
+        if (s.Contains("mac"))
+            return "mac";
+        return "unknown";
     }
 
     protected override async Task OnInitializedAsync()

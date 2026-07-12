@@ -4396,6 +4396,121 @@ body .message-bot,
 .sync-login-required-box { margin:2rem 0; }
 .sync-page-margin-l-sm  { margin-left:0.5rem; }
 
+/* --- Login page OS download cards --- */
+.login-download-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 1rem 0;
+}
+
+.login-download-card {
+    position: relative;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--color-success-border, #22c55e);
+    background: var(--success, #D1FFD2);
+    color: var(--color-text);
+    transition: opacity 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, filter 0.15s ease;
+}
+
+.login-download-card--active {
+    border-width: 2px;
+    border-color: var(--primary-dark, #1F7FCC);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-blue, #3BA7FF) 35%, transparent);
+    filter: none;
+    opacity: 1;
+}
+
+.login-download-card--muted {
+    opacity: 0.55;
+    filter: saturate(0.75);
+}
+
+.login-download-card--muted:hover {
+    opacity: 0.85;
+    filter: none;
+}
+
+.login-download-badge {
+    display: inline-block;
+    margin-bottom: 0.45rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-light, #fff);
+    background: var(--primary-dark, #1F7FCC);
+}
+
+.login-download-title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+    color: var(--color-text);
+}
+
+.login-download-title a {
+    color: var(--primary-dark, #1F7FCC);
+    font-weight: 600;
+}
+
+.login-download-desc {
+    margin: 0 0 0.55rem 0;
+    font-size: 0.9em;
+    color: var(--color-text-muted);
+}
+
+.login-download-btn {
+    margin-top: 0.15rem;
+}
+
+.login-install-cmd-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+
+/* Fixed dark terminal style so command stays readable in every theme */
+.login-install-cmd {
+    flex: 1 1 16rem;
+    margin: 0;
+    padding: 0.5rem 0.65rem;
+    border-radius: 6px;
+    background: #1e1e1e;
+    color: #e8e8e8;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    overflow-x: auto;
+    white-space: nowrap;
+    border: 1px solid #333;
+}
+
+.login-install-cmd code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    color: #e8e8e8;
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+}
+
+.login-download-links {
+    margin-top: 0.15rem;
+    font-size: 0.8em;
+}
+
+.login-download-links a {
+    color: var(--primary-dark, #1F7FCC);
+}
+
+.login-download-sep {
+    margin: 0 0.35rem;
+    color: var(--color-text-muted);
+}
+
 /* --- Table wrapper --- */
 .cf-sync-table-wrapper { border-radius:6px; overflow:hidden; margin-bottom:1rem; }
 
