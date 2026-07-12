@@ -31,7 +31,8 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService, IBrowserTab
 
 	// Root GirCore signal handlers so GC cannot collect them.
 	private GObject.SignalHandler<WebKit.WebView, WebKit.WebView.LoadChangedSignalArgs>? _loadChangedHandler;
-	private GObject.SignalHandler<WebKit.WebView, WebKit.WebView.CreateSignalArgs>? _createHandler;
+	// OnCreate is a returning signal (Gtk.Widget) — not a void SignalHandler.
+	private GObject.ReturningSignalHandler<WebKit.WebView, WebKit.WebView.CreateSignalArgs, Gtk.Widget>? _createHandler;
 
 	public LinuxBrowserAgentService(IBrowserPanelState panel, IBrowserStore store)
 	{
@@ -364,8 +365,9 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService, IBrowserTab
 	/// <summary>
 	/// WebKit create signal: decide policy for new windows. Returning null cancels the new view;
 	/// we open the target URL in a Chatfish tab instead when available.
+	/// Handler must return <see cref="Gtk.Widget"/> per GirCore ReturningSignalHandler.
 	/// </summary>
-	private WebKit.WebView? OnCreateWebView(WebKit.WebView sender, WebKit.WebView.CreateSignalArgs args)
+	private Gtk.Widget OnCreateWebView(WebKit.WebView sender, WebKit.WebView.CreateSignalArgs args)
 	{
 		try
 		{
@@ -383,7 +385,7 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService, IBrowserTab
 				{
 					Console.WriteLine($"[Browser] external open failed: {ex.Message}");
 				}
-				return null;
+				return null!; // Cancel native new-window WebView.
 			}
 
 			if (!string.IsNullOrWhiteSpace(uri))
@@ -391,12 +393,12 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService, IBrowserTab
 			else
 				Console.WriteLine("[Browser] Linux create without URI — tab open skipped");
 
-			return null; // Do not create an extra WebView.
+			return null!; // Do not create an extra WebView; Chatfish tab handles it.
 		}
 		catch (Exception ex)
 		{
 			Console.WriteLine($"[Browser] Linux OnCreate failed: {ex.Message}");
-			return null;
+			return null!;
 		}
 	}
 
@@ -411,23 +413,15 @@ public sealed class LinuxBrowserAgentService : IBrowserAgentService, IBrowserTab
 			if (nav == null)
 				return null;
 
-			var reqProp = nav.GetType().GetProperty("Request")
-				?? nav.GetType().GetMethod("GetRequest");
-			object? request = null;
-			if (reqProp is System.Reflection.PropertyInfo pi)
-				request = pi.GetValue(nav);
-			else if (reqProp is System.Reflection.MethodInfo mi)
-				request = mi.Invoke(nav, null);
+			// PropertyInfo and MethodInfo are unrelated types — cannot use ??.
+			object? request = nav.GetType().GetProperty("Request")?.GetValue(nav)
+				?? nav.GetType().GetMethod("GetRequest")?.Invoke(nav, null);
 
 			if (request == null)
 				return null;
 
-			var uriProp = request.GetType().GetProperty("Uri")
-				?? request.GetType().GetMethod("GetUri");
-			if (uriProp is System.Reflection.PropertyInfo up)
-				return up.GetValue(request)?.ToString();
-			if (uriProp is System.Reflection.MethodInfo um)
-				return um.Invoke(request, null)?.ToString();
+			return request.GetType().GetProperty("Uri")?.GetValue(request)?.ToString()
+				?? request.GetType().GetMethod("GetUri")?.Invoke(request, null)?.ToString();
 		}
 		catch
 		{
