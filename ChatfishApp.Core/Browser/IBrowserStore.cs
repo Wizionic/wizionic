@@ -14,7 +14,7 @@ public interface IBrowserStore
     IReadOnlyList<BrowserBookmarkFolder> GetFolders();
     IReadOnlyList<BrowserBookmark> GetBookmarks(string? folderId = null);
     BrowserBookmark? FindBookmarkByUrl(string url);
-    Task<BrowserBookmark> AddBookmarkAsync(string url, string title, string folderId, CancellationToken ct = default);
+    Task<BrowserBookmark> AddBookmarkAsync(string url, string title, string folderId, string? iconUrl = null, CancellationToken ct = default);
     Task ReorderBookmarksAsync(string folderId, IReadOnlyList<string> orderedIds, CancellationToken ct = default);
     Task MoveBookmarkAsync(string bookmarkId, string targetFolderId, string? beforeBookmarkId = null, CancellationToken ct = default);
     Task UpdateBookmarkAsync(BrowserBookmark bookmark, CancellationToken ct = default);

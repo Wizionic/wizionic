@@ -4511,6 +4511,42 @@ body .message-bot,
     color: var(--color-text-muted);
 }
 
+/* Sync page: capability badge + debug log */
+.sync-cap-badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+    color: var(--primary-dark, #1F7FCC);
+    background: color-mix(in srgb, var(--primary-blue, #3BA7FF) 22%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary-blue, #3BA7FF) 45%, transparent);
+}
+
+.sync-debug-panel {
+    border-top: 1px solid var(--color-border, #ddd);
+    padding-top: 0.75rem;
+}
+
+.sync-debug-log {
+    margin: 0.35rem 0 0 0;
+    max-height: 280px;
+    overflow: auto;
+    padding: 0.55rem 0.65rem;
+    border-radius: 6px;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 1px solid #333;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 /* --- Table wrapper --- */
 .cf-sync-table-wrapper { border-radius:6px; overflow:hidden; margin-bottom:1rem; }
 

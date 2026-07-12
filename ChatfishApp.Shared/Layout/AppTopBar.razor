@@ -195,8 +195,9 @@
         }
         else if (IsOnChatPage())
         {
+            // Notes off when on /chat, but do not force chat open — browser-only mode
+            // (top-bar browser icon) must be able to land on /chat with ChatPanel closed.
             NotesPanel.IsOpen = false;
-            ChatPanel.IsOpen = true;
         }
         else
         {
@@ -266,13 +267,15 @@
 
         if (!IsOnChatPage())
         {
-            if (!BrowserPanel.IsOpen)
-                BrowserPanel.IsOpen = true;
+            // From Notes/Settings/etc.: browser only — do not open chat or chat history sidebar.
+            BrowserPanel.IsOpen = true;
+            ChatPanel.IsOpen = false;
             Nav.NavigateTo("/chat");
             await SidebarState.SetCollapsedAsync(true, JS);
             return;
         }
 
+        // Already on /chat: toggle browser pane without changing chat open/closed.
         BrowserPanel.Toggle();
         if (BrowserPanel.IsOpen)
             await SidebarState.SetCollapsedAsync(true, JS);

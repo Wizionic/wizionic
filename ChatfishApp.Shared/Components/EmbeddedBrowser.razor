@@ -87,7 +87,7 @@
                         {
                             <button type="button" class="browser-bookmarks-item"
                                     @onclick="() => OpenBookmarkFromMenu(bm.Url)">
-                                <span class="browser-bookmarks-item-title">@bm.Title</span>
+                                <span class="browser-bookmarks-item-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
                                 <span class="browser-bookmarks-item-url">@bm.Url</span>
                             </button>
                         }
@@ -125,11 +125,9 @@
                         @oncontextmenu="(e) => OnBarContextMenu(e, bm)"
                         @oncontextmenu:preventDefault="true"
                         @oncontextmenu:stopPropagation="true">
-                    <img class="browser-bookmarks-bar-icon" src="@BrowserFaviconUrl.Get(bm.Url)" alt="" loading="lazy" draggable="false" />
-                    @if (!string.IsNullOrWhiteSpace(bm.Title))
-                    {
-                        <span class="browser-bookmarks-bar-title">@bm.Title</span>
-                    }
+                    <img class="browser-bookmarks-bar-icon" src="@BrowserFaviconUrl.Get(bm.Url, bm.IconUrl)" alt="" loading="lazy" draggable="false"
+                         onerror="this.dataset.step=(+this.dataset.step||0)+1;var s=+this.dataset.step;if(s===1)this.src='@BrowserFaviconUrl.GetDuckDuckGo(bm.Url)';else if(s===2)this.src='@BrowserFaviconUrl.GetSiteRootIco(bm.Url)';else if(s===3)this.src='@BrowserFaviconUrl.GetGoogle(bm.Url)';else{this.onerror=null;this.style.opacity='0.35';}" />
+                    <span class="browser-bookmarks-bar-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
                 </button>
             }
             @if (!BookmarksBarItems.Any())
@@ -160,7 +158,7 @@
                                     @foreach (var bm in folderBookmarks)
                                     {
                                         <button type="button" class="browser-start-tile" @onclick="() => OpenBookmark(bm.Url)">
-                                            <span class="browser-start-tile-title">@(string.IsNullOrWhiteSpace(bm.Title) ? bm.Url : bm.Title)</span>
+                                            <span class="browser-start-tile-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
                                             <span class="browser-start-tile-url">@bm.Url</span>
                                         </button>
                                     }
@@ -246,8 +244,9 @@
                                                 </label>
                                                 <button type="button" class="browser-side-bookmark-link"
                                                         @onmousedown="(e) => StartSidebarBookmarkDragAsync(e, bm.Id, folder.Id)">
-                                                    <img class="browser-side-bookmark-icon" src="@BrowserFaviconUrl.Get(bm.Url)" alt="" draggable="false" />
-                                                    <span class="browser-side-bookmark-title">@(string.IsNullOrWhiteSpace(bm.Title) ? bm.Url : bm.Title)</span>
+                                                    <img class="browser-side-bookmark-icon" src="@BrowserFaviconUrl.Get(bm.Url, bm.IconUrl)" alt="" draggable="false"
+                                                         onerror="this.dataset.step=(+this.dataset.step||0)+1;var s=+this.dataset.step;if(s===1)this.src='@BrowserFaviconUrl.GetDuckDuckGo(bm.Url)';else if(s===2)this.src='@BrowserFaviconUrl.GetSiteRootIco(bm.Url)';else if(s===3)this.src='@BrowserFaviconUrl.GetGoogle(bm.Url)';else{this.onerror=null;this.style.opacity='0.35';}" />
+                                                    <span class="browser-side-bookmark-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
                                                 </button>
                                                 <button type="button" class="browser-side-bookmark-action" title="Edit"
                                                         @onclick:stopPropagation="true" @onclick="() => EditSideBookmark(bm)">
@@ -939,13 +938,16 @@
         catch (Exception ex) { Console.WriteLine($"[Browser] open external failed: {ex.Message}"); }
     }
 
-    private void OpenBookmarkDialog()
+    private async Task OpenBookmarkDialog()
     {
         CloseBarContextMenu();
 
         var currentUrl = BrowserAgent.CurrentUrl;
         if (string.IsNullOrWhiteSpace(currentUrl))
             return;
+
+        // Re-read title from the live document — SPA titles often arrive after Navigated.
+        await RefreshPageTitleFromDocumentAsync();
 
         var existing = BrowserStore.FindBookmarkByUrl(currentUrl);
         if (existing != null)
@@ -954,12 +956,72 @@
             OpenBookmarkAddDialog();
     }
 
+    private async Task RefreshPageTitleFromDocumentAsync()
+    {
+        try
+        {
+            var raw = await BrowserAgent.EvaluateScriptAsync(BrowserPageMetadata.ReadTitleScript);
+            var cleaned = UnquoteScriptResult(raw);
+            var url = BrowserAgent.CurrentUrl;
+            var title = BrowserPageMetadata.ResolveBookmarkTitle(cleaned, url);
+            if (!string.IsNullOrWhiteSpace(title))
+                _browserPageTitle = title;
+
+            var iconRaw = await BrowserAgent.EvaluateScriptAsync(BrowserPageMetadata.ReadFaviconHrefScript);
+            var icon = UnquoteScriptResult(iconRaw);
+            if (!string.IsNullOrWhiteSpace(icon) && !string.IsNullOrWhiteSpace(url))
+                BrowserFaviconUrl.Remember(url, icon);
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] refresh title/icon for bookmark failed: {ex.Message}");
+        }
+    }
+
+    private async Task<string?> CapturePageFaviconAsync(string pageUrl)
+    {
+        try
+        {
+            var iconRaw = await BrowserAgent.EvaluateScriptAsync(BrowserPageMetadata.ReadFaviconHrefScript);
+            var icon = UnquoteScriptResult(iconRaw);
+            if (BrowserFaviconUrl.IsUsableIconUrl(icon))
+            {
+                BrowserFaviconUrl.Remember(pageUrl, icon);
+                return icon;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] capture favicon failed: {ex.Message}");
+        }
+
+        return BrowserFaviconUrl.GetCached(pageUrl);
+    }
+
+    private static string UnquoteScriptResult(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+        var trimmed = value.Trim();
+        if (trimmed.Equals("null", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("undefined", StringComparison.OrdinalIgnoreCase))
+            return "";
+        if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
+            return trimmed[1..^1].Replace("\\\"", "\"").Replace("\\n", "\n");
+        return trimmed;
+    }
+
     private void OpenBookmarkAddDialog()
     {
         _bookmarkIsEditMode = false;
         _editingBookmarkId = null;
-        _bookmarkTitle = string.IsNullOrWhiteSpace(_browserPageTitle) ? _browserUrl : _browserPageTitle;
-        _bookmarkUrl = BrowserAgent.CurrentUrl ?? _browserUrl ?? "";
+        var url = BrowserAgent.CurrentUrl ?? _browserUrl ?? "";
+        _bookmarkTitle = BrowserPageMetadata.ResolveBookmarkTitle(
+            string.IsNullOrWhiteSpace(_browserPageTitle) ? BrowserAgent.PageTitle : _browserPageTitle,
+            url);
+        _bookmarkUrl = url;
         _bookmarkFolderId = ShowBookmarksBar
             && BrowserStore.GetFolders().Any(f => f.Id == BrowserBookmarkFolders.BookmarksBarFolderId)
             ? BrowserBookmarkFolders.BookmarksBarFolderId
@@ -1006,6 +1068,9 @@
         if (string.IsNullOrWhiteSpace(url))
             return;
 
+        var iconUrl = await CapturePageFaviconAsync(url)
+                      ?? BrowserFaviconUrl.GetCached(url);
+
         if (_bookmarkIsEditMode)
         {
             if (string.IsNullOrWhiteSpace(_editingBookmarkId))
@@ -1019,14 +1084,15 @@
             {
                 Title = _bookmarkTitle?.Trim() ?? "",
                 Url = url,
-                FolderId = _bookmarkFolderId
+                FolderId = _bookmarkFolderId,
+                IconUrl = iconUrl ?? existing.IconUrl
             };
             await BrowserStore.UpdateBookmarkAsync(updated);
             SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(updated.Id);
         }
         else
         {
-            var added = await BrowserStore.AddBookmarkAsync(url, _bookmarkTitle, _bookmarkFolderId);
+            var added = await BrowserStore.AddBookmarkAsync(url, _bookmarkTitle, _bookmarkFolderId, iconUrl);
             SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(added.Id);
         }
 
@@ -1369,7 +1435,10 @@
 
         try { await PwaDetector.DetectFromPageAsync(); } catch { }
 
-        _pinName = string.IsNullOrWhiteSpace(_browserPageTitle) ? _browserUrl : _browserPageTitle;
+        await RefreshPageTitleFromDocumentAsync();
+        _pinName = BrowserPageMetadata.ResolveBookmarkTitle(
+            string.IsNullOrWhiteSpace(_browserPageTitle) ? BrowserAgent.PageTitle : _browserPageTitle,
+            BrowserAgent.CurrentUrl ?? _browserUrl);
         if (PwaDetector.CurrentManifest != null)
         {
             var manifest = PwaDetector.CurrentManifest;
@@ -1394,12 +1463,14 @@
         if (string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl))
             return;
 
+        var pageUrl = BrowserAgent.CurrentUrl;
+        var pinIcon = await CapturePageFaviconAsync(pageUrl) ?? BrowserFaviconUrl.Get(pageUrl);
         var app = new SidebarApp(
             Guid.NewGuid().ToString("N"),
-            string.IsNullOrWhiteSpace(_pinName) ? BrowserAgent.CurrentUrl : _pinName.Trim(),
-            string.IsNullOrWhiteSpace(_pinName) ? BrowserAgent.CurrentUrl : _pinName.Trim(),
-            BrowserAgent.CurrentUrl,
-            BrowserFaviconUrl.Get(BrowserAgent.CurrentUrl),
+            string.IsNullOrWhiteSpace(_pinName) ? pageUrl : _pinName.Trim(),
+            string.IsNullOrWhiteSpace(_pinName) ? pageUrl : _pinName.Trim(),
+            pageUrl,
+            pinIcon,
             null,
             null,
             false,
