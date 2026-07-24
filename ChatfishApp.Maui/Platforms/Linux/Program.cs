@@ -94,7 +94,7 @@ public static class Program
 
 		// Overlay: Blazor fills the content area; WebKit browser views track #browser-content-host.
 		var browserHost = _serviceProvider.GetRequiredService<LinuxBrowserHost>();
-		var browserRoot = browserHost.BuildRoot(_webView);
+		var browserRoot = browserHost.BuildRoot(_webView, _window);
 		LifetimeRoots.Add(browserRoot);
 		LifetimeRoots.Add(browserHost);
 

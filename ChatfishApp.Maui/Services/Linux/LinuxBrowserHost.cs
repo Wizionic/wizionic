@@ -22,31 +22,39 @@ public sealed class LinuxBrowserHost
 	private readonly LinuxBrowserAgentService _mainAgent;
 	private readonly LinuxSideBrowserService _sideAgent;
 	private readonly LinuxBrowserOverlayService _overlay;
+	private readonly LinuxBrowserPlatformHooks _platformHooks;
 
 	private Gtk.Overlay? _overlayWidget;
 	private WebKit.WebView? _mainWebView;
 	private WebKit.WebView? _sideWebView;
 	private Gtk.Box? _mainClamp;
 	private Gtk.Box? _sideClamp;
+	private Gtk.Window? _window;
 
 	private Action? _overlayChangedHandler;
 	private int _layoutQueued;
+	private bool _htmlFullscreen;
+	private int _overlayWidth;
+	private int _overlayHeight;
 
 	public LinuxBrowserHost(
 		LinuxBrowserAgentService mainAgent,
 		LinuxSideBrowserService sideAgent,
-		LinuxBrowserOverlayService overlay)
+		LinuxBrowserOverlayService overlay,
+		LinuxBrowserPlatformHooks platformHooks)
 	{
 		_mainAgent = mainAgent;
 		_sideAgent = sideAgent;
 		_overlay = overlay;
+		_platformHooks = platformHooks;
 	}
 
 	/// <summary>
 	/// Builds the root window child: Blazor fills the window; WebKit overlays track Blazor bounds.
 	/// </summary>
-	public Gtk.Widget BuildRoot(WebKit.WebView blazorWebView)
+	public Gtk.Widget BuildRoot(WebKit.WebView blazorWebView, Gtk.Window? window = null)
 	{
+		_window = window;
 		_mainWebView = WebKit.WebView.New();
 		_sideWebView = WebKit.WebView.New();
 		ConfigureWebView(_mainWebView);
@@ -54,6 +62,7 @@ public sealed class LinuxBrowserHost
 
 		_mainAgent.AttachWebView(_mainWebView);
 		_sideAgent.AttachWebView(_sideWebView);
+		_platformHooks.Attach(_mainWebView, window, this);
 
 		_mainClamp = CreateClamp(_mainWebView);
 		_sideClamp = CreateClamp(_sideWebView);
@@ -73,9 +82,47 @@ public sealed class LinuxBrowserHost
 		_overlayChangedHandler = OnOverlayChanged;
 		_overlay.Changed += _overlayChangedHandler;
 
+		try
+		{
+			_overlayWidget.OnRealize += (_, _) => RememberOverlaySize();
+			_overlayWidget.OnResize += (_, _) => RememberOverlaySize();
+		}
+		catch { /* optional signals */ }
+
 		ApplyLayout();
 		Console.WriteLine("[Browser] Linux WebKit dual-overlay host ready (clamp + margin layout)");
 		return _overlayWidget;
+	}
+
+	/// <summary>Expand main WebKit clamp to the full overlay for HTML5 fullscreen video.</summary>
+	public void EnterHtmlFullscreen()
+	{
+		_htmlFullscreen = true;
+		RememberOverlaySize();
+		ApplyLayout();
+	}
+
+	public void ExitHtmlFullscreen()
+	{
+		_htmlFullscreen = false;
+		ApplyLayout();
+	}
+
+	private void RememberOverlaySize()
+	{
+		if (_overlayWidget == null)
+			return;
+		try
+		{
+			var w = _overlayWidget.GetWidth();
+			var h = _overlayWidget.GetHeight();
+			if (w > 1 && h > 1)
+			{
+				_overlayWidth = w;
+				_overlayHeight = h;
+			}
+		}
+		catch { /* ignore */ }
 	}
 
 	private static Gtk.Box CreateClamp(WebKit.WebView webView)
@@ -127,6 +174,17 @@ public sealed class LinuxBrowserHost
 	{
 		if (_mainClamp == null || _sideClamp == null)
 			return;
+
+		if (_htmlFullscreen || _overlay.IsHtmlFullscreen)
+		{
+			RememberOverlaySize();
+			var w = Math.Max(_overlayWidth, 1);
+			var h = Math.Max(_overlayHeight, 1);
+			// Cover entire Blazor host (full app content area).
+			PlaceClamp(_mainClamp, new LinuxBrowserOverlayService.Bounds(0, 0, w, h), visible: true, "main-fs");
+			PlaceClamp(_sideClamp, default, visible: false, "side-fs");
+			return;
+		}
 
 		PlaceClamp(_mainClamp, _overlay.MainBounds, _overlay.MainVisible, "main");
 		PlaceClamp(_sideClamp, _overlay.SideBounds, _overlay.SideVisible, "side");
