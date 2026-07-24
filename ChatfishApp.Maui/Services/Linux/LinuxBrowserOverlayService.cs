@@ -19,8 +19,54 @@ public sealed class LinuxBrowserOverlayService : IBrowserOverlaySync
 	private Bounds _side;
 	private bool _mainVisible;
 	private bool _sideVisible;
+	private bool _htmlFullscreen;
+	private bool _sideWasVisibleBeforeFullscreen;
+
+	public bool IsHtmlFullscreen
+	{
+		get { lock (_gate) return _htmlFullscreen; }
+	}
 
 	public event Action? Changed;
+
+	/// <summary>
+	/// Expand main overlay to fill the entire Gtk.Overlay so HTML5 fullscreen
+	/// covers the whole app (not just the browser content host).
+	/// </summary>
+	public void EnterHtmlFullscreen()
+	{
+		bool changed;
+		lock (_gate)
+		{
+			if (_htmlFullscreen)
+				return;
+			_htmlFullscreen = true;
+			_sideWasVisibleBeforeFullscreen = _sideVisible;
+			_sideVisible = false;
+			_mainVisible = true;
+			changed = true;
+		}
+
+		if (changed)
+			Changed?.Invoke();
+	}
+
+	public void ExitHtmlFullscreen()
+	{
+		bool changed;
+		lock (_gate)
+		{
+			if (!_htmlFullscreen)
+				return;
+			_htmlFullscreen = false;
+			_mainVisible = _main.IsValid;
+			_sideVisible = _sideWasVisibleBeforeFullscreen && _side.IsValid;
+			changed = true;
+		}
+
+		if (changed)
+			Changed?.Invoke();
+	}
 
 	public Bounds MainBounds
 	{
@@ -106,7 +152,14 @@ public sealed class LinuxBrowserOverlayService : IBrowserOverlaySync
 		bool changed;
 		lock (_gate)
 		{
-			if (!next.IsValid)
+			// While HTML fullscreen is active, still cache chrome bounds but do not hide main.
+			if (_htmlFullscreen && isMain)
+			{
+				if (next.IsValid)
+					_main = next;
+				changed = false;
+			}
+			else if (!next.IsValid)
 			{
 				if (isMain)
 				{
@@ -147,7 +200,11 @@ public sealed class LinuxBrowserOverlayService : IBrowserOverlaySync
 		bool changed;
 		lock (_gate)
 		{
-			if (isMain)
+			if (_htmlFullscreen && isMain && !visible)
+			{
+				changed = false;
+			}
+			else if (isMain)
 			{
 				changed = _mainVisible != visible;
 				_mainVisible = visible && _main.IsValid;

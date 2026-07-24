@@ -13,6 +13,7 @@
 @inject IBrowserSidePanelState SidePanel
 @inject IBrowserSideAgentService SideAgent
 @inject IPwaDetector PwaDetector
+@inject IBrowserDownloadService Downloads
 @inject ISyncService SyncService
 @using ChatfishApp.Core.Sync
 
@@ -159,6 +160,74 @@
         <button type="button" class="browser-toolbar-btn" @onclick="OpenBookmarkDialog" title="Bookmark this page" disabled="@(string.IsNullOrWhiteSpace(BrowserAgent.CurrentUrl) || _showStartPage)">
             <i class="bi bi-bookmark-plus"></i>
         </button>
+        <div class="browser-downloads-menu-wrap">
+            <button type="button"
+                    class="browser-toolbar-btn @(_showDownloadsMenu ? "active" : "") @(Downloads.IsAnyInProgress ? "browser-download-active" : "")"
+                    @onclick="ToggleDownloadsMenu"
+                    title="Downloads">
+                <i class="bi bi-download @(Downloads.IsAnyInProgress ? "spin" : "")"></i>
+            </button>
+            @if (_showDownloadsMenu)
+            {
+                <div class="browser-downloads-dropdown" @onclick:stopPropagation="true">
+                    <div class="browser-downloads-header">
+                        <span>Downloads</span>
+                        @if (Downloads.Downloads.Any(d => d.State != BrowserDownloadState.InProgress))
+                        {
+                            <button type="button" class="browser-downloads-clear" @onclick="ClearCompletedDownloads">Clear</button>
+                        }
+                    </div>
+                    @if (!Downloads.Downloads.Any())
+                    {
+                        <div class="browser-downloads-empty">No downloads yet</div>
+                    }
+                    else
+                    {
+                        @foreach (var dl in Downloads.Downloads)
+                        {
+                            var downloadId = dl.Id;
+                            <div class="browser-downloads-item">
+                                <div class="browser-downloads-item-main">
+                                    <i class="bi @DownloadStateIcon(dl.State) browser-downloads-item-icon" aria-hidden="true"></i>
+                                    <div class="browser-downloads-item-text">
+                                        <div class="browser-downloads-item-name" title="@dl.FileName">@dl.FileName</div>
+                                        <div class="browser-downloads-item-meta">@DownloadStatusText(dl)</div>
+                                        @if (dl.State == BrowserDownloadState.InProgress && dl.ProgressFraction is double frac)
+                                        {
+                                            <div class="browser-downloads-progress">
+                                                <div class="browser-downloads-progress-bar" style="width:@($"{frac * 100:F0}%")"></div>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                                <div class="browser-downloads-item-actions">
+                                    <button type="button"
+                                            class="browser-downloads-action"
+                                            title="Show in folder"
+                                            disabled="@(string.IsNullOrWhiteSpace(dl.FilePath))"
+                                            @onclick="() => ShowDownloadInFolderAsync(downloadId)">
+                                        <i class="bi bi-folder2-open"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="browser-downloads-action"
+                                            title="Open"
+                                            disabled="@(dl.State != BrowserDownloadState.Completed || string.IsNullOrWhiteSpace(dl.FilePath))"
+                                            @onclick="() => OpenDownloadAsync(downloadId)">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="browser-downloads-action browser-downloads-action-danger"
+                                            title="Delete"
+                                            @onclick="() => DeleteDownloadAsync(downloadId)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
         <button type="button" class="browser-toolbar-btn" @onclick="OpenInExternalBrowser" title="Open in external browser">
             <i class="bi bi-box-arrow-up-right"></i>
         </button>
@@ -391,7 +460,7 @@
             <button type="button"
                     class="browser-vtoolbar-btn @(SidePanel.IsOpen && SidePanel.Content == BrowserSidePanelContent.Bookmarks ? "active" : "")"
                     title="Bookmarks"
-                    @onclick="OpenBookmarksInSidePanel">
+                    @onclick="ToggleBookmarksInSidePanel">
                 <i class="bi bi-bookmarks"></i>
             </button>
             @foreach (var app in SidebarStore.GetPinnedApps())
@@ -574,6 +643,7 @@
     private List<BrowserHistoryEntry> _urlSuggestions = [];
     private bool _suppressUrlBlur;
     private bool _showBookmarkMenu;
+    private bool _showDownloadsMenu;
 
     private bool _showBookmarkDialog;
     private bool _bookmarkIsEditMode;
@@ -645,7 +715,7 @@
         || _contextMenuApp != null;
 
     private int DropdownInsetPx =>
-        _showBookmarkMenu ? 300
+        _showBookmarkMenu || _showDownloadsMenu ? 300
         : (_showUrlSuggestions && _urlSuggestions.Count > 0) ? 230
         : 0;
 
@@ -658,6 +728,7 @@
     private Action? _sidePanelChangedHandler;
     private Action? _pwaChangedHandler;
     private Action? _tabsChangedHandler;
+    private Action? _downloadsChangedHandler;
 
     protected override async Task OnInitializedAsync()
     {
@@ -682,6 +753,9 @@
 
         _tabsChangedHandler = () => InvokeAsync(OnTabsChangedAsync);
         TabManager.Changed += _tabsChangedHandler;
+
+        _downloadsChangedHandler = () => InvokeAsync(StateHasChanged);
+        Downloads.Changed += _downloadsChangedHandler;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1149,8 +1223,73 @@
     {
         _showBookmarkMenu = !_showBookmarkMenu;
         if (_showBookmarkMenu)
+        {
             _showUrlSuggestions = false;
+            _showDownloadsMenu = false;
+        }
         RefreshWebViewBounds();
+    }
+
+    private void ToggleDownloadsMenu()
+    {
+        _showDownloadsMenu = !_showDownloadsMenu;
+        if (_showDownloadsMenu)
+        {
+            _showBookmarkMenu = false;
+            _showUrlSuggestions = false;
+        }
+        RefreshWebViewBounds();
+    }
+
+    private async Task OpenDownloadAsync(string id)
+    {
+        await Downloads.OpenAsync(id);
+    }
+
+    private async Task ShowDownloadInFolderAsync(string id)
+    {
+        await Downloads.ShowInFolderAsync(id);
+    }
+
+    private async Task DeleteDownloadAsync(string id)
+    {
+        await Downloads.DeleteAsync(id);
+    }
+
+    private void ClearCompletedDownloads()
+    {
+        Downloads.ClearCompleted();
+    }
+
+    private static string DownloadStateIcon(BrowserDownloadState state) => state switch
+    {
+        BrowserDownloadState.InProgress => "bi-arrow-down-circle spin",
+        BrowserDownloadState.Completed => "bi-check-circle",
+        BrowserDownloadState.Failed => "bi-exclamation-circle",
+        BrowserDownloadState.Cancelled => "bi-x-circle",
+        _ => "bi-download"
+    };
+
+    private static string DownloadStatusText(BrowserDownloadItem dl) => dl.State switch
+    {
+        BrowserDownloadState.InProgress when dl.ProgressFraction is double f =>
+            $"{FormatBytes(dl.BytesReceived)} / {(dl.TotalBytes is long t ? FormatBytes(t) : "?")} ({f * 100:F0}%)",
+        BrowserDownloadState.InProgress =>
+            dl.BytesReceived > 0 ? $"Downloading… {FormatBytes(dl.BytesReceived)}" : "Downloading…",
+        BrowserDownloadState.Completed => "Completed",
+        BrowserDownloadState.Failed => string.IsNullOrWhiteSpace(dl.ErrorMessage) ? "Failed" : $"Failed: {dl.ErrorMessage}",
+        BrowserDownloadState.Cancelled => "Cancelled",
+        _ => ""
+    };
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        double v = bytes;
+        string[] units = ["KB", "MB", "GB", "TB"];
+        var u = -1;
+        do { v /= 1024; u++; } while (v >= 1024 && u < units.Length - 1);
+        return $"{v:0.##} {units[u]}";
     }
 
     private async Task OpenBookmarksPage()
@@ -1158,6 +1297,21 @@
         _showBookmarkMenu = false;
         OpenBookmarksInSidePanel();
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Vertical toolbar bookmarks icon: open side panel, or close it if already showing bookmarks.
+    /// </summary>
+    private void ToggleBookmarksInSidePanel()
+    {
+        CloseAllContextMenus();
+        if (SidePanel.IsOpen && SidePanel.Content == BrowserSidePanelContent.Bookmarks)
+        {
+            CloseSidePanel();
+            return;
+        }
+
+        OpenBookmarksInSidePanel();
     }
 
     private void OpenBookmarksInSidePanel()
@@ -1627,8 +1781,14 @@
     public async Task OnSidebarBookmarkClick(string bookmarkId)
     {
         var bookmark = BrowserStore.GetBookmarks().FirstOrDefault(b => b.Id == bookmarkId);
-        if (bookmark != null)
-            await OpenBookmark(bookmark.Url);
+        if (bookmark == null)
+            return;
+
+        await OpenBookmark(bookmark.Url);
+
+        // Navigating from the bookmarks side list closes the panel; edit/delete leave it open.
+        if (SidePanel.IsOpen && SidePanel.Content == BrowserSidePanelContent.Bookmarks)
+            CloseSidePanel();
     }
 
     [JSInvokable]
@@ -1699,8 +1859,24 @@
     private void CloseAllContextMenus(bool keepSidePanelOpen = false)
     {
         CloseBarContextMenu();
+        var closedDropdown = false;
+        if (_showDownloadsMenu)
+        {
+            _showDownloadsMenu = false;
+            closedDropdown = true;
+        }
+        if (_showBookmarkMenu)
+        {
+            _showBookmarkMenu = false;
+            closedDropdown = true;
+        }
+
         if (_contextMenuApp == null)
+        {
+            if (closedDropdown)
+                RefreshWebViewBounds();
             return;
+        }
 
         _contextMenuApp = null;
         if (_contextMenuOpenedSidePanel && !keepSidePanelOpen)
@@ -2135,6 +2311,8 @@
             PwaDetector.Changed -= _pwaChangedHandler;
         if (_tabsChangedHandler != null)
             TabManager.Changed -= _tabsChangedHandler;
+        if (_downloadsChangedHandler != null)
+            Downloads.Changed -= _downloadsChangedHandler;
 
         try { _ = JS.InvokeVoidAsync("chatfishBrowser.stopBoundsObserver"); } catch { }
         BrowserOverlay.SetMainOverlayVisible(false);
