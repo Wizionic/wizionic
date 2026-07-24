@@ -36,6 +36,7 @@ builder.Services.AddSingleton<BrowserSidePanelState>();
 builder.Services.AddSingleton<IBrowserSidePanelState>(sp => sp.GetRequiredService<BrowserSidePanelState>());
 builder.Services.AddSingleton<IBrowserSideAgentService, NullBrowserSideAgentService>();
 builder.Services.AddSingleton<IPwaDetector, NullPwaDetector>();
+builder.Services.AddSingleton<IBrowserDownloadService, NullBrowserDownloadService>();
 builder.Services.AddSingleton<WasmKeyStore>();
 builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<WasmKeyStore>());
 builder.Services.AddScoped<ChatModelCatalogService>();

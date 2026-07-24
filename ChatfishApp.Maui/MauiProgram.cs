@@ -181,6 +181,9 @@ public static class MauiProgram
 		services.AddSingleton<IBrowserSidebarStore>(sp => sp.GetRequiredService<SqliteBrowserSidebarStore>());
 		services.AddSingleton<MauiBrowserSidePanelState>();
 		services.AddSingleton<IBrowserSidePanelState>(sp => sp.GetRequiredService<MauiBrowserSidePanelState>());
+		// Embedded browser downloads (toolbar + open/reveal/delete) — both desktop targets.
+		services.AddSingleton<BrowserDownloadService>();
+		services.AddSingleton<IBrowserDownloadService>(sp => sp.GetRequiredService<BrowserDownloadService>());
 #if LINUX_DESKTOP
 		// Native WebKit overlays (MainPage MAUI WebViews are not used on Linux).
 		services.AddSingleton<LinuxBrowserOverlayService>();
@@ -190,6 +193,7 @@ public static class MauiProgram
 		services.AddSingleton<IBrowserTabManager>(sp => sp.GetRequiredService<LinuxBrowserAgentService>());
 		services.AddSingleton<LinuxSideBrowserService>();
 		services.AddSingleton<IBrowserSideAgentService>(sp => sp.GetRequiredService<LinuxSideBrowserService>());
+		services.AddSingleton<LinuxBrowserPlatformHooks>();
 		services.AddSingleton<LinuxBrowserHost>();
 #else
 		services.AddSingleton<BrowserOverlayService>();
