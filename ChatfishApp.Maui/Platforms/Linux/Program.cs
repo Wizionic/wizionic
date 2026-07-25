@@ -112,6 +112,9 @@ public static class Program
 		toolbarView.SetContent(browserRoot);
 		LifetimeRoots.Add(toolbarView);
 
+		// So HTML5/YouTube fullscreen can hide the header and fill the monitor.
+		browserHost.AttachChrome(toolbarView);
+
 		_root = toolbarView;
 		Pin(_root, ref _rootPin);
 
