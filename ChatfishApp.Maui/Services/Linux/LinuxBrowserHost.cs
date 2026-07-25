@@ -30,12 +30,24 @@ public sealed class LinuxBrowserHost
 	private Gtk.Box? _mainClamp;
 	private Gtk.Box? _sideClamp;
 	private Gtk.Window? _window;
+	private Adw.ToolbarView? _toolbarView;
 
 	private Action? _overlayChangedHandler;
+	private GObject.SignalHandler<GObject.Object, GObject.Object.NotifySignalArgs>? _windowNotifyHandler;
+	private GObject.SignalHandler<Gdk.Surface, Gdk.Surface.LayoutSignalArgs>? _surfaceLayoutHandler;
+	private Gdk.Surface? _surfaceHooked;
+	private readonly List<object> _handlerRoots = [];
+
 	private int _layoutQueued;
 	private bool _htmlFullscreen;
+	private bool _appWasFullscreen;
+	private bool _topBarsWereRevealed = true;
 	private int _overlayWidth;
 	private int _overlayHeight;
+	private int _fsRelayoutFrames;
+	private uint _fsTickId;
+	private int _lastLoggedFsW;
+	private int _lastLoggedFsH;
 
 	public LinuxBrowserHost(
 		LinuxBrowserAgentService mainAgent,
@@ -84,8 +96,13 @@ public sealed class LinuxBrowserHost
 
 		try
 		{
-			_overlayWidget.OnRealize += (_, _) => RememberOverlaySize();
-			_overlayWidget.OnResize += (_, _) => RememberOverlaySize();
+			// Gtk.Overlay has no OnResize in GirCore; re-measure on realize and whenever layout runs.
+			_overlayWidget.OnRealize += (_, _) =>
+			{
+				RememberOverlaySize();
+				if (_htmlFullscreen)
+					ApplyLayout();
+			};
 		}
 		catch { /* optional signals */ }
 
@@ -94,35 +111,331 @@ public sealed class LinuxBrowserHost
 		return _overlayWidget;
 	}
 
-	/// <summary>Expand main WebKit clamp to the full overlay for HTML5 fullscreen video.</summary>
+	/// <summary>
+	/// Wire Adwaita chrome so HTML5 fullscreen can hide the header bar and fill the monitor.
+	/// Call after the ToolbarView is created and set as the window content.
+	/// </summary>
+	public void AttachChrome(Adw.ToolbarView toolbarView)
+	{
+		_toolbarView = toolbarView ?? throw new ArgumentNullException(nameof(toolbarView));
+	}
+
+	/// <summary>
+	/// True OS + in-app fullscreen for HTML5 video (YouTube, etc.):
+	/// hide Adwaita header, gtk_window_fullscreen, expand WebKit clamp to the full content area,
+	/// and keep re-laying out as the window surface grows (Wayland fullscreen is async).
+	/// </summary>
 	public void EnterHtmlFullscreen()
 	{
+		if (_htmlFullscreen)
+		{
+			// Already in FS — still re-apply in case size changed.
+			ScheduleFullscreenRelayout();
+			return;
+		}
+
 		_htmlFullscreen = true;
-		RememberOverlaySize();
-		ApplyLayout();
+
+		// 1) Drop window chrome so the content (and overlay) can use the full window.
+		try
+		{
+			if (_toolbarView != null)
+			{
+				_topBarsWereRevealed = _toolbarView.RevealTopBars;
+				_toolbarView.SetRevealTopBars(false);
+				// Let content claim the full vertical space once bars are hidden.
+				try { _toolbarView.SetExtendContentToTopEdge(true); } catch { /* older libadwaita */ }
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux hide chrome failed: {ex.Message}");
+		}
+
+		// 2) Ask the compositor for real monitor fullscreen (hides CSD decorations too).
+		try
+		{
+			if (_window != null)
+			{
+				_appWasFullscreen = _window.IsFullscreen();
+				if (!_appWasFullscreen)
+					_window.Fullscreen();
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux window.Fullscreen failed: {ex.Message}");
+		}
+
+		try
+		{
+			_toolbarView?.QueueResize();
+			_overlayWidget?.QueueResize();
+			_window?.QueueResize();
+		}
+		catch { /* ignore */ }
+
+		HookWindowSizeTracking();
+		_lastLoggedFsW = _lastLoggedFsH = 0;
+		ScheduleFullscreenRelayout();
+		Console.WriteLine("[Browser] Linux HTML fullscreen enter (chrome hidden + window fullscreen)");
 	}
 
 	public void ExitHtmlFullscreen()
 	{
+		if (!_htmlFullscreen)
+			return;
+
 		_htmlFullscreen = false;
+		StopFullscreenRelayout();
+		UnhookWindowSizeTracking();
+
+		// Restore window first so subsequent layout uses restored geometry.
+		try
+		{
+			if (_window != null && !_appWasFullscreen && _window.IsFullscreen())
+				_window.Unfullscreen();
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux window.Unfullscreen failed: {ex.Message}");
+		}
+		finally
+		{
+			_appWasFullscreen = false;
+		}
+
+		try
+		{
+			if (_toolbarView != null)
+			{
+				try { _toolbarView.SetExtendContentToTopEdge(false); } catch { /* ignore */ }
+				_toolbarView.SetRevealTopBars(_topBarsWereRevealed);
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux restore chrome failed: {ex.Message}");
+		}
+
+		// Wayland unfullscreen is async — re-apply chrome bounds after a few frames.
+		QueueLayout();
+		GLib.Functions.TimeoutAdd(GLib.Constants.PRIORITY_DEFAULT_IDLE, 50, () =>
+		{
+			RememberOverlaySize();
+			ApplyLayout();
+			return false;
+		});
+		GLib.Functions.TimeoutAdd(GLib.Constants.PRIORITY_DEFAULT_IDLE, 200, () =>
+		{
+			RememberOverlaySize();
+			ApplyLayout();
+			return false;
+		});
+
+		Console.WriteLine("[Browser] Linux HTML fullscreen leave");
+	}
+
+	private void HookWindowSizeTracking()
+	{
+		if (_window == null)
+			return;
+
+		try
+		{
+			if (_windowNotifyHandler == null)
+			{
+				_windowNotifyHandler = OnWindowNotify;
+				_window.OnNotify += _windowNotifyHandler;
+				_handlerRoots.Add(_windowNotifyHandler);
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux window notify hook failed: {ex.Message}");
+		}
+
+		try
+		{
+			var surface = _window.GetSurface();
+			if (surface != null && !ReferenceEquals(surface, _surfaceHooked))
+			{
+				if (_surfaceHooked != null && _surfaceLayoutHandler != null)
+				{
+					try { _surfaceHooked.OnLayout -= _surfaceLayoutHandler; } catch { /* ignore */ }
+				}
+
+				_surfaceLayoutHandler ??= OnSurfaceLayout;
+				surface.OnLayout += _surfaceLayoutHandler;
+				_handlerRoots.Add(_surfaceLayoutHandler);
+				_surfaceHooked = surface;
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux surface layout hook failed: {ex.Message}");
+		}
+	}
+
+	private void UnhookWindowSizeTracking()
+	{
+		try
+		{
+			if (_window != null && _windowNotifyHandler != null)
+				_window.OnNotify -= _windowNotifyHandler;
+		}
+		catch { /* ignore */ }
+
+		try
+		{
+			if (_surfaceHooked != null && _surfaceLayoutHandler != null)
+				_surfaceHooked.OnLayout -= _surfaceLayoutHandler;
+		}
+		catch { /* ignore */ }
+
+		_surfaceHooked = null;
+		// Keep handlers rooted / reusable for the next enter; only detach signals.
+	}
+
+	private void OnWindowNotify(GObject.Object sender, GObject.Object.NotifySignalArgs args)
+	{
+		if (!_htmlFullscreen)
+			return;
+
+		var name = args.Pspec?.GetName();
+		// fullscreened flips after the compositor ack; default-* may also change.
+		if (name is "fullscreened" or "default-width" or "default-height" or "maximized")
+			ScheduleFullscreenRelayout();
+	}
+
+	private void OnSurfaceLayout(Gdk.Surface sender, Gdk.Surface.LayoutSignalArgs args)
+	{
+		if (!_htmlFullscreen)
+			return;
+
+		// Surface size is the true window pixel size after (un)fullscreen.
+		if (args.Width > 1 && args.Height > 1)
+		{
+			// Prefer overlay allocation for clamp coords, but fall back to surface.
+			RememberOverlaySize();
+			if (_overlayWidth < args.Width * 0.9 || _overlayHeight < args.Height * 0.9)
+			{
+				// Overlay has not expanded yet (header still consuming space, or not reallocated).
+				// Use surface size so the video fills the monitor immediately.
+				_overlayWidth = args.Width;
+				_overlayHeight = args.Height;
+			}
+		}
+
 		ApplyLayout();
+	}
+
+	private void ScheduleFullscreenRelayout()
+	{
+		RememberOverlaySize();
+		ApplyLayout();
+
+		// Pump a few frames: Wayland fullscreen + Adwaita bar hide reallocate asynchronously.
+		_fsRelayoutFrames = 0;
+		if (_overlayWidget == null)
+			return;
+
+		if (_fsTickId != 0)
+			return;
+
+		try
+		{
+			_fsTickId = _overlayWidget.AddTickCallback(OnFullscreenTick);
+		}
+		catch
+		{
+			// Fallback: idle retries.
+			GLib.Functions.TimeoutAdd(GLib.Constants.PRIORITY_DEFAULT_IDLE, 16, () =>
+			{
+				if (!_htmlFullscreen)
+					return false;
+				RememberOverlaySize();
+				ApplyLayout();
+				_fsRelayoutFrames++;
+				return _fsRelayoutFrames < 30;
+			});
+		}
+	}
+
+	private bool OnFullscreenTick(Gtk.Widget widget, Gdk.FrameClock clock)
+	{
+		if (!_htmlFullscreen)
+		{
+			_fsTickId = 0;
+			return false;
+		}
+
+		RememberOverlaySize();
+		ApplyLayout();
+		_fsRelayoutFrames++;
+		if (_fsRelayoutFrames >= 45)
+		{
+			_fsTickId = 0;
+			return false;
+		}
+
+		return true;
+	}
+
+	private void StopFullscreenRelayout()
+	{
+		if (_fsTickId != 0 && _overlayWidget != null)
+		{
+			try { _overlayWidget.RemoveTickCallback(_fsTickId); } catch { /* ignore */ }
+			_fsTickId = 0;
+		}
+		_fsRelayoutFrames = 0;
 	}
 
 	private void RememberOverlaySize()
 	{
-		if (_overlayWidget == null)
-			return;
+		// Prefer the largest reliable size we can see: overlay allocation, then window.
+		var bestW = 0;
+		var bestH = 0;
+
 		try
 		{
-			var w = _overlayWidget.GetWidth();
-			var h = _overlayWidget.GetHeight();
-			if (w > 1 && h > 1)
+			if (_overlayWidget != null)
 			{
-				_overlayWidth = w;
-				_overlayHeight = h;
+				var w = Math.Max(_overlayWidget.GetWidth(), _overlayWidget.GetAllocatedWidth());
+				var h = Math.Max(_overlayWidget.GetHeight(), _overlayWidget.GetAllocatedHeight());
+				if (w > bestW) bestW = w;
+				if (h > bestH) bestH = h;
 			}
 		}
 		catch { /* ignore */ }
+
+		try
+		{
+			if (_window != null)
+			{
+				var w = Math.Max(_window.GetWidth(), _window.GetAllocatedWidth());
+				var h = Math.Max(_window.GetHeight(), _window.GetAllocatedHeight());
+				if (w > bestW) bestW = w;
+				if (h > bestH) bestH = h;
+
+				var surface = _window.GetSurface();
+				if (surface != null)
+				{
+					var sw = surface.GetWidth();
+					var sh = surface.GetHeight();
+					if (sw > bestW) bestW = sw;
+					if (sh > bestH) bestH = sh;
+				}
+			}
+		}
+		catch { /* ignore */ }
+
+		if (bestW > 1 && bestH > 1)
+		{
+			_overlayWidth = bestW;
+			_overlayHeight = bestH;
+		}
 	}
 
 	private static Gtk.Box CreateClamp(WebKit.WebView webView)
@@ -157,7 +470,9 @@ public sealed class LinuxBrowserHost
 		webView.SetSettings(settings);
 	}
 
-	private void OnOverlayChanged()
+	private void OnOverlayChanged() => QueueLayout();
+
+	private void QueueLayout()
 	{
 		if (Interlocked.Exchange(ref _layoutQueued, 1) == 1)
 			return;
@@ -180,7 +495,7 @@ public sealed class LinuxBrowserHost
 			RememberOverlaySize();
 			var w = Math.Max(_overlayWidth, 1);
 			var h = Math.Max(_overlayHeight, 1);
-			// Cover entire Blazor host (full app content area).
+			// Cover entire window content area (header is hidden during HTML fullscreen).
 			PlaceClamp(_mainClamp, new LinuxBrowserOverlayService.Bounds(0, 0, w, h), visible: true, "main-fs");
 			PlaceClamp(_sideClamp, default, visible: false, "side-fs");
 			return;
@@ -190,7 +505,7 @@ public sealed class LinuxBrowserHost
 		PlaceClamp(_sideClamp, _overlay.SideBounds, _overlay.SideVisible, "side");
 	}
 
-	private static void PlaceClamp(
+	private void PlaceClamp(
 		Gtk.Box clamp,
 		LinuxBrowserOverlayService.Bounds bounds,
 		bool visible,
@@ -215,6 +530,23 @@ public sealed class LinuxBrowserHost
 
 		if (!clamp.Visible)
 			clamp.Visible = true;
+
+		// Force WebKit to notice the new allocation (important after window fullscreen).
+		try
+		{
+			clamp.QueueResize();
+			clamp.QueueAllocate();
+		}
+		catch { /* ignore */ }
+
+		// Avoid spamming the console on every fullscreen tick frame.
+		if (label is "main-fs" or "side-fs")
+		{
+			if (bounds.Width == _lastLoggedFsW && bounds.Height == _lastLoggedFsH)
+				return;
+			_lastLoggedFsW = bounds.Width;
+			_lastLoggedFsH = bounds.Height;
+		}
 
 		Console.WriteLine(
 			$"[Browser] overlay {label} -> x={bounds.X} y={bounds.Y} w={bounds.Width} h={bounds.Height}");

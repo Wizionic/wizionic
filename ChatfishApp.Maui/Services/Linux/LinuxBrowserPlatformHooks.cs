@@ -15,19 +15,34 @@ public sealed class LinuxBrowserPlatformHooks
 	private readonly LinuxBrowserOverlayService _overlay;
 
 	private WebKit.WebView? _webView;
+	private WebKit.NetworkSession? _networkSession;
 	private Gtk.Window? _window;
 	private LinuxBrowserHost? _host;
 
 	private GObject.ReturningSignalHandler<WebKit.WebView, WebKit.WebView.DecidePolicySignalArgs, bool>? _decidePolicyHandler;
-	private GObject.ReturningSignalHandler<WebKit.WebView, EventArgs, bool>? _enterFullscreenHandler;
-	private GObject.SignalHandler<WebKit.WebView>? _leaveFullscreenHandler;
-	private GObject.SignalHandler<WebKit.WebView, WebKit.WebView.DownloadStartedSignalArgs>? _downloadStartedHandler;
+	// WebKitGTK 6 / GirCore: enter/leave-fullscreen are ReturningSignalHandler<WebView, bool>
+	// (Invoke uses System.EventArgs — not SignalArgs), not ReturningSignalHandler`3.
+	private GObject.ReturningSignalHandler<WebKit.WebView, bool>? _enterFullscreenHandler;
+	private GObject.ReturningSignalHandler<WebKit.WebView, bool>? _leaveFullscreenHandler;
+	// download-started moved from WebView → NetworkSession in WebKitGTK 6.
+	private GObject.SignalHandler<WebKit.NetworkSession, WebKit.NetworkSession.DownloadStartedSignalArgs>? _downloadStartedHandler;
 
 	private readonly ConcurrentDictionary<WebKit.Download, string> _downloadMap = new();
+	// Root per-download signal handlers + Download instances (GirCore/GObject can drop them otherwise).
+	private readonly ConcurrentDictionary<WebKit.Download, DownloadHooks> _liveDownloads = new();
 	private bool _htmlFullscreen;
 
 	// Keep signal handlers rooted for GirCore.
 	private readonly List<object> _handlerRoots = [];
+
+	private sealed class DownloadHooks
+	{
+		public required GObject.ReturningSignalHandler<WebKit.Download, WebKit.Download.DecideDestinationSignalArgs, bool> DecideDestination { get; init; }
+		public required GObject.SignalHandler<WebKit.Download> Finished { get; init; }
+		public required GObject.SignalHandler<WebKit.Download, WebKit.Download.FailedSignalArgs> Failed { get; init; }
+		public required GObject.SignalHandler<WebKit.Download, WebKit.Download.ReceivedDataSignalArgs> ReceivedData { get; init; }
+		public GObject.SignalHandler<WebKit.Download, WebKit.Download.CreatedDestinationSignalArgs>? CreatedDestination { get; init; }
+	}
 
 	public LinuxBrowserPlatformHooks(
 		IBrowserStore store,
@@ -48,8 +63,10 @@ public sealed class LinuxBrowserPlatformHooks
 
 		try
 		{
+			// WebKitGTK 6: downloads are owned by NetworkSession, not WebView.
+			_networkSession = _webView.GetNetworkSession();
 			_downloadStartedHandler = OnDownloadStarted;
-			_webView.OnDownloadStarted += _downloadStartedHandler;
+			_networkSession.OnDownloadStarted += _downloadStartedHandler;
 			_handlerRoots.Add(_downloadStartedHandler);
 		}
 		catch (Exception ex)
@@ -106,12 +123,17 @@ public sealed class LinuxBrowserPlatformHooks
 
 	public void Detach()
 	{
+		try
+		{
+			if (_networkSession != null && _downloadStartedHandler != null)
+				_networkSession.OnDownloadStarted -= _downloadStartedHandler;
+		}
+		catch { /* ignore */ }
+
 		if (_webView != null)
 		{
 			try
 			{
-				if (_downloadStartedHandler != null)
-					_webView.OnDownloadStarted -= _downloadStartedHandler;
 				if (_decidePolicyHandler != null)
 					_webView.OnDecidePolicy -= _decidePolicyHandler;
 				if (_enterFullscreenHandler != null)
@@ -122,18 +144,23 @@ public sealed class LinuxBrowserPlatformHooks
 			catch { /* ignore */ }
 		}
 
+		foreach (var dl in _liveDownloads.Keys.ToList())
+			UnhookDownload(dl);
+		_liveDownloads.Clear();
+		_downloadMap.Clear();
+
 		_downloadStartedHandler = null;
 		_decidePolicyHandler = null;
 		_enterFullscreenHandler = null;
 		_leaveFullscreenHandler = null;
 		_handlerRoots.Clear();
 		_webView = null;
+		_networkSession = null;
 		_window = null;
 		_host = null;
-		_downloadMap.Clear();
 	}
 
-	private void OnDownloadStarted(WebKit.WebView sender, WebKit.WebView.DownloadStartedSignalArgs args)
+	private void OnDownloadStarted(WebKit.NetworkSession sender, WebKit.NetworkSession.DownloadStartedSignalArgs args)
 	{
 		try
 		{
@@ -141,11 +168,25 @@ public sealed class LinuxBrowserPlatformHooks
 			if (download == null)
 				return;
 
-			// decide-destination chooses the save path (and may show a dialog).
-			download.OnDecideDestination += OnDecideDestination;
-			download.OnFinished += OnDownloadFinished;
-			download.OnFailed += OnDownloadFailed;
-			download.OnReceivedData += OnDownloadReceivedData;
+			// Root handlers + download for the lifetime of the transfer (GirCore GC otherwise).
+			var hooks = new DownloadHooks
+			{
+				DecideDestination = OnDecideDestination,
+				Finished = OnDownloadFinished,
+				Failed = OnDownloadFailed,
+				ReceivedData = OnDownloadReceivedData,
+				CreatedDestination = OnCreatedDestination
+			};
+			_liveDownloads[download] = hooks;
+
+			download.OnDecideDestination += hooks.DecideDestination;
+			download.OnFinished += hooks.Finished;
+			download.OnFailed += hooks.Failed;
+			download.OnReceivedData += hooks.ReceivedData;
+			download.OnCreatedDestination += hooks.CreatedDestination;
+
+			try { download.SetAllowOverwrite(true); } catch { /* optional */ }
+			Console.WriteLine("[Browser] Linux download-started hooked");
 		}
 		catch (Exception ex)
 		{
@@ -153,6 +194,11 @@ public sealed class LinuxBrowserPlatformHooks
 		}
 	}
 
+	/// <summary>
+	/// WebKitGTK 6 (2022 GLIB API): return true without SetDestination to handle async
+	/// (file dialog), then call SetDestination with an absolute filesystem path — not file://.
+	/// Nested main-loop dialogs inside this handler leave the download stuck forever.
+	/// </summary>
 	private bool OnDecideDestination(WebKit.Download download, WebKit.Download.DecideDestinationSignalArgs args)
 	{
 		try
@@ -161,29 +207,20 @@ public sealed class LinuxBrowserPlatformHooks
 			if (string.IsNullOrWhiteSpace(suggested))
 				suggested = "download";
 
-			string? path;
+			// Sanitize path separators from server-provided names.
+			suggested = suggested.Replace('/', '_').Replace('\\', '_');
+
 			if (_store.GetSettings().AskBeforeDownloading)
 			{
-				path = PickSavePathBlocking(suggested);
-				if (string.IsNullOrWhiteSpace(path))
-				{
-					try { download.Cancel(); } catch { /* ignore */ }
-					return true;
-				}
-			}
-			else
-			{
-				var folder = BrowserDownloadService.GetDefaultDownloadsFolder();
-				Directory.CreateDirectory(folder);
-				path = BrowserDownloadService.MakeUniquePath(Path.Combine(folder, suggested));
+				// Async path: keep download paused until Save dialog finishes.
+				_ = ResolveDestinationAndStartAsync(download, suggested);
+				return true;
 			}
 
-			var uri = PathToFileUri(path);
-			download.SetDestination(uri);
-
-			var item = _downloads.Begin(download.GetRequest()?.GetUri() ?? "", path, Path.GetFileName(path));
-			_downloadMap[download] = item.Id;
-			Console.WriteLine($"[Browser] Linux download -> {path}");
+			var folder = BrowserDownloadService.GetDefaultDownloadsFolder();
+			Directory.CreateDirectory(folder);
+			var path = BrowserDownloadService.MakeUniquePath(Path.Combine(folder, suggested));
+			ApplyDestination(download, path);
 			return true;
 		}
 		catch (Exception ex)
@@ -194,16 +231,93 @@ public sealed class LinuxBrowserPlatformHooks
 		}
 	}
 
+	private async Task ResolveDestinationAndStartAsync(WebKit.Download download, string suggestedFileName)
+	{
+		try
+		{
+			var path = await PickSavePathAsync(suggestedFileName).ConfigureAwait(true);
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				Console.WriteLine("[Browser] Linux download cancelled (no path)");
+				try { download.Cancel(); } catch { /* ignore */ }
+				return;
+			}
+
+			// Ensure we always have a file path (dialog may return a bare directory on some portals).
+			path = EnsureFilePath(path, suggestedFileName);
+			ApplyDestination(download, path);
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Browser] Linux async destination failed: {ex.Message}");
+			try { download.Cancel(); } catch { /* ignore */ }
+		}
+	}
+
+	private void ApplyDestination(WebKit.Download download, string path)
+	{
+		// WebKitGTK 6 requires an absolute local path (NOT file:// URI). Passing a URI
+		// hits g_return_if_fail(g_path_is_absolute) and the download never starts —
+		// UI stays "InProgress" forever with no file written.
+		var absolute = Path.GetFullPath(path);
+		var dir = Path.GetDirectoryName(absolute);
+		if (!string.IsNullOrWhiteSpace(dir))
+			Directory.CreateDirectory(dir);
+
+		try { download.SetAllowOverwrite(true); } catch { /* ignore */ }
+		download.SetDestination(absolute);
+
+		var item = _downloads.Begin(download.GetRequest()?.GetUri() ?? "", absolute, Path.GetFileName(absolute));
+		_downloadMap[download] = item.Id;
+		Console.WriteLine($"[Browser] Linux download destination set -> {absolute}");
+	}
+
+	private static string EnsureFilePath(string path, string suggestedFileName)
+	{
+		// If the portal/dialog only returned a directory, append the suggested name.
+		try
+		{
+			if (Directory.Exists(path) && !File.Exists(path))
+				return BrowserDownloadService.MakeUniquePath(Path.Combine(path, suggestedFileName));
+		}
+		catch { /* use as-is */ }
+		return path;
+	}
+
+	private void OnCreatedDestination(WebKit.Download sender, WebKit.Download.CreatedDestinationSignalArgs args)
+	{
+		Console.WriteLine($"[Browser] Linux download file created: {args.Destination}");
+	}
+
 	private void OnDownloadFinished(WebKit.Download sender, EventArgs args)
 	{
 		if (!_downloadMap.TryRemove(sender, out var id))
+		{
+			UnhookDownload(sender);
 			return;
+		}
 		try
 		{
 			var dest = sender.GetDestination();
-			var path = FileUriToPath(dest) ?? dest;
-			_downloads.Complete(id, path);
-			Console.WriteLine($"[Browser] Linux download finished: {path}");
+			var path = NormalizeDestinationPath(dest) ?? dest;
+			if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+			{
+				_downloads.Complete(id, path);
+				Console.WriteLine($"[Browser] Linux download finished: {path} ({new FileInfo(path).Length} bytes)");
+			}
+			else
+			{
+				// Finished can fire after failed/cancel; only mark complete if a file exists.
+				var existing = _downloads.Downloads.FirstOrDefault(d => d.Id == id);
+				if (existing is { State: BrowserDownloadState.InProgress })
+				{
+					if (!string.IsNullOrWhiteSpace(path))
+						_downloads.Complete(id, path);
+					else
+						_downloads.Fail(id, "Download finished but no file was written");
+				}
+				Console.WriteLine($"[Browser] Linux download finished (path={path}, exists={path != null && File.Exists(path)})");
+			}
 		}
 		catch (Exception ex)
 		{
@@ -215,10 +329,24 @@ public sealed class LinuxBrowserPlatformHooks
 	private void OnDownloadFailed(WebKit.Download sender, WebKit.Download.FailedSignalArgs args)
 	{
 		if (!_downloadMap.TryRemove(sender, out var id))
+		{
+			// Destination may never have been applied (cancel before Begin).
+			UnhookDownload(sender);
 			return;
+		}
 		var msg = args.Error?.Message ?? "Download failed";
-		_downloads.Fail(id, msg);
-		Console.WriteLine($"[Browser] Linux download failed: {msg}");
+		// User cancel is expected when dismissing the save dialog.
+		if (msg.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
+		    || msg.Contains("canceled", StringComparison.OrdinalIgnoreCase))
+		{
+			_downloads.Cancel(id);
+			Console.WriteLine($"[Browser] Linux download cancelled: {msg}");
+		}
+		else
+		{
+			_downloads.Fail(id, msg);
+			Console.WriteLine($"[Browser] Linux download failed: {msg}");
+		}
 		UnhookDownload(sender);
 	}
 
@@ -235,9 +363,9 @@ public sealed class LinuxBrowserPlatformHooks
 				try
 				{
 					var response = sender.GetResponse();
-					var len = response?.GetContentLength() ?? 0;
-					if (len > 0)
-						item.TotalBytes = len;
+					var len = response?.GetContentLength() ?? 0UL;
+					if (len > 0 && len <= (ulong)long.MaxValue)
+						item.TotalBytes = (long)len;
 				}
 				catch { /* optional */ }
 			});
@@ -245,11 +373,18 @@ public sealed class LinuxBrowserPlatformHooks
 		catch { /* ignore */ }
 	}
 
-	private static void UnhookDownload(WebKit.Download download)
+	private void UnhookDownload(WebKit.Download download)
 	{
+		if (!_liveDownloads.TryRemove(download, out var hooks))
+			return;
 		try
 		{
-			// Handlers may already be gone; best-effort.
+			download.OnDecideDestination -= hooks.DecideDestination;
+			download.OnFinished -= hooks.Finished;
+			download.OnFailed -= hooks.Failed;
+			download.OnReceivedData -= hooks.ReceivedData;
+			if (hooks.CreatedDestination != null)
+				download.OnCreatedDestination -= hooks.CreatedDestination;
 		}
 		catch { /* ignore */ }
 	}
@@ -286,11 +421,11 @@ public sealed class LinuxBrowserPlatformHooks
 		try
 		{
 			_htmlFullscreen = true;
+			// Expand overlay bounds flag, then host hides Adwaita chrome + OS-fullscreen + re-layout.
 			_overlay.EnterHtmlFullscreen();
 			_host?.EnterHtmlFullscreen();
-			try { _window?.Fullscreen(); } catch { /* ignore */ }
-			Console.WriteLine("[Browser] Linux HTML fullscreen enter");
-			// true = we handle fullscreen presentation
+			Console.WriteLine("[Browser] Linux HTML fullscreen enter (handled by host)");
+			// true = we handle fullscreen presentation (must size WebView ourselves)
 			return true;
 		}
 		catch (Exception ex)
@@ -300,73 +435,55 @@ public sealed class LinuxBrowserPlatformHooks
 		}
 	}
 
-	private void OnLeaveFullscreen(WebKit.WebView sender, EventArgs args)
+	private bool OnLeaveFullscreen(WebKit.WebView sender, EventArgs args)
 	{
 		try
 		{
 			if (!_htmlFullscreen)
-				return;
+				return false;
 			_htmlFullscreen = false;
-			try { _window?.Unfullscreen(); } catch { /* ignore */ }
+			// Host restores chrome + unfullscreens window; overlay restores side/main visibility.
 			_host?.ExitHtmlFullscreen();
 			_overlay.ExitHtmlFullscreen();
-			Console.WriteLine("[Browser] Linux HTML fullscreen leave");
+			Console.WriteLine("[Browser] Linux HTML fullscreen leave (handled by host)");
+			return false;
 		}
 		catch (Exception ex)
 		{
 			Console.WriteLine($"[Browser] Linux leave fullscreen failed: {ex.Message}");
+			return false;
 		}
 	}
 
-	private string? PickSavePathBlocking(string suggestedFileName)
+	private async Task<string?> PickSavePathAsync(string suggestedFileName)
 	{
 		try
 		{
 			if (_window == null)
 			{
-				// No window — fall back to Downloads.
 				var folder = BrowserDownloadService.GetDefaultDownloadsFolder();
 				Directory.CreateDirectory(folder);
 				return BrowserDownloadService.MakeUniquePath(Path.Combine(folder, suggestedFileName));
 			}
 
-			// Gtk4 FileDialog is async; run a nested main-context wait so decide-destination can stay sync.
 			var dialog = Gtk.FileDialog.New();
 			dialog.SetTitle("Save download");
 			dialog.SetInitialName(suggestedFileName);
 
-			string? resultPath = null;
-			var done = false;
-			Exception? error = null;
-
-			dialog.Save(_window, cancellable: null, (obj, res) =>
+			try
 			{
-				try
-				{
-					var file = dialog.SaveFinish(res);
-					resultPath = file?.GetPath();
-				}
-				catch (Exception ex)
-				{
-					// User cancel raises; treat as null.
-					if (!ex.Message.Contains("Dismissed", StringComparison.OrdinalIgnoreCase)
-					    && !ex.Message.Contains("cancelled", StringComparison.OrdinalIgnoreCase))
-						error = ex;
-				}
-				finally
-				{
-					done = true;
-				}
-			});
-
-			var ctx = GLib.MainContext.Default();
-			while (!done)
-				ctx.Iteration(mayBlock: true);
-
-			if (error != null)
-				Console.WriteLine($"[Browser] Linux save dialog error: {error.Message}");
-
-			return resultPath;
+				var file = await dialog.SaveAsync(_window).ConfigureAwait(true);
+				return file?.GetPath();
+			}
+			catch (Exception ex)
+			{
+				// User cancel raises; treat as null.
+				if (!ex.Message.Contains("Dismissed", StringComparison.OrdinalIgnoreCase)
+				    && !ex.Message.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
+				    && !ex.Message.Contains("canceled", StringComparison.OrdinalIgnoreCase))
+					Console.WriteLine($"[Browser] Linux save dialog error: {ex.Message}");
+				return null;
+			}
 		}
 		catch (Exception ex)
 		{
@@ -375,25 +492,19 @@ public sealed class LinuxBrowserPlatformHooks
 		}
 	}
 
-	private static string PathToFileUri(string path)
+	private static string? NormalizeDestinationPath(string? dest)
 	{
-		var full = Path.GetFullPath(path);
-		return new Uri(full).AbsoluteUri;
-	}
-
-	private static string? FileUriToPath(string? uri)
-	{
-		if (string.IsNullOrWhiteSpace(uri))
+		if (string.IsNullOrWhiteSpace(dest))
 			return null;
 		try
 		{
-			if (uri.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
-				return new Uri(uri).LocalPath;
-			return uri;
+			if (dest.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+				return new Uri(dest).LocalPath;
+			return dest;
 		}
 		catch
 		{
-			return uri;
+			return dest;
 		}
 	}
 }
