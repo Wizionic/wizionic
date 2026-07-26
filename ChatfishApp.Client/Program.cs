@@ -15,7 +15,8 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+// Singleton HttpClient + auth so keystore/settings can share one multi-user storage prefix.
+builder.Services.AddSingleton(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddSingleton<ThemeService>();
 builder.Services.AddSingleton<SidebarState>();
 builder.Services.AddSingleton<ISidebarState>(sp => sp.GetRequiredService<SidebarState>());
@@ -37,6 +38,7 @@ builder.Services.AddSingleton<IBrowserSidePanelState>(sp => sp.GetRequiredServic
 builder.Services.AddSingleton<IBrowserSideAgentService, NullBrowserSideAgentService>();
 builder.Services.AddSingleton<IPwaDetector, NullPwaDetector>();
 builder.Services.AddSingleton<IBrowserDownloadService, NullBrowserDownloadService>();
+// Singleton so settings survive navigation and stay aligned with auth + multi-user prefixes.
 builder.Services.AddSingleton<WasmKeyStore>();
 builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<WasmKeyStore>());
 builder.Services.AddScoped<ChatModelCatalogService>();
@@ -54,9 +56,11 @@ builder.Services.AddScoped<WasmConversationStore>();
 builder.Services.AddScoped<IConversationStore>(sp => sp.GetRequiredService<WasmConversationStore>());
 builder.Services.AddScoped<WasmNoteStore>();
 builder.Services.AddScoped<INoteStore>(sp => sp.GetRequiredService<WasmNoteStore>());
-builder.Services.AddScoped<IGuestKeyProvider, BrowserGuestKeyProvider>();
-builder.Services.AddScoped<ChatAuthService>();
-builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
+// Guest key provider must be Singleton: ChatAuthService is Singleton and injects IGuestKeyProvider.
+builder.Services.AddSingleton<IGuestKeyProvider, BrowserGuestKeyProvider>();
+// Singleton auth so all stores share one identity/prefix (multi-user isolation).
+builder.Services.AddSingleton<ChatAuthService>();
+builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 builder.Services.AddScoped<WasmCryptoService>();
 builder.Services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<WasmCryptoService>());
 builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationService>();
@@ -81,7 +85,9 @@ var host = builder.Build();
 var authService = host.Services.GetRequiredService<IAuthService>();
 var guestMigration = host.Services.GetRequiredService<IGuestDataMigrationService>();
 var syncService = host.Services.GetRequiredService<ISyncService>();
+var keyStore = host.Services.GetRequiredService<IKeyStore>();
 await authService.LoadAsync();
+await keyStore.LoadAsync();
 await guestMigration.MigrateIfNeededAsync();
 
 using (var scope = host.Services.CreateScope())

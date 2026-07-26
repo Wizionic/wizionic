@@ -6,6 +6,7 @@
 @inject IChatPanelState ChatPanel
 @inject INotesPanelState NotesPanel
 @inject INavLayoutState NavLayout
+@inject ChatfishApp.Core.Auth.IAuthService Auth
 @using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
 
@@ -226,6 +227,7 @@
     private async Task SetNavLayoutAsync(NavLayoutMode mode)
     {
         CloseNavContextMenu();
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
         await NavLayout.SetModeAsync(mode, JS);
     }
 

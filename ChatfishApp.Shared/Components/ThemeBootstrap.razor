@@ -1,15 +1,23 @@
 @implements IAsyncDisposable
+@using ChatfishApp.Core.Auth
+@using ChatfishApp.Core.UI
+@using ChatfishApp.Shared.Services
 @inject ThemeService Theme
+@inject INavLayoutState NavLayout
+@inject IAuthService Auth
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
 @code {
     private DotNetObjectReference<ThemeBootstrap>? _dotNetRef;
     private bool _initialized;
+    private Action? _authChangedHandler;
 
     protected override void OnInitialized()
     {
         Nav.LocationChanged += OnLocationChanged;
+        _authChangedHandler = () => _ = OnAuthChangedAsync();
+        Auth.OnChanged += _authChangedHandler;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -23,7 +31,7 @@
         try
         {
             await ThemeInterop.InitPersistentHooksAsync(JS);
-            await Theme.SyncFromStorageAndApplyAsync(JS);
+            await ApplyUiPreferencesForCurrentUserAsync();
             await ThemeInterop.InitSystemListenerAsync(JS, _dotNetRef);
         }
         catch
@@ -31,10 +39,34 @@
         }
     }
 
+    private async Task OnAuthChangedAsync()
+    {
+        try
+        {
+            await ApplyUiPreferencesForCurrentUserAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task ApplyUiPreferencesForCurrentUserAsync()
+    {
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await Theme.SyncFromStorageAndApplyAsync(JS);
+
+        // WASM keeps top nav fixed; MAUI persists left/top layout per user.
+        if (AppEnvironment.IsMaui)
+            await NavLayout.SyncFromStorageAndApplyAsync(JS);
+    }
+
     private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         try
         {
+            // Prefix may already be set; re-apply theme after enhanced nav / static shells.
+            await UiStorageNamespace.ApplyAsync(JS, Auth);
             await Theme.SyncFromStorageAndApplyAsync(JS);
             await InvokeAsync(StateHasChanged);
         }
@@ -52,6 +84,8 @@
     public ValueTask DisposeAsync()
     {
         Nav.LocationChanged -= OnLocationChanged;
+        if (_authChangedHandler is not null)
+            Auth.OnChanged -= _authChangedHandler;
         _dotNetRef?.Dispose();
         return ValueTask.CompletedTask;
     }

@@ -24,7 +24,17 @@ public class WasmNoteStore : INoteStore
         _js = js;
     }
 
-    private record StoredMeta(string key, string id, string @namespace, string title, string lastUpdated, bool syncEnabled, string? contentFingerprint, string? deletedAt);
+    private record StoredMeta(
+        string key,
+        string id,
+        string @namespace,
+        string title,
+        string lastUpdated,
+        bool syncEnabled,
+        string? contentFingerprint,
+        string? deletedAt,
+        bool? isPasswordProtected = null,
+        int? sortOrder = null);
 
     private string GetPrefix() => StorageNamespace.GetPrefix(_auth);
 
@@ -58,7 +68,7 @@ public class WasmNoteStore : INoteStore
             if (!deletedAtTicks.HasValue)
             {
                 var noteEntries = await LoadNoteAsync(m.id, ct);
-                var computed = SyncFingerprint.ForNote(m.id, title, noteEntries);
+                var computed = SyncFingerprint.ForNote(m.id, title, noteEntries, m.isPasswordProtected == true);
                 if (!string.IsNullOrEmpty(fingerprint) && !string.Equals(fingerprint, computed, StringComparison.Ordinal))
                 {
                     Console.WriteLine(
@@ -95,7 +105,9 @@ public class WasmNoteStore : INoteStore
             lastUpdated = meta.lastUpdated,
             syncEnabled = meta.syncEnabled,
             contentFingerprint = fingerprint,
-            deletedAt = deletedAt ?? ""
+            deletedAt = deletedAt ?? "",
+            isPasswordProtected = meta.isPasswordProtected == true,
+            sortOrder = meta.sortOrder ?? 0
         });
     }
 
@@ -103,10 +115,42 @@ public class WasmNoteStore : INoteStore
     {
         var ns = GetPrefix();
         var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
-        return metas
-            .Where(m => string.IsNullOrEmpty(m.deletedAt))
-            .OrderByDescending(m => m.lastUpdated)
-            .Select(m => new LocalNote(m.id, string.IsNullOrWhiteSpace(m.title) ? "(empty)" : m.title, DateTime.Parse(m.lastUpdated)))
+        var live = metas.Where(m => string.IsNullOrEmpty(m.deletedAt)).ToList();
+
+        // Backfill stable sort orders once so sync-driven lastUpdated changes do not reshuffle the sidebar.
+        if (live.Count > 0 && live.All(m => (m.sortOrder ?? 0) == 0))
+        {
+            var ordered = live.OrderByDescending(m => m.lastUpdated).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var m = ordered[i];
+                await _js.InvokeVoidAsync("idbPutNoteMeta", new
+                {
+                    key = m.key,
+                    id = m.id,
+                    @namespace = m.@namespace,
+                    title = m.title,
+                    lastUpdated = m.lastUpdated,
+                    syncEnabled = m.syncEnabled,
+                    contentFingerprint = m.contentFingerprint,
+                    deletedAt = m.deletedAt ?? "",
+                    isPasswordProtected = m.isPasswordProtected == true,
+                    sortOrder = i
+                });
+                ordered[i] = m with { sortOrder = i };
+            }
+            live = ordered;
+        }
+
+        return live
+            .OrderBy(m => m.sortOrder ?? 0)
+            .ThenByDescending(m => m.lastUpdated)
+            .Select(m => new LocalNote(
+                m.id,
+                string.IsNullOrWhiteSpace(m.title) ? "(empty)" : m.title,
+                DateTime.Parse(m.lastUpdated),
+                m.isPasswordProtected == true,
+                m.sortOrder ?? 0))
             .ToList();
     }
 
@@ -153,11 +197,19 @@ public class WasmNoteStore : INoteStore
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
         var normalizedTitle = string.IsNullOrWhiteSpace(title) ? "(empty)" : title;
 
+        var existing = await GetMetaByIdAsync(id);
         var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
-        var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries);
+        var isPasswordProtected = existing?.isPasswordProtected == true;
+        var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries, isPasswordProtected);
 
-        var existingTitle = (await GetMetaByIdAsync(id))?.title;
+        var existingTitle = existing?.title;
         var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle);
+        var sortOrder = existing?.sortOrder;
+        if (sortOrder is null)
+        {
+            var index = await LoadIndexAsync(ct);
+            sortOrder = index.Count == 0 ? 0 : index.Max(n => n.SortOrder) + 1;
+        }
 
         await _js.InvokeVoidAsync("idbPutNoteMeta", new
         {
@@ -168,8 +220,68 @@ public class WasmNoteStore : INoteStore
             lastUpdated = DateTime.UtcNow.ToString("o"),
             syncEnabled,
             contentFingerprint,
-            deletedAt = ""
+            deletedAt = "",
+            isPasswordProtected,
+            sortOrder
         });
+    }
+
+    public async Task SetPasswordProtectedAsync(string id, bool isProtected, CancellationToken ct = default)
+    {
+        var existing = await GetMetaByIdAsync(id);
+        if (existing == null)
+            return;
+
+        // Recompute fingerprint so peers detect the protection change and re-sync.
+        var title = string.IsNullOrWhiteSpace(existing.title) ? "(empty)" : existing.title;
+        var entries = await LoadNoteAsync(id, ct);
+        var contentFingerprint = SyncFingerprint.ForNote(id, title, entries, isProtected);
+
+        await _js.InvokeVoidAsync("idbPutNoteMeta", new
+        {
+            key = existing.key,
+            id = existing.id,
+            @namespace = existing.@namespace,
+            title = existing.title,
+            lastUpdated = DateTime.UtcNow.ToString("o"),
+            syncEnabled = existing.syncEnabled,
+            contentFingerprint,
+            deletedAt = existing.deletedAt ?? "",
+            isPasswordProtected = isProtected,
+            sortOrder = existing.sortOrder ?? 0
+        });
+    }
+
+    public async Task ReorderNotesAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+    {
+        if (orderedIds.Count == 0)
+            return;
+
+        var ns = GetPrefix();
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetNoteMetasByNamespace", ns);
+        var byId = metas
+            .Where(m => string.IsNullOrEmpty(m.deletedAt))
+            .ToDictionary(m => m.id, StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < orderedIds.Count; i++)
+        {
+            if (!byId.TryGetValue(orderedIds[i], out var m))
+                continue;
+
+            await _js.InvokeVoidAsync("idbPutNoteMeta", new
+            {
+                key = m.key,
+                id = m.id,
+                @namespace = m.@namespace,
+                title = m.title,
+                lastUpdated = m.lastUpdated,
+                syncEnabled = m.syncEnabled,
+                contentFingerprint = m.contentFingerprint,
+                deletedAt = m.deletedAt ?? "",
+                isPasswordProtected = m.isPasswordProtected == true,
+                sortOrder = i
+            });
+        }
     }
 
     private async Task<DateTime> TombstoneDeleteNoteAsync(string id, DateTime? deletedAtUtc = null)
@@ -191,13 +303,14 @@ public class WasmNoteStore : INoteStore
             lastUpdated = deletedAtIso,
             syncEnabled,
             contentFingerprint = DeleteSyncPayload.AckValue(deletedAt.Ticks),
-            deletedAt = deletedAtIso
+            deletedAt = deletedAtIso,
+            isPasswordProtected = existing?.isPasswordProtected == true,
+            sortOrder = existing?.sortOrder ?? 0
         });
 
         await _js.InvokeVoidAsync("idbDeleteNoteContent", existing?.key ?? metaKey);
         return deletedAt;
     }
-
     public Task<DateTime> DeleteNoteAsync(string id, CancellationToken ct = default) =>
         TombstoneDeleteNoteAsync(id);
 

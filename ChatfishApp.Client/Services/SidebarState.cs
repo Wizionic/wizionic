@@ -5,6 +5,8 @@ namespace ChatfishApp.Client.Services;
 
 /// <summary>
 /// Sidebar collapsed state for WASM chat/notes pages.
+/// Persistence key prefix is applied by <c>WasmSidebarSync</c> / <c>UiStorageNamespace</c>
+/// before read/write so collapse state stays per-user.
 /// </summary>
 public class SidebarState : ISidebarState
 {
@@ -39,6 +41,7 @@ public class SidebarState : ISidebarState
 
         try
         {
+            // Prefix is set by WasmSidebarSync / ThemeBootstrap for the current auth user.
             await js.InvokeVoidAsync("chatfishSidebar.setCollapsed", ct, collapsed, new { source = "SidebarState.SetCollapsedAsync", skipNotify = true });
         }
         catch (Exception ex)

@@ -45,14 +45,17 @@
                 </span>
             </div>
 
-            <!-- Local convos list -->
-            @foreach (var c in localConvos.OrderByDescending(x => x.LastUpdated))
+            <!-- Local convos list (stable SortOrder; pointer drag-reorder like Notes) -->
+            @foreach (var c in localConvos.OrderBy(x => x.SortOrder).ThenByDescending(x => x.LastUpdated))
             {
                 var isActive = activeConvoId == c.Id;
-                <div class="conversation-item @(isActive ? "active" : "")" @onclick="() => SwitchConvo(c.Id)">
+                <div class="conversation-item @(isActive ? "active" : "") @(_dragConvoId == c.Id ? "note-dragging" : "") @(_dragOverConvoId == c.Id ? "note-drag-over" : "")"
+                     data-reorder-id="@c.Id"
+                     @onpointerdown="e => OnConvoPointerDown(e, c.Id)"
+                     @onpointerdown:preventDefault="false">
                     <div class="row-top">
                         <div class="title">@c.Title</div>
-                        <div class="menu" @onclick:stopPropagation>
+                        <div class="menu" @onclick:stopPropagation @onpointerdown:stopPropagation>
                             <button id="menu-btn-@c.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(c.Id)">⋮</button>
                         </div>
                     </div>
@@ -481,6 +484,10 @@
     List<LocalConvo> localConvos = new();
     string? activeConvoId;
 
+    private string? _dragConvoId;
+    private string? _dragOverConvoId;
+    private DotNetObjectReference<ChatPage>? _reorderDotNetRef;
+
     string? openMenuId;
     string? renameConvoId;
     string renameConvoTitle = "";
@@ -630,7 +637,7 @@
         }
         else if (localConvos.Any())
         {
-            activeConvoId = localConvos.OrderByDescending(c => c.LastUpdated).First().Id;
+            activeConvoId = localConvos.OrderBy(c => c.SortOrder).ThenByDescending(c => c.LastUpdated).First().Id;
             await LoadConversation(activeConvoId);
         }
         else
@@ -707,6 +714,90 @@
             SyncService.OnChanged -= _syncChangedHandler;
 
         dotNetRef?.Dispose();
+        _reorderDotNetRef?.Dispose();
+        _reorderDotNetRef = null;
+    }
+
+    private async Task OnConvoPointerDown(PointerEventArgs e, string convoId)
+    {
+        if (string.Equals(e.PointerType, "mouse", StringComparison.OrdinalIgnoreCase) && e.Button != 0)
+            return;
+
+        _reorderDotNetRef ??= DotNetObjectReference.Create(this);
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "chatfishNotesReorder.start",
+                _reorderDotNetRef,
+                convoId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Chat] Reorder gesture start failed: {ex.Message}");
+            await SwitchConvo(convoId);
+        }
+    }
+
+    [JSInvokable]
+    public void OnReorderDragStarted(string convoId)
+    {
+        _dragConvoId = convoId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnReorderDragOver(string? overConvoId)
+    {
+        if (_dragOverConvoId == overConvoId)
+            return;
+        _dragOverConvoId = overConvoId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnReorderClick(string convoId)
+    {
+        _dragConvoId = null;
+        _dragOverConvoId = null;
+        await SwitchConvo(convoId);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnReorderDrop(string sourceId, string targetId)
+    {
+        _dragConvoId = null;
+        _dragOverConvoId = null;
+
+        if (string.IsNullOrEmpty(sourceId) || string.IsNullOrEmpty(targetId) || sourceId == targetId)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var ordered = localConvos
+            .OrderBy(c => c.SortOrder)
+            .ThenByDescending(c => c.LastUpdated)
+            .ToList();
+
+        var from = ordered.FindIndex(c => c.Id == sourceId);
+        var to = ordered.FindIndex(c => c.Id == targetId);
+        if (from < 0 || to < 0)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var item = ordered[from];
+        ordered.RemoveAt(from);
+        ordered.Insert(to, item);
+
+        await ConversationStore.ReorderConversationsAsync(ordered.Select(c => c.Id).ToList());
+        localConvos = await ConversationStore.LoadIndexAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private void OnConversationsChangedFromSync()
@@ -1114,7 +1205,7 @@
         {
             if (localConvos.Any())
             {
-                activeConvoId = localConvos.OrderByDescending(c => c.LastUpdated).First().Id;
+                activeConvoId = localConvos.OrderBy(c => c.SortOrder).ThenByDescending(c => c.LastUpdated).First().Id;
                 await LoadConversation(activeConvoId);
             }
             else

@@ -1,8 +1,13 @@
 namespace ChatfishApp.Core.Storage;
 
-public record LocalConvo(string Id, string Title, DateTime LastUpdated);
+public record LocalConvo(string Id, string Title, DateTime LastUpdated, int SortOrder = 0);
 
-public record LocalNote(string Id, string Title, DateTime LastUpdated);
+public record LocalNote(
+    string Id,
+    string Title,
+    DateTime LastUpdated,
+    bool IsPasswordProtected = false,
+    int SortOrder = 0);
 
 public record SyncManifestEntry(
     string Id,

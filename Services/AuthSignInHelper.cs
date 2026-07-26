@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using ChatfishApp.Data;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace ChatfishApp.Services;
 
@@ -29,6 +28,9 @@ public static class AuthSignInHelper
 
     public static async Task SignOutUserAsync(HttpContext ctx)
     {
-        await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        // Must match the scheme used by SignInUserAsync and Program.cs AddCookie("ChatfishAuth").
+        // CookieAuthenticationDefaults.AuthenticationScheme is "Cookies" and does NOT clear
+        // the ChatfishAuth cookie — that left WASM sessions alive after "Sign out".
+        await ctx.SignOutAsync("ChatfishAuth");
     }
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Storage;
 
@@ -16,6 +17,7 @@ public sealed class SqliteBrowserStore : IBrowserStore
     private const int MaxHistoryEntries = 500;
 
     private readonly SqliteSettingsDatabase _db;
+    private readonly IAuthService _auth;
     private List<BrowserHistoryEntry> _history = [];
     private List<BrowserBookmark> _bookmarks = [];
     private List<BrowserBookmarkFolder> _folders = [];
@@ -25,13 +27,25 @@ public sealed class SqliteBrowserStore : IBrowserStore
 
     private sealed record SyncMeta(string ContentFingerprint, long LastUpdatedTicks, long? DeletedAtTicks = null);
 
-    public SqliteBrowserStore(SqliteSettingsDatabase db) => _db = db;
+    public SqliteBrowserStore(SqliteSettingsDatabase db, IAuthService auth)
+    {
+        _db = db;
+        _auth = auth;
+        _auth.OnChanged += () => _ = LoadAsync();
+    }
 
     public event Action? Changed;
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        var historyJson = await _db.GetStringAsync(HistoryKey, ct);
+        _history = [];
+        _bookmarks = [];
+        _folders = [];
+        _settings = new();
+        _bookmarkMeta = new(StringComparer.Ordinal);
+        _folderMeta = new(StringComparer.Ordinal);
+
+        var historyJson = await GetItemAsync(HistoryKey, ct);
         if (!string.IsNullOrEmpty(historyJson))
         {
             var loaded = JsonSerializer.Deserialize<List<BrowserHistoryEntry>>(historyJson);
@@ -39,7 +53,7 @@ public sealed class SqliteBrowserStore : IBrowserStore
                 _history = loaded;
         }
 
-        var bookmarksJson = await _db.GetStringAsync(BookmarksKey, ct);
+        var bookmarksJson = await GetItemAsync(BookmarksKey, ct);
         if (!string.IsNullOrEmpty(bookmarksJson))
         {
             var loaded = JsonSerializer.Deserialize<List<BrowserBookmark>>(bookmarksJson);
@@ -54,7 +68,7 @@ public sealed class SqliteBrowserStore : IBrowserStore
             }
         }
 
-        var foldersJson = await _db.GetStringAsync(FoldersKey, ct);
+        var foldersJson = await GetItemAsync(FoldersKey, ct);
         if (!string.IsNullOrEmpty(foldersJson))
         {
             var loaded = JsonSerializer.Deserialize<List<BrowserBookmarkFolder>>(foldersJson);
@@ -64,7 +78,7 @@ public sealed class SqliteBrowserStore : IBrowserStore
 
         EnsureDefaultFolder();
 
-        var settingsJson = await _db.GetStringAsync(SettingsKey, ct);
+        var settingsJson = await GetItemAsync(SettingsKey, ct);
         if (!string.IsNullOrEmpty(settingsJson))
         {
             var loaded = JsonSerializer.Deserialize<BrowserSettings>(settingsJson);
@@ -77,7 +91,30 @@ public sealed class SqliteBrowserStore : IBrowserStore
 
         _bookmarkMeta = await LoadMetaAsync(BookmarkMetaKey, ct);
         _folderMeta = await LoadMetaAsync(FolderMetaKey, ct);
+        Changed?.Invoke();
     }
+
+    private string Prefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
+
+    private async Task<string?> GetItemAsync(string baseKey, CancellationToken ct = default)
+    {
+        var nk = Prefixed(baseKey);
+        var value = await _db.GetStringAsync(nk, ct);
+        if (value != null)
+            return value;
+
+        var legacy = await _db.GetStringAsync(baseKey, ct);
+        if (legacy != null)
+        {
+            await _db.SetStringAsync(nk, legacy, ct);
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private Task SetItemAsync(string baseKey, string? value, CancellationToken ct = default) =>
+        _db.SetStringAsync(Prefixed(baseKey), value, ct);
 
     public IReadOnlyList<BrowserHistoryEntry> GetHistory() =>
         _history.OrderByDescending(h => h.VisitedAtUtc).ToList();
@@ -395,7 +432,7 @@ public sealed class SqliteBrowserStore : IBrowserStore
             await EnsureBookmarksBarFolderAsync(ct);
 
         var json = JsonSerializer.Serialize(_settings);
-        await _db.SetStringAsync(SettingsKey, json, ct);
+        await SetItemAsync(SettingsKey, json, ct);
         Changed?.Invoke();
     }
 
@@ -717,37 +754,37 @@ public sealed class SqliteBrowserStore : IBrowserStore
     private async Task SaveHistoryAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_history);
-        await _db.SetStringAsync(HistoryKey, json, ct);
+        await SetItemAsync(HistoryKey, json, ct);
     }
 
     private async Task SaveBookmarksAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_bookmarks);
-        await _db.SetStringAsync(BookmarksKey, json, ct);
+        await SetItemAsync(BookmarksKey, json, ct);
     }
 
     private async Task SaveFoldersAsync(CancellationToken ct)
     {
         EnsureDefaultFolder();
         var json = JsonSerializer.Serialize(_folders);
-        await _db.SetStringAsync(FoldersKey, json, ct);
+        await SetItemAsync(FoldersKey, json, ct);
     }
 
     private async Task SaveBookmarkMetaAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_bookmarkMeta);
-        await _db.SetStringAsync(BookmarkMetaKey, json, ct);
+        await SetItemAsync(BookmarkMetaKey, json, ct);
     }
 
     private async Task SaveFolderMetaAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_folderMeta);
-        await _db.SetStringAsync(FolderMetaKey, json, ct);
+        await SetItemAsync(FolderMetaKey, json, ct);
     }
 
     private async Task<Dictionary<string, SyncMeta>> LoadMetaAsync(string key, CancellationToken ct)
     {
-        var json = await _db.GetStringAsync(key, ct);
+        var json = await GetItemAsync(key, ct);
         if (string.IsNullOrEmpty(json))
             return new Dictionary<string, SyncMeta>(StringComparer.Ordinal);
 

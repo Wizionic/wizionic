@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using Microsoft.Extensions.AI;
+using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Tools;
 
@@ -27,7 +28,7 @@ public class McpToolSource : IMcpToolRefresher
     private HashSet<string> _lastEnabledSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
-    public McpToolSource(IKeyStore keyStore, IToolExecutionTrace trace, HttpClient registryHttp)
+    public McpToolSource(IKeyStore keyStore, IToolExecutionTrace trace, HttpClient registryHttp, IAuthService? auth = null)
     {
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
         _trace = trace ?? throw new ArgumentNullException(nameof(trace));
@@ -37,6 +38,19 @@ public class McpToolSource : IMcpToolRefresher
         {
             Timeout = TimeSpan.FromSeconds(90)
         };
+
+        // Drop cached MCP tools when the signed-in account changes so user B never reuses user A's connectors.
+        if (auth is not null)
+            auth.OnChanged += () => InvalidateCache();
+    }
+
+    private void InvalidateCache()
+    {
+        lock (_lock)
+        {
+            _currentMcpTools = new();
+            _lastEnabledSnapshot = new(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>

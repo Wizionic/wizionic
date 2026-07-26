@@ -28,10 +28,30 @@ public class SqliteNoteStore : INoteStore
     {
         var ns = GetPrefix();
         var metas = await _db.GetNoteMetasByNamespaceAsync(ns, ct);
-        return metas
-            .Where(m => string.IsNullOrEmpty(m.DeletedAt))
-            .OrderByDescending(m => m.LastUpdated)
-            .Select(m => new LocalNote(m.Id, string.IsNullOrWhiteSpace(m.Title) ? "(empty)" : m.Title, DateTime.Parse(m.LastUpdated)))
+        var live = metas.Where(m => string.IsNullOrEmpty(m.DeletedAt)).ToList();
+
+        // Backfill stable sort orders once so sync-driven lastUpdated changes do not reshuffle the sidebar.
+        if (live.Count > 0 && live.All(m => m.SortOrder == 0))
+        {
+            var ordered = live.OrderByDescending(m => m.LastUpdated).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var m = ordered[i] with { SortOrder = i };
+                await _db.UpsertNoteMetaAsync(m, ct);
+                ordered[i] = m;
+            }
+            live = ordered;
+        }
+
+        return live
+            .OrderBy(m => m.SortOrder)
+            .ThenByDescending(m => m.LastUpdated)
+            .Select(m => new LocalNote(
+                m.Id,
+                string.IsNullOrWhiteSpace(m.Title) ? "(empty)" : m.Title,
+                DateTime.Parse(m.LastUpdated),
+                m.IsPasswordProtected,
+                m.SortOrder))
             .ToList();
     }
 
@@ -55,7 +75,7 @@ public class SqliteNoteStore : INoteStore
             if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
             {
                 var noteEntries = await LoadNoteAsync(m.Id, ct);
-                fingerprint = SyncFingerprint.ForNote(m.Id, title, noteEntries);
+                fingerprint = SyncFingerprint.ForNote(m.Id, title, noteEntries, m.IsPasswordProtected);
                 await _db.UpsertNoteMetaAsync(m with { ContentFingerprint = fingerprint }, ct);
             }
 
@@ -119,7 +139,9 @@ public class SqliteNoteStore : INoteStore
             deletedAtIso,
             syncEnabled,
             DeleteSyncPayload.AckValue(deletedAt.Ticks),
-            deletedAtIso), ct);
+            deletedAtIso,
+            existing?.IsPasswordProtected ?? false,
+            existing?.SortOrder ?? 0), ct);
 
         await _db.DeleteNoteContentAsync(existing?.StorageKey ?? storageKey, ct);
         return deletedAt;
@@ -138,11 +160,23 @@ public class SqliteNoteStore : INoteStore
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
         var normalizedTitle = string.IsNullOrWhiteSpace(title) ? "(empty)" : title;
 
+        var existing = await _db.GetNoteMetaByIdAsync(ns, id, ct);
         var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
-        var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries);
+        var isProtected = existing?.IsPasswordProtected ?? false;
+        var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries, isProtected);
 
-        var existingTitle = (await _db.GetNoteMetaByIdAsync(ns, id, ct))?.Title;
+        var existingTitle = existing?.Title;
         var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle);
+        int sortOrder;
+        if (existing is null)
+        {
+            var index = await LoadIndexAsync(ct);
+            sortOrder = index.Count == 0 ? 0 : index.Max(n => n.SortOrder) + 1;
+        }
+        else
+        {
+            sortOrder = existing.SortOrder;
+        }
 
         await _db.UpsertNoteMetaAsync(new SqliteHistoryDatabase.NoteMetaRow(
             storageKey,
@@ -152,7 +186,43 @@ public class SqliteNoteStore : INoteStore
             DateTime.UtcNow.ToString("o"),
             syncEnabled,
             contentFingerprint,
-            null), ct);
+            null,
+            isProtected,
+            sortOrder), ct);
+    }
+
+    public async Task SetPasswordProtectedAsync(string id, bool isProtected, CancellationToken ct = default)
+    {
+        var ns = GetPrefix();
+        var existing = await _db.GetNoteMetaByIdAsync(ns, id, ct);
+        if (existing == null)
+            return;
+
+        var title = string.IsNullOrWhiteSpace(existing.Title) ? "(empty)" : existing.Title;
+        var entries = await LoadNoteAsync(id, ct);
+        var fingerprint = SyncFingerprint.ForNote(id, title, entries, isProtected);
+
+        await _db.UpsertNoteMetaAsync(existing with
+        {
+            IsPasswordProtected = isProtected,
+            ContentFingerprint = fingerprint,
+            LastUpdated = DateTime.UtcNow.ToString("o")
+        }, ct);
+    }
+
+    public async Task ReorderNotesAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+    {
+        if (orderedIds.Count == 0)
+            return;
+
+        var ns = GetPrefix();
+        for (var i = 0; i < orderedIds.Count; i++)
+        {
+            var existing = await _db.GetNoteMetaByIdAsync(ns, orderedIds[i], ct);
+            if (existing == null)
+                continue;
+            await _db.UpsertNoteMetaAsync(existing with { SortOrder = i }, ct);
+        }
     }
 
     public async Task<bool> ShouldAcceptIncomingContentAsync(string id, List<ChatMessage> entries, CancellationToken ct = default)
