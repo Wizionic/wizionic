@@ -21,6 +21,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string DeviceIdKey = "chatfish-device-id";
     private const string DeviceNameKey = "chatfish-device-name";
     private const string AiServerDeviceIdKey = "chatfish-ai-server-device-id";
+    private const string AiServerNameKey = "chatfish-ai-server-name";
+    private const string KnownDevicesKey = "chatfish-known-devices";
     private const string SyncTargetDevicesKey = "chatfish-sync-target-devices";
     private const string AutoSyncChatKey = "chatfish-auto-sync-chat";
     private const string AutoSyncNotesKey = "chatfish-auto-sync-notes";
@@ -45,6 +47,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private WebRtcSyncCoordinator? _coordinator;
     private readonly HashSet<string> _syncTargetDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _devicesSnapshotInitialized;
+    private List<KnownDeviceRecord> _knownDevices = new();
+    private string? _aiServerName;
 
     private HubConnection? _hub;
     private bool _initialized;
@@ -140,10 +144,17 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         if (string.IsNullOrWhiteSpace(savedName))
             await _settings.SetStringAsync(DeviceNameKey, MyDeviceName);
 
-        var savedAiServer = await _settings.GetStringAsync(AiServerDeviceIdKey);
+        var savedAiServer = await GetUserSettingAsync(AiServerDeviceIdKey);
         _aiProxy.AiServerDeviceId = string.IsNullOrWhiteSpace(savedAiServer) ? null : savedAiServer;
+        _aiServerName = await GetUserSettingAsync(AiServerNameKey);
 
         await LoadSyncPreferencesAsync();
+        await LoadKnownDevicesAsync();
+        Devices = DeviceListMerger.Merge(
+            Array.Empty<SyncDeviceInfo>(),
+            _knownDevices,
+            _aiProxy.AiServerDeviceId,
+            _aiServerName);
 
         // File log when sync debug is enabled (toggle on Sync page).
         SyncDebugLog.LogFilePath = Path.Combine(MauiAppData.Directory, "sync-debug.log");
@@ -154,6 +165,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
         try
         {
+            await _keyStore.LoadAsync();
             await _browserStore.LoadAsync();
             await _sidebarStore.LoadAsync();
             SyncDebugLog.Browser(
@@ -216,32 +228,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                     .Select(d => d.DeviceId)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                Devices = list ?? Array.Empty<SyncDeviceInfo>();
-                SyncDebugLog.Hub(
-                    $"DevicesUpdated count={Devices.Count}: " +
-                    string.Join("; ", Devices.Select(d =>
-                        $"{d.Name} online={d.IsOnline} browser={d.SupportsBrowserSync} ai={d.CanRelayAi}")));
-
-                // If hub still shows us without browser sync (register race), re-publish once.
-                // Avoid looping: only when self entry exists and is false.
-                if (!string.IsNullOrEmpty(MyDeviceId)
-                    && Devices.Any(d =>
-                        string.Equals(d.DeviceId, MyDeviceId, StringComparison.OrdinalIgnoreCase)
-                        && !d.SupportsBrowserSync))
-                {
-                    _ = PublishBrowserCapabilitiesAsync();
-                }
-
-                if (!_devicesSnapshotInitialized)
-                {
-                    _devicesSnapshotInitialized = true;
-                    OnChanged?.Invoke();
-                    return;
-                }
-
-                EnsureCoordinatorWired();
-                _coordinator?.OnDevicesUpdated(Devices, prevOnline);
-                OnChanged?.Invoke();
+                _ = ApplyDevicesFromServerAndNotifyAsync(list, prevOnline);
             });
 
             WireSyncHandlers();
@@ -339,7 +326,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         foreach (var id in deviceIds.Where(id => !string.IsNullOrWhiteSpace(id)))
             _syncTargetDeviceIds.Add(id);
 
-        await _settings.SetStringAsync(
+        await SetUserSettingAsync(
             SyncTargetDevicesKey,
             System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
         OnChanged?.Invoke();
@@ -349,7 +336,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public async Task SetAutoSyncChatHistoryAsync(bool enabled)
     {
         AutoSyncChatHistory = enabled;
-        await _settings.SetStringAsync(AutoSyncChatKey, enabled ? "true" : "false");
+        await SetUserSettingAsync(AutoSyncChatKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -357,7 +344,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public async Task SetAutoSyncNotesAsync(bool enabled)
     {
         AutoSyncNotes = enabled;
-        await _settings.SetStringAsync(AutoSyncNotesKey, enabled ? "true" : "false");
+        await SetUserSettingAsync(AutoSyncNotesKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -365,7 +352,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public async Task SetAutoSyncBookmarksAsync(bool enabled)
     {
         AutoSyncBookmarks = enabled;
-        await _settings.SetStringAsync(AutoSyncBookmarksKey, enabled ? "true" : "false");
+        await SetUserSettingAsync(AutoSyncBookmarksKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -373,7 +360,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public async Task SetAutoSyncInstalledAppsAsync(bool enabled)
     {
         AutoSyncInstalledApps = enabled;
-        await _settings.SetStringAsync(AutoSyncAppsKey, enabled ? "true" : "false");
+        await SetUserSettingAsync(AutoSyncAppsKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -501,12 +488,44 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         return Devices.FirstOrDefault(d => string.Equals(d.DeviceId, _aiProxy.AiServerDeviceId, StringComparison.OrdinalIgnoreCase))?.Name;
     }
 
-    public Task SetAiServerDeviceAsync(string? deviceId) =>
-        _aiProxy.SetAiServerDeviceAsync(
+    public async Task SetAiServerDeviceAsync(string? deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            _aiServerName = null;
+            await SetUserSettingAsync(AiServerNameKey, null);
+            await _aiProxy.SetAiServerDeviceAsync(
+                null,
+                () => SetUserSettingAsync(AiServerDeviceIdKey, null),
+                id => SetUserSettingAsync(AiServerDeviceIdKey, id),
+                IsSelf);
+            var live = Devices.Where(d => d.IsOnline).ToList();
+            Devices = DeviceListMerger.Merge(live, _knownDevices);
+            OnChanged?.Invoke();
+            return;
+        }
+
+        if (IsSelf(deviceId))
+            return;
+
+        var knownName = Devices.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? _knownDevices.FirstOrDefault(k =>
+                string.Equals(k.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase))?.Name;
+        _aiServerName = knownName;
+        await SetUserSettingAsync(AiServerNameKey, _aiServerName);
+        _knownDevices = DeviceListMerger.Remember(_knownDevices, deviceId, _aiServerName);
+        await SaveKnownDevicesAsync();
+
+        await _aiProxy.SetAiServerDeviceAsync(
             deviceId,
-            () => _settings.RemoveAsync(AiServerDeviceIdKey),
-            id => _settings.SetStringAsync(AiServerDeviceIdKey, id),
+            () => SetUserSettingAsync(AiServerDeviceIdKey, null),
+            id => SetUserSettingAsync(AiServerDeviceIdKey, id),
             IsSelf);
+
+        Devices = DeviceListMerger.Merge(Devices, _knownDevices, AiServerDeviceId, _aiServerName);
+        OnChanged?.Invoke();
+    }
 
     public Task EnsureAiProxyConnectionAsync() => _aiProxy.EnsureConnectionAsync();
 
@@ -655,6 +674,31 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
     private async void OnAuthChanged()
     {
+        try
+        {
+            // Reload per-user sync prefs and AI server selection after login/logout.
+            var savedAiServer = await GetUserSettingAsync(AiServerDeviceIdKey);
+            _aiProxy.AiServerDeviceId = string.IsNullOrWhiteSpace(savedAiServer) ? null : savedAiServer;
+            _aiServerName = await GetUserSettingAsync(AiServerNameKey);
+            await LoadSyncPreferencesAsync();
+            await LoadKnownDevicesAsync();
+            Devices = DeviceListMerger.Merge(
+                Array.Empty<SyncDeviceInfo>(),
+                _knownDevices,
+                _aiProxy.AiServerDeviceId,
+                _aiServerName);
+            await _keyStore.LoadAsync();
+            await _browserStore.LoadAsync();
+            await _sidebarStore.LoadAsync();
+            OnBookmarksChanged?.Invoke();
+            OnInstalledAppsChanged?.Invoke();
+            OnChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Error($"Auth-changed store reload failed: {ex.Message}");
+        }
+
         if (_auth.IsAuthenticated)
         {
             try { await EnsureConnectedAndRegisteredAsync(); }
@@ -664,6 +708,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         {
             await StopAsync();
             Devices = Array.Empty<SyncDeviceInfo>();
+            _knownDevices = new();
             OnChanged?.Invoke();
         }
     }
@@ -746,7 +791,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         try
         {
             _syncTargetDeviceIds.Clear();
-            var targetsJson = await _settings.GetStringAsync(SyncTargetDevicesKey);
+            var targetsJson = await GetUserSettingAsync(SyncTargetDevicesKey);
             if (!string.IsNullOrWhiteSpace(targetsJson))
             {
                 var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(targetsJson);
@@ -758,25 +803,150 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             }
 
             AutoSyncChatHistory = string.Equals(
-                await _settings.GetStringAsync(AutoSyncChatKey),
+                await GetUserSettingAsync(AutoSyncChatKey),
                 "true",
                 StringComparison.Ordinal);
             AutoSyncNotes = string.Equals(
-                await _settings.GetStringAsync(AutoSyncNotesKey),
+                await GetUserSettingAsync(AutoSyncNotesKey),
                 "true",
                 StringComparison.Ordinal);
             AutoSyncBookmarks = string.Equals(
-                await _settings.GetStringAsync(AutoSyncBookmarksKey),
+                await GetUserSettingAsync(AutoSyncBookmarksKey),
                 "true",
                 StringComparison.Ordinal);
             AutoSyncInstalledApps = string.Equals(
-                await _settings.GetStringAsync(AutoSyncAppsKey),
+                await GetUserSettingAsync(AutoSyncAppsKey),
                 "true",
                 StringComparison.Ordinal);
         }
         catch
         {
             // Ignore preference load errors.
+        }
+    }
+
+    private string UserPrefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
+
+    private async Task<string?> GetUserSettingAsync(string baseKey)
+    {
+        var nk = UserPrefixed(baseKey);
+        var value = await _settings.GetStringAsync(nk);
+        if (value != null)
+            return value;
+
+        // One-time migrate from pre-multi-user unprefixed keys.
+        var legacy = await _settings.GetStringAsync(baseKey);
+        if (legacy != null)
+        {
+            await _settings.SetStringAsync(nk, legacy);
+            await _settings.RemoveAsync(baseKey);
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private async Task SetUserSettingAsync(string baseKey, string? value)
+    {
+        var nk = UserPrefixed(baseKey);
+        if (value is null)
+        {
+            // Clear both namespaced and legacy keys so uncheck survives restart/refresh.
+            await _settings.RemoveAsync(nk);
+            await _settings.RemoveAsync(baseKey);
+            return;
+        }
+
+        await _settings.SetStringAsync(nk, value);
+        await _settings.RemoveAsync(baseKey);
+    }
+
+    private async Task LoadKnownDevicesAsync()
+    {
+        try
+        {
+            var json = await GetUserSettingAsync(KnownDevicesKey);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                _knownDevices = new();
+                return;
+            }
+
+            _knownDevices = System.Text.Json.JsonSerializer.Deserialize<List<KnownDeviceRecord>>(json)
+                            ?? new List<KnownDeviceRecord>();
+        }
+        catch
+        {
+            _knownDevices = new();
+        }
+    }
+
+    private async Task SaveKnownDevicesAsync()
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(_knownDevices);
+            await SetUserSettingAsync(KnownDevicesKey, json);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+
+    private async Task ApplyDevicesFromServerAsync(IReadOnlyList<SyncDeviceInfo>? serverList)
+    {
+        _knownDevices = DeviceListMerger.UpsertFromServer(_knownDevices, serverList);
+        await SaveKnownDevicesAsync();
+
+        if (!string.IsNullOrEmpty(AiServerDeviceId) && serverList != null)
+        {
+            var live = serverList.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase));
+            if (live != null && !string.IsNullOrWhiteSpace(live.Name))
+            {
+                _aiServerName = live.Name;
+                await SetUserSettingAsync(AiServerNameKey, _aiServerName);
+            }
+        }
+
+        Devices = DeviceListMerger.Merge(serverList, _knownDevices, AiServerDeviceId, _aiServerName);
+    }
+
+    private async Task ApplyDevicesFromServerAndNotifyAsync(
+        IReadOnlyList<SyncDeviceInfo>? list,
+        HashSet<string> prevOnline)
+    {
+        try
+        {
+            await ApplyDevicesFromServerAsync(list);
+            SyncDebugLog.Hub(
+                $"DevicesUpdated count={Devices.Count}: " +
+                string.Join("; ", Devices.Select(d =>
+                    $"{d.Name} online={d.IsOnline} browser={d.SupportsBrowserSync} ai={d.CanRelayAi}")));
+
+            if (!string.IsNullOrEmpty(MyDeviceId)
+                && Devices.Any(d =>
+                    string.Equals(d.DeviceId, MyDeviceId, StringComparison.OrdinalIgnoreCase)
+                    && !d.SupportsBrowserSync))
+            {
+                _ = PublishBrowserCapabilitiesAsync();
+            }
+
+            if (!_devicesSnapshotInitialized)
+            {
+                _devicesSnapshotInitialized = true;
+                OnChanged?.Invoke();
+                return;
+            }
+
+            EnsureCoordinatorWired();
+            _coordinator?.OnDevicesUpdated(Devices, prevOnline);
+            OnChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Error($"DevicesUpdated handling failed: {ex.Message}");
         }
     }
 

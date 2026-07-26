@@ -28,7 +28,17 @@ public class WasmConversationStore : IConversationStore
         _auth.OnChanged += () => { /* consumer decides when to reload */ };
     }
 
-    private record StoredMeta(string key, string id, string @namespace, string title, string lastUpdated, bool syncEnabled, string? contentFingerprint, string? deletedAt, bool? titleIsCustom);
+    private record StoredMeta(
+        string key,
+        string id,
+        string @namespace,
+        string title,
+        string lastUpdated,
+        bool syncEnabled,
+        string? contentFingerprint,
+        string? deletedAt,
+        bool? titleIsCustom,
+        int? sortOrder = null);
 
     private static bool HasCustomTitle(StoredMeta? meta) => meta?.titleIsCustom == true;
 
@@ -89,11 +99,43 @@ public class WasmConversationStore : IConversationStore
             }
         }
 
-        return metas
-            .Where(m => string.IsNullOrEmpty(m.deletedAt))
-            .OrderByDescending(m => m.lastUpdated)
-            .Select(m => new LocalConvo(m.id, m.title ?? "(empty)", DateTime.Parse(m.lastUpdated)))
+        var live = metas.Where(m => string.IsNullOrEmpty(m.deletedAt)).ToList();
+
+        // Backfill stable sort orders once so sync-driven lastUpdated changes do not reshuffle the sidebar.
+        if (live.Count > 0 && live.All(m => (m.sortOrder ?? 0) == 0))
+        {
+            var ordered = live.OrderByDescending(m => m.lastUpdated).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var m = ordered[i];
+                await PutMetaAsync(m with { sortOrder = i });
+                ordered[i] = m with { sortOrder = i };
+            }
+            live = ordered;
+        }
+
+        return live
+            .OrderBy(m => m.sortOrder ?? 0)
+            .ThenByDescending(m => m.lastUpdated)
+            .Select(m => new LocalConvo(m.id, m.title ?? "(empty)", DateTime.Parse(m.lastUpdated), m.sortOrder ?? 0))
             .ToList();
+    }
+
+    private async Task PutMetaAsync(StoredMeta m)
+    {
+        await _js.InvokeVoidAsync("idbPutMeta", new
+        {
+            key = m.key,
+            id = m.id,
+            @namespace = m.@namespace,
+            title = m.title,
+            lastUpdated = m.lastUpdated,
+            syncEnabled = m.syncEnabled,
+            contentFingerprint = m.contentFingerprint,
+            deletedAt = m.deletedAt ?? "",
+            titleIsCustom = m.titleIsCustom ?? false,
+            sortOrder = m.sortOrder ?? 0
+        });
     }
 
     public async Task<List<SyncManifestEntry>> LoadManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default)
@@ -173,7 +215,8 @@ public class WasmConversationStore : IConversationStore
             syncEnabled = meta.syncEnabled,
             contentFingerprint = fingerprint,
             deletedAt = deletedAt ?? "",
-            titleIsCustom = meta.titleIsCustom ?? false
+            titleIsCustom = meta.titleIsCustom ?? false,
+            sortOrder = meta.sortOrder ?? 0
         });
     }
 
@@ -197,7 +240,8 @@ public class WasmConversationStore : IConversationStore
             syncEnabled,
             contentFingerprint = DeleteSyncPayload.AckValue(deletedAt.Ticks),
             deletedAt = deletedAtIso,
-            titleIsCustom = existing?.titleIsCustom ?? false
+            titleIsCustom = existing?.titleIsCustom ?? false,
+            sortOrder = existing?.sortOrder ?? 0
         });
 
         await _js.InvokeVoidAsync("idbDeleteConvoContent", existing?.key ?? metaKey);
@@ -340,7 +384,8 @@ public class WasmConversationStore : IConversationStore
             syncEnabled,
             contentFingerprint,
             deletedAt = existing?.deletedAt ?? "",
-            titleIsCustom = true
+            titleIsCustom = true,
+            sortOrder = existing?.sortOrder ?? 0
         });
     }
 
@@ -369,6 +414,23 @@ public class WasmConversationStore : IConversationStore
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
         var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages);
 
+        int sortOrder;
+        if (existing is null)
+        {
+            var known = currentIndex.FirstOrDefault(c => c.Id == id);
+            if (known is not null)
+                sortOrder = known.SortOrder;
+            else if (currentIndex.Count > 0)
+                // New chats appear at the top without reshuffling existing SortOrders.
+                sortOrder = currentIndex.Min(c => c.SortOrder) - 1;
+            else
+                sortOrder = 0;
+        }
+        else
+        {
+            sortOrder = existing.sortOrder ?? 0;
+        }
+
         await _js.InvokeVoidAsync("idbPutMeta", new
         {
             key = existing?.key ?? metaKey,
@@ -379,7 +441,8 @@ public class WasmConversationStore : IConversationStore
             syncEnabled,
             contentFingerprint,
             deletedAt = existing?.deletedAt ?? "",
-            titleIsCustom
+            titleIsCustom,
+            sortOrder
         });
 
         await SetLastConvoIdAsync(id, ct);
@@ -405,8 +468,41 @@ public class WasmConversationStore : IConversationStore
             syncEnabled = enabled,
             contentFingerprint = existing?.contentFingerprint ?? "",
             deletedAt = existing?.deletedAt ?? "",
-            titleIsCustom = existing?.titleIsCustom ?? false
+            titleIsCustom = existing?.titleIsCustom ?? false,
+            sortOrder = existing?.sortOrder ?? 0
         });
+    }
+
+    public async Task ReorderConversationsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+    {
+        if (orderedIds.Count == 0)
+            return;
+
+        var ns = GetPrefix();
+        var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
+        var byId = metas
+            .Where(m => string.IsNullOrEmpty(m.deletedAt))
+            .ToDictionary(m => m.id, StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < orderedIds.Count; i++)
+        {
+            if (!byId.TryGetValue(orderedIds[i], out var m))
+                continue;
+
+            await _js.InvokeVoidAsync("idbPutMeta", new
+            {
+                key = m.key,
+                id = m.id,
+                @namespace = m.@namespace,
+                title = m.title,
+                lastUpdated = m.lastUpdated,
+                syncEnabled = m.syncEnabled,
+                contentFingerprint = m.contentFingerprint,
+                deletedAt = m.deletedAt ?? "",
+                titleIsCustom = m.titleIsCustom ?? false,
+                sortOrder = i
+            });
+        }
     }
 
     private static string StripHtmlForTitle(string htmlOrText)

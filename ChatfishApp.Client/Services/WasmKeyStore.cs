@@ -1,3 +1,4 @@
+using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Ollama;
 using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
@@ -9,6 +10,8 @@ namespace ChatfishApp.Client.Services;
 
 /// <summary>
 /// Browser localStorage implementation of <see cref="IKeyStore"/>.
+/// Settings are stored under a per-user (or guest) prefix so multi-account
+/// use on the same browser does not share Ollama keys, MCP config, etc.
 /// </summary>
 public class WasmKeyStore : IKeyStore
 {
@@ -24,6 +27,7 @@ public class WasmKeyStore : IKeyStore
     private const string HomeAssistantConfigKey = "wasm-home-assistant-config";
 
     private readonly IJSRuntime _js;
+    private readonly IAuthService _auth;
 
     private Dictionary<string, string> _providerKeys = new();
     private string _lastSelectedModel = "";
@@ -37,15 +41,22 @@ public class WasmKeyStore : IKeyStore
     private List<CustomMcpConnector> _customMcpConnectors = new();
     private HomeAssistantConfig _homeAssistantConfig = new();
 
-    public WasmKeyStore(IJSRuntime js) => _js = js;
+    public WasmKeyStore(IJSRuntime js, IAuthService auth)
+    {
+        _js = js;
+        _auth = auth;
+        _auth.OnChanged += () => _ = LoadAsync();
+    }
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        var keysJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, KeysStorageKey);
+        ResetInMemoryState();
+
+        var keysJson = await GetItemAsync(KeysStorageKey, ct);
         if (!string.IsNullOrEmpty(keysJson))
             _providerKeys = JsonSerializer.Deserialize<Dictionary<string, string>>(keysJson) ?? new();
 
-        var ollamaJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, OllamaConfigKey);
+        var ollamaJson = await GetItemAsync(OllamaConfigKey, ct);
         if (!string.IsNullOrEmpty(ollamaJson))
         {
             var loaded = JsonSerializer.Deserialize<OllamaConfig>(ollamaJson);
@@ -53,7 +64,7 @@ public class WasmKeyStore : IKeyStore
                 _ollamaConfig = MigrateOllamaConfig(loaded);
         }
 
-        var mcpJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, McpEnabledKey);
+        var mcpJson = await GetItemAsync(McpEnabledKey, ct);
         if (!string.IsNullOrEmpty(mcpJson))
         {
             var names = JsonSerializer.Deserialize<List<string>>(mcpJson);
@@ -61,7 +72,7 @@ public class WasmKeyStore : IKeyStore
                 _enabledMcpServers = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
         }
 
-        var tokensJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, McpTokensKey);
+        var tokensJson = await GetItemAsync(McpTokensKey, ct);
         if (!string.IsNullOrEmpty(tokensJson))
         {
             var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(tokensJson);
@@ -69,7 +80,7 @@ public class WasmKeyStore : IKeyStore
                 _mcpTokens = loaded;
         }
 
-        var customsJson = await _js.InvokeAsync<string>("localStorage.getItem", ct, McpCustomConnectorsKey);
+        var customsJson = await GetItemAsync(McpCustomConnectorsKey, ct);
         if (!string.IsNullOrEmpty(customsJson))
         {
             var loaded = JsonSerializer.Deserialize<List<CustomMcpConnector>>(customsJson);
@@ -77,13 +88,13 @@ public class WasmKeyStore : IKeyStore
                 _customMcpConnectors = loaded;
         }
 
-        _lastSelectedModel = await _js.InvokeAsync<string?>("localStorage.getItem", ct, LastSelectedModelKey) ?? "";
+        _lastSelectedModel = await GetItemAsync(LastSelectedModelKey, ct) ?? "";
 
-        var systemPromptJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, SystemPromptKey);
+        var systemPromptJson = await GetItemAsync(SystemPromptKey, ct);
         _systemPromptCustomized = systemPromptJson != null;
         _systemPrompt = systemPromptJson;
 
-        var profileJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, UserProfileKey);
+        var profileJson = await GetItemAsync(UserProfileKey, ct);
         if (!string.IsNullOrEmpty(profileJson))
         {
             var loaded = JsonSerializer.Deserialize<UserProfileSettings>(profileJson);
@@ -91,7 +102,7 @@ public class WasmKeyStore : IKeyStore
                 _userProfile = loaded;
         }
 
-        var memoriesJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, UserMemoriesKey);
+        var memoriesJson = await GetItemAsync(UserMemoriesKey, ct);
         if (!string.IsNullOrEmpty(memoriesJson))
         {
             var loaded = JsonSerializer.Deserialize<List<UserMemory>>(memoriesJson);
@@ -99,7 +110,7 @@ public class WasmKeyStore : IKeyStore
                 _userMemories = loaded;
         }
 
-        var haJson = await _js.InvokeAsync<string?>("localStorage.getItem", ct, HomeAssistantConfigKey);
+        var haJson = await GetItemAsync(HomeAssistantConfigKey, ct);
         if (!string.IsNullOrEmpty(haJson))
         {
             var loaded = JsonSerializer.Deserialize<HomeAssistantConfig>(haJson);
@@ -107,6 +118,50 @@ public class WasmKeyStore : IKeyStore
                 _homeAssistantConfig = loaded;
         }
     }
+
+    private void ResetInMemoryState()
+    {
+        _providerKeys = new();
+        _lastSelectedModel = "";
+        _systemPrompt = null;
+        _systemPromptCustomized = false;
+        _userProfile = new();
+        _userMemories = new();
+        _ollamaConfig = new();
+        _enabledMcpServers = new();
+        _mcpTokens = new();
+        _customMcpConnectors = new();
+        _homeAssistantConfig = new();
+    }
+
+    private string Prefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
+
+    /// <summary>
+    /// Read namespaced key; if missing, seed once from legacy unprefixed key so existing
+    /// single-user installs keep settings after multi-user isolation is enabled.
+    /// </summary>
+    private async Task<string?> GetItemAsync(string baseKey, CancellationToken ct = default)
+    {
+        var nk = Prefixed(baseKey);
+        var value = await _js.InvokeAsync<string?>("localStorage.getItem", ct, nk);
+        if (value != null)
+            return value;
+
+        var legacy = await _js.InvokeAsync<string?>("localStorage.getItem", ct, baseKey);
+        if (legacy != null)
+        {
+            await _js.InvokeVoidAsync("localStorage.setItem", ct, nk, legacy);
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private Task SetItemAsync(string baseKey, string value, CancellationToken ct = default) =>
+        _js.InvokeVoidAsync("localStorage.setItem", ct, Prefixed(baseKey), value).AsTask();
+
+    private Task RemoveItemAsync(string baseKey, CancellationToken ct = default) =>
+        _js.InvokeVoidAsync("localStorage.removeItem", ct, Prefixed(baseKey)).AsTask();
 
     public string LastSelectedModel => _lastSelectedModel;
     public bool IsSystemPromptCustomized => _systemPromptCustomized;
@@ -118,14 +173,14 @@ public class WasmKeyStore : IKeyStore
     {
         _systemPrompt = prompt ?? "";
         _systemPromptCustomized = true;
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, SystemPromptKey, _systemPrompt);
+        await SetItemAsync(SystemPromptKey, _systemPrompt, ct);
     }
 
     public async Task ResetSystemPromptAsync(CancellationToken ct = default)
     {
         _systemPrompt = null;
         _systemPromptCustomized = false;
-        await _js.InvokeVoidAsync("localStorage.removeItem", ct, SystemPromptKey);
+        await RemoveItemAsync(SystemPromptKey, ct);
     }
 
     public UserProfileSettings GetUserProfile() => _userProfile.Clone();
@@ -139,7 +194,7 @@ public class WasmKeyStore : IKeyStore
             Occupation = (profile.Occupation ?? "").Trim()
         };
         var json = JsonSerializer.Serialize(_userProfile);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, UserProfileKey, json);
+        await SetItemAsync(UserProfileKey, json, ct);
     }
 
     public IReadOnlyList<UserMemory> GetMemories() =>
@@ -186,7 +241,7 @@ public class WasmKeyStore : IKeyStore
     private async Task SaveMemoriesAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_userMemories);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, UserMemoriesKey, json);
+        await SetItemAsync(UserMemoriesKey, json, ct);
     }
 
     public string BuildUserContextForPrompt()
@@ -225,9 +280,9 @@ public class WasmKeyStore : IKeyStore
     {
         _lastSelectedModel = (modelId ?? "").Trim();
         if (string.IsNullOrEmpty(_lastSelectedModel))
-            await _js.InvokeVoidAsync("localStorage.removeItem", ct, LastSelectedModelKey);
+            await RemoveItemAsync(LastSelectedModelKey, ct);
         else
-            await _js.InvokeVoidAsync("localStorage.setItem", ct, LastSelectedModelKey, _lastSelectedModel);
+            await SetItemAsync(LastSelectedModelKey, _lastSelectedModel, ct);
     }
 
     public string GetKey(string providerId) =>
@@ -241,7 +296,7 @@ public class WasmKeyStore : IKeyStore
             _providerKeys[providerId] = key.Trim();
 
         var json = JsonSerializer.Serialize(_providerKeys);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, KeysStorageKey, json);
+        await SetItemAsync(KeysStorageKey, json, ct);
     }
 
     public async Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default)
@@ -251,7 +306,7 @@ public class WasmKeyStore : IKeyStore
         _providerKeys["openrouter"] = (openrouter ?? "").Trim();
 
         var json = JsonSerializer.Serialize(_providerKeys);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, KeysStorageKey, json);
+        await SetItemAsync(KeysStorageKey, json, ct);
     }
 
     public string OllamaBaseUrl => _ollamaConfig.BaseUrl ?? "http://localhost:11434";
@@ -393,7 +448,7 @@ public class WasmKeyStore : IKeyStore
     private async Task SaveOllamaConfigAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_ollamaConfig);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, OllamaConfigKey, json);
+        await SetItemAsync(OllamaConfigKey, json, ct);
     }
 
     public async Task RefreshOllamaModelsFromServerAsync(HttpClient http, string? baseUrl = null, CancellationToken ct = default)
@@ -503,7 +558,7 @@ public class WasmKeyStore : IKeyStore
     private async Task SaveMcpEnabledAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_enabledMcpServers.ToList());
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpEnabledKey, json);
+        await SetItemAsync(McpEnabledKey, json, ct);
     }
 
     public string GetMcpToken(string serverName) =>
@@ -519,7 +574,7 @@ public class WasmKeyStore : IKeyStore
             _mcpTokens[serverName] = token.Trim();
 
         var json = JsonSerializer.Serialize(_mcpTokens);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpTokensKey, json);
+        await SetItemAsync(McpTokensKey, json, ct);
     }
 
     public IReadOnlyDictionary<string, string> GetAllMcpTokens() =>
@@ -560,13 +615,13 @@ public class WasmKeyStore : IKeyStore
     private async Task SaveCustomConnectorsAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_customMcpConnectors);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpCustomConnectorsKey, json);
+        await SetItemAsync(McpCustomConnectorsKey, json, ct);
     }
 
     private async Task SaveMcpTokensAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_mcpTokens);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, McpTokensKey, json);
+        await SetItemAsync(McpTokensKey, json, ct);
     }
 
     public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";
@@ -589,7 +644,7 @@ public class WasmKeyStore : IKeyStore
             DeviceSummaryUpdatedAt = _homeAssistantConfig.DeviceSummaryUpdatedAt
         };
         var json = JsonSerializer.Serialize(_homeAssistantConfig);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, HomeAssistantConfigKey, json);
+        await SetItemAsync(HomeAssistantConfigKey, json, ct);
     }
 
     public async Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default)
@@ -597,6 +652,6 @@ public class WasmKeyStore : IKeyStore
         _homeAssistantConfig.CachedDeviceSummary = summary ?? "";
         _homeAssistantConfig.DeviceSummaryUpdatedAt = DateTime.UtcNow;
         var json = JsonSerializer.Serialize(_homeAssistantConfig);
-        await _js.InvokeVoidAsync("localStorage.setItem", ct, HomeAssistantConfigKey, json);
+        await SetItemAsync(HomeAssistantConfigKey, json, ct);
     }
 }

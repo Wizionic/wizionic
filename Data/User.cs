@@ -17,4 +17,15 @@ public class User
     /// Fetched over HTTPS+cookie auth so all devices for the same email share one stable key.
     /// </summary>
     public string? LocalEncryptionKey { get; set; }
+
+    /// <summary>
+    /// Optional PBKDF2 password hash for email+password login (and notebook unlock).
+    /// Null when the user has not set a password (magic-link / login code only).
+    /// </summary>
+    public string? PasswordHash { get; set; }
+
+    /// <summary>
+    /// Future admin flag. Defaults to false for all existing and new users.
+    /// </summary>
+    public bool IsAdmin { get; set; }
 }

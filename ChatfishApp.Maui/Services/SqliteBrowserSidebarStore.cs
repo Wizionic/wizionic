@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Storage;
 
@@ -15,6 +16,7 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
     private const double MaxSideWidth = 560;
 
     private readonly SqliteSettingsDatabase _db;
+    private readonly IAuthService _auth;
     private List<SidebarApp> _apps = [];
     private double _sidePanelWidth = DefaultSideWidth;
     private Dictionary<string, OpenTarget> _lastTargets = new(StringComparer.OrdinalIgnoreCase);
@@ -22,13 +24,23 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
 
     private sealed record SyncMeta(string ContentFingerprint, long LastUpdatedTicks, long? DeletedAtTicks = null);
 
-    public SqliteBrowserSidebarStore(SqliteSettingsDatabase db) => _db = db;
+    public SqliteBrowserSidebarStore(SqliteSettingsDatabase db, IAuthService auth)
+    {
+        _db = db;
+        _auth = auth;
+        _auth.OnChanged += () => _ = LoadAsync();
+    }
 
     public event Action? Changed;
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        var appsJson = await _db.GetStringAsync(AppsKey, ct);
+        _apps = [];
+        _sidePanelWidth = DefaultSideWidth;
+        _lastTargets = new(StringComparer.OrdinalIgnoreCase);
+        _appMeta = new(StringComparer.Ordinal);
+
+        var appsJson = await GetItemAsync(AppsKey, ct);
         if (!string.IsNullOrEmpty(appsJson))
         {
             var loaded = JsonSerializer.Deserialize<List<SidebarApp>>(appsJson);
@@ -42,11 +54,11 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
             }
         }
 
-        var widthStr = await _db.GetStringAsync(SideWidthKey, ct);
+        var widthStr = await GetItemAsync(SideWidthKey, ct);
         if (double.TryParse(widthStr, out var width))
             _sidePanelWidth = Math.Clamp(width, MinSideWidth, MaxSideWidth);
 
-        var targetsJson = await _db.GetStringAsync(LastTargetKey, ct);
+        var targetsJson = await GetItemAsync(LastTargetKey, ct);
         if (!string.IsNullOrEmpty(targetsJson))
         {
             var loaded = JsonSerializer.Deserialize<Dictionary<string, OpenTarget>>(targetsJson);
@@ -55,7 +67,30 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
         }
 
         _appMeta = await LoadMetaAsync(ct);
+        Changed?.Invoke();
     }
+
+    private string Prefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
+
+    private async Task<string?> GetItemAsync(string baseKey, CancellationToken ct = default)
+    {
+        var nk = Prefixed(baseKey);
+        var value = await _db.GetStringAsync(nk, ct);
+        if (value != null)
+            return value;
+
+        var legacy = await _db.GetStringAsync(baseKey, ct);
+        if (legacy != null)
+        {
+            await _db.SetStringAsync(nk, legacy, ct);
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private Task SetItemAsync(string baseKey, string? value, CancellationToken ct = default) =>
+        _db.SetStringAsync(Prefixed(baseKey), value, ct);
 
     public IReadOnlyList<SidebarApp> GetPinnedApps() =>
         _apps.OrderBy(a => a.SortOrder).ThenBy(a => a.PinnedAt).ToList();
@@ -139,7 +174,7 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
     public async Task SetSidePanelWidthPxAsync(double widthPx, CancellationToken ct = default)
     {
         _sidePanelWidth = Math.Clamp(widthPx, MinSideWidth, MaxSideWidth);
-        await _db.SetStringAsync(SideWidthKey, _sidePanelWidth.ToString("F0"), ct);
+        await SetItemAsync(SideWidthKey, _sidePanelWidth.ToString("F0"), ct);
         Changed?.Invoke();
     }
 
@@ -304,24 +339,24 @@ public sealed class SqliteBrowserSidebarStore : IBrowserSidebarStore
     private async Task SaveAppsAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_apps);
-        await _db.SetStringAsync(AppsKey, json, ct);
+        await SetItemAsync(AppsKey, json, ct);
     }
 
     private async Task SaveLastTargetsAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_lastTargets);
-        await _db.SetStringAsync(LastTargetKey, json, ct);
+        await SetItemAsync(LastTargetKey, json, ct);
     }
 
     private async Task SaveAppMetaAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_appMeta);
-        await _db.SetStringAsync(AppMetaKey, json, ct);
+        await SetItemAsync(AppMetaKey, json, ct);
     }
 
     private async Task<Dictionary<string, SyncMeta>> LoadMetaAsync(CancellationToken ct)
     {
-        var json = await _db.GetStringAsync(AppMetaKey, ct);
+        var json = await GetItemAsync(AppMetaKey, ct);
         if (string.IsNullOrEmpty(json))
             return new Dictionary<string, SyncMeta>(StringComparer.Ordinal);
 

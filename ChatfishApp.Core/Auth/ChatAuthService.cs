@@ -19,6 +19,7 @@ public class ChatAuthService : IAuthService
     public string? Email { get; private set; }
     public string? UserId { get; private set; }
     public string? LocalEncryptionKeyB64 { get; private set; }
+    public bool HasPassword { get; private set; }
     public bool IsAuthenticated => !string.IsNullOrEmpty(Email) && !string.IsNullOrEmpty(LocalEncryptionKeyB64);
 
     public string ServerBaseUrl =>
@@ -129,6 +130,102 @@ public class ChatAuthService : IAuthService
         }
     }
 
+    public async Task<(bool Success, string? Error)> LoginWithPasswordAsync(string email, string password)
+    {
+        try
+        {
+            var payload = new { Email = email.Trim(), Password = password };
+            var resp = await _http.PostAsJsonAsync("api/auth/login-password", payload);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                // Server intentionally returns a generic message; surface that (or a safe default).
+                string message = "Invalid email or password.";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return (false, message);
+            }
+
+            await LoadAsync();
+            return IsAuthenticated
+                ? (true, null)
+                : (false, "Signed in on the server, but the session could not be loaded.");
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> SetPasswordAsync(string password, string confirmPassword, string? currentPassword = null)
+    {
+        try
+        {
+            var payload = new
+            {
+                Password = password,
+                ConfirmPassword = confirmPassword,
+                CurrentPassword = currentPassword
+            };
+            var resp = await _http.PostAsJsonAsync("api/auth/set-password", payload);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                string message = $"Could not save password ({(int)resp.StatusCode}).";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return (false, message);
+            }
+
+            HasPassword = true;
+            OnChanged?.Invoke();
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> VerifyPasswordAsync(string password)
+    {
+        try
+        {
+            var payload = new { Password = password };
+            var resp = await _http.PostAsJsonAsync("api/auth/verify-password", payload);
+
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+
+            string message = "Incorrect password.";
+            try
+            {
+                var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                if (!string.IsNullOrWhiteSpace(body?.Message))
+                    message = body.Message;
+            }
+            catch { /* keep default */ }
+
+            return (false, message);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
     public async Task SignOutAsync()
     {
         try
@@ -220,6 +317,7 @@ public class ChatAuthService : IAuthService
             Email = me.Email;
             UserId = me.Id;
             LocalEncryptionKeyB64 = keyResp.Key;
+            HasPassword = me.HasPassword;
             return AuthFetchResult.Success;
         }
         catch (HttpRequestException ex)
@@ -253,8 +351,10 @@ public class ChatAuthService : IAuthService
         Email = null;
         UserId = null;
         LocalEncryptionKeyB64 = null;
+        HasPassword = false;
     }
 
-    private record UserMeResponse(string? Email, string? Id, bool HasLocalEncryptionKey);
+    private record UserMeResponse(string? Email, string? Id, bool HasLocalEncryptionKey, bool HasPassword = false);
     private record EncryptionKeyResponse(string? Key);
+    private record ErrorMessageResponse(string? Message);
 }

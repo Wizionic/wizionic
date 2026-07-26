@@ -21,4 +21,9 @@ public interface IConversationStore
     Task<bool> TryApplyRemoteDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default);
 
     Task SetConversationSyncEnabledAsync(string id, bool enabled, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sets sidebar order for chats (stable sort; does not change LastUpdated).
+    /// </summary>
+    Task ReorderConversationsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default);
 }

@@ -36,6 +36,7 @@ public class MauiSidebarState : ISidebarState
 
         try
         {
+            // Prefix is set by ThemeBootstrap / NavLayoutBootstrap for the current auth user.
             await js.InvokeVoidAsync("toggleWasmSidebar", ct, collapsed);
         }
         catch (Exception ex)

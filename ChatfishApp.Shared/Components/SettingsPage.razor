@@ -3,9 +3,11 @@
 @inject ChatfishApp.Core.Update.IUpdateService UpdateService
 @inject ChatfishApp.Shared.Services.ThemeService Theme
 @inject INavLayoutState NavLayout
+@inject ChatfishApp.Core.Auth.IAuthService Auth
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @using ChatfishApp.Core.Update
+@using ChatfishApp.Shared.Services
 @implements IDisposable
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
@@ -358,6 +360,7 @@
         if (!firstRender)
             return;
 
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
         await Theme.SyncFromStorageAndApplyAsync(JS);
         if (AppEnvironment.IsMaui)
             await NavLayout.SyncFromStorageAndApplyAsync(JS);
@@ -371,11 +374,13 @@
     private async Task OnThemeChanged(ChangeEventArgs e)
     {
         var theme = e.Value?.ToString() ?? ThemeService.DefaultThemeId;
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
         await Theme.SetThemeAsync(theme, JS);
     }
 
     private async Task OnNavLayoutChanged(ChangeEventArgs e)
     {
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
         var mode = string.Equals(e.Value?.ToString(), "left", StringComparison.OrdinalIgnoreCase)
             ? NavLayoutMode.Left
             : NavLayoutMode.Top;

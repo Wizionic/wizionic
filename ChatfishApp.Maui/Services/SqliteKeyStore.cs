@@ -1,3 +1,4 @@
+using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Ollama;
 using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
@@ -8,6 +9,7 @@ namespace ChatfishApp.Maui.Services;
 
 /// <summary>
 /// SQLite-backed implementation of <see cref="IKeyStore"/> for MAUI.
+/// Settings are stored under a per-user (or guest) prefix for multi-account isolation.
 /// </summary>
 public class SqliteKeyStore : IKeyStore
 {
@@ -23,6 +25,7 @@ public class SqliteKeyStore : IKeyStore
     private const string HomeAssistantConfigKey = "wasm-home-assistant-config";
 
     private readonly SqliteSettingsDatabase _db;
+    private readonly IAuthService _auth;
 
     private Dictionary<string, string> _providerKeys = new();
     private string _lastSelectedModel = "";
@@ -36,15 +39,22 @@ public class SqliteKeyStore : IKeyStore
     private List<CustomMcpConnector> _customMcpConnectors = new();
     private HomeAssistantConfig _homeAssistantConfig = new();
 
-    public SqliteKeyStore(SqliteSettingsDatabase db) => _db = db;
+    public SqliteKeyStore(SqliteSettingsDatabase db, IAuthService auth)
+    {
+        _db = db;
+        _auth = auth;
+        _auth.OnChanged += () => _ = LoadAsync();
+    }
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        var keysJson = await _db.GetStringAsync(KeysStorageKey, ct);
+        ResetInMemoryState();
+
+        var keysJson = await GetItemAsync(KeysStorageKey, ct);
         if (!string.IsNullOrEmpty(keysJson))
             _providerKeys = JsonSerializer.Deserialize<Dictionary<string, string>>(keysJson) ?? new();
 
-        var ollamaJson = await _db.GetStringAsync(OllamaConfigKey, ct);
+        var ollamaJson = await GetItemAsync(OllamaConfigKey, ct);
         if (!string.IsNullOrEmpty(ollamaJson))
         {
             var loaded = JsonSerializer.Deserialize<OllamaConfig>(ollamaJson);
@@ -52,7 +62,7 @@ public class SqliteKeyStore : IKeyStore
                 _ollamaConfig = MigrateOllamaConfig(loaded);
         }
 
-        var mcpJson = await _db.GetStringAsync(McpEnabledKey, ct);
+        var mcpJson = await GetItemAsync(McpEnabledKey, ct);
         if (!string.IsNullOrEmpty(mcpJson))
         {
             var names = JsonSerializer.Deserialize<List<string>>(mcpJson);
@@ -60,7 +70,7 @@ public class SqliteKeyStore : IKeyStore
                 _enabledMcpServers = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
         }
 
-        var tokensJson = await _db.GetStringAsync(McpTokensKey, ct);
+        var tokensJson = await GetItemAsync(McpTokensKey, ct);
         if (!string.IsNullOrEmpty(tokensJson))
         {
             var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(tokensJson);
@@ -68,7 +78,7 @@ public class SqliteKeyStore : IKeyStore
                 _mcpTokens = loaded;
         }
 
-        var customsJson = await _db.GetStringAsync(McpCustomConnectorsKey, ct);
+        var customsJson = await GetItemAsync(McpCustomConnectorsKey, ct);
         if (!string.IsNullOrEmpty(customsJson))
         {
             var loaded = JsonSerializer.Deserialize<List<CustomMcpConnector>>(customsJson);
@@ -76,13 +86,13 @@ public class SqliteKeyStore : IKeyStore
                 _customMcpConnectors = loaded;
         }
 
-        _lastSelectedModel = await _db.GetStringAsync(LastSelectedModelKey, ct) ?? "";
+        _lastSelectedModel = await GetItemAsync(LastSelectedModelKey, ct) ?? "";
 
-        var systemPromptJson = await _db.GetStringAsync(SystemPromptKey, ct);
+        var systemPromptJson = await GetItemAsync(SystemPromptKey, ct);
         _systemPromptCustomized = systemPromptJson != null;
         _systemPrompt = systemPromptJson;
 
-        var profileJson = await _db.GetStringAsync(UserProfileKey, ct);
+        var profileJson = await GetItemAsync(UserProfileKey, ct);
         if (!string.IsNullOrEmpty(profileJson))
         {
             var loaded = JsonSerializer.Deserialize<UserProfileSettings>(profileJson);
@@ -90,7 +100,7 @@ public class SqliteKeyStore : IKeyStore
                 _userProfile = loaded;
         }
 
-        var memoriesJson = await _db.GetStringAsync(UserMemoriesKey, ct);
+        var memoriesJson = await GetItemAsync(UserMemoriesKey, ct);
         if (!string.IsNullOrEmpty(memoriesJson))
         {
             var loaded = JsonSerializer.Deserialize<List<UserMemory>>(memoriesJson);
@@ -98,7 +108,7 @@ public class SqliteKeyStore : IKeyStore
                 _userMemories = loaded;
         }
 
-        var haJson = await _db.GetStringAsync(HomeAssistantConfigKey, ct);
+        var haJson = await GetItemAsync(HomeAssistantConfigKey, ct);
         if (!string.IsNullOrEmpty(haJson))
         {
             var loaded = JsonSerializer.Deserialize<HomeAssistantConfig>(haJson);
@@ -106,6 +116,46 @@ public class SqliteKeyStore : IKeyStore
                 _homeAssistantConfig = loaded;
         }
     }
+
+    private void ResetInMemoryState()
+    {
+        _providerKeys = new();
+        _lastSelectedModel = "";
+        _systemPrompt = null;
+        _systemPromptCustomized = false;
+        _userProfile = new();
+        _userMemories = new();
+        _ollamaConfig = new();
+        _enabledMcpServers = new();
+        _mcpTokens = new();
+        _customMcpConnectors = new();
+        _homeAssistantConfig = new();
+    }
+
+    private string Prefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
+
+    private async Task<string?> GetItemAsync(string baseKey, CancellationToken ct = default)
+    {
+        var nk = Prefixed(baseKey);
+        var value = await _db.GetStringAsync(nk, ct);
+        if (value != null)
+            return value;
+
+        var legacy = await _db.GetStringAsync(baseKey, ct);
+        if (legacy != null)
+        {
+            await _db.SetStringAsync(nk, legacy, ct);
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private Task SetItemAsync(string baseKey, string? value, CancellationToken ct = default) =>
+        _db.SetStringAsync(Prefixed(baseKey), value, ct);
+
+    private Task RemoveItemAsync(string baseKey, CancellationToken ct = default) =>
+        _db.RemoveAsync(Prefixed(baseKey), ct);
 
     public string LastSelectedModel => _lastSelectedModel;
     public bool IsSystemPromptCustomized => _systemPromptCustomized;
@@ -117,14 +167,14 @@ public class SqliteKeyStore : IKeyStore
     {
         _systemPrompt = prompt ?? "";
         _systemPromptCustomized = true;
-        await _db.SetStringAsync(SystemPromptKey, _systemPrompt, ct);
+        await SetItemAsync(SystemPromptKey, _systemPrompt, ct);
     }
 
     public async Task ResetSystemPromptAsync(CancellationToken ct = default)
     {
         _systemPrompt = null;
         _systemPromptCustomized = false;
-        await _db.RemoveAsync(SystemPromptKey, ct);
+        await RemoveItemAsync(SystemPromptKey, ct);
     }
 
     public UserProfileSettings GetUserProfile() => _userProfile.Clone();
@@ -138,7 +188,7 @@ public class SqliteKeyStore : IKeyStore
             Occupation = (profile.Occupation ?? "").Trim()
         };
         var json = JsonSerializer.Serialize(_userProfile);
-        await _db.SetStringAsync(UserProfileKey, json, ct);
+        await SetItemAsync(UserProfileKey, json, ct);
     }
 
     public IReadOnlyList<UserMemory> GetMemories() =>
@@ -185,7 +235,7 @@ public class SqliteKeyStore : IKeyStore
     private async Task SaveMemoriesAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_userMemories);
-        await _db.SetStringAsync(UserMemoriesKey, json, ct);
+        await SetItemAsync(UserMemoriesKey, json, ct);
     }
 
     public string BuildUserContextForPrompt()
@@ -224,9 +274,9 @@ public class SqliteKeyStore : IKeyStore
     {
         _lastSelectedModel = (modelId ?? "").Trim();
         if (string.IsNullOrEmpty(_lastSelectedModel))
-            await _db.RemoveAsync(LastSelectedModelKey, ct);
+            await RemoveItemAsync(LastSelectedModelKey, ct);
         else
-            await _db.SetStringAsync(LastSelectedModelKey, _lastSelectedModel, ct);
+            await SetItemAsync(LastSelectedModelKey, _lastSelectedModel, ct);
     }
 
     public string GetKey(string providerId) =>
@@ -240,7 +290,7 @@ public class SqliteKeyStore : IKeyStore
             _providerKeys[providerId] = key.Trim();
 
         var json = JsonSerializer.Serialize(_providerKeys);
-        await _db.SetStringAsync(KeysStorageKey, json, ct);
+        await SetItemAsync(KeysStorageKey, json, ct);
     }
 
     public async Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default)
@@ -250,7 +300,7 @@ public class SqliteKeyStore : IKeyStore
         _providerKeys["openrouter"] = (openrouter ?? "").Trim();
 
         var json = JsonSerializer.Serialize(_providerKeys);
-        await _db.SetStringAsync(KeysStorageKey, json, ct);
+        await SetItemAsync(KeysStorageKey, json, ct);
     }
 
     public string OllamaBaseUrl => _ollamaConfig.BaseUrl ?? "http://localhost:11434";
@@ -392,7 +442,7 @@ public class SqliteKeyStore : IKeyStore
     private async Task SaveOllamaConfigAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_ollamaConfig);
-        await _db.SetStringAsync(OllamaConfigKey, json, ct);
+        await SetItemAsync(OllamaConfigKey, json, ct);
     }
 
     public async Task RefreshOllamaModelsFromServerAsync(HttpClient http, string? baseUrl = null, CancellationToken ct = default)
@@ -502,7 +552,7 @@ public class SqliteKeyStore : IKeyStore
     private async Task SaveMcpEnabledAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_enabledMcpServers.ToList());
-        await _db.SetStringAsync(McpEnabledKey, json, ct);
+        await SetItemAsync(McpEnabledKey, json, ct);
     }
 
     public string GetMcpToken(string serverName) =>
@@ -518,7 +568,7 @@ public class SqliteKeyStore : IKeyStore
             _mcpTokens[serverName] = token.Trim();
 
         var json = JsonSerializer.Serialize(_mcpTokens);
-        await _db.SetStringAsync(McpTokensKey, json, ct);
+        await SetItemAsync(McpTokensKey, json, ct);
     }
 
     public IReadOnlyDictionary<string, string> GetAllMcpTokens() =>
@@ -559,13 +609,13 @@ public class SqliteKeyStore : IKeyStore
     private async Task SaveCustomConnectorsAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_customMcpConnectors);
-        await _db.SetStringAsync(McpCustomConnectorsKey, json, ct);
+        await SetItemAsync(McpCustomConnectorsKey, json, ct);
     }
 
     private async Task SaveMcpTokensAsync(CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(_mcpTokens);
-        await _db.SetStringAsync(McpTokensKey, json, ct);
+        await SetItemAsync(McpTokensKey, json, ct);
     }
 
     public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";
@@ -588,7 +638,7 @@ public class SqliteKeyStore : IKeyStore
             DeviceSummaryUpdatedAt = _homeAssistantConfig.DeviceSummaryUpdatedAt
         };
         var json = JsonSerializer.Serialize(_homeAssistantConfig);
-        await _db.SetStringAsync(HomeAssistantConfigKey, json, ct);
+        await SetItemAsync(HomeAssistantConfigKey, json, ct);
     }
 
     public async Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default)
@@ -596,6 +646,6 @@ public class SqliteKeyStore : IKeyStore
         _homeAssistantConfig.CachedDeviceSummary = summary ?? "";
         _homeAssistantConfig.DeviceSummaryUpdatedAt = DateTime.UtcNow;
         var json = JsonSerializer.Serialize(_homeAssistantConfig);
-        await _db.SetStringAsync(HomeAssistantConfigKey, json, ct);
+        await SetItemAsync(HomeAssistantConfigKey, json, ct);
     }
 }

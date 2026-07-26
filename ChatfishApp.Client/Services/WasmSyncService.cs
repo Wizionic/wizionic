@@ -45,6 +45,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string DeviceIdKey = "chatfish-device-id";
     private const string DeviceNameKey = "chatfish-device-name";
     private const string AiServerDeviceIdKey = "chatfish-ai-server-device-id";
+    private const string AiServerNameKey = "chatfish-ai-server-name";
+    private const string KnownDevicesKey = "chatfish-known-devices";
     private const string SyncTargetDevicesKey = "chatfish-sync-target-devices";
     private const string AutoSyncChatKey = "chatfish-auto-sync-chat";
     private const string AutoSyncNotesKey = "chatfish-auto-sync-notes";
@@ -57,8 +59,13 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 
     public bool IsConnected => _hub?.State == HubConnectionState.Connected;
 
-    /// <summary>Device ID of the peer browser that handles AI completions for this client.</summary>
+    /// <summary>Device ID of the peer browser that handles AI completions for this client (per-user prefs).</summary>
     public string? AiServerDeviceId { get; private set; }
+
+    /// <summary>Last known friendly name of the selected AI server (per-user; used when the peer is absent from presence).</summary>
+    private string? _aiServerName;
+
+    private List<KnownDeviceRecord> _knownDevices = new();
 
     /// <summary>Models available on the selected AI server device (populated over WebRTC).</summary>
     public IReadOnlyList<SyncModelInfo> RemoteModels { get; private set; } = Array.Empty<SyncModelInfo>();
@@ -144,6 +151,28 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 
     private async void OnAuthChanged()
     {
+        try
+        {
+            AiServerDeviceId = await GetUserSettingAsync(AiServerDeviceIdKey);
+            if (string.IsNullOrWhiteSpace(AiServerDeviceId))
+                AiServerDeviceId = null;
+            _aiServerName = await GetUserSettingAsync(AiServerNameKey);
+            await LoadSyncPreferencesAsync();
+            await LoadKnownDevicesAsync();
+            Devices = DeviceListMerger.Merge(
+                Array.Empty<SyncDeviceInfo>(),
+                _knownDevices,
+                AiServerDeviceId,
+                _aiServerName);
+            await _keyStore.LoadAsync();
+            try { await _modelCatalog.RefreshAsync(); } catch { /* optional */ }
+            OnChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSync] Auth-changed store reload failed: {ex.Message}");
+        }
+
         // If the user just logged in (or out), react.
         if (_auth.IsAuthenticated)
         {
@@ -154,6 +183,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         {
             await StopAsync();
             Devices = Array.Empty<SyncDeviceInfo>();
+            _knownDevices = new();
             OnChanged?.Invoke();
         }
     }
@@ -218,12 +248,20 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             }
         }
 
-        // Restore persisted AI server preference (if any).
-        AiServerDeviceId = await _js.InvokeAsync<string?>("localStorage.getItem", AiServerDeviceIdKey);
+        // Restore persisted AI server preference (if any) — per user.
+        AiServerDeviceId = await GetUserSettingAsync(AiServerDeviceIdKey);
         if (string.IsNullOrWhiteSpace(AiServerDeviceId))
             AiServerDeviceId = null;
+        _aiServerName = await GetUserSettingAsync(AiServerNameKey);
 
         await LoadSyncPreferencesAsync();
+        await LoadKnownDevicesAsync();
+        // Show roster immediately (offline peers) before hub connects.
+        Devices = DeviceListMerger.Merge(
+            Array.Empty<SyncDeviceInfo>(),
+            _knownDevices,
+            AiServerDeviceId,
+            _aiServerName);
 
         OnChanged?.Invoke();
     }
@@ -233,7 +271,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         try
         {
             _syncTargetDeviceIds.Clear();
-            var targetsJson = await _js.InvokeAsync<string?>("localStorage.getItem", SyncTargetDevicesKey);
+            var targetsJson = await GetUserSettingAsync(SyncTargetDevicesKey);
             if (!string.IsNullOrWhiteSpace(targetsJson))
             {
                 var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(targetsJson);
@@ -245,11 +283,11 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             }
 
             AutoSyncChatHistory = string.Equals(
-                await _js.InvokeAsync<string?>("localStorage.getItem", AutoSyncChatKey),
+                await GetUserSettingAsync(AutoSyncChatKey),
                 "true",
                 StringComparison.Ordinal);
             AutoSyncNotes = string.Equals(
-                await _js.InvokeAsync<string?>("localStorage.getItem", AutoSyncNotesKey),
+                await GetUserSettingAsync(AutoSyncNotesKey),
                 "true",
                 StringComparison.Ordinal);
         }
@@ -261,14 +299,108 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinatorWired();
     }
 
+    private async Task LoadKnownDevicesAsync()
+    {
+        try
+        {
+            var json = await GetUserSettingAsync(KnownDevicesKey);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                _knownDevices = new();
+                return;
+            }
+
+            _knownDevices = System.Text.Json.JsonSerializer.Deserialize<List<KnownDeviceRecord>>(json)
+                            ?? new List<KnownDeviceRecord>();
+        }
+        catch
+        {
+            _knownDevices = new();
+        }
+    }
+
+    private async Task SaveKnownDevicesAsync()
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(_knownDevices);
+            await SetUserSettingAsync(KnownDevicesKey, json);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+
+    /// <summary>
+    /// Apply hub presence list merged with the local per-user known-devices roster
+    /// so peers still appear offline after server restarts or when not currently connected.
+    /// </summary>
+    private async Task ApplyDevicesFromServerAsync(IReadOnlyList<SyncDeviceInfo>? serverList)
+    {
+        _knownDevices = DeviceListMerger.UpsertFromServer(_knownDevices, serverList);
+        await SaveKnownDevicesAsync();
+
+        // Keep AI server name in sync when we still see the peer live.
+        if (!string.IsNullOrEmpty(AiServerDeviceId) && serverList != null)
+        {
+            var live = serverList.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase));
+            if (live != null && !string.IsNullOrWhiteSpace(live.Name))
+            {
+                _aiServerName = live.Name;
+                await SetUserSettingAsync(AiServerNameKey, _aiServerName);
+            }
+        }
+
+        Devices = DeviceListMerger.Merge(serverList, _knownDevices, AiServerDeviceId, _aiServerName);
+    }
+
+    private string UserPrefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
+
+    private async Task<string?> GetUserSettingAsync(string baseKey)
+    {
+        var nk = UserPrefixed(baseKey);
+        var value = await _js.InvokeAsync<string?>("localStorage.getItem", nk);
+        if (value != null)
+            return value;
+
+        // One-time migrate from pre-multi-user unprefixed keys.
+        var legacy = await _js.InvokeAsync<string?>("localStorage.getItem", baseKey);
+        if (legacy != null)
+        {
+            await _js.InvokeVoidAsync("localStorage.setItem", nk, legacy);
+            // Drop legacy so clears/updates do not resurrect old values.
+            try { await _js.InvokeVoidAsync("localStorage.removeItem", baseKey); } catch { }
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private async Task SetUserSettingAsync(string baseKey, string? value)
+    {
+        var nk = UserPrefixed(baseKey);
+        if (value is null)
+        {
+            // Clear both namespaced and legacy keys so uncheck survives refresh.
+            try { await _js.InvokeVoidAsync("localStorage.removeItem", nk); } catch { }
+            try { await _js.InvokeVoidAsync("localStorage.removeItem", baseKey); } catch { }
+            return;
+        }
+
+        await _js.InvokeVoidAsync("localStorage.setItem", nk, value);
+        // Prefer namespaced storage only.
+        try { await _js.InvokeVoidAsync("localStorage.removeItem", baseKey); } catch { }
+    }
+
     public async Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds)
     {
         _syncTargetDeviceIds.Clear();
         foreach (var id in deviceIds.Where(id => !string.IsNullOrWhiteSpace(id)))
             _syncTargetDeviceIds.Add(id);
 
-        await _js.InvokeVoidAsync(
-            "localStorage.setItem",
+        await SetUserSettingAsync(
             SyncTargetDevicesKey,
             System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
         OnChanged?.Invoke();
@@ -278,7 +410,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public async Task SetAutoSyncChatHistoryAsync(bool enabled)
     {
         AutoSyncChatHistory = enabled;
-        await _js.InvokeVoidAsync("localStorage.setItem", AutoSyncChatKey, enabled ? "true" : "false");
+        await SetUserSettingAsync(AutoSyncChatKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -286,7 +418,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public async Task SetAutoSyncNotesAsync(bool enabled)
     {
         AutoSyncNotes = enabled;
-        await _js.InvokeVoidAsync("localStorage.setItem", AutoSyncNotesKey, enabled ? "true" : "false");
+        await SetUserSettingAsync(AutoSyncNotesKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -349,19 +481,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
                     .Select(d => d.DeviceId)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                Devices = list ?? Array.Empty<SyncDeviceInfo>();
-
-                if (!_devicesSnapshotInitialized)
-                {
-                    _devicesSnapshotInitialized = true;
-                    OnChanged?.Invoke();
-                    return;
-                }
-
-                                EnsureCoordinatorWired();
-                _coordinator.OnDevicesUpdated(Devices, prevOnline);
-
-                OnChanged?.Invoke();
+                _ = ApplyDevicesFromServerAndNotifyAsync(list, prevOnline);
             });
 
             WireSyncHandlers();
@@ -746,7 +866,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         if (string.IsNullOrEmpty(AiServerDeviceId)) return null;
         return Devices.FirstOrDefault(d => IsSelf(d.DeviceId) == false && string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase))?.Name
-               ?? Devices.FirstOrDefault(d => string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase))?.Name;
+               ?? Devices.FirstOrDefault(d => string.Equals(d.DeviceId, AiServerDeviceId, StringComparison.OrdinalIgnoreCase))?.Name
+               ?? _aiServerName;
     }
 
     public async Task SetAiServerDeviceAsync(string? deviceId)
@@ -756,9 +877,14 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         if (string.IsNullOrWhiteSpace(deviceId))
         {
             AiServerDeviceId = null;
-            await _js.InvokeVoidAsync("localStorage.removeItem", AiServerDeviceIdKey);
+            _aiServerName = null;
+            await SetUserSettingAsync(AiServerDeviceIdKey, null);
+            await SetUserSettingAsync(AiServerNameKey, null);
             await CloseAiProxyConnectionAsync();
             RemoteModels = Array.Empty<SyncModelInfo>();
+            // Keep known devices on the list (offline) so they can be re-selected later.
+            var live = Devices.Where(d => d.IsOnline).ToList();
+            Devices = DeviceListMerger.Merge(live, _knownDevices);
             OnChanged?.Invoke();
             return;
         }
@@ -767,13 +893,51 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             return;
 
         AiServerDeviceId = deviceId;
-        await _js.InvokeVoidAsync("localStorage.setItem", AiServerDeviceIdKey, deviceId);
+        var knownName = Devices.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? _knownDevices.FirstOrDefault(k =>
+                string.Equals(k.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase))?.Name;
+        _aiServerName = knownName;
+        await SetUserSettingAsync(AiServerDeviceIdKey, deviceId);
+        await SetUserSettingAsync(AiServerNameKey, _aiServerName);
+        _knownDevices = DeviceListMerger.Remember(_knownDevices, deviceId, _aiServerName);
+        await SaveKnownDevicesAsync();
+        Devices = DeviceListMerger.Merge(
+            Devices,
+            _knownDevices,
+            AiServerDeviceId,
+            _aiServerName);
         RemoteModels = Array.Empty<SyncModelInfo>();
         IsAiProxyConnected = false;
         AiProxyError = null;
         OnChanged?.Invoke();
 
         await EnsureAiProxyConnectionAsync();
+    }
+
+    private async Task ApplyDevicesFromServerAndNotifyAsync(
+        IReadOnlyList<SyncDeviceInfo>? list,
+        HashSet<string> prevOnline)
+    {
+        try
+        {
+            await ApplyDevicesFromServerAsync(list);
+
+            if (!_devicesSnapshotInitialized)
+            {
+                _devicesSnapshotInitialized = true;
+                OnChanged?.Invoke();
+                return;
+            }
+
+            EnsureCoordinatorWired();
+            _coordinator.OnDevicesUpdated(Devices, prevOnline);
+            OnChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] DevicesUpdated handling failed: {ex.Message}");
+        }
     }
 
     public async Task EnsureAiProxyConnectionAsync()
