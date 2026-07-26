@@ -19,8 +19,12 @@ public static class SyncFingerprint
     public static string ForConversation(string convoId, string title, List<ChatMessage> messages) =>
         Compute(ConvoSyncPayload.Serialize(convoId, title, messages));
 
-    public static string ForNote(string noteId, string title, List<ChatMessage> entries) =>
-        Compute(NoteSyncPayload.Serialize(noteId, title, entries));
+    public static string ForNote(
+        string noteId,
+        string title,
+        List<ChatMessage> entries,
+        bool isPasswordProtected = false) =>
+        Compute(NoteSyncPayload.Serialize(noteId, title, entries, isPasswordProtected));
 
     public static string ForBookmark(BrowserBookmark bookmark) =>
         Compute(BookmarkSyncPayload.Serialize(bookmark));
@@ -72,10 +76,18 @@ public record DeleteSyncPayload(string Id, long DeletedAtTicks)
     public static string AckValue(long deletedAtTicks) => $"deleted:{deletedAtTicks}";
 }
 
-public record NoteSyncPayload(string NoteId, string Title, List<ChatMessage> Entries)
+public record NoteSyncPayload(
+    string NoteId,
+    string Title,
+    List<ChatMessage> Entries,
+    bool IsPasswordProtected = false)
 {
-    public static string Serialize(string noteId, string title, List<ChatMessage> entries) =>
-        JsonSerializer.Serialize(new NoteSyncPayload(noteId, title, entries));
+    public static string Serialize(
+        string noteId,
+        string title,
+        List<ChatMessage> entries,
+        bool isPasswordProtected = false) =>
+        JsonSerializer.Serialize(new NoteSyncPayload(noteId, title, entries, isPasswordProtected));
 
     public static NoteSyncPayload? Deserialize(string json) =>
         JsonSerializer.Deserialize<NoteSyncPayload>(json);

@@ -1,14 +1,29 @@
 // Cross-component sidebar state for Blazor WebAssembly.
 // AppTopBar is statically rendered (no @rendermode) so Blazor @onclick never fires there.
 // This module owns click handling via document delegation, DOM classes, and one .NET listener.
+// Storage key is namespaced per user: {prefix}chatfish-sidebar-collapsed (see setStoragePrefix).
 window.chatfishSidebar = (function () {
-    const STORAGE_KEY = 'chatfish-sidebar-collapsed';
+    const BASE_STORAGE_KEY = 'chatfish-sidebar-collapsed';
     const LOG_PREFIX = '[chatfishSidebar]';
     const DEBUG = false;
 
+    let storagePrefix = '';
     let activeListener = null;
     let collapsedCache = null;
     let clickDelegationBound = false;
+
+    function storageKey() {
+        return (storagePrefix || '') + BASE_STORAGE_KEY;
+    }
+
+    function setStoragePrefix(prefix) {
+        const next = prefix || '';
+        if (storagePrefix === next)
+            return;
+        storagePrefix = next;
+        // Force re-read from the new namespace on next getCollapsed.
+        collapsedCache = null;
+    }
 
     function log(step, detail) {
         if (!DEBUG) return;
@@ -22,7 +37,16 @@ window.chatfishSidebar = (function () {
 
     function readStorage() {
         try {
-            const value = localStorage.getItem(STORAGE_KEY);
+            const key = storageKey();
+            let value = localStorage.getItem(key);
+            if (value === null && key !== BASE_STORAGE_KEY) {
+                // Seed from legacy unprefixed key once.
+                const legacy = localStorage.getItem(BASE_STORAGE_KEY);
+                if (legacy === '1' || legacy === '0') {
+                    localStorage.setItem(key, legacy);
+                    value = legacy;
+                }
+            }
             if (value === '1') return true;
             if (value === '0') return false;
         } catch (_) { /* private browsing */ }
@@ -31,7 +55,7 @@ window.chatfishSidebar = (function () {
 
     function writeStorage(collapsed) {
         try {
-            localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+            localStorage.setItem(storageKey(), collapsed ? '1' : '0');
         } catch (_) { /* private browsing */ }
     }
 
@@ -193,6 +217,7 @@ window.chatfishSidebar = (function () {
     }
 
     return {
+        setStoragePrefix: setStoragePrefix,
         getCollapsed: getCollapsed,
         setCollapsed: setCollapsed,
         registerListener: registerListener,

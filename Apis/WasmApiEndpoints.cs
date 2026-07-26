@@ -12,9 +12,14 @@ namespace ChatfishApp.Apis;
 /// Minimal API endpoints exposed specifically for the WASM client.
 /// 
 /// Auth surface:
-/// - POST /api/auth/request-magic-link  (PUBLIC, no auth required) → creates the short-lived magic token and sends a real email containing both a prominent clickable login link and the raw URL for copy/paste (the recipient may be on a different device/browser than the one that started the login flow).
-/// - GET  /api/auth/me                  (protected) → basic identity (email, id, has key) for a logged-in WASM client
-/// - GET  /api/user/encryption-key      (protected) → the per-user key for client-side AES-GCM (localStorage + live sync payloads)
+/// - POST /api/auth/request-magic-link  (PUBLIC) → creates the short-lived magic token and emails login code/link
+/// - POST /api/auth/verify-code         (PUBLIC) → exchange email+code for cookie session
+/// - POST /api/auth/login-password      (PUBLIC) → email+password login (generic errors; no existence/password-set clues)
+/// - POST /api/auth/logout              (PUBLIC) → clear cookie
+/// - GET  /api/auth/me                  (protected) → identity (email, id, has key, has password)
+/// - POST /api/auth/set-password        (protected) → set/change account password (min 6 chars)
+/// - POST /api/auth/verify-password     (protected) → check password (notebook unlock)
+/// - GET  /api/user/encryption-key      (protected) → per-user AES-GCM key for client storage/sync
 /// - GET  /api/keys                     (protected) → server-stored provider keys (decrypted) so WASM can import them
 ///
 /// Plus tool proxies (under /api/tools) so that agentic/tool-calling in WASM chat can use
@@ -87,6 +92,43 @@ public static class WasmApiEndpoints
             return Results.Ok(new { signedOut = true });
         });
 
+        // Password login. Always returns the same generic error so callers cannot tell
+        // whether the email exists or whether a password has been set.
+        publicAuth.MapPost("/login-password", async (HttpContext ctx, MagicLinkService magic, ChatfishDbContext db, LoginWithPassword req) =>
+        {
+            const string genericFail = "Invalid email or password.";
+
+            if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
+                return Results.Unauthorized();
+
+            var email = req.Email.Trim();
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+
+            if (user == null || string.IsNullOrEmpty(user.PasswordHash))
+            {
+                // Burn similar CPU time so absence of password is not an easy timing oracle.
+                PasswordHashService.DummyVerify(req.Password);
+                return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (!PasswordHashService.Verify(req.Password, user.PasswordHash))
+                return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+
+            // Ensure encryption key is usable (same rules as magic-link login).
+            var ready = await magic.EnsureUserReadyForSignInAsync(user);
+            if (ready == null)
+                return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+
+            await AuthSignInHelper.SignInUserAsync(ctx, ready);
+
+            return Results.Ok(new
+            {
+                success = true,
+                email = ready.Email,
+                message = "Signed in successfully."
+            });
+        });
+
         var group = endpoints.MapGroup("/api").RequireAuthorization();
 
         // Tool endpoints are intentionally *not* under the authorized group.
@@ -103,15 +145,81 @@ public static class WasmApiEndpoints
 
             // Lightweight check: does the DB row for this email have a (protected) LocalEncryptionKey?
             // The actual unprotected key bytes are returned by the dedicated endpoint below.
-            var hasKey = await db.Users.AsNoTracking()
-                .AnyAsync(u => u.Email == email && u.LocalEncryptionKey != null);
+            var row = await db.Users.AsNoTracking()
+                .Where(u => u.Email == email)
+                .Select(u => new { HasKey = u.LocalEncryptionKey != null, HasPassword = u.PasswordHash != null && u.PasswordHash != "" })
+                .FirstOrDefaultAsync();
+
+            if (row == null)
+                return Results.Unauthorized();
 
             return Results.Ok(new
             {
                 Email = email,
                 Id = user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
-                HasLocalEncryptionKey = hasKey
+                HasLocalEncryptionKey = row.HasKey,
+                HasPassword = row.HasPassword
             });
+        });
+
+        // Set or change password for the currently signed-in user.
+        // Easy requirements: minimum length only (see PasswordHashService.MinLength).
+        group.MapPost("/auth/set-password", async (ClaimsPrincipal principal, ChatfishDbContext db, SetPasswordRequest req) =>
+        {
+            var email = principal.Identity?.Name;
+            if (string.IsNullOrEmpty(email))
+                return Results.Unauthorized();
+
+            if (!PasswordHashService.MeetsRequirements(req.Password))
+                return Results.BadRequest(new { message = $"Password must be at least {PasswordHashService.MinLength} characters." });
+
+            if (!string.Equals(req.Password, req.ConfirmPassword, StringComparison.Ordinal))
+                return Results.BadRequest(new { message = "Passwords do not match." });
+
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user == null)
+                return Results.Unauthorized();
+
+            // If a password is already set, require the current one to change it.
+            if (!string.IsNullOrEmpty(user.PasswordHash))
+            {
+                if (string.IsNullOrEmpty(req.CurrentPassword) || !PasswordHashService.Verify(req.CurrentPassword, user.PasswordHash))
+                    return Results.BadRequest(new { message = "Current password is incorrect." });
+            }
+
+            user.PasswordHash = PasswordHashService.Hash(req.Password!);
+            await db.SaveChangesAsync();
+
+            return Results.Ok(new { success = true, hasPassword = true, message = "Password saved." });
+        });
+
+        // Verify the account password (used to unlock password-protected notebooks).
+        // Always the same failure message; does not reveal whether a password is set beyond 401/400.
+        group.MapPost("/auth/verify-password", async (ClaimsPrincipal principal, ChatfishDbContext db, VerifyPasswordRequest req) =>
+        {
+            const string genericFail = "Incorrect password.";
+
+            var email = principal.Identity?.Name;
+            if (string.IsNullOrEmpty(email))
+                return Results.Unauthorized();
+
+            if (string.IsNullOrEmpty(req.Password))
+                return Results.BadRequest(new { success = false, message = genericFail });
+
+            var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
+            if (user == null)
+                return Results.Unauthorized();
+
+            if (string.IsNullOrEmpty(user.PasswordHash))
+            {
+                PasswordHashService.DummyVerify(req.Password);
+                return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (!PasswordHashService.Verify(req.Password, user.PasswordHash))
+                return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+
+            return Results.Ok(new { success = true });
         });
 
         group.MapGet("/user/encryption-key", async (ClaimsPrincipal user, KeyProtectionService protector, ChatfishDbContext db) =>
@@ -275,6 +383,9 @@ public static class WasmApiEndpoints
     // Request for the public login flow (used by WASM and MAUI landing pages).
     public record RequestMagicLink(string Email);
     public record VerifyLoginCode(string Email, string Code);
+    public record LoginWithPassword(string Email, string Password);
+    public record SetPasswordRequest(string? Password, string? ConfirmPassword, string? CurrentPassword = null);
+    public record VerifyPasswordRequest(string? Password);
 
     // --- MCP Registry proxy models (clean output for the Tools page) ---
 

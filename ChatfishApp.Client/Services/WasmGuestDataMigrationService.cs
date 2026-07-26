@@ -271,7 +271,8 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
             lastUpdated = guestMeta.lastUpdated,
             syncEnabled = true,
             contentFingerprint = fingerprint,
-            deletedAt = ""
+            deletedAt = "",
+            isPasswordProtected = guestMeta.isPasswordProtected == true
         });
 
         await _js.InvokeVoidAsync("idbDeleteNoteByKey", guestMeta.key);
@@ -312,5 +313,6 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
         string lastUpdated,
         bool syncEnabled,
         string? contentFingerprint,
-        string? deletedAt);
+        string? deletedAt,
+        bool? isPasswordProtected = null);
 }

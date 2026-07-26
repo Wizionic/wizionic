@@ -67,6 +67,58 @@
             <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/settings")'>Settings</button>
             <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
         </div>
+
+        <div style="margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+            <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">
+                @(Auth.HasPassword ? "Change password" : "Add a password")
+            </h3>
+            <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                Optional. Use a password to sign in without waiting for an email code, and to unlock protected notebooks.
+                Minimum @MinPasswordLength characters.
+            </p>
+
+            @if (!string.IsNullOrEmpty(passwordMessage))
+            {
+                <div style="color: var(--color-success-fg, var(--success)); margin: 0 0 0.5rem; font-size:0.9em;">@passwordMessage</div>
+            }
+            @if (!string.IsNullOrEmpty(passwordError))
+            {
+                <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@passwordError</div>
+            }
+
+            @if (Auth.HasPassword)
+            {
+                <div style="margin-bottom:0.5rem;">
+                    <input type="password"
+                           @bind-value="currentPassword"
+                           @bind-value:event="oninput"
+                           placeholder="Current password"
+                           class="form-control"
+                           autocomplete="current-password" />
+                </div>
+            }
+            <div style="margin-bottom:0.5rem;">
+                <input type="password"
+                       @bind-value="newPassword"
+                       @bind-value:event="oninput"
+                       placeholder="New password (min @MinPasswordLength characters)"
+                       class="form-control"
+                       autocomplete="new-password" />
+            </div>
+            <div style="margin-bottom:0.75rem;">
+                <input type="password"
+                       @bind-value="confirmPassword"
+                       @bind-value:event="oninput"
+                       placeholder="Confirm new password"
+                       class="form-control"
+                       autocomplete="new-password" />
+            </div>
+            <button class="btn btn-primary"
+                    @onclick="SavePassword"
+                    disabled="@(busy || string.IsNullOrWhiteSpace(newPassword) || string.IsNullOrWhiteSpace(confirmPassword) || (Auth.HasPassword && string.IsNullOrWhiteSpace(currentPassword)))">
+                @(Auth.HasPassword ? "Update password" : "Save password")
+            </button>
+        </div>
     }
     else
     {
@@ -75,7 +127,47 @@
             <div style="color: var(--cf-error-fg); margin: 0.25rem 0 0.5rem; font-size:0.9em;">@error</div>
         }
 
-        @if (loginSent)
+        <div style="display:flex; gap:0.5rem; margin: 0.75rem 0 1rem; flex-wrap:wrap;">
+            <button type="button"
+                    class="btn @(loginMode == LoginMode.Code ? "btn-primary" : "btn-outline-secondary") btn-sm"
+                    @onclick="() => SwitchLoginMode(LoginMode.Code)"
+                    disabled="@busy">
+                Login code (email)
+            </button>
+            <button type="button"
+                    class="btn @(loginMode == LoginMode.Password ? "btn-primary" : "btn-outline-secondary") btn-sm"
+                    @onclick="() => SwitchLoginMode(LoginMode.Password)"
+                    disabled="@busy">
+                Password
+            </button>
+        </div>
+
+        @if (loginMode == LoginMode.Password)
+        {
+            <div style="display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+                <input type="email"
+                       @bind-value="email"
+                       @bind-value:event="oninput"
+                       placeholder="email address"
+                       class="form-control"
+                       autocomplete="username" />
+                <input type="password"
+                       @bind-value="passwordLogin"
+                       @bind-value:event="oninput"
+                       placeholder="password"
+                       class="form-control"
+                       autocomplete="current-password"
+                       @onkeydown="PasswordLoginKeyHandler" />
+                <div>
+                    <button class="btn btn-primary"
+                            @onclick="LoginWithPassword"
+                            disabled="@(busy || !IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))">
+                        Sign in with password
+                    </button>
+                </div>
+            </div>
+        }
+        else if (loginSent)
         {
             <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--color-info-bg); border: 1px solid var(--color-info-border); border-radius: 6px;">
                 <p style="margin:0 0 0.25rem 0;"><strong>Login code sent!</strong></p>
@@ -147,15 +239,25 @@
     [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
 
     private const string LinuxInstallCommand = "curl -fsSL https://chatfish.me/install.sh | bash";
+    private const int MinPasswordLength = 6;
     private bool _linuxInstallCopied;
     /// <summary>"windows", "linux", "mac", or null until detected.</summary>
     private string? _detectedOs;
 
+    private enum LoginMode { Code, Password }
+
     string email = "";
     string loginCode = "";
+    string passwordLogin = "";
+    string newPassword = "";
+    string confirmPassword = "";
+    string currentPassword = "";
     bool loginSent;
     bool busy;
     string? error;
+    string? passwordError;
+    string? passwordMessage;
+    LoginMode loginMode = LoginMode.Code;
 
     private async Task CopyLinuxInstallCommand()
     {
@@ -284,6 +386,13 @@
     async Task DoLogout()
     {
         await Auth.SignOutAsync();
+        passwordLogin = "";
+        newPassword = "";
+        confirmPassword = "";
+        currentPassword = "";
+        passwordError = null;
+        passwordMessage = null;
+        loginMode = LoginMode.Code;
     }
 
     void Reset()
@@ -291,6 +400,97 @@
         loginSent = false;
         loginCode = "";
         error = null;
+    }
+
+    void SwitchLoginMode(LoginMode mode)
+    {
+        loginMode = mode;
+        error = null;
+        if (mode == LoginMode.Code)
+            passwordLogin = "";
+        else
+        {
+            loginSent = false;
+            loginCode = "";
+        }
+    }
+
+    async Task LoginWithPassword()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))
+                return;
+
+            var (success, err) = await Auth.LoginWithPasswordAsync(email, passwordLogin);
+            if (!success)
+            {
+                error = err ?? "Invalid email or password.";
+                return;
+            }
+
+            passwordLogin = "";
+            if (GuestMigration is not null)
+                await GuestMigration.MigrateIfNeededAsync();
+
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task PasswordLoginKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !busy && IsValidEmail(email) && !string.IsNullOrWhiteSpace(passwordLogin))
+            await LoginWithPassword();
+    }
+
+    async Task SavePassword()
+    {
+        passwordError = null;
+        passwordMessage = null;
+        busy = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < MinPasswordLength)
+            {
+                passwordError = $"Password must be at least {MinPasswordLength} characters.";
+                return;
+            }
+
+            if (!string.Equals(newPassword, confirmPassword, StringComparison.Ordinal))
+            {
+                passwordError = "Passwords do not match.";
+                return;
+            }
+
+            var changingExisting = Auth.HasPassword;
+            var (success, err) = await Auth.SetPasswordAsync(
+                newPassword,
+                confirmPassword,
+                changingExisting ? currentPassword : null);
+
+            if (!success)
+            {
+                passwordError = err ?? "Could not save password.";
+                return;
+            }
+
+            passwordMessage = changingExisting
+                ? "Password updated."
+                : "Password saved. You can now sign in with it next time.";
+            newPassword = "";
+            confirmPassword = "";
+            currentPassword = "";
+        }
+        finally
+        {
+            busy = false;
+        }
     }
 
     private static bool IsValidEmail(string? e)

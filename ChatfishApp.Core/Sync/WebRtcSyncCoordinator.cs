@@ -233,14 +233,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             return;
         }
 
-        var dataJson = NoteSyncPayload.Serialize(noteId, title, entries);
+        var index = await _noteStore.LoadIndexAsync();
+        var isProtected = index.FirstOrDefault(n => n.Id == noteId)?.IsPasswordProtected == true;
+        var dataJson = NoteSyncPayload.Serialize(noteId, title, entries, isProtected);
         var item = new SyncQueueItem
         {
             Kind = SyncItemKind.Note,
             ItemId = noteId,
             NoteTitle = title,
             DataJson = dataJson,
-            ContentFingerprint = SyncFingerprint.ForNote(noteId, title, entries)
+            ContentFingerprint = SyncFingerprint.ForNote(noteId, title, entries, isProtected)
         };
         await EnqueueSyncAsync(targetDeviceId, item);
     }
@@ -766,10 +768,12 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         foreach (var noteId in response.NeededNotes.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var index = await _noteStore.LoadIndexAsync();
-            var title = index.FirstOrDefault(n => n.Id == noteId)?.Title ?? noteId;
+            var noteMeta = index.FirstOrDefault(n => n.Id == noteId);
+            var title = noteMeta?.Title ?? noteId;
+            var isProtected = noteMeta?.IsPasswordProtected == true;
             var entries = await _noteStore.LoadNoteAsync(noteId);
-            var dataJson = NoteSyncPayload.Serialize(noteId, title, entries);
-            var fingerprint = SyncFingerprint.ForNote(noteId, title, entries);
+            var dataJson = NoteSyncPayload.Serialize(noteId, title, entries, isProtected);
+            var fingerprint = SyncFingerprint.ForNote(noteId, title, entries, isProtected);
 
             var item = new SyncQueueItem
             {
@@ -2442,11 +2446,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             await _noteStore.SaveNoteAsync(payload.NoteId, entries);
             await _noteStore.UpdateIndexAfterSaveAsync(payload.NoteId, title, entries);
+            // Password-protection flag travels with the note payload (local sort order is device-local).
+            await _noteStore.SetPasswordProtectedAsync(payload.NoteId, payload.IsPasswordProtected);
 
             OnNoteSyncPayloadReceived?.Invoke(payload.NoteId, json, fromDeviceId);
             OnNotesChanged?.Invoke();
 
-            SyncDebugLog.Info($"Auto-saved incoming note sync for {payload.NoteId} from {fromDeviceId} ({payload.Entries.Count} entries)");
+            SyncDebugLog.Info($"Auto-saved incoming note sync for {payload.NoteId} from {fromDeviceId} ({payload.Entries.Count} entries, protected={payload.IsPasswordProtected})");
         }
         catch (Exception ex)
         {

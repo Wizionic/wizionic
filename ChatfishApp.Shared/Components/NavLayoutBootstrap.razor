@@ -1,10 +1,20 @@
 @implements IAsyncDisposable
+@using ChatfishApp.Core.Auth
 @using ChatfishApp.Core.UI
 @using ChatfishApp.Shared.Services
 @inject INavLayoutState NavLayout
+@inject IAuthService Auth
 @inject IJSRuntime JS
 
 @code {
+    private Action? _authChangedHandler;
+
+    protected override void OnInitialized()
+    {
+        _authChangedHandler = () => _ = OnAuthChangedAsync();
+        Auth.OnChanged += _authChangedHandler;
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender)
@@ -12,6 +22,7 @@
 
         try
         {
+            await UiStorageNamespace.ApplyAsync(JS, Auth);
             if (AppEnvironment.IsMaui)
                 await NavLayout.SyncFromStorageAndApplyAsync(JS);
             else
@@ -23,5 +34,24 @@
         }
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    private async Task OnAuthChangedAsync()
+    {
+        try
+        {
+            await UiStorageNamespace.ApplyAsync(JS, Auth);
+            if (AppEnvironment.IsMaui)
+                await NavLayout.SyncFromStorageAndApplyAsync(JS);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (_authChangedHandler is not null)
+            Auth.OnChanged -= _authChangedHandler;
+        return ValueTask.CompletedTask;
+    }
 }

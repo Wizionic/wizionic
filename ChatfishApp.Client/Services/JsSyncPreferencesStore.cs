@@ -1,25 +1,52 @@
+using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
 using Microsoft.JSInterop;
 
 namespace ChatfishApp.Client.Services;
 
-/// <summary>Wraps browser localStorage for sync coordinator preferences.</summary>
+/// <summary>
+/// Browser localStorage for sync coordinator preferences (per-user prefix).
+/// Device identity keys are stored outside this store.
+/// </summary>
 public sealed class JsSyncPreferencesStore : ISyncPreferencesStore
 {
     private readonly IJSRuntime _js;
+    private readonly IAuthService _auth;
 
-    public JsSyncPreferencesStore(IJSRuntime js) => _js = js;
+    public JsSyncPreferencesStore(IJSRuntime js, IAuthService auth)
+    {
+        _js = js;
+        _auth = auth;
+    }
 
-    public Task<string?> GetStringAsync(string key, CancellationToken ct = default) =>
-        _js.InvokeAsync<string?>("localStorage.getItem", ct, key).AsTask();
+    private string Prefixed(string key) => StorageNamespace.PrefixedKey(_auth, key);
+
+    public async Task<string?> GetStringAsync(string key, CancellationToken ct = default)
+    {
+        var nk = Prefixed(key);
+        var value = await _js.InvokeAsync<string?>("localStorage.getItem", ct, nk);
+        if (value != null)
+            return value;
+
+        var legacy = await _js.InvokeAsync<string?>("localStorage.getItem", ct, key);
+        if (legacy != null)
+        {
+            await _js.InvokeVoidAsync("localStorage.setItem", ct, nk, legacy);
+            return legacy;
+        }
+
+        return null;
+    }
 
     public Task SetStringAsync(string key, string? value, CancellationToken ct = default)
     {
+        var nk = Prefixed(key);
         if (value is null)
-            return _js.InvokeVoidAsync("localStorage.removeItem", ct, key).AsTask();
-        return _js.InvokeVoidAsync("localStorage.setItem", ct, key, value).AsTask();
+            return _js.InvokeVoidAsync("localStorage.removeItem", ct, nk).AsTask();
+        return _js.InvokeVoidAsync("localStorage.setItem", ct, nk, value).AsTask();
     }
 
     public Task RemoveAsync(string key, CancellationToken ct = default) =>
-        _js.InvokeVoidAsync("localStorage.removeItem", ct, key).AsTask();
+        _js.InvokeVoidAsync("localStorage.removeItem", ct, Prefixed(key)).AsTask();
 }

@@ -54,10 +54,24 @@ public class SqliteConversationStore : IConversationStore
     {
         var ns = GetPrefix();
         var metas = await _db.GetConvoMetasByNamespaceAsync(ns, ct);
-        return metas
-            .Where(m => string.IsNullOrEmpty(m.DeletedAt))
-            .OrderByDescending(m => m.LastUpdated)
-            .Select(m => new LocalConvo(m.Id, m.Title, DateTime.Parse(m.LastUpdated)))
+        var live = metas.Where(m => string.IsNullOrEmpty(m.DeletedAt)).ToList();
+
+        if (live.Count > 0 && live.All(m => m.SortOrder == 0))
+        {
+            var ordered = live.OrderByDescending(m => m.LastUpdated).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var m = ordered[i] with { SortOrder = i };
+                await _db.UpsertConvoMetaAsync(m, ct);
+                ordered[i] = m;
+            }
+            live = ordered;
+        }
+
+        return live
+            .OrderBy(m => m.SortOrder)
+            .ThenByDescending(m => m.LastUpdated)
+            .Select(m => new LocalConvo(m.Id, m.Title, DateTime.Parse(m.LastUpdated), m.SortOrder))
             .ToList();
     }
 
@@ -135,7 +149,8 @@ public class SqliteConversationStore : IConversationStore
             syncEnabled,
             DeleteSyncPayload.AckValue(deletedAt.Ticks),
             deletedAtIso,
-            existing?.TitleIsCustom ?? false), ct);
+            existing?.TitleIsCustom ?? false,
+            existing?.SortOrder ?? 0), ct);
 
         await _db.DeleteConvoContentAsync(existing?.StorageKey ?? storageKey, ct);
         return deletedAt;
@@ -175,7 +190,8 @@ public class SqliteConversationStore : IConversationStore
             syncEnabled,
             contentFingerprint,
             existing?.DeletedAt,
-            true), ct);
+            true,
+            existing?.SortOrder ?? 0), ct);
     }
 
     public async Task UpdateIndexAfterSaveAsync(string id, List<ChatMessage> messages, List<LocalConvo> currentIndex, CancellationToken ct = default)
@@ -203,6 +219,23 @@ public class SqliteConversationStore : IConversationStore
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
         var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages);
 
+        int sortOrder;
+        if (existing is null)
+        {
+            var known = currentIndex.FirstOrDefault(c => c.Id == id);
+            if (known is not null)
+                sortOrder = known.SortOrder;
+            else if (currentIndex.Count > 0)
+                // New chats appear at the top without reshuffling existing SortOrders.
+                sortOrder = currentIndex.Min(c => c.SortOrder) - 1;
+            else
+                sortOrder = 0;
+        }
+        else
+        {
+            sortOrder = existing.SortOrder;
+        }
+
         await _db.UpsertConvoMetaAsync(new SqliteHistoryDatabase.ConvoMetaRow(
             existing?.StorageKey ?? storageKey,
             id,
@@ -212,7 +245,8 @@ public class SqliteConversationStore : IConversationStore
             syncEnabled,
             contentFingerprint,
             existing?.DeletedAt,
-            titleIsCustom), ct);
+            titleIsCustom,
+            sortOrder), ct);
 
         await SetLastConvoIdAsync(id, ct);
     }
@@ -279,7 +313,23 @@ public class SqliteConversationStore : IConversationStore
             enabled,
             existing?.ContentFingerprint,
             existing?.DeletedAt,
-            existing?.TitleIsCustom ?? false), ct);
+            existing?.TitleIsCustom ?? false,
+            existing?.SortOrder ?? 0), ct);
+    }
+
+    public async Task ReorderConversationsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+    {
+        if (orderedIds.Count == 0)
+            return;
+
+        var ns = GetPrefix();
+        for (var i = 0; i < orderedIds.Count; i++)
+        {
+            var existing = await _db.GetConvoMetaByIdAsync(ns, orderedIds[i], ct);
+            if (existing == null)
+                continue;
+            await _db.UpsertConvoMetaAsync(existing with { SortOrder = i }, ct);
+        }
     }
 
     private static string StripHtmlForTitle(string htmlOrText)

@@ -95,12 +95,16 @@
                                 <td class="cf-sync-cell">
                                     @if (ShowAiServerOptions && !isSelf)
                                     {
-                                        var canUse = d.IsOnline;
                                         var isAiServerLabel = string.Equals(SyncService.AiServerDeviceId, d.DeviceId, StringComparison.OrdinalIgnoreCase);
-                                        var aiHint = d.CanRelayAi && d.AiModelCount > 0
-                                            ? $"{d.AiModelCount} model(s) advertised"
-                                            : "Models discovered after connecting";
-                                        if (canUse)
+                                        // Always allow unchecking the currently selected AI server (e.g. device went offline).
+                                        // Only require online when enabling a new AI server.
+                                        var canToggle = d.IsOnline || isAiServerLabel;
+                                        var aiHint = isAiServerLabel && !d.IsOnline
+                                            ? "Uncheck to stop routing chats through this offline device and use local AI again"
+                                            : d.CanRelayAi && d.AiModelCount > 0
+                                                ? $"{d.AiModelCount} model(s) advertised"
+                                                : "Models discovered after connecting";
+                                        if (canToggle)
                                         {
                                             <label class="ai-server-label" title="@($"Route chat completions through this device ({aiHint})")">
                                                 <input type="checkbox" checked="@isAiServerLabel" @onchange="(e) => ToggleAiServer(d.DeviceId, e)" />
@@ -109,18 +113,29 @@
                                         }
                                         else
                                         {
-                                            <label class="ai-server-label-disabled" title="Device must be online">
-                                                <input type="checkbox" checked="@isAiServerLabel" disabled />
+                                            <label class="ai-server-label-disabled" title="Device must be online to use it as an AI server">
+                                                <input type="checkbox" checked="false" disabled />
                                                 <span>Use this device for my chats</span>
                                             </label>
                                         }
-                                        if (canUse && !isAiServerLabel && d.CanRelayAi && d.AiModelCount > 0)
+                                        if (d.IsOnline && !isAiServerLabel && d.CanRelayAi && d.AiModelCount > 0)
                                         {
                                             @:<div class="ai-hint-text">@d.AiModelCount model(s) available</div>
                                         }
                                         if (isAiServerLabel)
                                         {
-                                            <span>@(SyncService.IsAiProxyConnected ? "Connected" : "Connecting")</span>
+                                            if (SyncService.IsAiProxyConnected)
+                                            {
+                                                <span>Connected</span>
+                                            }
+                                            else if (!d.IsOnline)
+                                            {
+                                                <span class="sync-warning-text">Offline — uncheck to use local AI</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Connecting</span>
+                                            }
                                             @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
                                             {
                                                 @:<span class="sync-warning-text"> &#8212; @SyncService.AiProxyError</span>
@@ -152,7 +167,19 @@
             @if (ShowAiServerOptions && !string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
                 var aiServer = devices.FirstOrDefault(d => string.Equals(d.DeviceId, SyncService.AiServerDeviceId, StringComparison.OrdinalIgnoreCase));
-                <div class="cf-sync-success">Chat AI is routed through <strong>@(aiServer?.Name ?? "selected device")</strong>@if (SyncService.RemoteModels.Any()) { <span> @SyncService.RemoteModels.Count model(s) available on Chat.</span> }</div>
+                var aiLabel = aiServer?.Name ?? "selected device";
+                var aiOffline = aiServer is null || !aiServer.IsOnline;
+                <div class="@(aiOffline ? "cf-sync-warning" : "cf-sync-success")">
+                    Chat AI is routed through <strong>@aiLabel</strong>
+                    @if (aiOffline)
+                    {
+                        <span> (offline — uncheck below or clear routing to use local AI)</span>
+                    }
+                    else if (SyncService.RemoteModels.Any())
+                    {
+                        <span> @SyncService.RemoteModels.Count model(s) available on Chat.</span>
+                    }
+                </div>
             }
 
             <div class="sync-device-name-row">
@@ -619,8 +646,18 @@
 
     private async Task ToggleAiServer(string deviceId, ChangeEventArgs e)
     {
-        if (e.Value is bool b4 && b4) await SyncService.SetAiServerDeviceAsync(deviceId);
-        else if (string.Equals(SyncService.AiServerDeviceId, deviceId, StringComparison.OrdinalIgnoreCase)) await SyncService.SetAiServerDeviceAsync(null);
+        // Blazor may report checkbox value as bool or as the string "true"/"false".
+        var enabled = e.Value is bool b
+            ? b
+            : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+
+        if (enabled)
+            await SyncService.SetAiServerDeviceAsync(deviceId);
+        else
+            // Always clear when unchecking — do not require a prior match (stale UI edge cases).
+            await SyncService.SetAiServerDeviceAsync(null);
+
+        devices = SyncService.Devices.ToList();
         StateHasChanged();
     }
 

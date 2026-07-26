@@ -96,6 +96,15 @@ public class MagicLinkService
         user.MagicLinkToken = null;
         user.MagicLinkExpiresAt = null;
 
+        return await EnsureUserReadyForSignInAsync(user);
+    }
+
+    /// <summary>
+    /// Ensures the user has a usable LocalEncryptionKey, migrating legacy protected keys if needed.
+    /// Shared by magic-link and password login so both paths behave the same.
+    /// </summary>
+    public async Task<User?> EnsureUserReadyForSignInAsync(User user)
+    {
         if (string.IsNullOrEmpty(user.LocalEncryptionKey))
             user.LocalEncryptionKey = LocalEncryptionKeyService.GenerateRawKeyBase64();
         else

@@ -4962,3 +4962,21 @@ body .message-bot,
 
 /* Self-device row highlight (theme-aware subtle bg) */
 .cf-sync-self-row { background: var(--cf-bg-subtle); border-radius:4px; margin-top:1px; }
+/* Notes sidebar drag-reorder (pointer-based; works in MAUI WebView) */
+.conversation-item[data-note-id] {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.conversation-item.note-dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+.conversation-item.note-drag-over {
+  outline: 2px dashed var(--primary-dark, #5b5fc7);
+  outline-offset: -2px;
+}
+body.note-list-reordering {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

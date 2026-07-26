@@ -1,18 +1,44 @@
 // Navigation bar layout persistence + DOM application (WASM, MAUI WebView, host shell).
+// Storage key is namespaced per user: {prefix}chatfish-nav-layout (see setStoragePrefix).
 window.chatfishNavLayout = window.chatfishNavLayout || {
 
-    storageKey: 'chatfish-nav-layout',
+    baseStorageKey: 'chatfish-nav-layout',
+    storagePrefix: '',
+
+    get storageKey() {
+        return (this.storagePrefix || '') + this.baseStorageKey;
+    },
+
+    setStoragePrefix: function (prefix) {
+        this.storagePrefix = prefix || '';
+    },
 
     normalize: function (mode) {
         return mode === 'left' ? 'left' : 'top';
     },
 
     getMode: function () {
-        return this.normalize(localStorage.getItem(this.storageKey));
+        const key = this.storageKey;
+        try {
+            let value = localStorage.getItem(key);
+            if (value !== null)
+                return this.normalize(value);
+
+            if (key !== this.baseStorageKey) {
+                const legacy = localStorage.getItem(this.baseStorageKey);
+                if (legacy !== null) {
+                    localStorage.setItem(key, legacy);
+                    return this.normalize(legacy);
+                }
+            }
+        } catch (e) { /* private browsing */ }
+        return 'top';
     },
 
     saveMode: function (mode) {
-        localStorage.setItem(this.storageKey, this.normalize(mode));
+        try {
+            localStorage.setItem(this.storageKey, this.normalize(mode));
+        } catch (e) { /* private browsing */ }
     },
 
     apply: function (mode) {

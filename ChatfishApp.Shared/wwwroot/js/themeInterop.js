@@ -1,17 +1,44 @@
 // Theme persistence + DOM application for Chatfish (WASM, MAUI WebView, host shell).
+// Storage key is namespaced per user: {prefix}chatfish-theme (see setStoragePrefix).
 window.chatfishTheme = window.chatfishTheme || {
 
-    storageKey: 'chatfish-theme',
+    baseStorageKey: 'chatfish-theme',
+    storagePrefix: '',
 
     // Dark themes for colorScheme hint
     darkThemes: { 'chatfish-dark': 1, 'dracula': 1, 'nord': 1 },
 
+    get storageKey() {
+        return (this.storagePrefix || '') + this.baseStorageKey;
+    },
+
+    setStoragePrefix: function (prefix) {
+        this.storagePrefix = prefix || '';
+    },
+
     getTheme: function () {
-        return localStorage.getItem(this.storageKey) || 'system';
+        const key = this.storageKey;
+        try {
+            let value = localStorage.getItem(key);
+            if (value !== null)
+                return value;
+
+            // Seed from legacy unprefixed key once so existing installs keep their theme.
+            if (key !== this.baseStorageKey) {
+                const legacy = localStorage.getItem(this.baseStorageKey);
+                if (legacy !== null) {
+                    localStorage.setItem(key, legacy);
+                    return legacy;
+                }
+            }
+        } catch (e) { /* private browsing */ }
+        return 'system';
     },
 
     saveTheme: function (theme) {
-        localStorage.setItem(this.storageKey, theme || 'system');
+        try {
+            localStorage.setItem(this.storageKey, theme || 'system');
+        } catch (e) { /* private browsing */ }
     },
 
     prefersDark: function () {
@@ -42,6 +69,7 @@ window.chatfishTheme = window.chatfishTheme || {
 
     applyEarly: function () {
         try {
+            // Before auth is known, use guest prefix if set; otherwise legacy/unprefixed key.
             const saved = this.getTheme();
             this.apply(saved);
         } catch (e) { }

@@ -6,6 +6,9 @@ namespace ChatfishApp.Core.Storage;
 
 public static class StorageNamespace
 {
+    /// <summary>Guest / signed-out local data prefix (matches historical chat/note isolation).</summary>
+    public const string GuestPrefix = "wasmchat-";
+
     public static string GetPrefix(IAuthService auth)
     {
         if (auth.IsAuthenticated)
@@ -16,8 +19,12 @@ public static class StorageNamespace
                 return $"e-{GetStableHash(auth.Email)}-";
         }
 
-        return "wasmchat-";
+        return GuestPrefix;
     }
+
+    /// <summary>Per-user/guest storage key: <c>{prefix}{baseKey}</c>.</summary>
+    public static string PrefixedKey(IAuthService auth, string baseKey) =>
+        GetPrefix(auth) + baseKey;
 
     private static string GetStableHash(string input)
     {
