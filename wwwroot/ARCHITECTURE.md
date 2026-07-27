@@ -151,7 +151,7 @@ Tools are composed by `CompositeToolProvider` from injectable **`IToolModule`** 
 | Module | Tools | Where it runs | Availability |
 |--------|-------|---------------|--------------|
 | **Native** (`NativeToolModule`) | `search_web`, `summarize_url`, `get_time`, `calculate`, `get_current_weather` | Server via `POST /api/tools/*` | Always |
-| **HomeAssistant** (`HomeAssistantToolModule`) | `ListLights`, `ControlLight`, `GetEntityState`, `CallService` | MAUI → direct LAN HTTP to Home Assistant | MAUI only, when HA configured |
+| **HomeAssistant** (`HomeAssistantToolModule`) | `ListEntities`, `ListLights`, `ControlLight`, `ControlMediaPlayer`, `GetEntityState`, `CallService`, `ListServices`, `ProcessConversation` | MAUI → direct LAN HTTP to Home Assistant | MAUI only, when HA configured |
 | **BrowserAgent** (`BrowserAgentToolModule`) | `navigate_to`, `get_page_content`, `click_element`, `fill_field` | MAUI → native WebView JS eval | MAUI only, when browser panel open |
 | **MCP servers** (`McpToolSource`) | User-enabled remote tools | Client calls MCP HTTP directly | When servers enabled |
 
@@ -174,21 +174,44 @@ Chatfish can agentically control a local Home Assistant instance from the MAUI d
 | Base URL | `IKeyStore.HomeAssistantBaseUrl` | e.g. `http://192.168.4.23:8123` |
 | Long-lived token | `IKeyStore.HomeAssistantToken` | Bearer token from HA Profile → Security |
 | Assistant name (wake word) | `IKeyStore.HomeAssistantAssistantName` | Default `Home` — user addresses this name in chat |
-| Device summary cache | `IKeyStore.HomeAssistantDeviceSummary` | Cleartext list of `light.*` entities refreshed on save/test |
+| Device summary cache | `IKeyStore.HomeAssistantDeviceSummary` | Cleartext multi-domain controllable entity catalog refreshed on save/test |
 
-Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in SQLite via `SqliteKeyStore` (`HomeAssistantConfig` DTO). The settings page calls `ISmartHomeService.TestConnectionAsync` and `ListLightEntitiesAsync` to validate and refresh the device list.
+Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in SQLite via `SqliteKeyStore` (`HomeAssistantConfig` DTO). The settings page calls `ISmartHomeService.TestConnectionAsync` and `BuildDeviceCatalogAsync` to validate and refresh the device list.
 
 ### Core contracts
 
 | Interface / type | Location | Role |
 |------------------|----------|------|
-| `ISmartHomeService` | `ChatfishApp.Core/SmartHome/` | `TestConnectionAsync`, `CallServiceAsync`, `GetEntityStateAsync`, `ListLightEntitiesAsync` |
+| `ISmartHomeService` | `ChatfishApp.Core/SmartHome/` | `TestConnectionAsync`, `CallServiceAsync`, `GetEntityStateAsync`, `ListEntitiesAsync`, `BuildDeviceCatalogAsync`, `ListServicesAsync`, `ProcessConversationAsync`, `ListLightEntitiesAsync` |
 | `HomeAssistantCredentials` | `ChatfishApp.Core/SmartHome/` | URL/token normalization |
 | `HomeAssistantConfig` | `ChatfishApp.Core/Storage/` | DTO for key store persistence |
 
 ### MAUI implementation
 
-`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Chatfish server or browser DevTools. It hits standard HA REST endpoints (`/api/`, `/api/states`, `/api/services/{domain}/{service}`) with `Authorization: Bearer {token}`. Proxy is disabled (`UseProxy = false`) to avoid LAN hangs.
+`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Chatfish server or browser DevTools. It hits standard HA REST endpoints with `Authorization: Bearer {token}`:
+
+| Endpoint | Use |
+|----------|-----|
+| `GET /api/` | Connection test |
+| `GET /api/states` | Entity discovery + multi-domain catalog |
+| `GET /api/states/{entity_id}` | Single entity state |
+| `GET /api/services` | List services (optional filter by domain) |
+| `POST /api/services/{domain}/{service}` | Control any device |
+| `POST /api/conversation/process` | Secondary Assist natural-language path |
+
+Proxy is disabled (`UseProxy = false`) to avoid LAN hangs.
+
+**Control strategy:** Chatfish’s selected model (Ollama or cloud) is the agent. REST tools (`ListEntities` → `CallService` / `ControlLight` / `ControlMediaPlayer`) are the primary path so any controllable domain works for any user’s HA install.
+
+**Hybrid enforcement when the model skips tools** (common with small VL models):
+
+1. First completion with HA tools available  
+2. Tool-required retry via the same function-invocation client  
+3. **Structured REST fallback** (`HomeAssistantFallback`) — parse volume/media/light intents and call HA services directly using catalog name match + domain-specific session entities (`LastMediaPlayerEntity` / `LastLightEntity`). Fixes “first volume works, follow-up fails” without relying on the model.  
+4. **Clean Assist fallback** — `POST /api/conversation/process` with natural language only (friendly names, no raw `entity_id`s, no wrong-domain last entity, strip fillers like “now” that confuse Assist)  
+5. If all fail → honest failure message (never keep a hallucinated “volume has been set”)
+
+`ProcessConversation` remains available as a model-callable tool; the auto path does not depend on the model choosing it. Small vision models (e.g. 4B VL) are weaker at multi-arg tool calls — structured fallback + Assist + `ControlMediaPlayer` mitigate that; stronger instruct models remain best for reliability.
 
 ### How chat triggers Home Assistant
 
@@ -220,10 +243,14 @@ ChatCompletionService
 
 | Tool | Purpose | Example user intent |
 |------|---------|---------------------|
-| `ListLights` | List `light.*` entities with friendly names | "Home, what lights do you know?" |
+| `ListEntities` | Discover entities by domain and/or search (primary discovery) | "Home, what media players do you see?" / find Denon by name |
+| `ListLights` | Alias for light listing | "Home, what lights do you know?" |
 | `ControlLight` | Turn on/off, brightness (0–255), color name or hex | "Home, turn off the kitchen light" / "make it blue" |
+| `ControlMediaPlayer` | play/pause/stop/on/off/volume (0–100%)/select_source | "Home, set volume to 50" / play on AVR |
 | `GetEntityState` | Read any entity state JSON | "Home, is the garage door open?" |
-| `CallService` | Generic `domain.service` with JSON `service_data` | Scenes, switches, climate, etc. |
+| `CallService` | Generic `domain.service` with JSON `service_data` (primary control) | Switches, climate, covers, scenes, advanced media |
+| `ListServices` | List HA services for a domain | When unsure of service names for an integration |
+| `ProcessConversation` | HA Assist NLU (`/api/conversation/process`) — secondary + auto-fallback | Area phrases; app also calls Assist if model skips tools |
 
 **Key files:** `HomeAssistantPage.razor`, `HomeAssistantService.cs`, `HomeAssistantToolModule.cs`, `ContextualRequestRouter.cs`, `ChatCompletionService.cs` (`BuildHomeAssistantPrompt`, `RecordHomeAssistantSessionIfNeeded`)
 

@@ -22,7 +22,15 @@ public sealed class InMemoryRoutingSessionStore : IRoutingSessionStore
 
         var session = _sessions.GetOrAdd(conversationId, _ => new RoutingSession());
         session.LastActiveModule = module;
-        session.LastEntityActedOn = entityId;
+        if (!string.IsNullOrWhiteSpace(entityId))
+        {
+            session.LastEntityActedOn = entityId;
+            if (entityId.StartsWith("media_player.", StringComparison.OrdinalIgnoreCase))
+                session.LastMediaPlayerEntity = entityId;
+            else if (entityId.StartsWith("light.", StringComparison.OrdinalIgnoreCase))
+                session.LastLightEntity = entityId;
+        }
+
         session.LastAction = action;
         session.LastToolCallAt = DateTime.UtcNow;
     }
