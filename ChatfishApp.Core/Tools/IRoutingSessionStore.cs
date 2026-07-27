@@ -7,6 +7,12 @@ public sealed class RoutingSession
     public string? LastAction { get; set; }
     public DateTime? LastToolCallAt { get; set; }
 
+    /// <summary>Last light.* entity successfully controlled in this conversation.</summary>
+    public string? LastLightEntity { get; set; }
+
+    /// <summary>Last media_player.* entity successfully controlled in this conversation.</summary>
+    public string? LastMediaPlayerEntity { get; set; }
+
     public bool IsActive(string module, TimeSpan ttl)
     {
         if (LastActiveModule != module || !LastToolCallAt.HasValue)

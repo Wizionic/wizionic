@@ -17,6 +17,7 @@ using StoreChatMessage = ChatfishApp.Core.Storage.ChatMessage;
 
 using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Chat;
+using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Tools;
 using ChatfishApp.Core.UI;
 using ChatfishApp.Shared.Services.Tools;
@@ -36,6 +37,7 @@ public sealed class ChatCompletionService : IChatCompletionService
     private readonly IRoutingSessionStore _sessions;
     private readonly IBrowserPanelState _browserPanel;
     private readonly IBrowserAgentService _browserAgent;
+    private readonly ISmartHomeService _smartHome;
     private IReadOnlyList<AITool> _currentTools = [];
     private RequestRoute? _currentRoute;
     private static readonly HttpClient OllamaHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
@@ -48,7 +50,8 @@ public sealed class ChatCompletionService : IChatCompletionService
         IRequestRouter router,
         IRoutingSessionStore sessions,
         IBrowserPanelState browserPanel,
-        IBrowserAgentService browserAgent)
+        IBrowserAgentService browserAgent,
+        ISmartHomeService smartHome)
     {
         _catalog = catalog;
         _keyStore = keyStore;
@@ -58,6 +61,7 @@ public sealed class ChatCompletionService : IChatCompletionService
         _sessions = sessions;
         _browserPanel = browserPanel;
         _browserAgent = browserAgent;
+        _smartHome = smartHome ?? throw new ArgumentNullException(nameof(smartHome));
     }
 
     public async Task<ChatCompletionResult> CompleteAsync(
@@ -202,36 +206,41 @@ public sealed class ChatCompletionService : IChatCompletionService
                     {
                         _trace.Record("⚠️ Model replied without calling Home Assistant tools — retrying with tool-required prompt.");
 
-                        if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+                        // Always re-drive the function-invocation client so tools can actually run
+                        // (raw Ollama path returns on first text and skips tool execution).
+                        var retryHistory = BuildRetryHistoryForHomeAssistant(chatHistory);
+                        try
                         {
-                            var retryHistory = BuildRetryHistoryForHomeAssistant(chatHistory);
-                            var (retryText, retrySource) = await TryOllamaRawCompletionAsync(
-                                modelId, retryHistory, supportsTools: true, contextSize, ct);
-                            if (!string.IsNullOrWhiteSpace(retryText))
-                            {
-                                responseText = retryText;
-                                extractSource = retrySource;
-                            }
-                        }
-                        else
-                        {
-                            var retryHistory = BuildRetryHistoryForHomeAssistant(chatHistory);
                             var retryResponse = await client.GetResponseAsync(retryHistory, chatOptions ?? new ChatOptions(), ct);
                             var retryText = ExtractFinalDisplayText(retryResponse);
                             if (!string.IsNullOrWhiteSpace(retryText) && !IsBogusExtractedText(retryText))
                                 responseText = retryText;
                         }
+                        catch (Exception retryEx)
+                        {
+                            _trace.Record($"⚠️ HA tool retry failed: {retryEx.Message}");
+                        }
 
                         if (!HaToolsWereInvoked())
                         {
-                            _trace.Record("⚠️ Home Assistant action was NOT performed — no tool was called.");
-                            if (ResponseClaimsHomeAssistantAction(responseText))
+                            // 1) Structured REST fallback (volume/media/lights) — survives weak tool-calling models
+                            // 2) Clean Assist sentence (no raw entity_ids, domain-correct target)
+                            // 3) Honest failure
+                            var recovered = await RecoverHomeAssistantWithoutModelToolsAsync(
+                                lastUserMessage, conversationId, ct);
+                            if (!string.IsNullOrWhiteSpace(recovered))
                             {
+                                responseText = recovered;
+                            }
+                            else
+                            {
+                                _trace.Record("⚠️ Home Assistant action was NOT performed — model, structured fallback, and Assist all failed.");
                                 var assistantName = _keyStore.HomeAssistantAssistantName;
                                 responseText =
-                                    $"I wasn't able to control your Home Assistant devices — the model answered without calling the Home Assistant tools. " +
-                                    $"Start with your assistant name (e.g. \"{assistantName}, turn off the kitchen light\") or continue within 15 minutes of a successful command. " +
-                                    "Try a model with stronger tool support (e.g. Llama 3.3 or Qwen) if this keeps happening.";
+                                    $"I wasn't able to control your Home Assistant devices — the model did not call tools, " +
+                                    "and automatic recovery (direct control + Assist) could not complete the request. " +
+                                    $"Try naming the device clearly (e.g. \"{assistantName}, set volume to 40 on Helios Denon\"), " +
+                                    "or use a model with stronger tool calling.";
                             }
                         }
                     }
@@ -560,9 +569,101 @@ public sealed class ChatCompletionService : IChatCompletionService
         var assistantName = _keyStore.HomeAssistantAssistantName;
         AppendSystemInstruction(
             retryHistory,
-            $"CRITICAL: Call ListLights or ControlLight now to perform the user's request for assistant '{assistantName}'. " +
-            "Do not answer with text only — you must invoke a Home Assistant tool.");
+            $"CRITICAL: You must invoke a Home Assistant tool now for assistant '{assistantName}'. " +
+            "For media volume/play/pause use ControlMediaPlayer (volume_percent is 0-100). " +
+            "For lights use ControlLight. Otherwise ListEntities then CallService. " +
+            "Do not answer with text only. Never claim volume, power, or play state changed without a tool call.");
         return retryHistory;
+    }
+
+    /// <summary>
+    /// When the model skips tools: structured REST control first, then clean Assist NLU.
+    /// </summary>
+    private async Task<string?> RecoverHomeAssistantWithoutModelToolsAsync(
+        string lastUserMessage,
+        string? conversationId,
+        CancellationToken ct)
+    {
+        if (!_smartHome.IsConfigured)
+            return null;
+
+        var session = _sessions.Get(conversationId);
+        var catalog = _keyStore.HomeAssistantDeviceSummary ?? "";
+        var assistantName = _keyStore.HomeAssistantAssistantName;
+
+        // --- Structured REST (volume / media / lights) ---
+        try
+        {
+            var (msg, entityId, action) = await HomeAssistantFallback.TryStructuredAsync(
+                _smartHome, _trace, lastUserMessage, assistantName, session, catalog, ct);
+            if (!string.IsNullOrWhiteSpace(msg))
+            {
+                _sessions.RecordToolInvocation(conversationId, "HomeAssistant", entityId, action);
+                return msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            _trace.Record($"⚠️ Structured HA fallback error: {ex.Message}");
+        }
+
+        // --- Assist with cleaned natural language (never append raw entity_ids) ---
+        var command = HomeAssistantFallback.BuildAssistCommand(
+            lastUserMessage, assistantName, session, catalog);
+        if (string.IsNullOrWhiteSpace(command))
+            return null;
+
+        _trace.Record($"🏠 process_conversation(auto-fallback, text=\"{TruncateForTrace(command, 120)}\")");
+        try
+        {
+            var result = await _smartHome.ProcessConversationAsync(command, conversationId: null, ct);
+            var preview = TruncateForTrace(result.Replace('\n', ' '), 400);
+            var ok = IsAssistFallbackSuccess(result);
+            _trace.Record($"   {(ok ? "✅" : "❌")} {preview}");
+
+            if (!ok)
+                return null;
+
+            // Prefer domain-correct entity for session continuity
+            var entityForSession = HomeAssistantFallback.ResolveEntity(
+                lastUserMessage, "media_player", session.LastMediaPlayerEntity, catalog)
+                ?? HomeAssistantFallback.ResolveEntity(
+                    lastUserMessage, "light", session.LastLightEntity, catalog)
+                ?? session.LastEntityActedOn;
+            _sessions.RecordToolInvocation(conversationId, "HomeAssistant", entityForSession, "process_conversation");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _trace.Record($"   ❌ Assist fallback error: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static bool IsAssistFallbackSuccess(string? result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+            return false;
+        if (result.StartsWith("Assist could not handle", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (result.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (result.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (result.StartsWith("Conversation text is required", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
+    }
+
+    private static string TruncateForTrace(string? text, int max)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= max)
+            return text ?? "";
+        return text[..max] + "…";
     }
 
     private static List<AiChatMessage> BuildRetryHistoryForBrowser(IList<AiChatMessage> chatHistory)
@@ -606,14 +707,34 @@ public sealed class ChatCompletionService : IChatCompletionService
         var assistantName = _keyStore.HomeAssistantAssistantName;
         var sb = new StringBuilder();
         sb.AppendLine($"You have access to a Home Assistant integration named \"{assistantName}\".");
-        sb.AppendLine($"When the user addresses \"{assistantName}\" directly, or continues an active smart-home session, use the Home Assistant tools (ListLights, ControlLight, GetEntityState, CallService) to fulfill the request.");
-        sb.AppendLine("You MUST call a tool before claiming you changed a device. If you do not know the entity_id, call ListLights first.");
+        sb.AppendLine($"When the user addresses \"{assistantName}\" directly, or continues an active smart-home session, control ANY Home Assistant device (lights, media players, switches, climate, covers, scenes, scripts, locks, fans, etc.) using tools.");
+        sb.AppendLine();
+        sb.AppendLine("PRIMARY workflow (REST tools — preferred for precise control):");
+        sb.AppendLine("1. If entity_id is unknown, call ListEntities with domain and/or search from the user's words (room, device name, brand).");
+        sb.AppendLine("2. Optionally GetEntityState to confirm current state.");
+        sb.AppendLine("3. Lights: ControlLight (include brightness and color when the user asks).");
+        sb.AppendLine("4. Media players (play/pause/volume/source): ControlMediaPlayer — volume_percent is 0-100 (e.g. 50 → half volume).");
+        sb.AppendLine("5. Everything else: CallService(domain, service, service_data JSON with entity_id).");
+        sb.AppendLine("6. If unsure of service names, call ListServices(domain).");
+        sb.AppendLine();
+        sb.AppendLine("SECONDARY: ProcessConversation sends natural language to HA Assist (good for area phrases). If Assist fails, use ListEntities + CallService/ControlMediaPlayer. Never claim success without a tool result.");
+        sb.AppendLine();
+        sb.AppendLine("You MUST call a tool before claiming you changed a device. Never invent entity_ids. Never refuse a device type without first calling ListEntities. Never invent volume or color changes.");
+        sb.AppendLine();
+        sb.AppendLine("Service cheat sheet:");
+        sb.AppendLine("- light: ControlLight with state on/off, optional brightness 0-255, color name or #hex");
+        sb.AppendLine("- media_player: ControlMediaPlayer (play/pause/stop/on/off/volume/select_source); or CallService volume_set with volume_level 0.0-1.0");
+        sb.AppendLine("- switch: turn_on / turn_off");
+        sb.AppendLine("- climate: set_temperature, set_hvac_mode");
+        sb.AppendLine("- cover: open_cover, close_cover, stop_cover");
+        sb.AppendLine("- scene / script: turn_on");
+        sb.AppendLine("- fan: turn_on, turn_off, set_percentage; lock: lock, unlock");
 
         var summary = _keyStore.HomeAssistantDeviceSummary;
         if (!string.IsNullOrWhiteSpace(summary))
         {
             sb.AppendLine();
-            sb.AppendLine("Current known devices:");
+            sb.AppendLine("Current known devices (may be truncated; use ListEntities for live search):");
             sb.AppendLine(summary);
         }
 
@@ -621,11 +742,16 @@ public sealed class ChatCompletionService : IChatCompletionService
         {
             sb.AppendLine();
             sb.AppendLine("ACTIVE SESSION: You are currently controlling home devices in this conversation.");
+            if (!string.IsNullOrWhiteSpace(session.LastMediaPlayerEntity))
+                sb.AppendLine($"Last media_player (use for volume/play/pause follow-ups): {session.LastMediaPlayerEntity}.");
+            if (!string.IsNullOrWhiteSpace(session.LastLightEntity))
+                sb.AppendLine($"Last light (use for light follow-ups): {session.LastLightEntity}.");
             if (!string.IsNullOrWhiteSpace(session.LastEntityActedOn))
-                sb.AppendLine($"Last entity: {session.LastEntityActedOn}.");
+                sb.AppendLine($"Most recent entity: {session.LastEntityActedOn}.");
             if (!string.IsNullOrWhiteSpace(session.LastAction))
                 sb.AppendLine($"Last action: {session.LastAction}.");
-            sb.AppendLine("Follow-up messages about the same device should use Home Assistant tools.");
+            sb.AppendLine("For 'the volume' / 'the music' always use the last media_player entity, never a light.");
+            sb.AppendLine("Follow-up messages MUST call tools (ControlMediaPlayer for volume).");
         }
 
         return sb.ToString().Trim();
@@ -640,11 +766,38 @@ public sealed class ChatCompletionService : IChatCompletionService
         string? action = null;
         foreach (var line in _trace.GetCurrentTrace())
         {
-            if (!line.Contains("control_light", StringComparison.OrdinalIgnoreCase))
-                continue;
+            if (line.Contains("control_media_player", StringComparison.OrdinalIgnoreCase))
+            {
+                entity = ExtractTraceParam(line, "entity") ?? entity;
+                action = ExtractTraceParam(line, "action") ?? action;
+            }
+            else if (line.Contains("control_light", StringComparison.OrdinalIgnoreCase))
+            {
+                entity = ExtractTraceParam(line, "entity") ?? entity;
+                action = ExtractTraceParam(line, "state") ?? action;
+            }
+            else if (line.Contains("call_service", StringComparison.OrdinalIgnoreCase))
+            {
+                var svcMatch = Regex.Match(line, @"call_service\(([^,\)]+)", RegexOptions.IgnoreCase);
+                if (svcMatch.Success)
+                    action = svcMatch.Groups[1].Value.Trim();
 
-            entity = ExtractTraceParam(line, "entity") ?? entity;
-            action = ExtractTraceParam(line, "state") ?? action;
+                // data={"entity_id": "media_player.foo"}
+                var entityMatch = Regex.Match(
+                    line,
+                    @"entity_id""\s*:\s*""([^""]+)""",
+                    RegexOptions.IgnoreCase);
+                if (entityMatch.Success)
+                    entity = entityMatch.Groups[1].Value;
+            }
+            else if (line.Contains("process_conversation", StringComparison.OrdinalIgnoreCase))
+            {
+                action = "process_conversation";
+            }
+            else if (line.Contains("list_entities", StringComparison.OrdinalIgnoreCase) && action is null)
+            {
+                action = "list_entities";
+            }
         }
 
         _sessions.RecordToolInvocation(conversationId, "HomeAssistant", entity, action);
@@ -710,7 +863,11 @@ public sealed class ChatCompletionService : IChatCompletionService
         [
             "turned on", "turned off", "turned the", "i have turned", "i've turned",
             "light is now", "light has been", "done!", "all set", "successfully turned",
-            "is now off", "is now on", "is off", "is on"
+            "is now off", "is now on", "is off", "is on",
+            "playing", "started playing", "now playing", "volume set", "volume has been set",
+            "has been set to", "set the volume", "set to 50", "set to 60",
+            "set the temperature", "opened", "closed", "activated the scene", "called the service",
+            "music is now", "enjoy your music"
         ];
 
         foreach (var marker in markers)
