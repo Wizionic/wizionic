@@ -71,7 +71,12 @@ public class SqliteConversationStore : IConversationStore
         return live
             .OrderBy(m => m.SortOrder)
             .ThenByDescending(m => m.LastUpdated)
-            .Select(m => new LocalConvo(m.Id, m.Title, DateTime.Parse(m.LastUpdated), m.SortOrder))
+            .Select(m => new LocalConvo(
+                m.Id,
+                m.Title,
+                DateTime.Parse(m.LastUpdated),
+                m.SortOrder,
+                m.IsPasswordProtected))
             .ToList();
     }
 
@@ -95,7 +100,7 @@ public class SqliteConversationStore : IConversationStore
             if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
             {
                 var messages = await LoadConversationAsync(m.Id, ct);
-                fingerprint = SyncFingerprint.ForConversation(m.Id, title, messages);
+                fingerprint = SyncFingerprint.ForConversation(m.Id, title, messages, m.IsPasswordProtected);
                 await _db.UpsertConvoMetaAsync(m with { ContentFingerprint = fingerprint }, ct);
             }
 
@@ -150,7 +155,8 @@ public class SqliteConversationStore : IConversationStore
             DeleteSyncPayload.AckValue(deletedAt.Ticks),
             deletedAtIso,
             existing?.TitleIsCustom ?? false,
-            existing?.SortOrder ?? 0), ct);
+            existing?.SortOrder ?? 0,
+            existing?.IsPasswordProtected ?? false), ct);
 
         await _db.DeleteConvoContentAsync(existing?.StorageKey ?? storageKey, ct);
         return deletedAt;
@@ -179,7 +185,8 @@ public class SqliteConversationStore : IConversationStore
         bool syncEnabled = existing?.SyncEnabled
             ?? (_auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email));
         var messages = await LoadConversationAsync(id, ct);
-        var contentFingerprint = SyncFingerprint.ForConversation(id, normalizedTitle, messages);
+        var isProtected = existing?.IsPasswordProtected ?? false;
+        var contentFingerprint = SyncFingerprint.ForConversation(id, normalizedTitle, messages, isProtected);
 
         await _db.UpsertConvoMetaAsync(new SqliteHistoryDatabase.ConvoMetaRow(
             existing?.StorageKey ?? storageKey,
@@ -191,7 +198,8 @@ public class SqliteConversationStore : IConversationStore
             contentFingerprint,
             existing?.DeletedAt,
             true,
-            existing?.SortOrder ?? 0), ct);
+            existing?.SortOrder ?? 0,
+            isProtected), ct);
     }
 
     public async Task UpdateIndexAfterSaveAsync(string id, List<ChatMessage> messages, List<LocalConvo> currentIndex, CancellationToken ct = default)
@@ -217,7 +225,8 @@ public class SqliteConversationStore : IConversationStore
 
         var now = DateTime.UtcNow.ToString("o");
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
-        var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages);
+        var isProtected = existing?.IsPasswordProtected ?? false;
+        var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages, isProtected);
 
         int sortOrder;
         if (existing is null)
@@ -246,7 +255,8 @@ public class SqliteConversationStore : IConversationStore
             contentFingerprint,
             existing?.DeletedAt,
             titleIsCustom,
-            sortOrder), ct);
+            sortOrder,
+            isProtected), ct);
 
         await SetLastConvoIdAsync(id, ct);
     }
@@ -314,7 +324,27 @@ public class SqliteConversationStore : IConversationStore
             existing?.ContentFingerprint,
             existing?.DeletedAt,
             existing?.TitleIsCustom ?? false,
-            existing?.SortOrder ?? 0), ct);
+            existing?.SortOrder ?? 0,
+            existing?.IsPasswordProtected ?? false), ct);
+    }
+
+    public async Task SetPasswordProtectedAsync(string id, bool isProtected, CancellationToken ct = default)
+    {
+        var ns = GetPrefix();
+        var existing = await _db.GetConvoMetaByIdAsync(ns, id, ct);
+        if (existing == null)
+            return;
+
+        var title = string.IsNullOrWhiteSpace(existing.Title) ? "(empty)" : existing.Title;
+        var messages = await LoadConversationAsync(id, ct);
+        var fingerprint = SyncFingerprint.ForConversation(id, title, messages, isProtected);
+
+        await _db.UpsertConvoMetaAsync(existing with
+        {
+            IsPasswordProtected = isProtected,
+            ContentFingerprint = fingerprint,
+            LastUpdated = DateTime.UtcNow.ToString("o")
+        }, ct);
     }
 
     public async Task ReorderConversationsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)

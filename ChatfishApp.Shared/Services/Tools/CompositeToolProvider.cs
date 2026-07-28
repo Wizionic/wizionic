@@ -17,18 +17,18 @@ public sealed class CompositeToolProvider : IToolProvider
         _mcpSource = mcpSource ?? throw new ArgumentNullException(nameof(mcpSource));
     }
 
-    public IReadOnlyList<AITool> GetTools() => BuildToolList(null);
+    public IReadOnlyList<AITool> GetTools() => BuildToolList(null, includeMcp: true);
 
-    public IReadOnlyList<AITool> GetToolsForModules(IEnumerable<string> moduleNames)
+    public IReadOnlyList<AITool> GetToolsForModules(IEnumerable<string> moduleNames, bool includeMcp = true)
     {
         var names = new HashSet<string>(moduleNames, StringComparer.OrdinalIgnoreCase);
-        return BuildToolList(names);
+        return BuildToolList(names, includeMcp);
     }
 
     public IReadOnlyList<IToolModule> GetActiveModules() =>
         _modules.Where(m => m.IsAvailable).ToList();
 
-    private IReadOnlyList<AITool> BuildToolList(HashSet<string>? moduleFilter)
+    private IReadOnlyList<AITool> BuildToolList(HashSet<string>? moduleFilter, bool includeMcp)
     {
         var tools = new List<AITool>();
 
@@ -43,7 +43,8 @@ public sealed class CompositeToolProvider : IToolProvider
             tools.AddRange(module.GetTools());
         }
 
-        tools.AddRange(_mcpSource.GetCurrentMcpTools());
+        if (includeMcp)
+            tools.AddRange(_mcpSource.GetCurrentMcpTools());
         return tools;
     }
 }

@@ -225,14 +225,18 @@ public static class MauiProgram
 		services.AddSingleton<NativeToolModule>();
 		services.AddSingleton<HomeAssistantToolModule>();
 		services.AddSingleton<BrowserAgentToolModule>();
+		services.AddSingleton<ChatfishApp.Shared.Services.Tools.LemonadeToolModule>();
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<HomeAssistantToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<BrowserAgentToolModule>());
+		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<ChatfishApp.Shared.Services.Tools.LemonadeToolModule>());
 		services.AddSingleton<IToolProvider, CompositeToolProvider>();
 		services.AddSingleton<ChatModelCatalogService>();
 		services.AddSingleton<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
 		services.AddSingleton<ChatCompletionService>();
 		services.AddSingleton<IChatCompletionService>(sp => sp.GetRequiredService<ChatCompletionService>());
+		services.AddSingleton<ChatfishApp.Core.Lemonade.ILemonadeImageService, ChatfishApp.Shared.Services.Lemonade.LemonadeImageService>();
+		services.AddSingleton<ChatfishApp.Core.Lemonade.ILemonadeSpeechService, ChatfishApp.Shared.Services.Lemonade.LemonadeSpeechService>();
 		services.AddSingleton<ChatAuthService>();
 		services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 		services.AddHttpClient();

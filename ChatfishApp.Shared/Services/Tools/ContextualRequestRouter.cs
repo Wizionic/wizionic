@@ -59,6 +59,41 @@ public sealed class ContextualRequestRouter : IRequestRouter
     public static bool ShouldEnforceBrowserTools(RequestRoute? route) =>
         route?.TargetModule == "BrowserAgent";
 
+    /// <summary>
+    /// Heuristic: general knowledge chat should NOT get tools (matches Lemonade pure-chat quality).
+    /// Only attach Native tools when the user clearly wants search, weather, time, or math.
+    /// </summary>
+    public static bool MessageSuggestsUtilityTools(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+
+        // Web / current info
+        if (m.Contains("search") || m.Contains("look up") || m.Contains("lookup") ||
+            m.Contains("google") || m.Contains("latest") || m.Contains("news") ||
+            m.Contains("current price") || m.Contains("today's") || m.Contains("todays") ||
+            m.Contains("what happened") || m.Contains("who won") || m.Contains("score"))
+            return true;
+
+        // Weather / time
+        if (m.Contains("weather") || m.Contains("forecast") || m.Contains("temperature") ||
+            m.Contains("what time") || m.Contains("current time") || m.Contains("utc"))
+            return true;
+
+        // Explicit math
+        if (m.Contains("calculate") || m.Contains("compute") || m.Contains("what is ") &&
+            (m.Contains("+") || m.Contains("*") || m.Contains("%") || m.Contains("divided")))
+            return true;
+
+        // URL present
+        if (m.Contains("http://") || m.Contains("https://") || m.Contains("www."))
+            return true;
+
+        return false;
+    }
+
     public static bool ContainsWakeWord(string message, string assistantName)
     {
         if (string.IsNullOrWhiteSpace(message) || string.IsNullOrWhiteSpace(assistantName))

@@ -41,6 +41,20 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
             return chatClient.AsIChatClient();
         }
 
+        if (modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
+        {
+            var lemonadeModel = modelId.Split('/', 2)[1];
+            var baseUrl = _keyStore.LemonadeBaseUrl.TrimEnd('/') + "/v1/";
+            var lemonadeKey = string.IsNullOrWhiteSpace(_keyStore.LemonadeApiKey)
+                ? "lemonade"
+                : _keyStore.LemonadeApiKey!;
+            var lemonadeCredential = new ApiKeyCredential(lemonadeKey);
+            var lemonadeOptions = new OpenAIClientOptions { Endpoint = new Uri(baseUrl) };
+            var lemonadeRoot = new OpenAIClient(lemonadeCredential, lemonadeOptions);
+            var lemonadeChat = lemonadeRoot.GetChatClient(lemonadeModel);
+            return lemonadeChat.AsIChatClient();
+        }
+
         var proxied = TryGetProxiedModel(modelId);
         if (proxied.HasValue)
         {
@@ -102,7 +116,53 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
                 "Ollama",
                 SupportsTools: settings.SupportsTools,
                 SupportsVision: settings.SupportsVision,
-                ContextSize: settings.ContextSize));
+                ContextSize: settings.ContextSize,
+                IsOllamaBackend: true));
+        }
+
+        foreach (var settings in _keyStore.LemonadeModelSettingsList)
+        {
+            var label = string.IsNullOrWhiteSpace(settings.Label) ? settings.Name : settings.Label;
+
+            // Pure modality models (TTS/STT/embeddings/rerank) stay off the chat picker.
+            // Image models ARE listed so users can pick them and type a prompt to generate.
+            if (!settings.IsChatEligible && !settings.IsImage)
+                continue;
+
+            if ((settings.IsImage || settings.IsEdit) && !settings.IsChatEligible)
+            {
+                var kind = settings.IsEdit && settings.IsImage
+                    ? "Image+Edit"
+                    : settings.IsEdit
+                        ? "Edit"
+                        : "Image";
+                result.Add(new ChatModelInfo(
+                    $"lemonade/{settings.Name}",
+                    $"{label} ({kind})",
+                    "🎨",
+                    "lemonade",
+                    "Lemonade",
+                    SupportsTools: false,
+                    SupportsVision: false,
+                    ContextSize: 0,
+                    IsLemonadeBackend: true,
+                    IsImageGeneration: true,
+                    SupportsImageEdit: settings.IsEdit));
+                continue;
+            }
+
+            var suffix = settings.IsOmniCollection ? " (Lemonade Omni)" : " (Lemonade)";
+            result.Add(new ChatModelInfo(
+                $"lemonade/{settings.Name}",
+                label + suffix,
+                settings.IsOmniCollection ? "🍋✨" : "🍋",
+                "lemonade",
+                "Lemonade",
+                SupportsTools: settings.SupportsTools,
+                SupportsVision: settings.SupportsVision,
+                ContextSize: settings.ContextSize,
+                IsOmniCollection: settings.IsOmniCollection,
+                IsLemonadeBackend: true));
         }
 
         foreach (var provider in ProviderCatalog.Providers)

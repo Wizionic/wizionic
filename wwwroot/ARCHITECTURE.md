@@ -9,7 +9,7 @@
 ## Core Values
 
 - **Privacy-first** — Chat history and notes live in the browser (IndexedDB), encrypted at rest. The server does not store conversation content for the WASM path.
-- **Local AI** — Ollama on the user's machine is a first-class provider. A logged-in device can relay AI to other devices over WebRTC.
+- **Local AI** — **Ollama** and **AMD Lemonade Server** on the user's machine are first-class providers (chat, multimodal, and Lemonade-specific modalities). A logged-in device can relay chat AI to other devices over WebRTC.
 - **Login is optional** — Guests can chat and take notes immediately. Email + magic link is only needed for cross-device sync and encrypted key distribution.
 - **Minimal server footprint** — Server handles auth, signaling, tool proxies (CORS), and CORS-restricted AI proxies. Heavy lifting runs in the browser.
 - **Tool-rich agents** — Built-in web search / URL summarization plus user-selected MCP servers, wired through `Microsoft.Extensions.AI` function calling. On MAUI, modular tools also control Home Assistant devices and an embedded browser.
@@ -68,28 +68,143 @@
 ## Chat Flow
 
 ```
-User types in Chat.razor
+User types in ChatPage.razor
         │
         ▼
-WasmChatCompletionService.CompleteAsync()
+ChatCompletionService.CompleteAsync()  (Shared)
         │
-        ├── Build history from WasmConversationStore (decrypted messages)
-        ├── Prepend system prompt (profile settings from WasmKeyStore)
-        ├── If model supports tools → UseFunctionInvocation (ME.AI)
-        │       ├── AppTools (search_web, summarize_url, get_time) via /api/tools/*
-        │       └── MCP tools from McpToolSource (user-enabled servers)
-        └── WasmAiProviderService.GetChatClientForModel()
-                ├── ollama/*     → direct to user's Ollama OpenAI-compat endpoint
+        ├── Build history from IConversationStore (decrypted messages)
+        ├── Prepend system prompt (profile settings from IKeyStore)
+        ├── Trim history to context window (reserve room for reply); track stats
+        ├── If model supports tools → PureChat vs utility tools (see Tool routing)
+        │       ├── Native tools (search_web, summarize_url, get_time, …) via /api/tools/*
+        │       ├── MCP tools from McpToolSource
+        │       └── Lemonade client tools (image/STT/TTS) when configured
+        └── ChatModelCatalogService.GetChatClientForModel()
+                ├── ollama/*     → direct to Ollama OpenAI-compat (default :11434/v1)
+                ├── lemonade/*   → direct to Lemonade OpenAI-compat (default :13305/v1)
+                │                 · image models → LemonadeImageService (not chat loop)
+                │                 · Omni collections → server-side multimodal tools
                 ├── proxied/*    → POST /api/proxy/chat (server-side key)
                 └── user keys    → direct to Groq, OpenRouter, Gemini, etc.
         │
         ▼
-Response streamed/displayed; WasmConversationStore saves encrypted JSON to IndexedDB
+Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore saves encrypted JSON
         │
-        └── If authenticated + auto-sync on → WasmSyncService queues WebRTC sync
+        └── If authenticated + auto-sync on → ISyncService queues WebRTC sync
 ```
 
-**Notes:** Parallel store (`WasmNoteStore`) with Quill HTML entries. Messages can be added from chat via "Add to notes" dialog.
+**Notes:** Parallel store (`INoteStore`) with Quill HTML entries. Messages can be added from chat via "Add to notes". Context compact (toolbar button) summarizes older turns to free window space.
+
+---
+
+## Local AI: Ollama + AMD Lemonade Server
+
+Chatfish treats **two local OpenAI-compatible servers** as first-class peers. Both are configured on **Local AI** (`LocalAiPage.razor`); settings stay on-device (`IKeyStore`).
+
+| Backend | Default base URL | Model id prefix | Catalog / metadata |
+|---------|------------------|-----------------|-------------------|
+| **Ollama** | `http://localhost:11434` | `ollama/{name}` | `/api/tags` + `/api/show`; falls back to `/v1/models` when the URL is Lemonade-compatible |
+| **Lemonade** | `http://localhost:8000` or `http://localhost:13305` (AMD installer) | `lemonade/{id}` | `/api/v1/models` or `/v1/models` (`max_context_window`, labels) |
+
+### Dual config UI
+
+- Separate base URL (and optional Lemonade API key) fields; **Refresh models** per section.
+- Per-model: label, context size, vision, tools (Ollama); Lemonade models also get modality flags from labels (`chat`, `image`, `edit`, `tts`, `transcription`, collections).
+- Pointing the **Ollama** base URL at Lemonade is supported: list + context use OpenAI-compatible endpoints when Ollama `/api/tags` / `/api/show` are missing.
+- Browser HTTPS → local HTTP is **mixed content**; prefer MAUI, or set CORS origins (`OLLAMA_ORIGINS`, `LEMONADE_ALLOWED_ORIGINS`) and avoid mixed content on the public site.
+
+### Model routing in the chat picker
+
+| Selection | Behavior |
+|-----------|----------|
+| `ollama/*` chat model | Streaming chat completion to Ollama |
+| `lemonade/*` chat model | Streaming chat completion to Lemonade |
+| `lemonade/*` **image** model (`IsImageGeneration`) | Send = image generate/edit (not the chat loop); param strip (steps, CFG, size, seed, upscale) |
+| `lemonade/*` **Omni** collection (`IsOmniCollection`) | Chat completion with **client tools disabled** so Lemonade’s server-side planner owns image/edit/TTS |
+
+Capability icons and toolbar actions (palette, mic, TTS) follow the **selected model** and whether Lemonade modalities are available.
+
+**Key files:** `LocalAiPage.razor`, `LemonadeModelSettings.cs` / `OllamaModelSettings` (Core), `LemonadeModelCatalogResolver.cs`, `OllamaCapabilitiesResolver.cs`, `WasmKeyStore` / `SqliteKeyStore`, `ChatModelCatalogService.cs`, `ChatModelInfo.cs`
+
+---
+
+## Lemonade modalities (image, speech, Omni)
+
+Beyond chat, Lemonade exposes modality-specific APIs used from `ChatPage` and optional client tools.
+
+### Image generation & edit
+
+| Capability | Service | API (typical) | UI |
+|------------|---------|---------------|-----|
+| **Generate** | `ILemonadeImageService` / `LemonadeImageService` | Lemonade images endpoint (OpenAI-style or Lemonade extensions) | Palette button / + menu when a Lemonade model is selected; advanced panel (model, steps, CFG, WxH, seed, upscale) |
+| **Edit (img2img)** | Same; only models with **`edit`** label | Edit path with source image bytes | + menu / bot ⋮ “Edit image”; edit fails on generate-only models (e.g. some Z-Image) |
+| **Upscale** | Optional post-step (e.g. RealESRGAN variants) | After generate/edit | Panel upscale selector |
+
+Results are stored as **attachments** on assistant messages (PNG base64). Copy / download via JS interop (`chatInterop.js` / `App.razor`).
+
+### Speech-to-text (STT)
+
+- `ILemonadeSpeechService` — record mic (JS WAV interop) → Lemonade **transcription** model (e.g. Whisper).
+- Mic button on the input toolbar when STT is available (not on pure image models).
+- Transcript fills the chat textarea for send.
+
+### Text-to-speech (TTS)
+
+- Same speech service → Lemonade **TTS** model (e.g. Kokoro).
+- Toolbar: auto-speak replies toggle + “read last reply”; per-message **Speak** / bot or user ⋮ **Read aloud**.
+- Playback via JS (`chatfishPlayAudioBase64`); Omni may already attach audio — prefer Omni audio over client TTS when present.
+
+### Omni collections
+
+- Models labeled as **collections / Omni** plan multimodal steps **on the Lemonade server** (image, edit, speech).
+- Chatfish runs a normal streaming completion but **disables client function-invocation** for that turn so client tools do not compete with the collection planner.
+- Embedded data-URI images/audio in the reply are extracted by `OmniMediaExtractor` into `Attachment`s for the chat UI.
+
+### Lemonade client tools (`LemonadeToolModule`)
+
+When Lemonade is configured, optional ME.AI tools can expose generate/edit/STT/TTS to **tool-capable chat models** (subject to PureChat routing). Omni turns keep client tools off.
+
+**Key files:** `LemonadeImageService.cs`, `LemonadeSpeechService.cs`, `OmniMediaExtractor.cs`, `LemonadeToolModule.cs`, `ChatPage.razor`, `chatInterop.js`, `App.razor` (mic + audio helpers)
+
+---
+
+## Streaming, generation stats, and context management
+
+### Streaming & stop
+
+- Local Ollama and Lemonade chat use `GetStreamingResponseAsync` with progressive UI updates (`onPartialText`).
+- **Stop** cancels the active `CancellationTokenSource` mid-stream.
+- `MaxOutputTokens` (e.g. 4096) caps runaway generations.
+
+### Stats line (per assistant message)
+
+Collapsible “Model reasoning / tool calls / stats” includes a compact line from `ChatCompletionStats.FormatLine()`:
+
+- **TTFT** — time to first token after the model HTTP call starts  
+- **total** — wall time for the model call  
+- **prep** — client setup before the request (if ≥ ~50 ms)  
+- **in / out** tokens, **tok/s**, **stream** / **stopped**  
+- **ctx used/limit (pct%)** — context window fill (server usage or estimate)  
+- **trimmed N** — older history messages dropped for this request  
+
+### PureChat tool routing (TTFT / quality)
+
+Dumping every tool schema into a small local model inflates prefill and can degrade answer quality. Strategy in `ChatCompletionService` + `ContextualRequestRouter.MessageSuggestsUtilityTools`:
+
+- **Default pure chat** — no Native/MCP tools for general questions (matches Lemonade’s “chat only” feel).
+- **Utility intent** — attach Native tools when the user clearly wants search, weather, time, math, or URLs.
+- HA / Browser / session routes still force their module tools when applicable.
+
+### Context window UI & compact
+
+| Mechanism | Behavior |
+|-----------|----------|
+| **Auto-trim** | Before each completion, drop oldest non-system turns so estimated tokens fit under `contextLimit − reserveOutput` |
+| **Context button** | Toolbar pill `used/limit` (e.g. `1.2k/32.8k`); **orange ≥80%**, **red ≥90%**; click runs **compact** |
+| **Compact** | Isolated summarize call over older turns → one summary assistant message; keeps last ~6 messages; frees window without full clear |
+
+**Key files:** `IChatCompletionService.cs` / `ChatCompletionStats`, `ChatCompletionService.cs` (`TrimHistoryToContext`, streaming), `ChatPage.razor` (ctx button, compact), `chatfish.css` (`.ctx-btn`)
 
 ---
 
@@ -150,9 +265,10 @@ Tools are composed by `CompositeToolProvider` from injectable **`IToolModule`** 
 
 | Module | Tools | Where it runs | Availability |
 |--------|-------|---------------|--------------|
-| **Native** (`NativeToolModule`) | `search_web`, `summarize_url`, `get_time`, `calculate`, `get_current_weather` | Server via `POST /api/tools/*` | Always |
+| **Native** (`NativeToolModule`) | `search_web`, `summarize_url`, `get_time`, `calculate`, `get_current_weather` | Server via `POST /api/tools/*` | Always (attached only when utility intent / forced route — see PureChat) |
 | **HomeAssistant** (`HomeAssistantToolModule`) | `ListEntities`, `ListLights`, `ControlLight`, `ControlMediaPlayer`, `GetEntityState`, `CallService`, `ListServices`, `ProcessConversation` | MAUI → direct LAN HTTP to Home Assistant | MAUI only, when HA configured |
 | **BrowserAgent** (`BrowserAgentToolModule`) | `navigate_to`, `get_page_content`, `click_element`, `fill_field` | MAUI → native WebView JS eval | MAUI only, when browser panel open |
+| **Lemonade** (`LemonadeToolModule`) | Image generate/edit, STT, TTS helpers | Client → Lemonade base URL | When Lemonade models/services are configured; off for Omni turns |
 | **MCP servers** (`McpToolSource`) | User-enabled remote tools | Client calls MCP HTTP directly | When servers enabled |
 
 **Routing:** Before each completion, `ContextualRequestRouter` classifies the last user message and may narrow the tool set to a single module (see [Home Assistant](#home-assistant-maui) and [Embedded Browser](#embedded-browser-maui)). `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
@@ -585,10 +701,10 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | File | Route (approx) | Description |
  |------|---------------|-------------|
  | `Components/LoginPage.razor` | `/` | Landing, magic-link login, guest continue |
- | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, tool traces |
+ | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, streaming, Lemonade image/STT/TTS, context compact, password-protect chats |
  | `Components/NotesPage.razor` | `/notes` | Notebooks, Quill entries, floating add button |
  | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets, auto-sync, AI server pick |
- | `Components/LocalAiPage.razor` | `/local-ai` | Ollama URL, model discovery |
+ | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults |
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
  | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences |
  | `Components/ToolsPage.razor` | `/tools` | Enable MCP servers and tokens |
@@ -602,20 +718,29 @@ A phone/tablet without Ollama can designate another online device as **AI server
  
  | File | Description |
  |------|-------------|
- | `Services/ChatCompletionService.cs` | Core completion loop + tool execution logic |
- | `Services/ChatModelCatalogService.cs` | Manage available AI models across providers |
+ | `Services/ChatCompletionService.cs` | Core completion loop, streaming, PureChat tools, context trim, vision proxy |
+ | `Services/ChatModelCatalogService.cs` | Manage available AI models (Ollama, Lemonade, proxied, user keys) |
+ | `Services/Lemonade/LemonadeImageService.cs` | Lemonade image generate / edit / upscale |
+ | `Services/Lemonade/LemonadeSpeechService.cs` | Lemonade STT + TTS |
+ | `Services/Lemonade/OmniMediaExtractor.cs` | Extract data-URI media from Omni replies |
  | `Services/Mcp/McpToolSource.cs` | Discover and cache MCP tools from enabled servers |
  | `Services/Tools/NativeToolModule.cs` | Server-proxied built-in tools (`search_web`, weather, etc.) |
+ | `Services/Tools/LemonadeToolModule.cs` | Client-side Lemonade modality tools for ME.AI |
  | `Services/Tools/CompositeToolProvider.cs` | Composes `IToolModule` + MCP tools |
- | `Services/Tools/ContextualRequestRouter.cs` | Wake-word / session / browser-panel routing |
+ | `Services/Tools/ContextualRequestRouter.cs` | Wake-word / session / browser-panel / utility-tool heuristics |
  
  ### Business Contracts (`ChatfishApp.Core`)
  
  | File | Description |
  |------|-------------|
- | `Storage/IConversationStore.cs` | Interface for chat history persistence |
- | `Storage/INoteStore.cs` | Interface for notes persistence |
+ | `Storage/IConversationStore.cs` | Chat history persistence + optional password-protect flag |
+ | `Storage/INoteStore.cs` | Notes persistence + password-protect flag |
  | `Storage/ICryptoService.cs` | Interface for AES-GCM encryption/decryption |
+ | `Storage/IKeyStore.cs` | Settings, Ollama/Lemonade config, API keys |
+ | `Chat/IChatCompletionService.cs` | Completion contract + `ChatCompletionStats` |
+ | `Chat/ChatModelInfo.cs` | Catalog entry (tools, vision, context, Omni, image flags) |
+ | `Lemonade/LemonadeModelCatalogResolver.cs` | Lemonade `/v1/models` → settings |
+ | `Ollama/OllamaCapabilitiesResolver.cs` | Ollama show + OpenAI-compat fallback |
  | `Sync/ISyncService.cs` | Interface for cross-device synchronization |
  | `SmartHome/ISmartHomeService.cs` | Home Assistant REST client contract |
  | `Browser/IBrowserAgentService.cs` | Embedded WebView navigation & script eval |
@@ -641,17 +766,19 @@ A phone/tablet without Ollama can designate another online device as **AI server
  
  1. Read this doc and skim `wwwroot/ROADMAP.md` for direction (not current state).
  2. For **chat/AI** changes → `ChatPage.razor`, `ChatCompletionService` (Shared), `ChatModelCatalogService`.
- 3. For **storage/privacy** → `IConversationStore`/`INoteStore` (Core) and the respective implementations in `ChatfishApp.Client` or `ChatfishApp.Maui`.
- 4. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
- 5. For **sync** → `ISyncService` (Core), `SyncPresencePage.razor`, and platform implementations of `ISyncService`.
- 6. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
- 7. For **tools/MCP** → `NativeToolModule`, `CompositeToolProvider`, `McpToolSource`, `ToolsPage.razor`.
- 8. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `ContextualRequestRouter`, `ChatCompletionService`.
- 9. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
- 10. For **embedded browser / shell (Linux)** → `Platforms/Linux/Program.cs`, `Services/Linux/*`, `WebKit.BlazorWebView.GirCore`, `MauiProgram.CreateLinuxServiceProvider`, section [Linux Desktop](#linux-desktop-maui-project-net100).
- 11. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
+ 3. For **Lemonade (image / STT / TTS / Omni)** → `LocalAiPage.razor`, `LemonadeImageService`, `LemonadeSpeechService`, `OmniMediaExtractor`, `LemonadeToolModule`, `LemonadeModelCatalogResolver`.
+ 4. For **streaming / stats / context compact** → `ChatCompletionService`, `ChatCompletionStats`, `ChatPage.razor` context button.
+ 5. For **storage/privacy** → `IConversationStore`/`INoteStore` (Core) and the respective implementations in `ChatfishApp.Client` or `ChatfishApp.Maui` (incl. password-protect flags + sync null-safe payloads).
+ 6. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
+ 7. For **sync** → `ISyncService` (Core), `SyncPresencePage.razor`, and platform implementations of `ISyncService`.
+ 8. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
+ 9. For **tools/MCP** → `NativeToolModule`, `CompositeToolProvider`, `McpToolSource`, `ToolsPage.razor`.
+ 10. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `ContextualRequestRouter`, `ChatCompletionService`.
+ 11. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
+ 12. For **embedded browser / shell (Linux)** → `Platforms/Linux/Program.cs`, `Services/Linux/*`, `WebKit.BlazorWebView.GirCore`, `MauiProgram.CreateLinuxServiceProvider`, section [Linux Desktop](#linux-desktop-maui-project-net100).
+ 13. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
 
 
 ---
 
-*Last updated: July 2026 — WASM local-storage architecture; MAUI Windows Home Assistant & WebView2 browser; Linux desktop (GirCore Adwaita + WebKitGTK Blazor + browser overlays); themes and PWA toolbar.*
+*Last updated: July 2026 — AMD Lemonade integration (dual local AI, image/edit/upscale, STT/TTS, Omni, streaming + stats, PureChat tools, context compact); password-protect chats/notes sync fix; staged chat load; WASM local-storage architecture; MAUI Windows Home Assistant & WebView2 browser; Linux desktop (GirCore Adwaita + WebKitGTK); themes and PWA toolbar.*

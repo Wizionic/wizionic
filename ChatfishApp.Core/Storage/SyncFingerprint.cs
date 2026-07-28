@@ -16,8 +16,12 @@ public static class SyncFingerprint
         return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
     }
 
-    public static string ForConversation(string convoId, string title, List<ChatMessage> messages) =>
-        Compute(ConvoSyncPayload.Serialize(convoId, title, messages));
+    public static string ForConversation(
+        string convoId,
+        string title,
+        List<ChatMessage> messages,
+        bool isPasswordProtected = false) =>
+        Compute(ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom: null, isPasswordProtected));
 
     public static string ForNote(
         string noteId,
@@ -36,15 +40,31 @@ public static class SyncFingerprint
         Compute(SidebarAppSyncPayload.Serialize(app));
 }
 
-public record ConvoSyncPayload(string ConvoId, string Title, List<ChatMessage> Messages, bool? TitleIsCustom = null)
+public record ConvoSyncPayload(
+    string ConvoId,
+    string Title,
+    List<ChatMessage> Messages,
+    bool? TitleIsCustom = null,
+    /// <summary>
+    /// Null when older peers omit the field — receiver must preserve local protection.
+    /// Explicit true/false applies remote intent (including remove protection).
+    /// </summary>
+    bool? IsPasswordProtected = null)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    public static string Serialize(string convoId, string title, List<ChatMessage> messages, bool? titleIsCustom = null) =>
-        JsonSerializer.Serialize(new ConvoSyncPayload(convoId, title, messages, titleIsCustom), JsonOpts);
+    public static string Serialize(
+        string convoId,
+        string title,
+        List<ChatMessage> messages,
+        bool? titleIsCustom = null,
+        bool isPasswordProtected = false) =>
+        JsonSerializer.Serialize(
+            new ConvoSyncPayload(convoId, title, messages, titleIsCustom, isPasswordProtected),
+            JsonOpts);
 
     public static ConvoSyncPayload? Deserialize(string json) => TryDeserialize(json);
 
@@ -80,17 +100,37 @@ public record NoteSyncPayload(
     string NoteId,
     string Title,
     List<ChatMessage> Entries,
-    bool IsPasswordProtected = false)
+    /// <summary>
+    /// Null when older peers omit the field — receiver must preserve local protection.
+    /// Explicit true/false applies remote intent (including remove protection).
+    /// </summary>
+    bool? IsPasswordProtected = null)
 {
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     public static string Serialize(
         string noteId,
         string title,
         List<ChatMessage> entries,
         bool isPasswordProtected = false) =>
-        JsonSerializer.Serialize(new NoteSyncPayload(noteId, title, entries, isPasswordProtected));
+        JsonSerializer.Serialize(
+            new NoteSyncPayload(noteId, title, entries, isPasswordProtected),
+            JsonOpts);
 
-    public static NoteSyncPayload? Deserialize(string json) =>
-        JsonSerializer.Deserialize<NoteSyncPayload>(json);
+    public static NoteSyncPayload? Deserialize(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<NoteSyncPayload>(json, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 public record BookmarkSyncPayload(BrowserBookmark Bookmark)
