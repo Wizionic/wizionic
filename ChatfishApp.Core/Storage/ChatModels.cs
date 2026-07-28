@@ -1,6 +1,11 @@
 namespace ChatfishApp.Core.Storage;
 
-public record LocalConvo(string Id, string Title, DateTime LastUpdated, int SortOrder = 0);
+public record LocalConvo(
+    string Id,
+    string Title,
+    DateTime LastUpdated,
+    int SortOrder = 0,
+    bool IsPasswordProtected = false);
 
 public record LocalNote(
     string Id,
@@ -37,4 +42,6 @@ public record ChatMessage(
     string? ContentFormat = null,
     string? ItemId = null,
     DateTime? ModifiedAt = null,
-    DateTime? DeletedAt = null);
+    DateTime? DeletedAt = null,
+    /// <summary>Compact generation metrics (TTFT, total time, tokens) for the UI footer.</summary>
+    string? StatsLine = null);

@@ -23,6 +23,12 @@ public interface IConversationStore
     Task SetConversationSyncEnabledAsync(string id, bool enabled, CancellationToken ct = default);
 
     /// <summary>
+    /// Marks a chat as password-protected (or clears protection).
+    /// Unlocking is done in the UI by verifying the account password; this only stores the flag.
+    /// </summary>
+    Task SetPasswordProtectedAsync(string id, bool isProtected, CancellationToken ct = default);
+
+    /// <summary>
     /// Sets sidebar order for chats (stable sort; does not change LastUpdated).
     /// </summary>
     Task ReorderConversationsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default);

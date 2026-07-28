@@ -20,6 +20,7 @@ using ChatfishApp.Core.Chat;
 using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Tools;
 using ChatfishApp.Core.UI;
+using ChatfishApp.Shared.Services.Lemonade;
 using ChatfishApp.Shared.Services.Tools;
 
 namespace ChatfishApp.Shared.Services;
@@ -69,19 +70,30 @@ public sealed class ChatCompletionService : IChatCompletionService
         IReadOnlyList<StoreChatMessage> messages,
         string? currentUser = null,
         string? conversationId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<string, Task>? onPartialText = null)
     {
         if (string.IsNullOrEmpty(modelId))
             return new ChatCompletionResult("", "", "No model selected.");
 
+        var wallStart = DateTime.UtcNow;
         var modelInfo = _catalog.GetAvailableModels().FirstOrDefault(m => m.Id == modelId);
-        bool supportsTools = modelInfo?.SupportsTools ?? ResolveOllamaCapability(modelId, tools: true);
-        bool supportsVision = modelInfo?.SupportsVision ?? ResolveOllamaCapability(modelId, tools: false);
-        int contextSize = modelInfo?.ContextSize ?? ResolveOllamaContextSize(modelId);
+        bool isOmniCollection = modelInfo?.IsOmniCollection == true || IsLemonadeOmniModel(modelId);
+        bool supportsTools = modelInfo?.SupportsTools ?? ResolveLocalCapability(modelId, tools: true);
+        // Omni collections run server-side multimodal tools; client function-invocation would compete.
+        if (isOmniCollection)
+            supportsTools = false;
+        bool supportsVision = modelInfo?.SupportsVision ?? ResolveLocalCapability(modelId, tools: false)
+                              || isOmniCollection;
+        int contextSize = modelInfo?.ContextSize ?? ResolveLocalContextSize(modelId);
         bool serverVisionProxy = !supportsVision &&
             !string.IsNullOrWhiteSpace(modelInfo?.VisionProxyModelId ?? _catalog.GetProxiedVisionProxyModelId(modelId));
         bool includeImagesInHistory = supportsVision || serverVisionProxy;
 
+        // Cap runaway generations (repetition loops) unless a smaller limit is already set.
+        const int defaultMaxOutputTokens = 4096;
+        int messagesTrimmed = 0;
+        int contextLimit = contextSize > 0 ? contextSize : 8192;
 
         try
         {
@@ -93,7 +105,25 @@ public sealed class ChatCompletionService : IChatCompletionService
             if (_browserPanel.IsOpen)
                 AppendSystemInstruction(chatHistory, BuildBrowserPrompt());
 
+            // Leave room for the reply; drop oldest non-system turns if the history is too large.
+            if (contextSize > 0)
+                contextLimit = contextSize;
+            int reserveOutput = Math.Min(defaultMaxOutputTokens, Math.Max(512, contextLimit / 4));
+            chatHistory = TrimHistoryToContext(chatHistory, contextLimit, reserveOutput, out messagesTrimmed);
+
             _trace.Clear();
+            if (messagesTrimmed > 0)
+            {
+                _trace.Record(
+                    $"✂️ Context: dropped {messagesTrimmed} older message(s) to fit ~{contextLimit} token window " +
+                    $"(reserved ~{reserveOutput} for the reply).");
+            }
+            if (isOmniCollection)
+            {
+                _trace.Record(
+                    "🍋 Omni collection: Lemonade runs image/edit/TTS tools server-side. " +
+                    "Client tools disabled for this turn so the collection planner owns the loop.");
+            }
             if (!string.IsNullOrWhiteSpace(visionProxyTrace))
                 _trace.Record(visionProxyTrace);
             else if (serverVisionProxy && MessagesContainVisionAttachments(effectiveMessages, currentUser))
@@ -111,21 +141,30 @@ public sealed class ChatCompletionService : IChatCompletionService
 
             if (supportsTools)
             {
-                client = baseClient
-                    .AsBuilder()
-                    .UseFunctionInvocation()
-                    .Build();
-
                 var activeModules = _toolProvider.GetActiveModules();
                 var route = _router.ClassifyRequest(lastUserMessage, activeModules, conversationId);
                 _currentRoute = route;
-                _currentTools = route.TargetModule != null
-                    ? _toolProvider.GetToolsForModules([route.TargetModule, "Native"])
-                    : _toolProvider.GetTools();
 
-                _trace.Record(route.TargetModule != null
-                    ? $"🧭 Route: {route.Type} → {route.TargetModule}"
-                    : $"🧭 Route: {route.Type}");
+                // Tool selection strategy (critical for small local models + TTFT):
+                // - HA / Browser session: module tools + Native
+                // - Clear search/weather/time/math intent: Native only (no HA/Lemonade dump)
+                // - General knowledge chat: NO tools (matches Lemonade pure-chat quality & latency)
+                if (route.TargetModule != null)
+                {
+                    _currentTools = _toolProvider.GetToolsForModules(
+                        [route.TargetModule, "Native"], includeMcp: true);
+                    _trace.Record($"🧭 Route: {route.Type} → {route.TargetModule}");
+                }
+                else if (ContextualRequestRouter.MessageSuggestsUtilityTools(lastUserMessage))
+                {
+                    _currentTools = _toolProvider.GetToolsForModules(["Native"], includeMcp: false);
+                    _trace.Record("🧭 Route: ToolAssistedChat → Native (utility intent)");
+                }
+                else
+                {
+                    _currentTools = [];
+                    _trace.Record("🧭 Route: PureChat (no tools — faster, better factual answers)");
+                }
 
                 if (route.TargetModule == "HomeAssistant")
                 {
@@ -141,7 +180,7 @@ public sealed class ChatCompletionService : IChatCompletionService
                 var toolNames = _currentTools.OfType<AIFunction>().Select(f => f.Name).ToList();
                 _trace.Record(toolNames.Count > 0
                     ? $"🔧 Tools ({toolNames.Count}): {string.Join(", ", toolNames)}"
-                    : "🔧 Tools: none available");
+                    : "🔧 Tools: none");
 
                 if (ContextualRequestRouter.ShouldEnforceHomeAssistantTools(route))
                 {
@@ -152,13 +191,34 @@ public sealed class ChatCompletionService : IChatCompletionService
                 if (ContextualRequestRouter.ShouldEnforceBrowserTools(route))
                     AppendSystemInstruction(chatHistory, BuildBrowserToolEnforcementPrompt());
 
-                chatOptions = new ChatOptions { Tools = _currentTools.ToList() };
+                // Pure chat / empty tools: skip UseFunctionInvocation entirely (big TTFT win).
+                if (_currentTools.Count == 0)
+                {
+                    client = baseClient;
+                    chatOptions = new ChatOptions { MaxOutputTokens = defaultMaxOutputTokens };
+                    supportsTools = false;
+                }
+                else
+                {
+                    client = baseClient
+                        .AsBuilder()
+                        .UseFunctionInvocation()
+                        .Build();
+                    chatOptions = new ChatOptions
+                    {
+                        Tools = _currentTools.ToList(),
+                        MaxOutputTokens = defaultMaxOutputTokens
+                    };
+                }
             }
             else
             {
                 _currentTools = [];
+                chatOptions = new ChatOptions { MaxOutputTokens = defaultMaxOutputTokens };
+                _trace.Record("🧭 Route: PureChat (model tools disabled)");
             }
 
+            var prepMs = (DateTime.UtcNow - wallStart).TotalMilliseconds;
             const int maxAttempts = 3;
             Exception? lastEx = null;
 
@@ -168,33 +228,45 @@ public sealed class ChatCompletionService : IChatCompletionService
 
                 try
                 {
-                    var response = await client.GetResponseAsync(chatHistory, chatOptions ?? new ChatOptions(), ct);
+                    var options = chatOptions ?? new ChatOptions { MaxOutputTokens = defaultMaxOutputTokens };
+                    if (options.MaxOutputTokens is null or <= 0)
+                        options.MaxOutputTokens = defaultMaxOutputTokens;
 
-                    var reasoningTrace = CollectReasoningTrace(response);
-                    var responseText = ExtractFinalDisplayText(response);
-                    string? extractSource = null;
+                    var requestStart = DateTime.UtcNow;
+                    var (responseText, response, streamed, ttftMs, cancelled) =
+                        await GetResponsePossiblyStreamingAsync(
+                            client, chatHistory, options, modelId, onPartialText, ct, requestStart);
+
+                    var reasoningTrace = response != null ? CollectReasoningTrace(response) : "";
+                    string? extractSource = streamed ? "streaming response" : null;
 
                     // Local Ollama only: raw JSON fallback when content is empty (proxied Ollama uses ServerProxyChatClient).
                     if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase) &&
                         (string.IsNullOrWhiteSpace(responseText) || IsBogusExtractedText(responseText)))
                     {
-                        var historyForFallback = BuildFallbackHistory(chatHistory, response.Messages);
+                        var historyForFallback = response != null
+                            ? BuildFallbackHistory(chatHistory, response.Messages)
+                            : chatHistory;
                         var (fallbackText, fallbackSource) = await TryOllamaRawCompletionAsync(
                             modelId, historyForFallback, supportsTools, contextSize, ct);
                         if (!string.IsNullOrWhiteSpace(fallbackText))
                         {
                             responseText = fallbackText;
                             extractSource = fallbackSource;
+                            if (onPartialText != null)
+                                await onPartialText(responseText);
                         }
                     }
 
-                    if (string.IsNullOrWhiteSpace(responseText))
+                    if (string.IsNullOrWhiteSpace(responseText) && response != null)
                     {
                         var (extracted, source) = ExtractContentOnlyFromResponse(response);
                         if (!string.IsNullOrWhiteSpace(extracted) && !IsBogusExtractedText(extracted))
                         {
                             responseText = extracted;
                             extractSource = source;
+                            if (onPartialText != null)
+                                await onPartialText(responseText);
                         }
                     }
 
@@ -292,10 +364,82 @@ public sealed class ChatCompletionService : IChatCompletionService
                             : $"💭 Model reasoning:\n{reasoningTrace}\n\n{toolTrace}";
                     }
 
-                    var text = string.IsNullOrWhiteSpace(responseText) ? "No response." : responseText;
-                    return new ChatCompletionResult(text, toolTrace, null);
+                    var text = string.IsNullOrWhiteSpace(responseText)
+                        ? (cancelled ? "(Generation stopped.)" : "No response.")
+                        : responseText;
+                    if (cancelled && !string.IsNullOrWhiteSpace(responseText) &&
+                        !responseText.Contains("stopped", StringComparison.OrdinalIgnoreCase))
+                    {
+                        text = responseText.TrimEnd() + "\n\n*(Generation stopped.)*";
+                    }
+
+                    List<StoreAttachment>? resultAttachments = null;
+
+                    // Omni (and any response) may embed data-URI images/audio — extract to attachments.
+                    if (OmniMediaExtractor.LooksLikeEmbeddedMedia(text))
+                    {
+                        var extracted = OmniMediaExtractor.Extract(text);
+                        text = string.IsNullOrWhiteSpace(extracted.CleanText)
+                            ? (extracted.Attachments.Count > 0 ? "Generated media:" : text)
+                            : extracted.CleanText;
+                        if (extracted.Attachments.Count > 0)
+                        {
+                            resultAttachments = extracted.Attachments;
+                            _trace.Record(
+                                $"🍋 Omni media: extracted {extracted.ImageCount} image(s), {extracted.AudioCount} audio clip(s).");
+                            toolTrace = string.Join("\n", _trace.GetCurrentTrace());
+                            if (!string.IsNullOrWhiteSpace(reasoningTrace))
+                            {
+                                toolTrace = string.IsNullOrWhiteSpace(toolTrace)
+                                    ? $"💭 Model reasoning:\n{reasoningTrace}"
+                                    : $"💭 Model reasoning:\n{reasoningTrace}\n\n{toolTrace}";
+                            }
+                        }
+                    }
+
+                    var totalMs = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                    var (promptTok, completionTok, totalTok) = ExtractUsage(response, text, chatHistory);
+                    var contextUsed = (promptTok ?? 0) + (completionTok ?? 0);
+                    if (contextUsed <= 0 && promptTok == null)
+                        contextUsed = EstimateMessageListTokens(chatHistory) + EstimateTokens(text);
+                    var stats = new ChatCompletionStats(
+                        PrepMs: prepMs,
+                        TtftMs: ttftMs,
+                        TotalMs: totalMs,
+                        PromptTokens: promptTok,
+                        CompletionTokens: completionTok,
+                        TotalTokens: totalTok,
+                        Streamed: streamed,
+                        Cancelled: cancelled,
+                        ContextLimit: contextLimit > 0 ? contextLimit : null,
+                        ContextUsed: contextUsed > 0 ? contextUsed : null,
+                        MessagesTrimmed: messagesTrimmed);
+
+                    return new ChatCompletionResult(text, toolTrace, null, resultAttachments, stats);
                 }
-                catch (Exception ex) when (attempt < maxAttempts)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    var totalMs = (DateTime.UtcNow - wallStart).TotalMilliseconds;
+                    var stats = new ChatCompletionStats(
+                        PrepMs: prepMs,
+                        TtftMs: null,
+                        TotalMs: totalMs,
+                        PromptTokens: null,
+                        CompletionTokens: null,
+                        TotalTokens: null,
+                        Streamed: true,
+                        Cancelled: true,
+                        ContextLimit: contextLimit > 0 ? contextLimit : null,
+                        ContextUsed: null,
+                        MessagesTrimmed: messagesTrimmed);
+                    return new ChatCompletionResult(
+                        "(Generation stopped.)",
+                        string.Join("\n", _trace.GetCurrentTrace()),
+                        null,
+                        null,
+                        stats);
+                }
+                catch (Exception ex) when (attempt < maxAttempts && !ct.IsCancellationRequested)
                 {
                     lastEx = ex;
                     string msg = ex.Message.ToLowerInvariant();
@@ -315,6 +459,15 @@ public sealed class ChatCompletionService : IChatCompletionService
                 "",
                 exhaustedTrace,
                 $"Error calling provider after retries: {lastEx?.Message ?? "unknown"}");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new ChatCompletionResult(
+                "(Generation stopped.)",
+                string.Join("\n", _trace.GetCurrentTrace()),
+                null,
+                null,
+                new ChatCompletionStats(0, null, 0, null, null, null, Streamed: true, Cancelled: true));
         }
         catch (Exception ex)
         {
@@ -346,11 +499,14 @@ public sealed class ChatCompletionService : IChatCompletionService
         if (supportsVision || !MessagesContainVisionAttachments(messages, currentUser))
             return (messages.ToList(), null);
 
-        var proxyName = _keyStore.GetVisionProxyModelName();
-        if (string.IsNullOrWhiteSpace(proxyName))
+        var proxyModelId = _keyStore.GetVisionProxyModelName();
+        if (string.IsNullOrWhiteSpace(proxyModelId))
             return (messages.ToList(), null);
 
-        var proxyModelId = $"ollama/{proxyName}";
+        // Legacy: bare name without provider prefix → treat as Ollama.
+        if (!proxyModelId.Contains('/'))
+            proxyModelId = "ollama/" + proxyModelId;
+
         var enriched = new List<StoreChatMessage>();
         int describedCount = 0;
         int lastUserVisionIndex = -1;
@@ -392,7 +548,7 @@ public sealed class ChatCompletionService : IChatCompletionService
 
             var prefix = string.IsNullOrWhiteSpace(message.Content) ? "" : CleanTextForLlm(message.Content) + "\n\n";
             var injected = prefix +
-                "[Image context — described by vision proxy model '" + proxyName + "']\n" +
+                "[Image context — described by vision proxy model '" + proxyModelId + "']\n" +
                 string.Join("\n\n", descriptions);
 
             enriched.Add(message with { Content = injected.Trim(), Attachments = null });
@@ -401,7 +557,7 @@ public sealed class ChatCompletionService : IChatCompletionService
         if (describedCount == 0)
             return (messages.ToList(), null);
 
-        var trace = $"👁️ Vision proxy ({proxyName}) described {describedCount} attachment(s) for the text-only model.";
+        var trace = $"👁️ Vision proxy ({proxyModelId}) described {describedCount} attachment(s) for the text-only model.";
         return (enriched, trace);
     }
 
@@ -493,7 +649,7 @@ public sealed class ChatCompletionService : IChatCompletionService
         {
             var ollamaModel = proxyModelId.Split('/', 2)[1];
             var baseUrl = _keyStore.OllamaBaseUrl.TrimEnd('/') + "/v1/chat/completions";
-            var contextSize = ResolveOllamaContextSize(proxyModelId);
+            var contextSize = ResolveLocalContextSize(proxyModelId);
             var dataUrl = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
 
             var body = new Dictionary<string, object?>
@@ -1252,7 +1408,232 @@ public sealed class ChatCompletionService : IChatCompletionService
     /// Direct Ollama /v1/chat/completions call to read raw JSON (content + reasoning fields).
     /// The OpenAI SDK used by ME.AI drops Ollama's "reasoning" field during deserialization.
     /// </summary>
-    private bool ResolveOllamaCapability(string modelId, bool tools)
+    private bool IsLemonadeOmniModel(string modelId)
+    {
+        if (!modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var name = modelId.Split('/', 2)[1];
+        var settings = _keyStore.GetLemonadeModelSettings(name);
+        if (settings?.IsOmniCollection == true)
+            return true;
+        // Heuristic for models not yet refreshed with recipe metadata.
+        return name.Contains("Omni", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("collection.omni", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Streams tokens for OpenAI-compatible clients (Ollama, Lemonade, user-keyed).
+    /// Falls back to non-streaming for proxied providers or when streaming is unsupported.
+    /// </summary>
+    private async Task<(string Text, ChatResponse? Response, bool Streamed, double? TtftMs, bool Cancelled)>
+        GetResponsePossiblyStreamingAsync(
+            IChatClient client,
+            IList<AiChatMessage> chatHistory,
+            ChatOptions options,
+            string modelId,
+            Func<string, Task>? onPartialText,
+            CancellationToken ct,
+            DateTime requestStart)
+    {
+        // Prefer streaming for local OpenAI-compatible endpoints and direct cloud keys.
+        // Server proxy currently has no SSE path.
+        bool tryStream = onPartialText != null && !_catalog.IsProxiedModel(modelId);
+
+        if (tryStream)
+        {
+            var sb = new StringBuilder();
+            var updates = new List<ChatResponseUpdate>();
+            double? ttftMs = null;
+            bool gotText = false;
+
+            try
+            {
+                await foreach (var update in client.GetStreamingResponseAsync(chatHistory, options, ct))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    updates.Add(update);
+                    var delta = ExtractTextFromUpdate(update);
+                    if (string.IsNullOrEmpty(delta))
+                        continue;
+
+                    if (!gotText)
+                    {
+                        gotText = true;
+                        ttftMs = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                    }
+
+                    sb.Append(delta);
+                    await onPartialText!(sb.ToString());
+                }
+
+                ChatResponse? asResponse = null;
+                try
+                {
+                    asResponse = updates.ToChatResponse();
+                }
+                catch
+                {
+                    // Older or incomplete update sets — text alone is enough for the UI.
+                }
+
+                var text = sb.ToString().Trim();
+                if (string.IsNullOrWhiteSpace(text) && asResponse != null)
+                    text = ExtractFinalDisplayText(asResponse);
+
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    if (onPartialText != null)
+                        await onPartialText(text);
+                    return (text, asResponse, Streamed: true, ttftMs, Cancelled: false);
+                }
+
+                _trace.Record("ℹ️ Streaming returned no text; falling back to non-streaming completion.");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                var partial = sb.ToString().Trim();
+                return (partial, null, Streamed: true, ttftMs, Cancelled: true);
+            }
+            catch (NotSupportedException)
+            {
+                // e.g. ServerProxyChatClient
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException ||
+                ex.Message.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("SSE", StringComparison.OrdinalIgnoreCase))
+            {
+                _trace.Record($"ℹ️ Streaming unavailable ({ex.Message}); using non-streaming completion.");
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        var response = await client.GetResponseAsync(chatHistory, options, ct);
+        var fullText = ExtractFinalDisplayText(response);
+        var nonStreamTtft = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+        if (onPartialText != null && !string.IsNullOrWhiteSpace(fullText))
+            await onPartialText(fullText);
+        return (fullText, response, Streamed: false, TtftMs: nonStreamTtft, Cancelled: false);
+    }
+
+    private static string ExtractTextFromUpdate(ChatResponseUpdate update)
+    {
+        if (update.Contents is { Count: > 0 })
+        {
+            var parts = update.Contents
+                .OfType<TextContent>()
+                .Select(t => t.Text)
+                .Where(t => !string.IsNullOrEmpty(t));
+            return string.Concat(parts);
+        }
+
+        return update.Text ?? "";
+    }
+
+    private static (int? Prompt, int? Completion, int? Total) ExtractUsage(
+        ChatResponse? response,
+        string completionText,
+        IList<AiChatMessage> chatHistory)
+    {
+        // Prefer provider-reported usage when ME.AI exposes it.
+        try
+        {
+            if (response?.Usage is { } usage)
+            {
+                int? pin = usage.InputTokenCount is long pinL and > 0 ? (int)pinL : null;
+                int? pout = usage.OutputTokenCount is long poutL and > 0 ? (int)poutL : null;
+                int? tot = usage.TotalTokenCount is long totL and > 0
+                    ? (int)totL
+                    : (pin is int a && pout is int b ? a + b : null);
+                if (pin != null || pout != null)
+                    return (pin, pout, tot);
+            }
+        }
+        catch
+        {
+            // Usage shape varies by package version.
+        }
+
+        // Fallback: rough char/4 estimate (not model-accurate, still useful for local models).
+        int estOut = EstimateTokens(completionText);
+        int estIn = 0;
+        foreach (var m in chatHistory)
+        {
+            foreach (var c in m.Contents.OfType<TextContent>())
+                estIn += EstimateTokens(c.Text ?? "");
+        }
+        if (estIn <= 0 && estOut <= 0)
+            return (null, null, null);
+        return (estIn > 0 ? estIn : null, estOut > 0 ? estOut : null, estIn + estOut);
+    }
+
+    private static int EstimateTokens(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        // ~4 chars/token is a common English heuristic for GGUF models.
+        return Math.Max(1, (int)Math.Ceiling(text.Length / 4.0));
+    }
+
+    private static int EstimateMessageListTokens(IList<AiChatMessage> history)
+    {
+        int n = 0;
+        foreach (var m in history)
+        {
+            n += 4; // role / framing overhead
+            foreach (var c in m.Contents)
+            {
+                if (c is TextContent tc)
+                    n += EstimateTokens(tc.Text);
+                else if (c is DataContent)
+                    n += 256; // rough image/blob tax
+            }
+        }
+        return n;
+    }
+
+    /// <summary>
+    /// Drops oldest non-system messages until estimated tokens fit under <paramref name="budget"/>.
+    /// Always keeps system messages and the most recent user turn when possible.
+    /// </summary>
+    private static List<AiChatMessage> TrimHistoryToContext(
+        List<AiChatMessage> history,
+        int contextLimit,
+        int reserveOutput,
+        out int droppedMessages)
+    {
+        droppedMessages = 0;
+        if (history.Count == 0 || contextLimit <= 0)
+            return history;
+
+        int budget = Math.Max(512, contextLimit - Math.Max(256, reserveOutput));
+        if (EstimateMessageListTokens(history) <= budget)
+            return history;
+
+        var system = history.Where(m => m.Role == ChatRole.System).ToList();
+        var rest = history.Where(m => m.Role != ChatRole.System).ToList();
+
+        while (rest.Count > 1)
+        {
+            var candidate = system.Concat(rest).ToList();
+            if (EstimateMessageListTokens(candidate) <= budget)
+                break;
+
+            // Drop oldest non-system message
+            rest.RemoveAt(0);
+            droppedMessages++;
+        }
+
+        // If still over budget, drop more but keep last user message if present
+        while (rest.Count > 1 && EstimateMessageListTokens(system.Concat(rest).ToList()) > budget)
+        {
+            rest.RemoveAt(0);
+            droppedMessages++;
+        }
+
+        return system.Concat(rest).ToList();
+    }
+
+    private bool ResolveLocalCapability(string modelId, bool tools)
     {
         if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
         {
@@ -1262,17 +1643,37 @@ public sealed class ChatCompletionService : IChatCompletionService
                 return tools ? settings.SupportsTools : settings.SupportsVision;
         }
 
+        if (modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = modelId.Split('/', 2)[1];
+            var settings = _keyStore.GetLemonadeModelSettings(name);
+            if (settings != null)
+            {
+                if (settings.IsOmniCollection && !tools)
+                    return true; // vision for omni
+                return tools ? settings.SupportsTools : settings.SupportsVision;
+            }
+        }
+
         var caps = ProviderCatalog.GetCapabilitiesForModel(modelId);
         return tools ? caps.SupportsTools : caps.SupportsVision;
     }
 
-    private int ResolveOllamaContextSize(string modelId)
+    private int ResolveLocalContextSize(string modelId)
     {
-        if (!modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
-            return 0;
+        if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = modelId.Split('/', 2)[1];
+            return _keyStore.GetOllamaModelSettings(name)?.ContextSize ?? 0;
+        }
 
-        var name = modelId.Split('/', 2)[1];
-        return _keyStore.GetOllamaModelSettings(name)?.ContextSize ?? 0;
+        if (modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = modelId.Split('/', 2)[1];
+            return _keyStore.GetLemonadeModelSettings(name)?.ContextSize ?? 0;
+        }
+
+        return 0;
     }
 
     private async Task<(string Text, string? Source)> TryOllamaRawCompletionAsync(

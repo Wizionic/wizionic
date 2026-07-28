@@ -9,7 +9,8 @@ public interface IToolProvider
 {
     IReadOnlyList<AITool> GetTools();
 
-    IReadOnlyList<AITool> GetToolsForModules(IEnumerable<string> moduleNames);
+    /// <param name="includeMcp">When false, skips user-enabled MCP tools (faster pure utility turns).</param>
+    IReadOnlyList<AITool> GetToolsForModules(IEnumerable<string> moduleNames, bool includeMcp = true);
 
     IReadOnlyList<IToolModule> GetActiveModules();
 }

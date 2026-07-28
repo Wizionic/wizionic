@@ -38,7 +38,8 @@ public class WasmConversationStore : IConversationStore
         string? contentFingerprint,
         string? deletedAt,
         bool? titleIsCustom,
-        int? sortOrder = null);
+        int? sortOrder = null,
+        bool? isPasswordProtected = null);
 
     private static bool HasCustomTitle(StoredMeta? meta) => meta?.titleIsCustom == true;
 
@@ -117,7 +118,12 @@ public class WasmConversationStore : IConversationStore
         return live
             .OrderBy(m => m.sortOrder ?? 0)
             .ThenByDescending(m => m.lastUpdated)
-            .Select(m => new LocalConvo(m.id, m.title ?? "(empty)", DateTime.Parse(m.lastUpdated), m.sortOrder ?? 0))
+            .Select(m => new LocalConvo(
+                m.id,
+                m.title ?? "(empty)",
+                DateTime.Parse(m.lastUpdated),
+                m.sortOrder ?? 0,
+                m.isPasswordProtected == true))
             .ToList();
     }
 
@@ -134,7 +140,8 @@ public class WasmConversationStore : IConversationStore
             contentFingerprint = m.contentFingerprint,
             deletedAt = m.deletedAt ?? "",
             titleIsCustom = m.titleIsCustom ?? false,
-            sortOrder = m.sortOrder ?? 0
+            sortOrder = m.sortOrder ?? 0,
+            isPasswordProtected = m.isPasswordProtected == true
         });
     }
 
@@ -158,7 +165,7 @@ public class WasmConversationStore : IConversationStore
             if (!deletedAtTicks.HasValue)
             {
                 var messages = await LoadConversationAsync(m.id, ct);
-                var computed = SyncFingerprint.ForConversation(m.id, title, messages);
+                var computed = SyncFingerprint.ForConversation(m.id, title, messages, m.isPasswordProtected == true);
                 if (!string.IsNullOrEmpty(fingerprint) && !string.Equals(fingerprint, computed, StringComparison.Ordinal))
                 {
                     Console.WriteLine(
@@ -216,7 +223,8 @@ public class WasmConversationStore : IConversationStore
             contentFingerprint = fingerprint,
             deletedAt = deletedAt ?? "",
             titleIsCustom = meta.titleIsCustom ?? false,
-            sortOrder = meta.sortOrder ?? 0
+            sortOrder = meta.sortOrder ?? 0,
+            isPasswordProtected = meta.isPasswordProtected == true
         });
     }
 
@@ -241,7 +249,8 @@ public class WasmConversationStore : IConversationStore
             contentFingerprint = DeleteSyncPayload.AckValue(deletedAt.Ticks),
             deletedAt = deletedAtIso,
             titleIsCustom = existing?.titleIsCustom ?? false,
-            sortOrder = existing?.sortOrder ?? 0
+            sortOrder = existing?.sortOrder ?? 0,
+            isPasswordProtected = existing?.isPasswordProtected == true
         });
 
         await _js.InvokeVoidAsync("idbDeleteConvoContent", existing?.key ?? metaKey);
@@ -372,7 +381,8 @@ public class WasmConversationStore : IConversationStore
         bool syncEnabled = existing?.syncEnabled
             ?? (_auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email));
         var messages = await LoadConversationAsync(id, ct);
-        var contentFingerprint = SyncFingerprint.ForConversation(id, normalizedTitle, messages);
+        var isProtected = existing?.isPasswordProtected == true;
+        var contentFingerprint = SyncFingerprint.ForConversation(id, normalizedTitle, messages, isProtected);
 
         await _js.InvokeVoidAsync("idbPutMeta", new
         {
@@ -385,7 +395,8 @@ public class WasmConversationStore : IConversationStore
             contentFingerprint,
             deletedAt = existing?.deletedAt ?? "",
             titleIsCustom = true,
-            sortOrder = existing?.sortOrder ?? 0
+            sortOrder = existing?.sortOrder ?? 0,
+            isPasswordProtected = isProtected
         });
     }
 
@@ -412,7 +423,8 @@ public class WasmConversationStore : IConversationStore
         var metaKey = ns + ConvoPrefix + id;
         var now = DateTime.UtcNow.ToString("o");
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
-        var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages);
+        var isProtected = existing?.isPasswordProtected == true;
+        var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages, isProtected);
 
         int sortOrder;
         if (existing is null)
@@ -442,7 +454,8 @@ public class WasmConversationStore : IConversationStore
             contentFingerprint,
             deletedAt = existing?.deletedAt ?? "",
             titleIsCustom,
-            sortOrder
+            sortOrder,
+            isPasswordProtected = isProtected
         });
 
         await SetLastConvoIdAsync(id, ct);
@@ -469,7 +482,34 @@ public class WasmConversationStore : IConversationStore
             contentFingerprint = existing?.contentFingerprint ?? "",
             deletedAt = existing?.deletedAt ?? "",
             titleIsCustom = existing?.titleIsCustom ?? false,
-            sortOrder = existing?.sortOrder ?? 0
+            sortOrder = existing?.sortOrder ?? 0,
+            isPasswordProtected = existing?.isPasswordProtected == true
+        });
+    }
+
+    public async Task SetPasswordProtectedAsync(string id, bool isProtected, CancellationToken ct = default)
+    {
+        var existing = await GetMetaByIdAsync(id);
+        if (existing == null)
+            return;
+
+        var title = string.IsNullOrWhiteSpace(existing.title) ? "(empty)" : existing.title;
+        var messages = await LoadConversationAsync(id, ct);
+        var contentFingerprint = SyncFingerprint.ForConversation(id, title, messages, isProtected);
+
+        await _js.InvokeVoidAsync("idbPutMeta", new
+        {
+            key = existing.key,
+            id = existing.id,
+            @namespace = existing.@namespace,
+            title = existing.title,
+            lastUpdated = DateTime.UtcNow.ToString("o"),
+            syncEnabled = existing.syncEnabled,
+            contentFingerprint,
+            deletedAt = existing.deletedAt ?? "",
+            titleIsCustom = existing.titleIsCustom ?? false,
+            sortOrder = existing.sortOrder ?? 0,
+            isPasswordProtected = isProtected
         });
     }
 
@@ -500,7 +540,8 @@ public class WasmConversationStore : IConversationStore
                 contentFingerprint = m.contentFingerprint,
                 deletedAt = m.deletedAt ?? "",
                 titleIsCustom = m.titleIsCustom ?? false,
-                sortOrder = i
+                sortOrder = i,
+                isPasswordProtected = m.isPasswordProtected == true
             });
         }
     }

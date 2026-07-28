@@ -622,7 +622,9 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         try
         {
             var (title, titleIsCustom) = await _conversationStore.GetMetaTitleInfoAsync(convoId);
-            var json = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom);
+            var index = await _conversationStore.LoadIndexAsync();
+            var isProtected = index.FirstOrDefault(c => c.Id == convoId)?.IsPasswordProtected == true;
+            var json = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom, isProtected);
             await _hub.InvokeAsync("SendSyncPayload", targetDeviceId, convoId, json, MyDeviceId ?? "");
         }
         catch (Exception ex)
