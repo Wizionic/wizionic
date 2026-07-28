@@ -45,6 +45,8 @@ builder.Services.AddScoped<ChatModelCatalogService>();
 builder.Services.AddScoped<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
 builder.Services.AddScoped<ChatCompletionService>();
 builder.Services.AddScoped<IChatCompletionService>(sp => sp.GetRequiredService<ChatCompletionService>());
+builder.Services.AddScoped<ChatfishApp.Core.Lemonade.ILemonadeImageService, ChatfishApp.Shared.Services.Lemonade.LemonadeImageService>();
+builder.Services.AddScoped<ChatfishApp.Core.Lemonade.ILemonadeSpeechService, ChatfishApp.Shared.Services.Lemonade.LemonadeSpeechService>();
 builder.Services.AddSingleton<JsSyncPreferencesStore>();
 builder.Services.AddSingleton<ISyncPreferencesStore>(sp => sp.GetRequiredService<JsSyncPreferencesStore>());
 builder.Services.AddScoped<JsWebRtcTransport>();
@@ -77,7 +79,9 @@ builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 builder.Services.AddScoped<McpToolSource>();
 builder.Services.AddScoped<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
 builder.Services.AddScoped<NativeToolModule>();
+builder.Services.AddScoped<ChatfishApp.Shared.Services.Tools.LemonadeToolModule>();
 builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
+builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<ChatfishApp.Shared.Services.Tools.LemonadeToolModule>());
 builder.Services.AddScoped<IToolProvider, CompositeToolProvider>();
 
 var host = builder.Build();

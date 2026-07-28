@@ -211,13 +211,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var titleInfo = await _conversationStore.GetMetaTitleInfoAsync(convoId);
         title ??= titleInfo.Title;
         titleIsCustom ??= titleInfo.TitleIsCustom;
-        var dataJson = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom);
+        var index = await _conversationStore.LoadIndexAsync();
+        var isProtected = index.FirstOrDefault(c => c.Id == convoId)?.IsPasswordProtected == true;
+        var dataJson = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom, isProtected);
         var item = new SyncQueueItem
         {
             Kind = SyncItemKind.Conversation,
             ItemId = convoId,
             DataJson = dataJson,
-            ContentFingerprint = SyncFingerprint.ForConversation(convoId, title, messages)
+            ContentFingerprint = SyncFingerprint.ForConversation(convoId, title, messages, isProtected)
         };
         await EnqueueSyncAsync(targetDeviceId, item);
     }
@@ -748,8 +750,10 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         {
             var messages = await _conversationStore.LoadConversationAsync(convoId);
             var (title, titleIsCustom) = await _conversationStore.GetMetaTitleInfoAsync(convoId);
-            var dataJson = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom);
-            var fingerprint = SyncFingerprint.ForConversation(convoId, title, messages);
+            var index = await _conversationStore.LoadIndexAsync();
+            var isProtected = index.FirstOrDefault(c => c.Id == convoId)?.IsPasswordProtected == true;
+            var dataJson = ConvoSyncPayload.Serialize(convoId, title, messages, titleIsCustom, isProtected);
+            var fingerprint = SyncFingerprint.ForConversation(convoId, title, messages, isProtected);
 
             var item = new SyncQueueItem
             {
@@ -2446,13 +2450,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             await _noteStore.SaveNoteAsync(payload.NoteId, entries);
             await _noteStore.UpdateIndexAfterSaveAsync(payload.NoteId, title, entries);
-            // Password-protection flag travels with the note payload (local sort order is device-local).
-            await _noteStore.SetPasswordProtectedAsync(payload.NoteId, payload.IsPasswordProtected);
+            // Only apply protection when the peer explicitly sent the field.
+            // Older clients omit it (deserializes as null) — do not wipe local locks.
+            if (payload.IsPasswordProtected is bool remoteProtected)
+                await _noteStore.SetPasswordProtectedAsync(payload.NoteId, remoteProtected);
 
             OnNoteSyncPayloadReceived?.Invoke(payload.NoteId, json, fromDeviceId);
             OnNotesChanged?.Invoke();
 
-            SyncDebugLog.Info($"Auto-saved incoming note sync for {payload.NoteId} from {fromDeviceId} ({payload.Entries.Count} entries, protected={payload.IsPasswordProtected})");
+            SyncDebugLog.Info($"Auto-saved incoming note sync for {payload.NoteId} from {fromDeviceId} ({payload.Entries.Count} entries, protected={payload.IsPasswordProtected?.ToString() ?? "omit"})");
         }
         catch (Exception ex)
         {
@@ -2706,11 +2712,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 await _conversationStore.UpdateIndexAfterSaveAsync(convoId, msgs, currentIndex);
             }
 
+            // Only apply when peer explicitly sent the field (older clients omit → null).
+            if (payload.IsPasswordProtected is bool remoteProtected)
+                await _conversationStore.SetPasswordProtectedAsync(convoId, remoteProtected);
+
             OnSyncPayloadReceived?.Invoke(convoId, json, fromDeviceId);
             OnConversationsChanged?.Invoke();
 
             SyncDebugLog.Info($"Auto-saved incoming sync for convo {convoId} from {fromDeviceId} " +
-                $"({msgs.Count} messages, title=\"{incomingTitle ?? ""}\", custom={incomingTitleIsCustom})");
+                $"({msgs.Count} messages, title=\"{incomingTitle ?? ""}\", custom={incomingTitleIsCustom}, protected={payload.IsPasswordProtected?.ToString() ?? "omit"})");
         }
         catch (Exception ex)
         {

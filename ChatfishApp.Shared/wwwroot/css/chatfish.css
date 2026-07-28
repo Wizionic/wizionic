@@ -1998,27 +1998,32 @@ a:hover {
 
 .typing { font-style: italic; color: var(--color-text-muted); margin-left: 0.5rem; }
 
-/* ====================== COMPACT SEAMLESS INPUT (full-width of chat content) ====================== */
+/* ====================== COMPACT SEAMLESS INPUT (full-width textarea + toolbar below) ====================== */
+/* Always stack: typing area spans full width; actions sit on a second row. Critical for MAUI + mobile WASM. */
 .input-area {
     background: var(--color-chat-bg);
     border-top: none;
     box-shadow: none;
-    padding: 10px 24px 14px;  /* side padding controls distance from edges of the chat pane */
+    padding: 10px 24px 14px;
     width: 100%;
+    box-sizing: border-box;
 }
 
 .input-container {
     display: flex;
-    align-items: flex-end;   /* buttons stay at bottom when textarea grows */
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
     gap: 6px;
     background: var(--color-bg-surface);
     border: 1px solid var(--color-border);
     border-radius: 18px;
-    padding: 6px 12px;
-    max-width: none;         /* let it fill the full available width of the chat area */
+    padding: 8px 12px 10px;
+    max-width: none;
     width: 100%;
     margin: 0;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    box-sizing: border-box;
 }
 
 .action-btn {
@@ -2035,9 +2040,9 @@ a:hover {
     flex-shrink: 0;
 }
 .action-btn:hover { background: var(--color-bg-subtle); color: var(--color-accent); }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .model-selector {
-    /* Much smaller + compact dropdown */
     font-size: 0.7rem;
     padding: 1px 8px;
     border-radius: 999px;
@@ -2045,12 +2050,15 @@ a:hover {
     background: var(--color-bg-subtle);
     color: var(--color-text);
     font-weight: 500;
-    max-width: 128px;
+    max-width: 160px;
     min-width: 0;
     height: 28px;
     line-height: 1.1;
-    flex-shrink: 0;
+    flex: 1 1 auto;
     cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .model-selector:focus {
@@ -2059,28 +2067,30 @@ a:hover {
 }
 
 .message-wrapper {
-    flex: 1 1 auto;
-    min-width: 0;            /* allows the wrapper (and textarea) to shrink/grow properly in flex row */
-    align-self: flex-start;  /* ensure textarea starts at top of input bar (buttons can stay at bottom via container) so text doesn't appear in the middle */
+    order: 0;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    align-self: stretch;
 }
 
 .message-input {
-    flex: 1 1 auto;
+    display: block;
     width: 100%;
+    box-sizing: border-box;
     border: none;
     outline: none;
     background: transparent;
     font-size: 1rem;
-    padding: 4px 8px 4px 8px;  /* reduced top padding so text starts higher; left aligned */
+    padding: 6px 4px 4px;
     resize: none;
-    min-height: 86px;        /* ~3 lines visible by default */
-    max-height: 110px;       /* scrollbar appears after ~3 lines */
+    min-height: 72px;
+    max-height: 140px;
     overflow-y: auto;
     line-height: 1.4;
     scrollbar-width: thin;
     scrollbar-color: var(--color-border-strong) transparent;
     text-align: left;
-    vertical-align: top;
 }
 
 /* Subtle scrollbar for when it does appear after 3 lines */
@@ -2114,6 +2124,7 @@ a:hover {
     cursor: pointer;
     transition: all 0.2s;
     flex-shrink: 0;
+    margin-left: auto; /* pin send to the right end of the toolbar */
 }
 .send-btn:hover:not(:disabled) { background: var(--primary-dark); transform: scale(1.05); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -2131,20 +2142,74 @@ a:hover {
     flex-shrink: 0;
 }
 
-/* Desktop: toolbar children participate in the main input row (plus | textarea | model | icons | send) */
-@media (min-width: 641px) {
-    .input-toolbar {
-        display: contents;
-    }
+/* Context usage pill — click to compact (orange ≥80%, red ≥90%) */
+.ctx-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-subtle);
+    color: var(--color-text-muted);
+    font-size: 0.65rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 120px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.ctx-btn i {
+    font-size: 0.75rem;
+}
+.ctx-btn:hover:not(:disabled) {
+    border-color: var(--color-accent, #2563eb);
+    color: var(--color-accent, #2563eb);
+    background: var(--color-bg-surface, #fff);
+}
+.ctx-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.ctx-btn--ok {
+    color: var(--color-text-muted);
+}
+.ctx-btn--warn {
+    color: #c2410c;
+    border-color: #fdba74;
+    background: #fff7ed;
+}
+.ctx-btn--warn:hover:not(:disabled) {
+    color: #9a3412;
+    border-color: #fb923c;
+    background: #ffedd5;
+}
+.ctx-btn--danger {
+    color: #b91c1c;
+    border-color: #fca5a5;
+    background: #fef2f2;
+}
+.ctx-btn--danger:hover:not(:disabled) {
+    color: #991b1b;
+    border-color: #f87171;
+    background: #fee2e2;
+}
 
-    .message-wrapper {
-        order: 2;
-    }
-
-    .attach-btn-wrap { order: 1; }
-    .model-selector { order: 3; }
-    .capability-icon { order: 4; }
-    .send-btn { order: 5; }
+/* Toolbar row under the full-width textarea (all viewports) */
+.input-toolbar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    flex-shrink: 0;
+    order: 1;
 }
 
 /* ====================== SIDEBAR ALIGNMENT (NO DOUBLE MARGIN!) ====================== */
@@ -2178,54 +2243,19 @@ a:hover {
 
     .chat-container { padding-bottom: 185px; }
 
-    /* Stack textarea above a single no-wrap toolbar row */
     .input-area {
         padding: 8px 12px 12px !important;
     }
 
     .input-container,
     body .input-container {
-        flex-direction: column !important;
-        flex-wrap: nowrap !important;
-        align-items: stretch !important;
         padding: 8px 10px !important;
-        gap: 6px !important;
-    }
-
-    .message-wrapper,
-    body .message-wrapper {
-        order: 0 !important;
-        flex: 0 0 auto !important;
-        width: 100% !important;
-        min-width: 0 !important;
     }
 
     .message-input,
     body .message-input {
-        min-height: 44px !important;
+        min-height: 48px !important;
         max-height: 120px !important;
-    }
-
-    .input-toolbar,
-    body .input-toolbar {
-        display: flex !important;
-        flex-wrap: nowrap !important;
-        align-items: center !important;
-        gap: 4px !important;
-        width: 100% !important;
-        min-width: 0 !important;
-        flex-shrink: 0 !important;
-    }
-
-    .attach-btn-wrap,
-    body .attach-btn-wrap,
-    .action-btn,
-    body .action-btn,
-    .capability-icon,
-    body .capability-icon,
-    .input-toolbar .send-btn,
-    body .input-toolbar .send-btn {
-        flex-shrink: 0 !important;
     }
 
     .action-btn,
@@ -2240,21 +2270,24 @@ a:hover {
         width: 32px !important;
         height: 32px !important;
         font-size: 1.2rem !important;
-        margin-left: auto !important;
     }
 
     .model-selector,
     body .model-selector {
         flex: 1 1 0 !important;
         width: 0 !important;
-        min-width: 0 !important;
         max-width: none !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
-        white-space: nowrap !important;
         font-size: 0.62rem !important;
         padding: 1px 4px 1px 6px !important;
         height: 26px !important;
+    }
+
+    .ctx-btn,
+    body .ctx-btn {
+        height: 26px !important;
+        font-size: 0.58rem !important;
+        padding: 0 6px !important;
+        max-width: 96px !important;
     }
 }
 
@@ -3702,30 +3735,53 @@ body .input-area,
 body .input-container,
 .input-container {
     display: flex !important;
-    align-items: flex-end !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    flex-wrap: nowrap !important;
     gap: 6px !important;
     background: var(--color-bg-surface) !important;
     border: 1px solid var(--color-border) !important;
     border-radius: 18px !important;
-    padding: 6px 12px !important;
+    padding: 8px 12px 10px !important;
     width: 100% !important;
     margin: 0 !important;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+    box-sizing: border-box !important;
 }
 
-/* Message input textarea */
+body .message-wrapper,
+.message-wrapper {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 0 0 auto !important;
+}
+
+body .input-toolbar,
+.input-toolbar {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 4px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    flex-shrink: 0 !important;
+}
+
+/* Message input textarea — full width of the card (not squeezed between side buttons) */
 body .message-input,
 .message-input {
-    flex: 1 1 auto !important;
+    display: block !important;
     width: 100% !important;
+    box-sizing: border-box !important;
     border: none !important;
     outline: none !important;
     background: transparent !important;
     font-size: 1rem !important;
-    padding: 4px 8px 4px 8px !important;
+    padding: 6px 4px 4px !important;
     resize: none !important;
-    min-height: 86px !important;
-    max-height: 110px !important;
+    min-height: 72px !important;
+    max-height: 140px !important;
     overflow-y: auto !important;
     line-height: 1.4 !important;
 }
@@ -3745,6 +3801,7 @@ body .send-btn,
     justify-content: center !important;
     cursor: pointer !important;
     flex-shrink: 0 !important;
+    margin-left: auto !important;
 }
 
 /* Sidebar toggle in app nav uses topbar-toggle-btn layout (in-flow, not absolute) */
@@ -3817,41 +3874,14 @@ body .message-bot,
     width: fit-content !important;
 }
 
-/* Mobile input toolbar — placed after WASM !important rules so narrow phones keep one toolbar row */
+/* Narrow phones: slightly tighter toolbar (stacked layout is already the default everywhere) */
 @media (max-width: 640.98px) {
-    body .input-container,
-    .input-container {
-        flex-direction: column !important;
-        flex-wrap: nowrap !important;
-        align-items: stretch !important;
-    }
-
-    body .input-toolbar,
-    .input-toolbar {
-        display: flex !important;
-        flex-wrap: nowrap !important;
-        align-items: center !important;
-        gap: 4px !important;
-        width: 100% !important;
-        min-width: 0 !important;
-    }
-
-    body .attach-btn-wrap,
-    .attach-btn-wrap,
-    body .action-btn,
-    .action-btn,
-    body .capability-icon,
-    .capability-icon,
-    body .input-toolbar .send-btn,
-    .input-toolbar .send-btn {
-        flex-shrink: 0 !important;
-    }
-
     body .model-selector,
     .model-selector {
         flex: 1 1 0 !important;
         width: 0 !important;
         min-width: 0 !important;
+        max-width: none !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
         white-space: nowrap !important;

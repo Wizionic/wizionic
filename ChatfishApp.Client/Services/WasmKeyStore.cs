@@ -1,4 +1,5 @@
 using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Lemonade;
 using ChatfishApp.Core.Ollama;
 using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
@@ -17,6 +18,7 @@ public class WasmKeyStore : IKeyStore
 {
     private const string KeysStorageKey = "wasm-provider-keys";
     private const string OllamaConfigKey = "wasm-ollama-config";
+    private const string LemonadeConfigKey = "wasm-lemonade-config";
     private const string McpEnabledKey = "wasm-mcp-enabled-servers";
     private const string McpTokensKey = "wasm-mcp-tokens";
     private const string McpCustomConnectorsKey = "wasm-mcp-custom-connectors";
@@ -36,6 +38,7 @@ public class WasmKeyStore : IKeyStore
     private UserProfileSettings _userProfile = new();
     private List<UserMemory> _userMemories = new();
     private OllamaConfig _ollamaConfig = new();
+    private LemonadeConfig _lemonadeConfig = new();
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
@@ -62,6 +65,14 @@ public class WasmKeyStore : IKeyStore
             var loaded = JsonSerializer.Deserialize<OllamaConfig>(ollamaJson);
             if (loaded != null)
                 _ollamaConfig = MigrateOllamaConfig(loaded);
+        }
+
+        var lemonadeJson = await GetItemAsync(LemonadeConfigKey, ct);
+        if (!string.IsNullOrEmpty(lemonadeJson))
+        {
+            var loaded = JsonSerializer.Deserialize<LemonadeConfig>(lemonadeJson);
+            if (loaded != null)
+                _lemonadeConfig = MigrateLemonadeConfig(loaded);
         }
 
         var mcpJson = await GetItemAsync(McpEnabledKey, ct);
@@ -128,6 +139,7 @@ public class WasmKeyStore : IKeyStore
         _userProfile = new();
         _userMemories = new();
         _ollamaConfig = new();
+        _lemonadeConfig = new();
         _enabledMcpServers = new();
         _mcpTokens = new();
         _customMcpConnectors = new();
@@ -331,10 +343,20 @@ public class WasmKeyStore : IKeyStore
             : null;
     }
 
-    public string? GetVisionProxyModelName() =>
-        GetModelSettingsMap().Values
-            .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision)
-            ?.Name;
+    public string? GetVisionProxyModelName()
+    {
+        var ollama = GetModelSettingsMap().Values
+            .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision);
+        if (ollama != null)
+            return "ollama/" + ollama.Name;
+
+        var lemonade = GetLemonadeModelSettingsMap().Values
+            .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision);
+        if (lemonade != null)
+            return "lemonade/" + lemonade.Name;
+
+        return null;
+    }
 
     public OllamaModelSettings GetOrCreateOllamaModelSettings(string modelName)
     {
@@ -434,6 +456,9 @@ public class WasmKeyStore : IKeyStore
                 if (!key.Equals(settings.Name, StringComparison.OrdinalIgnoreCase) && map[key].IsVisionProxy)
                     map[key].IsVisionProxy = false;
             }
+
+            // Single global vision proxy: clear Lemonade proxies too.
+            await ClearLemonadeVisionProxiesAsync(ct);
         }
 
         map[settings.Name] = settings;
@@ -459,15 +484,16 @@ public class WasmKeyStore : IKeyStore
         try
         {
             var origin = OllamaBaseUrl.TrimEnd('/');
-            var tagsUrl = origin + "/api/tags";
-            var resp = await http.GetFromJsonAsync<OllamaTagsResponse>(tagsUrl, ct);
-            if (resp?.models == null)
-                return;
+            // /api/tags for real Ollama; /v1/models when this URL is Lemonade (or OpenAI-compatible).
+            var modelNames = await OllamaCapabilitiesResolver.ListModelNamesAsync(http, origin, ct);
+            if (modelNames.Count == 0)
+                throw new InvalidOperationException(
+                    "No models returned. Is the server running? For Lemonade, use port 13305 and ensure /v1/models is reachable.");
 
             var existingMap = GetModelSettingsMap();
             var next = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var tag in resp.models.Where(m => !string.IsNullOrWhiteSpace(m.name)).Select(m => m.name!).Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var tag in modelNames.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 existingMap.TryGetValue(tag, out var existing);
                 var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag, ct);
@@ -530,6 +556,318 @@ public class WasmKeyStore : IKeyStore
     private class OllamaModel
     {
         public string name { get; set; } = "";
+    }
+
+    // --- Lemonade ---
+
+    public string LemonadeBaseUrl =>
+        LemonadeModelCatalogResolver.NormalizeBaseUrl(_lemonadeConfig.BaseUrl);
+
+    public string? LemonadeApiKey =>
+        string.IsNullOrWhiteSpace(_lemonadeConfig.ApiKey) ? null : _lemonadeConfig.ApiKey.Trim();
+
+    public string LemonadeChatEndpoint =>
+        LemonadeBaseUrl.TrimEnd('/') + "/v1/chat/completions";
+
+    public List<string> LemonadeModels =>
+        GetLemonadeModelSettingsMap().Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+
+    public IReadOnlyList<LemonadeModelSettings> LemonadeModelSettingsList =>
+        GetLemonadeModelSettingsMap().Values
+            .OrderBy(m => m.Label, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    public LemonadeModelSettings? GetLemonadeModelSettings(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+            return null;
+
+        return GetLemonadeModelSettingsMap().TryGetValue(modelName.Trim(), out var settings)
+            ? settings.Clone()
+            : null;
+    }
+
+    public LemonadeModelSettings GetOrCreateLemonadeModelSettings(string modelName)
+    {
+        modelName = modelName.Trim();
+        var map = GetLemonadeModelSettingsMap();
+        if (map.TryGetValue(modelName, out var existing))
+            return existing.Clone();
+
+        return LemonadeModelCatalogResolver.CreateDefaultSettings(modelName);
+    }
+
+    public string? LemonadeDefaultImageModel => _lemonadeConfig.DefaultImageModel;
+    public string? LemonadeDefaultEditModel => _lemonadeConfig.DefaultEditModel;
+    public string? LemonadeDefaultTtsModel => _lemonadeConfig.DefaultTtsModel;
+    public string? LemonadeDefaultSttModel => _lemonadeConfig.DefaultSttModel;
+    public string? LemonadeDefaultVoice => _lemonadeConfig.DefaultVoice;
+
+    public async Task SetLemonadeBaseUrlAsync(string baseUrl, CancellationToken ct = default)
+    {
+        _lemonadeConfig = _lemonadeConfig with
+        {
+            BaseUrl = LemonadeModelCatalogResolver.NormalizeBaseUrl(baseUrl)
+        };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    public async Task SetLemonadeApiKeyAsync(string? apiKey, CancellationToken ct = default)
+    {
+        _lemonadeConfig = _lemonadeConfig with
+        {
+            ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim()
+        };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    public async Task SetLemonadeModalityDefaultsAsync(
+        string? imageModel = null,
+        string? editModel = null,
+        string? ttsModel = null,
+        string? sttModel = null,
+        string? voice = null,
+        CancellationToken ct = default)
+    {
+        // Null or whitespace clears that default slot (UI always passes current selections).
+        _lemonadeConfig = _lemonadeConfig with
+        {
+            DefaultImageModel = string.IsNullOrWhiteSpace(imageModel) ? null : imageModel.Trim(),
+            DefaultEditModel = string.IsNullOrWhiteSpace(editModel) ? null : editModel.Trim(),
+            DefaultTtsModel = string.IsNullOrWhiteSpace(ttsModel) ? null : ttsModel.Trim(),
+            DefaultSttModel = string.IsNullOrWhiteSpace(sttModel) ? null : sttModel.Trim(),
+            DefaultVoice = string.IsNullOrWhiteSpace(voice) ? null : voice.Trim()
+        };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    public async Task AddLemonadeModelAsync(string model, CancellationToken ct = default)
+    {
+        model = (model ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        var map = GetLemonadeModelSettingsMap();
+        if (map.ContainsKey(model))
+            return;
+
+        map[model] = LemonadeModelCatalogResolver.CreateDefaultSettings(model);
+        _lemonadeConfig = _lemonadeConfig with
+        {
+            Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelSettings = map
+        };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    public async Task RemoveLemonadeModelAsync(string model, CancellationToken ct = default)
+    {
+        var map = GetLemonadeModelSettingsMap();
+        map.Remove(model);
+        _lemonadeConfig = _lemonadeConfig with
+        {
+            Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelSettings = map,
+            DefaultImageModel = string.Equals(_lemonadeConfig.DefaultImageModel, model, StringComparison.OrdinalIgnoreCase)
+                ? null : _lemonadeConfig.DefaultImageModel,
+            DefaultEditModel = string.Equals(_lemonadeConfig.DefaultEditModel, model, StringComparison.OrdinalIgnoreCase)
+                ? null : _lemonadeConfig.DefaultEditModel,
+            DefaultTtsModel = string.Equals(_lemonadeConfig.DefaultTtsModel, model, StringComparison.OrdinalIgnoreCase)
+                ? null : _lemonadeConfig.DefaultTtsModel,
+            DefaultSttModel = string.Equals(_lemonadeConfig.DefaultSttModel, model, StringComparison.OrdinalIgnoreCase)
+                ? null : _lemonadeConfig.DefaultSttModel
+        };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    public async Task SaveLemonadeModelSettingsAsync(LemonadeModelSettings settings, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(settings.Name))
+            return;
+
+        var map = GetLemonadeModelSettingsMap();
+        settings.Name = settings.Name.Trim();
+        settings.Label = string.IsNullOrWhiteSpace(settings.Label) ? settings.Name : settings.Label.Trim();
+        settings.UserOverrideTools = true;
+        settings.UserOverrideVision = true;
+        settings.UserOverrideContext = true;
+
+        if (!settings.SupportsVision)
+            settings.IsVisionProxy = false;
+
+        if (settings.IsVisionProxy)
+        {
+            foreach (var key in map.Keys.ToList())
+            {
+                if (!key.Equals(settings.Name, StringComparison.OrdinalIgnoreCase) && map[key].IsVisionProxy)
+                    map[key].IsVisionProxy = false;
+            }
+
+            await ClearOllamaVisionProxiesAsync(ct);
+        }
+
+        map[settings.Name] = settings;
+        _lemonadeConfig = _lemonadeConfig with
+        {
+            Models = map.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelSettings = map
+        };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    public async Task RefreshLemonadeModelsFromServerAsync(
+        HttpClient http,
+        string? baseUrl = null,
+        string? apiKey = null,
+        CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+        {
+            _lemonadeConfig = _lemonadeConfig with
+            {
+                BaseUrl = LemonadeModelCatalogResolver.NormalizeBaseUrl(baseUrl)
+            };
+        }
+
+        if (apiKey != null)
+        {
+            _lemonadeConfig = _lemonadeConfig with
+            {
+                ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim()
+            };
+        }
+
+        try
+        {
+            var discovered = await LemonadeModelCatalogResolver.FetchModelsAsync(
+                http, LemonadeBaseUrl, LemonadeApiKey, showAll: false, ct);
+
+            var existingMap = GetLemonadeModelSettingsMap();
+            var next = new Dictionary<string, LemonadeModelSettings>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var model in discovered)
+            {
+                existingMap.TryGetValue(model.Name, out var existing);
+                next[model.Name] = LemonadeModelCatalogResolver.ResolveSettings(model, existing);
+            }
+
+            // Preserve manually-added models not returned by the server.
+            foreach (var (name, settings) in existingMap)
+            {
+                if (!next.ContainsKey(name))
+                    next[name] = settings;
+            }
+
+            var list = next.Values.ToList();
+            _lemonadeConfig = _lemonadeConfig with
+            {
+                Models = next.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
+                ModelSettings = next,
+                DefaultImageModel = LemonadeModelCatalogResolver.PickDefault(
+                    _lemonadeConfig.DefaultImageModel, list, m => m.IsImage),
+                DefaultEditModel = LemonadeModelCatalogResolver.PickDefault(
+                    _lemonadeConfig.DefaultEditModel, list, m => m.IsEdit),
+                DefaultTtsModel = LemonadeModelCatalogResolver.PickDefault(
+                    _lemonadeConfig.DefaultTtsModel, list, m => m.IsTts),
+                DefaultSttModel = LemonadeModelCatalogResolver.PickDefault(
+                    _lemonadeConfig.DefaultSttModel, list, m => m.IsTranscription),
+                DefaultVoice = string.IsNullOrWhiteSpace(_lemonadeConfig.DefaultVoice)
+                    ? "shimmer"
+                    : _lemonadeConfig.DefaultVoice
+            };
+            await SaveLemonadeConfigAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to refresh Lemonade models from {LemonadeBaseUrl}: {ex.Message}", ex);
+        }
+    }
+
+    private async Task SaveLemonadeConfigAsync(CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(_lemonadeConfig);
+        await SetItemAsync(LemonadeConfigKey, json, ct);
+    }
+
+    private Dictionary<string, LemonadeModelSettings> GetLemonadeModelSettingsMap()
+    {
+        if (_lemonadeConfig.ModelSettings is { Count: > 0 })
+            return new Dictionary<string, LemonadeModelSettings>(_lemonadeConfig.ModelSettings, StringComparer.OrdinalIgnoreCase);
+
+        var map = new Dictionary<string, LemonadeModelSettings>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in _lemonadeConfig.Models ?? new List<string>())
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+            map[name.Trim()] = LemonadeModelCatalogResolver.CreateDefaultSettings(name.Trim());
+        }
+
+        return map;
+    }
+
+    private static LemonadeConfig MigrateLemonadeConfig(LemonadeConfig loaded)
+    {
+        var baseUrl = LemonadeModelCatalogResolver.NormalizeBaseUrl(loaded.BaseUrl);
+        if (loaded.ModelSettings is { Count: > 0 })
+            return loaded with { BaseUrl = baseUrl };
+
+        if (loaded.Models is not { Count: > 0 })
+            return loaded with
+            {
+                BaseUrl = baseUrl,
+                ModelSettings = new Dictionary<string, LemonadeModelSettings>(StringComparer.OrdinalIgnoreCase)
+            };
+
+        var map = new Dictionary<string, LemonadeModelSettings>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in loaded.Models.Where(m => !string.IsNullOrWhiteSpace(m)))
+        {
+            var trimmed = name.Trim();
+            map[trimmed] = LemonadeModelCatalogResolver.CreateDefaultSettings(trimmed);
+        }
+
+        return loaded with { BaseUrl = baseUrl, ModelSettings = map };
+    }
+
+    private async Task ClearLemonadeVisionProxiesAsync(CancellationToken ct)
+    {
+        var map = GetLemonadeModelSettingsMap();
+        var changed = false;
+        foreach (var key in map.Keys.ToList())
+        {
+            if (map[key].IsVisionProxy)
+            {
+                map[key].IsVisionProxy = false;
+                changed = true;
+            }
+        }
+
+        if (!changed)
+            return;
+
+        _lemonadeConfig = _lemonadeConfig with { ModelSettings = map };
+        await SaveLemonadeConfigAsync(ct);
+    }
+
+    private async Task ClearOllamaVisionProxiesAsync(CancellationToken ct)
+    {
+        var map = GetModelSettingsMap();
+        var changed = false;
+        foreach (var key in map.Keys.ToList())
+        {
+            if (map[key].IsVisionProxy)
+            {
+                map[key].IsVisionProxy = false;
+                changed = true;
+            }
+        }
+
+        if (!changed)
+            return;
+
+        _ollamaConfig = _ollamaConfig with { ModelSettings = map };
+        await SaveOllamaConfigAsync(ct);
     }
 
     public IReadOnlySet<string> EnabledMcpServerNames => _enabledMcpServers;

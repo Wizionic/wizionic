@@ -75,6 +75,7 @@ public sealed class SqliteHistoryDatabase
         await TryAddColumnAsync(conn, "note_meta", "is_password_protected", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "note_meta", "sort_order", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "conversation_meta", "sort_order", "INTEGER NOT NULL DEFAULT 0", ct);
+        await TryAddColumnAsync(conn, "conversation_meta", "is_password_protected", "INTEGER NOT NULL DEFAULT 0", ct);
 
         _initialized = true;
     }
@@ -140,7 +141,8 @@ public sealed class SqliteHistoryDatabase
         string? ContentFingerprint,
         string? DeletedAt,
         bool TitleIsCustom,
-        int SortOrder = 0);
+        int SortOrder = 0,
+        bool IsPasswordProtected = false);
 
     public record NoteMetaRow(
         string StorageKey,
@@ -162,7 +164,7 @@ public sealed class SqliteHistoryDatabase
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT storage_key, id, namespace, title, last_updated, sync_enabled,
-                   content_fingerprint, deleted_at, title_is_custom, sort_order
+                   content_fingerprint, deleted_at, title_is_custom, sort_order, is_password_protected
             FROM conversation_meta
             WHERE namespace = $ns
             """;
@@ -178,7 +180,7 @@ public sealed class SqliteHistoryDatabase
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT storage_key, id, namespace, title, last_updated, sync_enabled,
-                   content_fingerprint, deleted_at, title_is_custom, sort_order
+                   content_fingerprint, deleted_at, title_is_custom, sort_order, is_password_protected
             FROM conversation_meta
             WHERE namespace = $ns AND id = $id
             LIMIT 1
@@ -198,8 +200,8 @@ public sealed class SqliteHistoryDatabase
         cmd.CommandText = """
             INSERT INTO conversation_meta (
                 storage_key, id, namespace, title, last_updated, sync_enabled,
-                content_fingerprint, deleted_at, title_is_custom, sort_order)
-            VALUES ($key, $id, $ns, $title, $last, $sync, $fp, $deleted, $custom, $sort)
+                content_fingerprint, deleted_at, title_is_custom, sort_order, is_password_protected)
+            VALUES ($key, $id, $ns, $title, $last, $sync, $fp, $deleted, $custom, $sort, $locked)
             ON CONFLICT(storage_key) DO UPDATE SET
                 id = excluded.id,
                 namespace = excluded.namespace,
@@ -209,7 +211,8 @@ public sealed class SqliteHistoryDatabase
                 content_fingerprint = excluded.content_fingerprint,
                 deleted_at = excluded.deleted_at,
                 title_is_custom = excluded.title_is_custom,
-                sort_order = excluded.sort_order;
+                sort_order = excluded.sort_order,
+                is_password_protected = excluded.is_password_protected;
             """;
         BindConvoMeta(cmd, row);
         await cmd.ExecuteNonQueryAsync(ct);
@@ -362,6 +365,7 @@ public sealed class SqliteHistoryDatabase
         cmd.Parameters.AddWithValue("$deleted", row.DeletedAt ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue("$custom", row.TitleIsCustom ? 1 : 0);
         cmd.Parameters.AddWithValue("$sort", row.SortOrder);
+        cmd.Parameters.AddWithValue("$locked", row.IsPasswordProtected ? 1 : 0);
     }
 
     private static void BindNoteMeta(SqliteCommand cmd, NoteMetaRow row)
@@ -385,6 +389,7 @@ public sealed class SqliteHistoryDatabase
         while (await reader.ReadAsync(ct))
         {
             var sortOrder = reader.FieldCount > 9 && !reader.IsDBNull(9) ? (int)reader.GetInt64(9) : 0;
+            var isProtected = reader.FieldCount > 10 && !reader.IsDBNull(10) && reader.GetInt64(10) != 0;
             rows.Add(new ConvoMetaRow(
                 reader.GetString(0),
                 reader.GetString(1),
@@ -395,7 +400,8 @@ public sealed class SqliteHistoryDatabase
                 reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.GetInt64(8) != 0,
-                sortOrder));
+                sortOrder,
+                isProtected));
         }
 
         return rows;

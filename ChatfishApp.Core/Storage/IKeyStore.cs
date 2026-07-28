@@ -30,6 +30,10 @@ public interface IKeyStore
     List<string> OllamaModels { get; }
     IReadOnlyList<OllamaModelSettings> OllamaModelSettingsList { get; }
     OllamaModelSettings? GetOllamaModelSettings(string modelName);
+    /// <summary>
+    /// Active vision-proxy model id, fully qualified as <c>ollama/{name}</c> or <c>lemonade/{name}</c>,
+    /// or null when none is configured.
+    /// </summary>
     string? GetVisionProxyModelName();
     OllamaModelSettings GetOrCreateOllamaModelSettings(string modelName);
     Task SetOllamaBaseUrlAsync(string baseUrl, CancellationToken ct = default);
@@ -38,6 +42,33 @@ public interface IKeyStore
     Task RemoveOllamaModelAsync(string model, CancellationToken ct = default);
     Task SaveOllamaModelSettingsAsync(OllamaModelSettings settings, CancellationToken ct = default);
     Task RefreshOllamaModelsFromServerAsync(HttpClient http, string? baseUrl = null, CancellationToken ct = default);
+
+    // --- Lemonade (parallel local AI server; independent of Ollama) ---
+    string LemonadeBaseUrl { get; }
+    string? LemonadeApiKey { get; }
+    string LemonadeChatEndpoint { get; }
+    List<string> LemonadeModels { get; }
+    IReadOnlyList<LemonadeModelSettings> LemonadeModelSettingsList { get; }
+    LemonadeModelSettings? GetLemonadeModelSettings(string modelName);
+    LemonadeModelSettings GetOrCreateLemonadeModelSettings(string modelName);
+    string? LemonadeDefaultImageModel { get; }
+    string? LemonadeDefaultEditModel { get; }
+    string? LemonadeDefaultTtsModel { get; }
+    string? LemonadeDefaultSttModel { get; }
+    string? LemonadeDefaultVoice { get; }
+    Task SetLemonadeBaseUrlAsync(string baseUrl, CancellationToken ct = default);
+    Task SetLemonadeApiKeyAsync(string? apiKey, CancellationToken ct = default);
+    Task SetLemonadeModalityDefaultsAsync(
+        string? imageModel = null,
+        string? editModel = null,
+        string? ttsModel = null,
+        string? sttModel = null,
+        string? voice = null,
+        CancellationToken ct = default);
+    Task AddLemonadeModelAsync(string model, CancellationToken ct = default);
+    Task RemoveLemonadeModelAsync(string model, CancellationToken ct = default);
+    Task SaveLemonadeModelSettingsAsync(LemonadeModelSettings settings, CancellationToken ct = default);
+    Task RefreshLemonadeModelsFromServerAsync(HttpClient http, string? baseUrl = null, string? apiKey = null, CancellationToken ct = default);
 
     IReadOnlySet<string> EnabledMcpServerNames { get; }
     bool IsMcpServerEnabled(string name);
