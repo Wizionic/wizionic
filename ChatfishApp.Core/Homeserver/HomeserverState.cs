@@ -11,8 +11,10 @@ public enum HomeserverInstallMode
     Declined = 1,
     /// <summary>Running as a Windows Service (auto-start).</summary>
     WindowsService = 2,
-    /// <summary>User-session fallback (Startup folder / logon task).</summary>
-    UserSession = 3
+    /// <summary>User-session fallback (Startup folder / logon autostart).</summary>
+    UserSession = 3,
+    /// <summary>Running as a Linux systemd unit (auto-start).</summary>
+    Systemd = 4
 }
 
 public sealed class HomeserverState
@@ -44,13 +46,16 @@ public sealed class HomeserverState
 
     [JsonIgnore]
     public bool IsInstalled =>
-        InstallMode is HomeserverInstallMode.WindowsService or HomeserverInstallMode.UserSession;
+        InstallMode is HomeserverInstallMode.WindowsService
+            or HomeserverInstallMode.UserSession
+            or HomeserverInstallMode.Systemd;
 
     [JsonIgnore]
     public bool HasDecided =>
         InstallMode is HomeserverInstallMode.Declined
             or HomeserverInstallMode.WindowsService
-            or HomeserverInstallMode.UserSession;
+            or HomeserverInstallMode.UserSession
+            or HomeserverInstallMode.Systemd;
 
     [JsonIgnore]
     public bool OnboardingCompleted => OnboardingCompletedAt.HasValue;

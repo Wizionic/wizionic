@@ -126,11 +126,33 @@ public static class MauiProgram
 	/// </summary>
 	public static IServiceProvider CreateLinuxServiceProvider()
 	{
-		VelopackApp.Build().Run();
+		// Capture Velopack lifecycle for homeserver update flags (same idea as Windows).
+		var firstRun = false;
+		var afterUpdate = false;
+		VelopackApp.Build()
+			.OnFirstRun(_ => firstRun = true)
+			.OnAfterUpdateFastCallback(_ =>
+			{
+				afterUpdate = true;
+				try
+				{
+					Directory.CreateDirectory(HomeserverPaths.RootDirectory);
+					File.WriteAllText(HomeserverPaths.PendingUpdateFlagPath, DateTimeOffset.UtcNow.ToString("O"));
+				}
+				catch
+				{
+					// ignore — update continues
+				}
+			})
+			.Run();
 		AppEnvironment.SetMaui();
 
 		var configuration = BuildConfiguration();
 		var services = new ServiceCollection();
+
+		services.AddSingleton(new HomeserverLaunchFlags(firstRun, afterUpdate));
+		services.AddSingleton<ISetupWizardHost>(sp =>
+			new MauiSetupWizardHost(autoShowOnFirstRun: firstRun));
 
 		services.AddSingleton<IConfiguration>(configuration);
 		services.AddLogging(lb =>
@@ -305,7 +327,7 @@ public static class MauiProgram
 		services.AddHttpClient();
 		services.AddSingleton<MauiUpdateService>();
 		services.AddSingleton<IUpdateService>(sp => sp.GetRequiredService<MauiUpdateService>());
-#if WINDOWS
+#if WINDOWS || LINUX_DESKTOP
 		services.AddSingleton<HomeserverInstallService>();
 		services.AddSingleton<IHomeserverInstallService>(sp =>
 		{
@@ -329,7 +351,7 @@ public static class MauiProgram
 		services.AddSingleton<ILemonadeInstallService>(_ => NullLemonadeInstallService.Instance);
 		services.AddSingleton<IOllamaInstallService>(_ => NullOllamaInstallService.Instance);
 #endif
-		// Linux path may not register ISetupWizardHost above (Windows first-run block).
+		// Mobile / other TFMs may not register ISetupWizardHost above.
 		if (services.All(d => d.ServiceType != typeof(ISetupWizardHost)))
 			services.AddSingleton<ISetupWizardHost>(_ => NullSetupWizardHost.Instance);
 	}

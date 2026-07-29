@@ -34,8 +34,10 @@ if (File.Exists(homeserverSettingsPath))
     Console.WriteLine($"[Homeserver] Loaded config from {homeserverSettingsPath}");
 }
 
-// Allow running as a Windows Service (no-op when started interactively / in Docker).
+// Allow running as a Windows Service or Linux systemd unit
+// (no-op when started interactively / in Docker).
 builder.Host.UseWindowsService();
+builder.Host.UseSystemd();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()

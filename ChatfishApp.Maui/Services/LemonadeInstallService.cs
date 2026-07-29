@@ -65,7 +65,9 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         _http.Timeout = TimeSpan.FromMinutes(30);
     }
 
-    public bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    public bool IsSupported =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        || RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
     public bool IsInstalled => DetectInstallation() is not LemonadeDetection.NotFound;
 
@@ -93,7 +95,7 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         CancellationToken cancellationToken = default)
     {
         if (!IsSupported)
-            return LemonadeInstallResult.Fail("Lemonade install is only supported on Windows.");
+            return LemonadeInstallResult.Fail("Lemonade install is only supported on Windows and Linux.");
 
         try
         {
@@ -101,58 +103,120 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
             if (detection is not LemonadeDetection.NotFound)
             {
                 var detail = GetInstalledStatusDescription();
-                progress?.Report($"Skipping MSI install — {detail}");
-                _logger.LogInformation("[Lemonade] Skipping MSI; detection={Detection} detail={Detail}", detection, detail);
-                // Do not start a second server if one is already responding.
+                progress?.Report($"Skipping reinstall — {detail}");
+                _logger.LogInformation("[Lemonade] Skipping install; detection={Detection} detail={Detail}", detection, detail);
                 if (detection is not LemonadeDetection.ServerResponding)
                     await TryEnsureServerRunningAsync(progress, cancellationToken);
-                return LemonadeInstallResult.Ok($"Lemonade already installed ({detail}). Skipped MSI reinstall.");
+                return LemonadeInstallResult.Ok($"Lemonade already installed ({detail}). Skipped reinstall.");
             }
 
-            progress?.Report("Downloading Lemonade installer…");
-            var msiPath = Path.Combine(Path.GetTempPath(), $"lemonade-{Guid.NewGuid():N}.msi");
-            await using (var remote = await _http.GetStreamAsync(MsiDownloadUrl, cancellationToken))
-            await using (var file = File.Create(msiPath))
-                await remote.CopyToAsync(file, cancellationToken);
+            if (OperatingSystem.IsLinux())
+                return await InstallServerLinuxAsync(progress, cancellationToken);
 
-            progress?.Report("Installing Lemonade (may prompt for permission)…");
-            var silentOk = await RunProcessAsync(
-                "msiexec.exe",
-                $"/i \"{msiPath}\" /qn /norestart",
-                elevate: true,
-                cancellationToken,
-                timeoutMs: 15 * 60 * 1000);
-
-            if (!silentOk)
-            {
-                progress?.Report("Silent install failed or was cancelled — opening interactive installer…");
-                await RunProcessAsync(
-                    "msiexec.exe",
-                    $"/i \"{msiPath}\"",
-                    elevate: true,
-                    cancellationToken,
-                    timeoutMs: 15 * 60 * 1000);
-                await Task.Delay(3000, cancellationToken);
-            }
-
-            try { File.Delete(msiPath); } catch { /* ignore */ }
-
-            await Task.Delay(2000, cancellationToken);
-            if (DetectInstallation() is LemonadeDetection.NotFound)
-            {
-                return LemonadeInstallResult.Fail(
-                    "Lemonade installer finished but Lemonade was not detected yet. " +
-                    "Finish the MSI if it is still open, then re-run this step or open the Lemonade app once.");
-            }
-
-            await TryEnsureServerRunningAsync(progress, cancellationToken);
-            return LemonadeInstallResult.Ok("Lemonade installed.");
+            return await InstallServerWindowsAsync(progress, cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Lemonade] Install failed");
             return LemonadeInstallResult.Fail($"Lemonade install failed: {ex.Message}");
         }
+    }
+
+    private async Task<LemonadeInstallResult> InstallServerWindowsAsync(
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        progress?.Report("Downloading Lemonade installer…");
+        var msiPath = Path.Combine(Path.GetTempPath(), $"lemonade-{Guid.NewGuid():N}.msi");
+        await using (var remote = await _http.GetStreamAsync(MsiDownloadUrl, cancellationToken))
+        await using (var file = File.Create(msiPath))
+            await remote.CopyToAsync(file, cancellationToken);
+
+        progress?.Report("Installing Lemonade (may prompt for permission)…");
+        var silentOk = await RunProcessAsync(
+            "msiexec.exe",
+            $"/i \"{msiPath}\" /qn /norestart",
+            elevate: true,
+            cancellationToken,
+            timeoutMs: 15 * 60 * 1000);
+
+        if (!silentOk)
+        {
+            progress?.Report("Silent install failed or was cancelled — opening interactive installer…");
+            await RunProcessAsync(
+                "msiexec.exe",
+                $"/i \"{msiPath}\"",
+                elevate: true,
+                cancellationToken,
+                timeoutMs: 15 * 60 * 1000);
+            await Task.Delay(3000, cancellationToken);
+        }
+
+        try { File.Delete(msiPath); } catch { /* ignore */ }
+
+        await Task.Delay(2000, cancellationToken);
+        if (DetectInstallation() is LemonadeDetection.NotFound)
+        {
+            return LemonadeInstallResult.Fail(
+                "Lemonade installer finished but Lemonade was not detected yet. " +
+                "Finish the MSI if it is still open, then re-run this step or open the Lemonade app once.");
+        }
+
+        await TryEnsureServerRunningAsync(progress, cancellationToken);
+        return LemonadeInstallResult.Ok("Lemonade installed.");
+    }
+
+    private async Task<LemonadeInstallResult> InstallServerLinuxAsync(
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        // 1) Prefer snap (cross-distro)
+        if (CommandExists("snap"))
+        {
+            progress?.Report("Installing Lemonade via snap (lemonade-server)…");
+            var snap = await RunElevatedShellAsync(
+                "snap install lemonade-server",
+                cancellationToken,
+                timeoutMs: 15 * 60 * 1000);
+            if (snap.Ok || DetectInstallation() is not LemonadeDetection.NotFound)
+            {
+                await TryEnsureServerRunningAsync(progress, cancellationToken);
+                return LemonadeInstallResult.Ok("Lemonade installed (snap).");
+            }
+
+            progress?.Report($"Snap install failed ({snap.Detail}). Trying apt/PPA…");
+        }
+
+        // 2) Ubuntu/Debian apt + official PPA
+        if (CommandExists("apt-get") || CommandExists("apt"))
+        {
+            progress?.Report("Installing Lemonade via apt (PPA lemonade-team/stable)…");
+            var aptScript = """
+                set -e
+                if command -v add-apt-repository >/dev/null 2>&1; then
+                  add-apt-repository -y ppa:lemonade-team/stable || true
+                fi
+                apt-get update -y
+                DEBIAN_FRONTEND=noninteractive apt-get install -y lemonade-server || apt-get install -y lemonade
+                """;
+            var apt = await RunElevatedShellAsync(aptScript, cancellationToken, timeoutMs: 20 * 60 * 1000);
+            if (apt.Ok || DetectInstallation() is not LemonadeDetection.NotFound)
+            {
+                // Best-effort start common service names
+                await RunElevatedShellAsync(
+                    "systemctl enable --now lemonade-server 2>/dev/null || systemctl enable --now lemond 2>/dev/null || true",
+                    cancellationToken,
+                    timeoutMs: 30_000);
+                await TryEnsureServerRunningAsync(progress, cancellationToken);
+                return LemonadeInstallResult.Ok("Lemonade installed (apt).");
+            }
+        }
+
+        return LemonadeInstallResult.Fail(
+            "Could not install Lemonade automatically. Install manually, then re-run this step:\n" +
+            "  sudo snap install lemonade-server\n" +
+            "  # or on Ubuntu: sudo add-apt-repository ppa:lemonade-team/stable && sudo apt install lemonade-server\n" +
+            "See https://lemonade-server.ai/docs/guide/install/");
     }
 
     public async Task<LemonadeInstallResult> PullModelsAsync(
@@ -395,6 +459,17 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
 
     private static IEnumerable<string> EnumerateInstallDirs()
     {
+        if (OperatingSystem.IsLinux())
+        {
+            yield return "/snap/lemonade-server/current";
+            yield return "/usr/share/lemonade";
+            yield return "/opt/lemonade";
+            yield return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local", "share", "lemonade");
+            yield break;
+        }
+
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
@@ -414,6 +489,31 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
     private static IEnumerable<string> EnumerateCliCandidates()
     {
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        if (OperatingSystem.IsLinux())
+        {
+            foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                yield return Path.Combine(dir, "lemonade");
+                yield return Path.Combine(dir, "lemonade-server");
+            }
+
+            yield return "/snap/bin/lemonade-server";
+            yield return "/snap/bin/lemonade";
+            yield return "/usr/bin/lemonade";
+            yield return "/usr/bin/lemonade-server";
+            yield return "/usr/local/bin/lemonade";
+            yield return "/usr/local/bin/lemonade-server";
+
+            foreach (var dir in EnumerateInstallDirs())
+            {
+                yield return Path.Combine(dir, "lemonade");
+                yield return Path.Combine(dir, "lemonade-server");
+                yield return Path.Combine(dir, "bin", "lemonade");
+            }
+
+            yield break;
+        }
+
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             yield return Path.Combine(dir, "lemonade.exe");
@@ -431,6 +531,17 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
 
     private static IEnumerable<string> EnumerateAppCandidates()
     {
+        if (OperatingSystem.IsLinux())
+        {
+            foreach (var dir in EnumerateInstallDirs())
+            {
+                yield return Path.Combine(dir, "lemonade-app");
+                yield return Path.Combine(dir, "lemonade");
+            }
+
+            yield break;
+        }
+
         foreach (var dir in EnumerateInstallDirs())
         {
             yield return Path.Combine(dir, "lemonade-app.exe");
@@ -440,6 +551,64 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
 
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         yield return Path.Combine(local, "Programs", "lemonade", "lemonade-app.exe");
+    }
+
+    private async Task<(bool Ok, string Detail)> RunElevatedShellAsync(
+        string shellCommand,
+        CancellationToken ct,
+        int timeoutMs)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"chatfish-lemonade-{Guid.NewGuid():N}.sh");
+        await File.WriteAllTextAsync(scriptPath, "#!/bin/bash\n" + shellCommand + "\n", ct);
+        try
+        {
+            await RunProcessWithOutputAsync("chmod", $"+x \"{scriptPath}\"", ct, timeoutMs: 5000);
+
+            foreach (var (file, args) in new[]
+                     {
+                         ("pkexec", $"bash \"{scriptPath}\""),
+                         ("sudo", $"-n bash \"{scriptPath}\""),
+                         ("sudo", $"bash \"{scriptPath}\"")
+                     })
+            {
+                if (!CommandExists(file))
+                    continue;
+
+                var result = await RunProcessWithOutputAsync(file, args, ct, timeoutMs);
+                if (result.Ok)
+                    return result;
+            }
+
+            return (false, "Elevation failed or cancelled.");
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { /* ignore */ }
+        }
+    }
+
+    private static bool CommandExists(string name)
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "which",
+                Arguments = name,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(3000);
+            return proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // ── process helpers ──────────────────────────────────────────────────
@@ -480,7 +649,7 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
                     fileName = resolved;
             }
 
-            if (elevate)
+            if (elevate && OperatingSystem.IsWindows())
             {
                 // Elevated msiexec: cannot reliably redirect; use shell + wait.
                 var psiElev = new ProcessStartInfo

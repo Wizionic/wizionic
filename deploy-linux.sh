@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# CHATFISH LINUX DEPLOYMENT (Velopack AppImage + .deb + install.sh)
+# CHATFISH LINUX DEPLOYMENT (Velopack AppImage + .deb + install.sh + homeserver)
 # ==============================================================================
-# Mirrors deploy.ps1 Part 1 (Windows Velopack installer), for Linux desktop.
+# Mirrors deploy.ps1 Part 1 + Part 1b (Windows Velopack + homeserver package),
+# for Linux desktop. Does NOT deploy production Docker website (see deploy.ps1 Part 2).
 #
 # Usage:
 #   ./deploy-linux.sh                  # publish, pack, upload
 #   ./deploy-linux.sh --skip-upload    # publish + pack only (local test)
 #   ./deploy-linux.sh --version 1.1.3
 #   ./deploy-linux.sh --skip-download  # do not fetch previous releases (no deltas)
+#   ./deploy-linux.sh --skip-homeserver  # skip homeserver package build
 #
 # Artifacts (uploaded to https://chatfish.me/releases/linux/):
 #   Chatfish.AppImage
@@ -18,8 +20,12 @@
 #                         --system: .deb under /opt (upgrade via reinstall)
 #   releases.linux.json (Velopack feed)
 #
+# Homeserver artifacts (https://chatfish.me/releases/homeserver/linux/):
+#   homeserver-linux-x64-${VERSION}.zip  — self-contained Blazor host + WASM
+#   latest.json                          — version, fileName, sha256, url
+#
 # Prerequisites:
-#   - .NET 10 SDK, vpk, dpkg-deb
+#   - .NET 10 SDK, vpk, dpkg-deb, zip
 #   - scp/ssh (unless --skip-upload)
 # ==============================================================================
 set -euo pipefail
@@ -32,9 +38,13 @@ SSH_USER="${SSH_USER:-daniel}"
 OUTPUT_DIR="${OUTPUT_DIR:-./linux_publish}"
 RELEASES_DIR="${RELEASES_DIR:-./linux_releases}"
 DEB_BUILD_DIR="${DEB_BUILD_DIR:-./linux_deb_build}"
-VERSION="${VERSION:-0.1.1}"
+HOMESERVER_OUTPUT="${HOMESERVER_OUTPUT:-./homeserver_publish_linux}"
+HOMESERVER_RELEASES="${HOMESERVER_RELEASES:-./homeserver_releases_linux}"
+VERSION="${VERSION:-0.1.2}"
 UPDATE_FEED="${UPDATE_FEED:-https://chatfish.me/releases/linux}"
+HOMESERVER_FEED="${HOMESERVER_FEED:-https://chatfish.me/releases/homeserver/linux}"
 REMOTE_RELEASES="${REMOTE_RELEASES:-/var/www/chatfish/releases/linux}"
+REMOTE_HOMESERVER="${REMOTE_HOMESERVER:-/var/www/chatfish/releases/homeserver/linux}"
 REMOTE_WWWROOT="${REMOTE_WWWROOT:-/var/www/chatfish}"
 PACK_ID="Chatfish"
 PACK_TITLE="Chatfish"
@@ -42,24 +52,26 @@ MAIN_EXE="Chatfish"
 ICON_PATH="ChatfishApp.Maui/Resources/AppIcon/chatfish.png"
 ICON_FALLBACKS=(
   "wwwroot/images/icon512.png"
-  "wwwroot/images/chatfi}sh.png"
+  "wwwroot/images/chatfish.png"
 )
 
 SKIP_UPLOAD=false
 SKIP_DOWNLOAD=false
+SKIP_HOMESERVER=false
 
 usage() {
-  sed -n '2,22p' "$0" | sed 's/^# \?//'
+  sed -n '2,28p' "$0" | sed 's/^# \?//'
   exit "${1:-0}"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-upload)   SKIP_UPLOAD=true; shift ;;
-    --skip-download) SKIP_DOWNLOAD=true; shift ;;
-    --version)       VERSION="${2:?}"; shift 2 ;;
-    --version=*)     VERSION="${1#*=}"; shift ;;
-    -h|--help)       usage 0 ;;
+    --skip-upload)     SKIP_UPLOAD=true; shift ;;
+    --skip-download)   SKIP_DOWNLOAD=true; shift ;;
+    --skip-homeserver) SKIP_HOMESERVER=true; shift ;;
+    --version)         VERSION="${2:?}"; shift 2 ;;
+    --version=*)       VERSION="${1#*=}"; shift ;;
+    -h|--help)         usage 0 ;;
     *)
       echo "Unknown option: $1" >&2
       usage 1
@@ -97,6 +109,8 @@ echo "================================================================"
 require_cmd dotnet
 require_cmd vpk
 require_cmd dpkg-deb
+require_cmd zip
+require_cmd sha256sum
 
 ICON="$(resolve_icon)"
 if [[ -z "$ICON" ]]; then
@@ -107,8 +121,8 @@ echo "Icon:     $ICON"
 
 # Clean previous builds (keep downloaded prior releases out of DEB dir)
 echo ""
-echo "Cleaning $OUTPUT_DIR, $RELEASES_DIR, $DEB_BUILD_DIR ..."
-rm -rf "$OUTPUT_DIR" "$RELEASES_DIR" "$DEB_BUILD_DIR"
+echo "Cleaning $OUTPUT_DIR, $RELEASES_DIR, $DEB_BUILD_DIR, $HOMESERVER_OUTPUT, $HOMESERVER_RELEASES ..."
+rm -rf "$OUTPUT_DIR" "$RELEASES_DIR" "$DEB_BUILD_DIR" "$HOMESERVER_OUTPUT" "$HOMESERVER_RELEASES"
 mkdir -p "$RELEASES_DIR"
 
 # Download previous releases for delta updates
@@ -407,14 +421,81 @@ cp -f "$RELEASES_DIR/install.sh" wwwroot/releases/linux/install.sh 2>/dev/null |
 # Root install.sh for static hosts that map wwwroot
 cp -f "$RELEASES_DIR/install.sh" wwwroot/install.sh 2>/dev/null || true
 
+# ------------------------------------------------------------------------------
+# Part 1b — Linux Home Server package (self-contained host + WASM)
+# Optional install from MAUI setup wizard. Does not change production Docker.
+# ------------------------------------------------------------------------------
+HOMESERVER_ZIP_NAME=""
+if [[ "$SKIP_HOMESERVER" == "true" ]]; then
+  echo ""
+  echo "Skipping Home Server package (--skip-homeserver)."
+else
+  echo ""
+  echo "================================================================"
+  echo " Building Linux Home Server package (self-contained host + WASM)"
+  echo "================================================================"
+  mkdir -p "$HOMESERVER_RELEASES"
+
+  echo "Publishing ChatfishApp (linux-x64 self-contained) ..."
+  dotnet publish "ChatfishApp.csproj" \
+    -c Release \
+    -r linux-x64 \
+    --self-contained true \
+    -o "$HOMESERVER_OUTPUT" \
+    -p:DebugType=None \
+    -p:DebugSymbols=false \
+    -p:BlazorEnableCompression=true \
+    -p:SelectBlazorWebAssemblyRazorConfiguration=Release \
+    -p:BuildProjectReferences=true \
+    -p:Version="$VERSION" \
+    -p:ApplicationDisplayVersion="$VERSION"
+
+  if [[ ! -f "$HOMESERVER_OUTPUT/ChatfishApp" && ! -f "$HOMESERVER_OUTPUT/ChatfishApp.dll" ]]; then
+    echo "ERROR: homeserver publish missing ChatfishApp entrypoint in $HOMESERVER_OUTPUT" >&2
+    ls -la "$HOMESERVER_OUTPUT" | head -40 >&2
+    exit 1
+  fi
+  # Ensure native entrypoint is executable when present
+  if [[ -f "$HOMESERVER_OUTPUT/ChatfishApp" ]]; then
+    chmod +x "$HOMESERVER_OUTPUT/ChatfishApp" || true
+  fi
+
+  HOMESERVER_ZIP_NAME="homeserver-linux-x64-${VERSION}.zip"
+  HOMESERVER_ZIP_PATH="$HOMESERVER_RELEASES/$HOMESERVER_ZIP_NAME"
+  echo "Zipping $HOMESERVER_ZIP_PATH ..."
+  # zip contents of publish dir (no extra top-level folder)
+  (
+    cd "$HOMESERVER_OUTPUT"
+    zip -qr "$SCRIPT_DIR/$HOMESERVER_ZIP_PATH" .
+  )
+
+  HOMESERVER_SHA256="$(sha256sum "$HOMESERVER_ZIP_PATH" | awk '{print $1}')"
+  cat > "$HOMESERVER_RELEASES/latest.json" << MANIFEST
+{
+  "version": "${VERSION}",
+  "fileName": "${HOMESERVER_ZIP_NAME}",
+  "sha256": "${HOMESERVER_SHA256}",
+  "url": "${HOMESERVER_FEED}/${HOMESERVER_ZIP_NAME}"
+}
+MANIFEST
+  echo "Home Server package: $HOMESERVER_ZIP_PATH (sha256=$HOMESERVER_SHA256)"
+fi
+
 echo ""
-echo "Release artifacts:"
+echo "Release artifacts (MAUI):"
 ls -lah "$RELEASES_DIR"
+if [[ -d "$HOMESERVER_RELEASES" ]]; then
+  echo "Release artifacts (Home Server):"
+  ls -lah "$HOMESERVER_RELEASES"
+fi
 
 if [[ "$SKIP_UPLOAD" == "true" ]]; then
   echo ""
   echo "Skipping upload (--skip-upload)."
   echo "Done. Local packages are in: $RELEASES_DIR"
+  if [[ -n "$HOMESERVER_ZIP_NAME" ]]; then
+    echo "  Homeserver: $HOMESERVER_RELEASES/$HOMESERVER_ZIP_NAME"
+  fi
   echo "  curl -fsSL file://$SCRIPT_DIR/$RELEASES_DIR/install.sh | bash   # not for remote"
   echo "  Install command (after upload): curl -fsSL https://chatfish.me/install.sh | bash"
   exit 0
@@ -436,6 +517,13 @@ scp "$RELEASES_DIR/install.sh" "${SSH_USER}@${SERVER_IP}:${REMOTE_WWWROOT}/insta
   || scp "$RELEASES_DIR/install.sh" "${SSH_USER}@${SERVER_IP}:${REMOTE_WWWROOT}/wwwroot/install.sh" \
   || echo "WARNING: could not copy install.sh to site root — use $UPDATE_FEED/install.sh"
 
+if [[ -n "$HOMESERVER_ZIP_NAME" && -d "$HOMESERVER_RELEASES" ]]; then
+  echo "Ensuring remote homeserver directory $REMOTE_HOMESERVER ..."
+  ssh "${SSH_USER}@${SERVER_IP}" "mkdir -p '${REMOTE_HOMESERVER}'"
+  echo "Uploading Home Server package to ${SSH_USER}@${SERVER_IP}:${REMOTE_HOMESERVER}/ ..."
+  scp -r "${HOMESERVER_RELEASES}/"* "${SSH_USER}@${SERVER_IP}:${REMOTE_HOMESERVER}/"
+fi
+
 echo ""
 echo "Linux deployment complete."
 echo "  Install (AppImage, in-app updates): curl -fsSL https://chatfish.me/install.sh | bash"
@@ -444,3 +532,7 @@ echo "  (alt)       curl -fsSL $UPDATE_FEED/install.sh | bash"
 echo "  AppImage:   $UPDATE_FEED/$APPIMAGE_NAME"
 echo "  Deb:        $UPDATE_FEED/$DEB_NAME"
 echo "  Feed:       $UPDATE_FEED/releases.linux.json"
+if [[ -n "$HOMESERVER_ZIP_NAME" ]]; then
+  echo "  Homeserver: $HOMESERVER_FEED/$HOMESERVER_ZIP_NAME"
+  echo "  Manifest:   $HOMESERVER_FEED/latest.json"
+fi

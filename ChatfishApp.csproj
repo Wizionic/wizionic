@@ -79,6 +79,7 @@
     <!-- Real email sending for magic links (SMTP via MailKit). Configure in appsettings under "Email" section (use user-secrets for passwords in real deploys). -->
     <PackageReference Include="MailKit" Version="4.8.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.8" />
     <PackageReference Include="SIPSorcery" Version="10.0.10" />
     <ProjectReference Include="ChatfishApp.Client\ChatfishApp.Client.csproj" />
     <ProjectReference Include="ChatfishApp.Core\ChatfishApp.Core.csproj" />

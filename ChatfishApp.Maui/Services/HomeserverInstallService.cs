@@ -3,19 +3,22 @@ using System.IO.Compression;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.ServiceProcess;
+using System.Text;
 using System.Text.Json;
 using ChatfishApp.Core.Configuration;
 using ChatfishApp.Core.Homeserver;
-// IChatfishServerEndpoint
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+#if WINDOWS
+using System.ServiceProcess;
+#endif
 
 namespace ChatfishApp.Maui.Services;
 
 /// <summary>
-/// Downloads, installs, updates, and removes the optional Windows Chatfish Home Server.
-/// Data lives under ProgramData and is never deleted by update/uninstall of binaries.
+/// Downloads, installs, updates, and removes the optional Chatfish Home Server
+/// (Windows Service / Linux systemd, with user-session fallback).
+/// Data lives under a stable path and is never deleted by update/uninstall of binaries.
 /// </summary>
 public sealed class HomeserverInstallService : IHomeserverInstallService
 {
@@ -31,12 +34,9 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         IHttpClientFactory httpClientFactory,
         IChatfishServerEndpoint? serverEndpoint = null)
     {
-        // Feed is always production (or configured BaseUrl) so local homeserver installs
-        // still pull packages from the public release site.
         _productionBaseUrl = string.IsNullOrWhiteSpace(options.Value.BaseUrl)
             ? "https://chatfish.me"
             : options.Value.BaseUrl.TrimEnd('/');
-        // Prefer public site for package downloads even if MAUI was retargeted to localhost.
         _feedBaseUrl = _productionBaseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase)
             ? "https://chatfish.me"
             : _productionBaseUrl;
@@ -45,12 +45,13 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         _http.Timeout = TimeSpan.FromMinutes(15);
         _serverEndpoint = serverEndpoint;
 
-        // Velopack after-update flag file (written from FastCallback — no UI/network there).
         if (File.Exists(HomeserverPaths.PendingUpdateFlagPath))
             PendingUpdateCheck = true;
     }
 
-    public bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    public bool IsSupported =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        || RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
     public bool ShouldPromptOnStartup { get; set; }
 
@@ -74,14 +75,14 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         CancellationToken cancellationToken = default)
     {
         if (!IsSupported)
-            return HomeserverInstallResult.Fail("Home Server is only supported on Windows.");
+            return HomeserverInstallResult.Fail("Home Server is only supported on Windows and Linux.");
 
         try
         {
             progress?.Report("Checking for Home Server package…");
             var manifest = await GetFeedManifestAsync(cancellationToken)
                 ?? throw new InvalidOperationException(
-                    "Could not find a Home Server package on the update feed. Deploy homeserver-win-x64 first.");
+                    "Could not find a Home Server package on the update feed. Deploy the homeserver package first.");
 
             progress?.Report($"Downloading Home Server {manifest.Version}…");
             var zipPath = await DownloadPackageAsync(manifest, cancellationToken);
@@ -89,10 +90,11 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             progress?.Report("Installing files…");
             EnsureDataLayout();
             ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
+            EnsureHostExecutable();
             WriteHomeserverAppsettings(HomeserverPaths.DefaultPort);
             TryDelete(zipPath);
 
-            progress?.Report("Starting Home Server service…");
+            progress?.Report("Starting Home Server…");
             var mode = await StartAsServiceOrUserSessionAsync(cancellationToken);
 
             var state = HomeserverState.Load();
@@ -108,9 +110,12 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             await RetargetMauiToLocalHomeserverAsync(state.BaseUrl);
             ShouldPromptOnStartup = false;
 
-            var modeLabel = mode == HomeserverInstallMode.WindowsService
-                ? "Windows Service (starts automatically)"
-                : "user session (starts at logon)";
+            var modeLabel = mode switch
+            {
+                HomeserverInstallMode.WindowsService => "Windows Service (starts automatically)",
+                HomeserverInstallMode.Systemd => "systemd unit (starts automatically)",
+                _ => "user session (starts at logon)"
+            };
             return HomeserverInstallResult.Ok(
                 $"Home Server installed ({modeLabel}) at {state.BaseUrl}",
                 mode,
@@ -158,9 +163,8 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             await StopHostAsync(state.InstallMode, cancellationToken);
 
             var zipPath = await DownloadPackageAsync(manifest, cancellationToken);
-            // Replace binaries only — never touch data/ or state identity.
             ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
-            // Re-write appsettings in case template changed; preserve port from state.
+            EnsureHostExecutable();
             WriteHomeserverAppsettings(state.Port);
             TryDelete(zipPath);
 
@@ -191,11 +195,15 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         try
         {
             await StopHostAsync(state.InstallMode, cancellationToken);
+#if WINDOWS
             if (state.InstallMode == HomeserverInstallMode.WindowsService)
-                await DeleteServiceAsync(cancellationToken);
+                await DeleteWindowsServiceAsync(cancellationToken);
+#endif
+            if (state.InstallMode == HomeserverInstallMode.Systemd)
+                await DeleteSystemdUnitAsync(cancellationToken);
+
             RemoveUserStartupShortcut();
 
-            // Remove app binaries only — keep data/ and state (or mark declined).
             if (Directory.Exists(HomeserverPaths.AppDirectory))
             {
                 try
@@ -229,6 +237,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         if (!state.IsInstalled)
             return "Not installed";
 
+#if WINDOWS
         if (state.InstallMode == HomeserverInstallMode.WindowsService)
         {
             try
@@ -240,6 +249,13 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             {
                 return $"Installed v{state.InstalledVersion ?? "?"} — Service not found ({state.BaseUrl})";
             }
+        }
+#endif
+
+        if (state.InstallMode == HomeserverInstallMode.Systemd)
+        {
+            var active = IsSystemdUnitActive();
+            return $"Installed v{state.InstalledVersion ?? "?"} — systemd {(active ? "active" : "inactive")} ({state.BaseUrl})";
         }
 
         var running = IsHostProcessRunning();
@@ -259,8 +275,9 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
             if (string.IsNullOrWhiteSpace(manifest.Url))
             {
+                var rid = OperatingSystem.IsLinux() ? "linux-x64" : "win-x64";
                 var fileName = string.IsNullOrWhiteSpace(manifest.FileName)
-                    ? $"homeserver-win-x64-{manifest.Version}.zip"
+                    ? $"homeserver-{rid}-{manifest.Version}.zip"
                     : manifest.FileName;
                 manifest.Url = $"{_feedBaseUrl}/{HomeserverPaths.ReleasesFeedPath}/{fileName}";
             }
@@ -301,7 +318,6 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
     private static void ExtractPackage(string zipPath, string targetDir)
     {
-        // Stage into a temp folder then swap so a failed extract never leaves a half-deleted app.
         var staging = targetDir + ".staging";
         if (Directory.Exists(staging))
             Directory.Delete(staging, recursive: true);
@@ -309,7 +325,6 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
         ZipFile.ExtractToDirectory(zipPath, staging, overwriteFiles: true);
 
-        // If the zip has a single top-level folder, unwrap it.
         var entries = Directory.GetFileSystemEntries(staging);
         if (entries.Length == 1 && Directory.Exists(entries[0]))
         {
@@ -335,7 +350,6 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             }
             catch
             {
-                // Roll back
                 if (Directory.Exists(targetDir))
                     Directory.Delete(targetDir, recursive: true);
                 Directory.Move(backup, targetDir);
@@ -347,9 +361,38 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             Directory.Move(staging, targetDir);
         }
 
-        if (!File.Exists(HomeserverPaths.HostExecutablePath))
+        if (!File.Exists(HomeserverPaths.HostExecutablePath) &&
+            !File.Exists(Path.Combine(targetDir, "ChatfishApp.dll")))
+        {
             throw new InvalidOperationException(
-                $"Package did not contain ChatfishApp.exe at {HomeserverPaths.HostExecutablePath}");
+                $"Package did not contain host entrypoint at {HomeserverPaths.HostExecutablePath}");
+        }
+    }
+
+    private static void EnsureHostExecutable()
+    {
+        var exe = HomeserverPaths.HostExecutablePath;
+        if (!File.Exists(exe))
+            return;
+
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                // Ensure +x for self-contained native host binary
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "chmod",
+                    Arguments = $"+x \"{exe}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                })?.WaitForExit(5000);
+            }
+            catch
+            {
+                // best effort
+            }
+        }
     }
 
     private static void EnsureDataLayout()
@@ -392,45 +435,62 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
     private async Task<HomeserverInstallMode> StartAsServiceOrUserSessionAsync(CancellationToken ct)
     {
-        if (await TryInstallAndStartServiceAsync(ct))
-            return HomeserverInstallMode.WindowsService;
+#if WINDOWS
+        if (OperatingSystem.IsWindows())
+        {
+            if (await TryInstallAndStartWindowsServiceAsync(ct))
+                return HomeserverInstallMode.WindowsService;
 
-        _logger.LogWarning("[Homeserver] Service install failed or elevation denied — using user-session fallback.");
+            _logger.LogWarning("[Homeserver] Service install failed or elevation denied — using user-session fallback.");
+            StartUserSessionHost();
+            InstallUserStartupShortcut();
+            return HomeserverInstallMode.UserSession;
+        }
+#endif
+
+        if (OperatingSystem.IsLinux())
+        {
+            if (await TryInstallAndStartSystemdAsync(ct))
+                return HomeserverInstallMode.Systemd;
+
+            _logger.LogWarning("[Homeserver] systemd install failed or elevation denied — using user-session fallback.");
+            StartUserSessionHost();
+            InstallUserStartupShortcut();
+            return HomeserverInstallMode.UserSession;
+        }
+
         StartUserSessionHost();
         InstallUserStartupShortcut();
         return HomeserverInstallMode.UserSession;
     }
 
-    private async Task<bool> TryInstallAndStartServiceAsync(CancellationToken ct)
+#if WINDOWS
+    private async Task<bool> TryInstallAndStartWindowsServiceAsync(CancellationToken ct)
     {
         try
         {
-            // Create/update service via elevated sc.exe
             var binPath = $"\"{HomeserverPaths.HostExecutablePath}\"";
             var createArgs =
                 $"create {HomeserverPaths.ServiceName} binPath= {binPath} start= auto " +
                 $"DisplayName= \"{HomeserverPaths.ServiceDisplayName}\"";
 
-            if (!await RunElevatedAsync("sc.exe", createArgs, ct))
+            if (!await RunElevatedWindowsAsync("sc.exe", createArgs, ct))
             {
-                // Service may already exist — try config + start
+                // Service may already exist
             }
             else
             {
-                await RunElevatedAsync("sc.exe",
+                await RunElevatedWindowsAsync("sc.exe",
                     $"description {HomeserverPaths.ServiceName} \"Chatfish local login server and website\"",
                     ct);
             }
 
-            // Ensure binPath is correct on reinstall
-            await RunElevatedAsync("sc.exe",
+            await RunElevatedWindowsAsync("sc.exe",
                 $"config {HomeserverPaths.ServiceName} binPath= {binPath} start= auto",
                 ct);
 
-            // sc start returns non-zero if already running — ignore exit code and verify status.
-            await RunElevatedAsync("sc.exe", $"start {HomeserverPaths.ServiceName}", ct, acceptAnyExitCode: true);
+            await RunElevatedWindowsAsync("sc.exe", $"start {HomeserverPaths.ServiceName}", ct, acceptAnyExitCode: true);
 
-            // Verify
             await Task.Delay(1500, ct);
             using var sc = new ServiceController(HomeserverPaths.ServiceName);
             sc.Refresh();
@@ -439,16 +499,131 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[Homeserver] Service path failed");
+            _logger.LogWarning(ex, "[Homeserver] Windows service path failed");
+            return false;
+        }
+    }
+
+    private async Task DeleteWindowsServiceAsync(CancellationToken ct)
+    {
+        try
+        {
+            await RunElevatedWindowsAsync("sc.exe", $"stop {HomeserverPaths.ServiceName}", ct);
+        }
+        catch { /* ignore */ }
+
+        await RunElevatedWindowsAsync("sc.exe", $"delete {HomeserverPaths.ServiceName}", ct);
+    }
+#endif
+
+    private async Task<bool> TryInstallAndStartSystemdAsync(CancellationToken ct)
+    {
+        try
+        {
+            var unitPath = Path.Combine(Path.GetTempPath(), HomeserverPaths.SystemdUnitFileName);
+            var userName = Environment.UserName;
+            var exe = HomeserverPaths.HostExecutablePath;
+            var workDir = HomeserverPaths.AppDirectory;
+            // Prefer native host; fall back to dotnet ChatfishApp.dll if only DLL published.
+            var execStart = File.Exists(exe)
+                ? exe
+                : $"dotnet {Path.Combine(workDir, "ChatfishApp.dll")}";
+
+            var unit = $"""
+                [Unit]
+                Description={HomeserverPaths.ServiceDisplayName}
+                After=network-online.target
+                Wants=network-online.target
+
+                [Service]
+                Type=notify
+                User={userName}
+                WorkingDirectory={workDir}
+                ExecStart={execStart}
+                Restart=on-failure
+                RestartSec=5
+                Environment=ASPNETCORE_ENVIRONMENT=Production
+                Environment=DOTNET_PrintStackToConsoleOnException=1
+                # HomeserverPaths.AppsettingsPath is under the user's LocalApplicationData
+                # and is loaded by the host when present.
+
+                [Install]
+                WantedBy=multi-user.target
+                """;
+            await File.WriteAllTextAsync(unitPath, unit, ct);
+
+            var dest = $"/etc/systemd/system/{HomeserverPaths.SystemdUnitFileName}";
+            var script = $"""
+                set -e
+                cp '{unitPath}' '{dest}'
+                systemctl daemon-reload
+                systemctl enable '{HomeserverPaths.SystemdUnitName}.service'
+                systemctl restart '{HomeserverPaths.SystemdUnitName}.service' || systemctl start '{HomeserverPaths.SystemdUnitName}.service'
+                """;
+
+            if (!await RunElevatedLinuxAsync(script, ct, timeoutMs: 60_000))
+                return false;
+
+            await Task.Delay(1500, ct);
+            return IsSystemdUnitActive();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Homeserver] systemd path failed");
+            return false;
+        }
+    }
+
+    private async Task DeleteSystemdUnitAsync(CancellationToken ct)
+    {
+        var script = $"""
+            systemctl stop '{HomeserverPaths.SystemdUnitName}.service' 2>/dev/null || true
+            systemctl disable '{HomeserverPaths.SystemdUnitName}.service' 2>/dev/null || true
+            rm -f '/etc/systemd/system/{HomeserverPaths.SystemdUnitFileName}'
+            systemctl daemon-reload 2>/dev/null || true
+            """;
+        await RunElevatedLinuxAsync(script, ct, timeoutMs: 60_000);
+    }
+
+    private static bool IsSystemdUnitActive()
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "systemctl",
+                Arguments = $"is-active {HomeserverPaths.SystemdUnitName}.service",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = proc.StandardOutput.ReadToEnd().Trim();
+            proc.WaitForExit(5000);
+            return output.Equals("active", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
             return false;
         }
     }
 
     private async Task StartHostAsync(HomeserverInstallMode mode, CancellationToken ct)
     {
+#if WINDOWS
         if (mode == HomeserverInstallMode.WindowsService)
         {
-            await RunElevatedAsync("sc.exe", $"start {HomeserverPaths.ServiceName}", ct);
+            await RunElevatedWindowsAsync("sc.exe", $"start {HomeserverPaths.ServiceName}", ct);
+            return;
+        }
+#endif
+        if (mode == HomeserverInstallMode.Systemd)
+        {
+            await RunElevatedLinuxAsync(
+                $"systemctl start '{HomeserverPaths.SystemdUnitName}.service'",
+                ct,
+                timeoutMs: 30_000);
             return;
         }
 
@@ -457,6 +632,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
     private async Task StopHostAsync(HomeserverInstallMode mode, CancellationToken ct)
     {
+#if WINDOWS
         if (mode == HomeserverInstallMode.WindowsService)
         {
             try
@@ -464,7 +640,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 using var sc = new ServiceController(HomeserverPaths.ServiceName);
                 if (sc.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending)
                 {
-                    await RunElevatedAsync("sc.exe", $"stop {HomeserverPaths.ServiceName}", ct);
+                    await RunElevatedWindowsAsync("sc.exe", $"stop {HomeserverPaths.ServiceName}", ct);
                     await Task.Delay(1000, ct);
                 }
             }
@@ -474,38 +650,52 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             }
             return;
         }
+#endif
+        if (mode == HomeserverInstallMode.Systemd)
+        {
+            await RunElevatedLinuxAsync(
+                $"systemctl stop '{HomeserverPaths.SystemdUnitName}.service' || true",
+                ct,
+                timeoutMs: 30_000);
+            return;
+        }
 
         KillHostProcesses();
     }
 
-    private async Task DeleteServiceAsync(CancellationToken ct)
-    {
-        try
-        {
-            await RunElevatedAsync("sc.exe", $"stop {HomeserverPaths.ServiceName}", ct);
-        }
-        catch { /* ignore */ }
-
-        await RunElevatedAsync("sc.exe", $"delete {HomeserverPaths.ServiceName}", ct);
-    }
-
     private void StartUserSessionHost()
     {
-        if (!File.Exists(HomeserverPaths.HostExecutablePath))
+        var exe = HomeserverPaths.HostExecutablePath;
+        var dll = Path.Combine(HomeserverPaths.AppDirectory, "ChatfishApp.dll");
+        if (!File.Exists(exe) && !File.Exists(dll))
             throw new InvalidOperationException("Home Server executable not found.");
 
         if (IsHostProcessRunning())
             return;
 
-        var psi = new ProcessStartInfo
+        ProcessStartInfo psi;
+        if (File.Exists(exe))
         {
-            FileName = HomeserverPaths.HostExecutablePath,
-            WorkingDirectory = HomeserverPaths.AppDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden
-        };
-        // Ensure the homeserver settings path is discoverable (host always checks ProgramData).
+            psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                WorkingDirectory = HomeserverPaths.AppDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+        else
+        {
+            psi = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"\"{dll}\"",
+                WorkingDirectory = HomeserverPaths.AppDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
         psi.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
         Process.Start(psi);
     }
@@ -556,28 +746,55 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
     }
 
-    private static string StartupShortcutPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.Startup),
-            "Chatfish Home Server.cmd");
-
     private static void InstallUserStartupShortcut()
     {
-        var cmd = $"""
-            @echo off
-            start "" /D "{HomeserverPaths.AppDirectory}" "{HomeserverPaths.HostExecutablePath}"
-            """;
-        File.WriteAllText(StartupShortcutPath, cmd.Trim() + Environment.NewLine);
+        if (OperatingSystem.IsWindows())
+        {
+            var cmdPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+                "Chatfish Home Server.cmd");
+            var cmd = $"""
+                @echo off
+                start "" /D "{HomeserverPaths.AppDirectory}" "{HomeserverPaths.HostExecutablePath}"
+                """;
+            File.WriteAllText(cmdPath, cmd.Trim() + Environment.NewLine);
+            return;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            var desktopPath = HomeserverPaths.LinuxAutostartDesktopPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(desktopPath)!);
+            var exec = File.Exists(HomeserverPaths.HostExecutablePath)
+                ? HomeserverPaths.HostExecutablePath
+                : $"dotnet {Path.Combine(HomeserverPaths.AppDirectory, "ChatfishApp.dll")}";
+            var desktop = $"""
+                [Desktop Entry]
+                Type=Application
+                Name=Chatfish Home Server
+                Comment=Local Chatfish login server and website
+                Exec={exec}
+                Path={HomeserverPaths.AppDirectory}
+                Terminal=false
+                X-GNOME-Autostart-enabled=true
+                """;
+            File.WriteAllText(desktopPath, desktop);
+        }
     }
 
     private static void RemoveUserStartupShortcut()
     {
-        TryDelete(StartupShortcutPath);
+        if (OperatingSystem.IsWindows())
+        {
+            TryDelete(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+                "Chatfish Home Server.cmd"));
+        }
+
+        if (OperatingSystem.IsLinux())
+            TryDelete(HomeserverPaths.LinuxAutostartDesktopPath);
     }
 
-    /// <summary>
-    /// Retarget MAUI login server so auth/sync hit the local homeserver (live Settings field + HttpClient).
-    /// </summary>
     private async Task RetargetMauiToLocalHomeserverAsync(string baseUrl)
     {
         try
@@ -589,15 +806,17 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 return;
             }
 
-            // Fallback if endpoint not registered
             var path = Path.Combine(MauiAppData.Directory, "appsettings.Local.json");
             Directory.CreateDirectory(MauiAppData.Directory);
+            var updateFeed = OperatingSystem.IsLinux()
+                ? $"{_feedBaseUrl}/releases/linux"
+                : $"{_feedBaseUrl}/releases/windows";
             var json = JsonSerializer.Serialize(new
             {
                 ChatfishServer = new
                 {
                     BaseUrl = baseUrl,
-                    UpdateFeedUrl = $"{_feedBaseUrl}/releases/windows"
+                    UpdateFeedUrl = updateFeed
                 }
             }, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(path, json);
@@ -609,15 +828,15 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────
+    // ── elevation helpers ────────────────────────────────────────────────
 
-    private static async Task<bool> RunElevatedAsync(
+#if WINDOWS
+    private static async Task<bool> RunElevatedWindowsAsync(
         string fileName,
         string arguments,
         CancellationToken ct,
         bool acceptAnyExitCode = false)
     {
-        // Write a tiny helper so we can wait for elevation result via exit code file.
         var marker = Path.Combine(Path.GetTempPath(), $"chatfish-elev-{Guid.NewGuid():N}.exit");
         TryDelete(marker);
 
@@ -646,7 +865,6 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
             await proc.WaitForExitAsync(ct);
 
-            // If UAC was denied, process may exit without writing marker.
             if (!File.Exists(marker))
                 return false;
 
@@ -658,13 +876,108 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
         catch (System.ComponentModel.Win32Exception)
         {
-            // User cancelled UAC
             return false;
         }
         finally
         {
             TryDelete(bat);
             TryDelete(marker);
+        }
+    }
+#endif
+
+    /// <summary>
+    /// Runs a shell script with elevation (pkexec preferred, then sudo).
+    /// </summary>
+    private async Task<bool> RunElevatedLinuxAsync(string scriptBody, CancellationToken ct, int timeoutMs)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"chatfish-elev-{Guid.NewGuid():N}.sh");
+        await File.WriteAllTextAsync(scriptPath, "#!/bin/bash\n" + scriptBody + "\n", ct);
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "chmod",
+                Arguments = $"+x \"{scriptPath}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            })?.WaitForExit(3000);
+
+            // Prefer graphical polkit elevation when available.
+            foreach (var (file, args) in new[]
+                     {
+                         ("pkexec", $"bash \"{scriptPath}\""),
+                         ("sudo", $"-n bash \"{scriptPath}\""),
+                         ("sudo", $"bash \"{scriptPath}\"")
+                     })
+            {
+                if (!CommandExists(file))
+                    continue;
+
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = file,
+                        Arguments = args,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+                    using var proc = Process.Start(psi);
+                    if (proc is null)
+                        continue;
+
+                    using var reg = ct.Register(() => { try { proc.Kill(true); } catch { } });
+                    var finished = await Task.Run(() => proc.WaitForExit(timeoutMs), ct);
+                    if (!finished)
+                    {
+                        try { proc.Kill(true); } catch { }
+                        continue;
+                    }
+
+                    if (proc.ExitCode == 0)
+                        return true;
+
+                    var err = await proc.StandardError.ReadToEndAsync(ct);
+                    _logger.LogDebug("[Homeserver] Elevated {File} exited {Code}: {Err}", file, proc.ExitCode, err);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[Homeserver] Elevation via {File} failed", file);
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            TryDelete(scriptPath);
+        }
+    }
+
+    private static bool CommandExists(string name)
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "which",
+                Arguments = name,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(3000);
+            return proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
+        }
+        catch
+        {
+            return false;
         }
     }
 
