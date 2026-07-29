@@ -107,6 +107,17 @@
         <PackageReference Include="Velopack" Version="1.2.0" />
     </ItemGroup>
 
+    <!-- Windows Home Server service control (optional install path). -->
+    <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+        <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.8" />
+    </ItemGroup>
+
+    <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'windows'">
+        <Compile Remove="Services\HomeserverInstallService.cs" />
+        <Compile Remove="Services\LemonadeInstallService.cs" />
+        <Compile Remove="Services\OllamaInstallService.cs" />
+    </ItemGroup>
+
     <!-- Linux desktop: WebKit.BlazorWebView.GirCore (GirCore 0.7.x). -->
     <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
         <PackageReference Include="WebKit.BlazorWebView.GirCore" Version="10.0.0-rc.1" />

@@ -6,7 +6,7 @@ $SSH_USER  = "daniel"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "0.1.0"   # bump this before each release
+$VERSION      = "0.1.2"   # bump this before each release
 $UPDATE_FEED  = "https://chatfish.me/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
 
@@ -44,6 +44,50 @@ Write-Host "Uploading installer to chatfish.me..." -ForegroundColor Cyan
 scp -r "${RELEASES_DIR}\*" "${SSH_USER}@${SERVER_IP}:/var/www/chatfish/releases/windows/"
 
 Write-Host "MAUI Installer deployed!" -ForegroundColor Green
+
+# ==============================================================================
+# PART 1b — WINDOWS HOMESERVER PACKAGE (self-contained host + WASM)
+# Optional install from MAUI first-run / Settings. Does not change production Docker.
+# ==============================================================================
+Write-Host "Building Windows Home Server package..." -ForegroundColor Cyan
+
+$HOMESERVER_OUTPUT = ".\homeserver_publish_win"
+$HOMESERVER_RELEASES = ".\homeserver_releases_win"
+
+if (Test-Path $HOMESERVER_OUTPUT) { Remove-Item -Recurse -Force $HOMESERVER_OUTPUT }
+if (Test-Path $HOMESERVER_RELEASES) { Remove-Item -Recurse -Force $HOMESERVER_RELEASES }
+New-Item -ItemType Directory -Force -Path $HOMESERVER_RELEASES | Out-Null
+
+dotnet publish "ChatfishApp.csproj" `
+    -c Release `
+    -r win-x64 `
+    --self-contained true `
+    -o $HOMESERVER_OUTPUT `
+    /p:DebugType=None `
+    /p:DebugSymbols=false `
+    /p:BlazorEnableCompression=true `
+    /p:SelectBlazorWebAssemblyRazorConfiguration=Release `
+    /p:BuildProjectReferences=true
+
+$zipName = "homeserver-win-x64-$VERSION.zip"
+$zipPath = Join-Path $HOMESERVER_RELEASES $zipName
+if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+Compress-Archive -Path (Join-Path $HOMESERVER_OUTPUT "*") -DestinationPath $zipPath -CompressionLevel Optimal
+
+$sha256 = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$manifest = @{
+    version  = $VERSION
+    fileName = $zipName
+    sha256   = $sha256
+    url      = "https://chatfish.me/releases/homeserver/windows/$zipName"
+} | ConvertTo-Json
+Set-Content -Path (Join-Path $HOMESERVER_RELEASES "latest.json") -Value $manifest -Encoding utf8
+
+Write-Host "Uploading Home Server package to chatfish.me..." -ForegroundColor Cyan
+ssh "${SSH_USER}@${SERVER_IP}" "mkdir -p /var/www/chatfish/releases/homeserver/windows"
+scp -r "${HOMESERVER_RELEASES}\*" "${SSH_USER}@${SERVER_IP}:/var/www/chatfish/releases/homeserver/windows/"
+
+Write-Host "Home Server package deployed!" -ForegroundColor Green
 
 # ==============================================================================
 # PART 2 — SERVER BLAZOR APP (Docker)

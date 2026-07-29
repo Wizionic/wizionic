@@ -2,6 +2,10 @@ using System.Net;
 using ChatfishApp.Core.Auth;
 using ChatfishApp.Core.Browser;
 using ChatfishApp.Core.Configuration;
+using ChatfishApp.Core.Homeserver;
+using ChatfishApp.Core.Lemonade;
+using ChatfishApp.Core.Ollama;
+using ChatfishApp.Core.Setup;
 using ChatfishApp.Core.SmartHome;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
@@ -37,8 +41,48 @@ public static class MauiProgram
 		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
 		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
 #endif
-		// Must be the very first line before anything else
-		VelopackApp.Build().Run();
+		// Must be the very first line before anything else.
+		// FastCallbacks must exit quickly and must not show UI.
+		var firstRun = false;
+		var afterUpdate = false;
+		VelopackApp.Build()
+			.OnFirstRun(_ => firstRun = true)
+			.OnAfterUpdateFastCallback(_ =>
+			{
+				afterUpdate = true;
+				try
+				{
+					Directory.CreateDirectory(HomeserverPaths.RootDirectory);
+					File.WriteAllText(HomeserverPaths.PendingUpdateFlagPath, DateTimeOffset.UtcNow.ToString("O"));
+				}
+				catch
+				{
+					// best effort — MainPage will still try UpdateIfNeeded when installed
+				}
+			})
+			.OnBeforeUninstallFastCallback(_ =>
+			{
+				try
+				{
+					// Stop homeserver service before MAUI uninstall; leave SQLite data intact.
+					if (OperatingSystem.IsWindows())
+					{
+						var psi = new System.Diagnostics.ProcessStartInfo
+						{
+							FileName = "sc.exe",
+							Arguments = $"stop {HomeserverPaths.ServiceName}",
+							UseShellExecute = false,
+							CreateNoWindow = true
+						};
+						System.Diagnostics.Process.Start(psi)?.WaitForExit(5000);
+					}
+				}
+				catch
+				{
+					// ignore — uninstall continues
+				}
+			})
+			.Run();
 
 		AppEnvironment.SetMaui();
 
@@ -46,6 +90,12 @@ public static class MauiProgram
 
 		var configuration = BuildConfiguration();
 		builder.Configuration.AddConfiguration(configuration);
+
+		// Stash Velopack lifecycle flags for the DI-backed homeserver service after build.
+		builder.Services.AddSingleton(new HomeserverLaunchFlags(firstRun, afterUpdate));
+		// First Velopack run or incomplete onboarding → auto-show setup wizard.
+		builder.Services.AddSingleton<ISetupWizardHost>(sp =>
+			new MauiSetupWizardHost(autoShowOnFirstRun: firstRun));
 
 		builder
 			.UseMauiApp<App>()
@@ -120,6 +170,11 @@ public static class MauiProgram
 		configBuilder.AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: false);
 #endif
 
+		// Written when the user opts into a local Home Server (retargets BaseUrl, keeps update feed).
+		var localOverride = Path.Combine(MauiAppData.Directory, "appsettings.Local.json");
+		if (File.Exists(localOverride))
+			configBuilder.AddJsonFile(localOverride, optional: true, reloadOnChange: false);
+
 		return configBuilder.Build();
 	}
 
@@ -151,6 +206,8 @@ public static class MauiProgram
 				Timeout = TimeSpan.FromSeconds(60)
 			};
 		});
+		services.AddSingleton<MauiChatfishServerEndpoint>();
+		services.AddSingleton<IChatfishServerEndpoint>(sp => sp.GetRequiredService<MauiChatfishServerEndpoint>());
 
 		services.AddSingleton<ThemeService>();
 		services.AddSingleton<SqliteSettingsDatabase>();
@@ -204,6 +261,12 @@ public static class MauiProgram
 		services.AddSingleton<MauiSideBrowserService>();
 		services.AddSingleton<IBrowserSideAgentService>(sp => sp.GetRequiredService<MauiSideBrowserService>());
 		services.AddSingleton<BrowserWebViewPlatformService>();
+		services.AddSingleton<MauiUrlEmbedOverlayService>();
+		services.AddSingleton<IUrlEmbedOverlay>(sp => sp.GetRequiredService<MauiUrlEmbedOverlayService>());
+#endif
+#if LINUX_DESKTOP
+		// Linux uses iframe path until a native WebKit overlay is wired.
+		services.AddSingleton<IUrlEmbedOverlay>(_ => NullUrlEmbedOverlay.Instance);
 #endif
 		services.AddSingleton<MauiPwaDetector>();
 		services.AddSingleton<IPwaDetector>(sp => sp.GetRequiredService<MauiPwaDetector>());
@@ -242,7 +305,37 @@ public static class MauiProgram
 		services.AddHttpClient();
 		services.AddSingleton<MauiUpdateService>();
 		services.AddSingleton<IUpdateService>(sp => sp.GetRequiredService<MauiUpdateService>());
+#if WINDOWS
+		services.AddSingleton<HomeserverInstallService>();
+		services.AddSingleton<IHomeserverInstallService>(sp =>
+		{
+			var svc = sp.GetRequiredService<HomeserverInstallService>();
+			var flags = sp.GetService<HomeserverLaunchFlags>();
+			if (flags is not null)
+			{
+				if (flags.IsFirstRun)
+					svc.ShouldPromptOnStartup = true;
+				if (flags.AfterUpdate || File.Exists(HomeserverPaths.PendingUpdateFlagPath))
+					svc.PendingUpdateCheck = true;
+			}
+			return svc;
+		});
+		services.AddSingleton<LemonadeInstallService>();
+		services.AddSingleton<ILemonadeInstallService>(sp => sp.GetRequiredService<LemonadeInstallService>());
+		services.AddSingleton<OllamaInstallService>();
+		services.AddSingleton<IOllamaInstallService>(sp => sp.GetRequiredService<OllamaInstallService>());
+#else
+		services.AddSingleton<IHomeserverInstallService>(_ => NullHomeserverInstallService.Instance);
+		services.AddSingleton<ILemonadeInstallService>(_ => NullLemonadeInstallService.Instance);
+		services.AddSingleton<IOllamaInstallService>(_ => NullOllamaInstallService.Instance);
+#endif
+		// Linux path may not register ISetupWizardHost above (Windows first-run block).
+		if (services.All(d => d.ServiceType != typeof(ISetupWizardHost)))
+			services.AddSingleton<ISetupWizardHost>(_ => NullSetupWizardHost.Instance);
 	}
+
+	/// <summary>Velopack lifecycle flags captured before DI is built.</summary>
+	internal sealed record HomeserverLaunchFlags(bool IsFirstRun, bool AfterUpdate);
 
 	private static void RestoreAuthCookies(IServiceProvider services)
 	{

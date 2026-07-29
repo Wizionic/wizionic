@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ChatfishApp.Core.Configuration;
 using Microsoft.Extensions.Options;
+// IChatfishServerEndpoint lives in Configuration
 
 namespace ChatfishApp.Core.Auth;
 
@@ -14,6 +15,7 @@ public class ChatAuthService : IAuthService
     private readonly HttpClient _http;
     private readonly IGuestKeyProvider? _guestKeys;
     private readonly ChatfishServerOptions? _serverOptions;
+    private readonly IChatfishServerEndpoint? _endpoint;
     private readonly IAuthSessionPersistence? _sessionPersistence;
 
     public string? Email { get; private set; }
@@ -23,15 +25,19 @@ public class ChatAuthService : IAuthService
     public bool IsAuthenticated => !string.IsNullOrEmpty(Email) && !string.IsNullOrEmpty(LocalEncryptionKeyB64);
 
     public string ServerBaseUrl =>
-        _serverOptions?.BaseUrl.TrimEnd('/')
-        ?? _http.BaseAddress?.ToString().TrimEnd('/')
-        ?? "";
+        !string.IsNullOrWhiteSpace(_endpoint?.BaseUrl)
+            ? _endpoint!.BaseUrl.TrimEnd('/')
+            : _serverOptions?.BaseUrl.TrimEnd('/')
+                ?? _http.BaseAddress?.ToString().TrimEnd('/')
+                ?? "";
 
     public string SyncHubUrl =>
-        _serverOptions?.SyncHubUrl
-        ?? (_http.BaseAddress is not null
-            ? new Uri(_http.BaseAddress, "sync-hub").ToString()
-            : "/sync-hub");
+        _endpoint is not null && !string.IsNullOrWhiteSpace(_endpoint.BaseUrl)
+            ? _endpoint.SyncHubUrl
+            : _serverOptions?.SyncHubUrl
+                ?? (_http.BaseAddress is not null
+                    ? new Uri(_http.BaseAddress, "sync-hub").ToString()
+                    : "/sync-hub");
 
     public event Action? OnChanged;
 
@@ -41,12 +47,14 @@ public class ChatAuthService : IAuthService
         HttpClient http,
         IGuestKeyProvider? guestKeys = null,
         IOptions<ChatfishServerOptions>? serverOptions = null,
-        IAuthSessionPersistence? sessionPersistence = null)
+        IAuthSessionPersistence? sessionPersistence = null,
+        IChatfishServerEndpoint? endpoint = null)
     {
         _http = http;
         _guestKeys = guestKeys;
         _serverOptions = serverOptions?.Value;
         _sessionPersistence = sessionPersistence;
+        _endpoint = endpoint;
     }
 
     public async Task LoadAsync()
