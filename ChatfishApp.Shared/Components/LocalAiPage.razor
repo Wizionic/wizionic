@@ -1,4 +1,4 @@
-@using ChatfishApp.Core.Lemonade
+@using ChatfishApp.Core.Ollama
 @using ChatfishApp.Core.Storage
 @inject IKeyStore KeyStore
 @inject NavigationManager Nav
@@ -7,24 +7,19 @@
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
 
-    <h4>Local AI</h4>
+    <h4>Ollama</h4>
     <p style="color: var(--color-text-muted); font-size: 0.9em;">
-        Configure local model servers on your machine. Settings stay on this device only.
-        You can use <strong>Ollama</strong>, <strong>Lemonade</strong> (AMD), or both.
+        Run open models privately with
+        <a href="https://www.ollama.com/" target="_blank" rel="noopener">Ollama</a>.
+        Settings stay on this device only.
+        For Lemonade (AMD-friendly local server), use the <a href="/lemonade">Lemonade</a> page.
     </p>
 
-    <!-- ========== OLLAMA ========== -->
-    <h3 style="margin-top: 1.5rem;">Ollama</h3>
-    <div style="max-width: 560px;">
+    <div style="max-width: 640px;">
         <div class="ollama-instructions">
-            <p>
-                Ollama lets you run AI models privately on your own computer —
-                no internet required, no API costs, no data leaving your machine.
-            </p>
             <p>
                 Download and install Ollama from
                 <a href="https://www.ollama.com/" target="_blank" rel="noopener">ollama.com</a>,
-                then pull a model (e.g. <code>ollama pull gemma4:e2b</code>).
             </p>
 
             <div class="cf-info-box" style="margin: 1rem 0; border-color: var(--color-accent);">
@@ -43,14 +38,55 @@
             Default: http://localhost:11434. Remote/LAN Ollama needs CORS + non-mixed-content access.
         </div>
 
-        <button @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.25rem;">Refresh Models from Ollama</button>
-        <div style="font-size:0.72em; color:var(--cf-text-muted); margin-top:2px;">
-            If refresh fails (CORS/mixed content), add model names manually below.
-            Pointing this URL at Lemonade works: refresh uses <code>/v1/models</code> (and <code>max_context_window</code>) when Ollama <code>/api/tags</code> / <code>/api/show</code> are missing. Click <strong>Refresh Models</strong> after changing the URL so context sizes update from the default 8192.
+        <button type="button" @onclick="RefreshOllamaModels" class="btn btn-outline-primary" style="margin-top: 0.25rem;" disabled="@busy">
+            @(busy && busyAction == "refresh" ? "Refreshing…" : "Refresh Models from Ollama")
+        </button>
+
+        <!-- Pull from library -->
+        <div style="margin-top: 1.25rem; padding: 0.85rem 1rem; border: 1px solid var(--color-border, #ddd); border-radius: 8px; background: var(--color-bg-muted, #f8f9fb);">
+            <label style="font-weight: 600;">Pull a model</label>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+                <select class="form-control" style="flex: 1; min-width: 200px;" @bind="pullModelId" disabled="@busy">
+                    <option value="">— select a model —</option>
+                    @foreach (var m in pullChoices)
+                    {
+                        <option value="@m.Name">@m.Name (@OllamaCapabilitiesResolver.FormatSize(m.SizeBytes))</option>
+                    }
+                </select>
+                <button type="button" class="btn btn-primary" @onclick="PullSelectedModel" disabled="@(busy || string.IsNullOrEmpty(pullModelId))">
+                    @(busy && busyAction == "pull" ? "Pulling…" : "Pull")
+                </button>
+                <button type="button" class="btn btn-outline-secondary" @onclick="LoadLibraryCatalog" disabled="@busy">
+                    @(busy && busyAction == "catalog" ? "Loading…" : "Reload catalog")
+                </button>
+            </div>
+            @if (libraryLoadError != null)
+            {
+                <div style="font-size: 0.8em; color: #c00; margin-top: 0.4rem;">@libraryLoadError</div>
+            }
+            else if (!pullChoices.Any() && libraryLoaded)
+            {
+                <div style="font-size: 0.8em; color: var(--cf-text-muted); margin-top: 0.4rem;">
+                    No catalog models left to pull (or catalog empty). Try Reload catalog, or type a name below.
+                </div>
+            }
+
+        <div style="margin-top: 0.75rem;">
+            <label>Pull / add by name</label>
+            <div style="display: flex; gap: 4px;">
+                <input type="text" @bind="newOllamaModel" placeholder="e.g. gemma3:1b" class="form-control" style="flex:1;" disabled="@busy" />
+                <button type="button" @onclick="PullByName" class="btn btn-outline-primary" disabled="@(busy || string.IsNullOrWhiteSpace(newOllamaModel))">
+                    @(busy && busyAction == "pull-name" ? "Pulling…" : "Pull")
+                </button>
+            </div>
         </div>
 
+        </div>
+
+
+
         <div class="model-list" style="margin-top: 1rem;">
-            <label>Available Ollama Models</label>
+            <label>Installed Ollama Models</label>
             @if (ollamaModelSettings.Any())
             {
                 <div class="ollama-model-list">
@@ -59,10 +95,14 @@
                         <div class="ollama-model-row @(editingOllamaName == model.Name ? "is-active" : "")">
                             <div class="ollama-model-row-main">
                                 <div class="ollama-model-row-title">@DisplayOllamaLabel(model)</div>
-                                <div class="ollama-model-row-subtitle">@model.Name</div>
+                                @if (ShowModelSubtitle(model))
+                                {
+                                    <div class="ollama-model-row-subtitle">@model.Name</div>
+                                }
                             </div>
                             <div class="ollama-model-row-meta">
-                                Chat
+                                <span class="ollama-vision-proxy-badge" title="On-disk size">@OllamaCapabilitiesResolver.FormatSize(model.SizeBytes)</span>
+                                <span class="ollama-vision-proxy-badge">Chat</span>
                                 @if (model.SupportsVision)
                                 {
                                     <span class="ollama-vision-proxy-badge">Vision</span>
@@ -72,19 +112,29 @@
                                     <span class="ollama-vision-proxy-badge">Vision proxy</span>
                                 }
                             </div>
-                            <button type="button"
-                                    class="ollama-model-edit-btn"
-                                    title="Edit model settings"
-                                    @onclick="() => OpenOllamaEditor(model.Name)">
-                                ✏️
-                            </button>
+                            <div class="ollama-model-row-actions">
+                                <button type="button"
+                                        class="ollama-model-edit-btn"
+                                        title="Edit model settings"
+                                        disabled="@busy"
+                                        @onclick="() => OpenOllamaEditor(model.Name)">
+                                    ✏️
+                                </button>
+                                <button type="button"
+                                        class="ollama-model-edit-btn"
+                                        title="Remove from Ollama (disk)"
+                                        disabled="@busy"
+                                        @onclick="() => DeleteOllamaModel(model.Name)">
+                                    🗑
+                                </button>
+                            </div>
                         </div>
                     }
                 </div>
             }
             else
             {
-                <div style="font-size: 0.8em; color: var(--cf-text-muted);">No models loaded. Use refresh or add a model name below.</div>
+                <div style="font-size: 0.8em; color: var(--cf-text-muted);">No models loaded. Refresh, pull from the catalog, or add a name below.</div>
             }
         </div>
 
@@ -98,6 +148,9 @@
 
                 <label>Model request name</label>
                 <input type="text" value="@ollamaEditDraft.Name" class="form-control" readonly />
+
+                <label>Size</label>
+                <input type="text" value="@OllamaCapabilitiesResolver.FormatSize(ollamaEditDraft.SizeBytes)" class="form-control" readonly />
 
                 <label>Server endpoint</label>
                 <input type="text" value="@KeyStore.OllamaChatEndpoint" class="form-control" readonly />
@@ -140,7 +193,7 @@
                     </label>
                 </div>
 
-                @if (!string.IsNullOrEmpty(saveFeedback) && saveFeedbackScope == "ollama")
+                @if (!string.IsNullOrEmpty(saveFeedback))
                 {
                     <div class="ollama-save-feedback @(saveFeedbackIsError ? "is-error" : "is-success")" role="status">
                         @saveFeedback
@@ -148,254 +201,16 @@
                 }
 
                 <div class="ollama-editor-actions">
-                    <button type="button" @onclick="SaveOllamaEditor" class="btn btn-primary">Save model</button>
+                    <button type="button" @onclick="SaveOllamaEditor" class="btn btn-primary" disabled="@busy">Save model</button>
                     <button type="button" @onclick="CloseOllamaEditor" class="btn btn-link-style">Close</button>
-                    <button type="button" @onclick="RemoveOllamaEditingModel" class="btn btn-outline-secondary ollama-remove-btn">Remove model</button>
+                    <button type="button" @onclick="DeleteEditingFromDisk" class="btn btn-outline-secondary ollama-remove-btn" disabled="@busy">
+                        Remove from disk
+                    </button>
                 </div>
             </div>
         }
 
-        <div style="margin-top: 0.5rem;">
-            <label>Add custom model tag</label>
-            <div style="display: flex; gap: 4px;">
-                <input type="text" @bind="newOllamaModel" placeholder="model:tag" class="form-control" style="flex:1;" />
-                <button @onclick="AddCustomOllamaModel" class="btn btn-outline-secondary">Add</button>
-            </div>
-        </div>
-    </div>
 
-    <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--cf-border, #ddd);" />
-
-    <!-- ========== LEMONADE ========== -->
-    <h3>Lemonade (AMD)</h3>
-    <div style="max-width: 560px;">
-        <div class="ollama-instructions">
-            <p>
-                <a href="https://lemonade-server.ai/" target="_blank" rel="noopener">Lemonade Server</a>
-                is a local OpenAI-compatible AI server with multimodal models (chat, image, speech)
-                optimized for AMD hardware — and usable on other GPUs/CPUs too.
-            </p>
-            <p>
-                Install Lemonade, start the server (default port <strong>13305</strong>), then refresh models below.
-                Chat models appear in the chat picker as <code>lemonade/…</code>. Image, TTS, and STT models
-                are listed here for later modality features.
-            </p>
-
-            <div class="cf-info-box" style="margin: 1rem 0; border-color: var(--color-accent);">
-                <strong>On https://chatfish.me:</strong> allow this origin on Lemonade (CORS) and prefer HTTPS for local access when possible.
-                <div class="model-command" style="margin-top: 0.5rem;">
-                    <span class="model-desc">Windows PowerShell</span>
-                    <pre><code>[System.Environment]::SetEnvironmentVariable("LEMONADE_ALLOWED_ORIGINS","https://chatfish.me","User")</code></pre>
-                </div>
-                <div style="font-size:0.75em; margin-top:0.4rem; color:var(--cf-text-muted);">
-                    Restart Lemonade after changing the environment variable. Mixed content still blocks plain <code>http://localhost</code> from HTTPS pages — use the MAUI app, a local tunnel, or configure TLS on Lemonade for full browser use.
-                </div>
-            </div>
-        </div>
-
-        <label>Base URL</label>
-        <input type="text" @bind="lemonadeBaseUrl" placeholder="http://localhost:13305" class="form-control" />
-        <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">
-            Default: http://localhost:13305. Pasting <code>/v1</code> or <code>/api/v1</code> is fine — it is normalized.
-        </div>
-
-        <label style="margin-top: 0.5rem;">API key (optional)</label>
-        <input type="password" @bind="lemonadeApiKey" placeholder="Only if LEMONADE_API_KEY is set" class="form-control" autocomplete="off" />
-        <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">
-            Sent as <code>Authorization: Bearer …</code> when set.
-        </div>
-
-        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
-            <button @onclick="TestLemonadeConnection" class="btn btn-outline-secondary">Test connection</button>
-            <button @onclick="RefreshLemonadeModels" class="btn btn-outline-primary">Refresh Models from Lemonade</button>
-        </div>
-        @if (!string.IsNullOrEmpty(lemonadeHealthSummary))
-        {
-            <div style="font-size: 0.8em; margin-top: 0.4rem; color: var(--cf-text-muted);">@lemonadeHealthSummary</div>
-        }
-
-        <div class="model-list" style="margin-top: 1rem;">
-            <label>Available Lemonade Models</label>
-            @if (lemonadeModelSettings.Any())
-            {
-                <div class="ollama-model-list">
-                    @foreach (var model in lemonadeModelSettings)
-                    {
-                        <div class="ollama-model-row @(editingLemonadeName == model.Name ? "is-active" : "")">
-                            <div class="ollama-model-row-main">
-                                <div class="ollama-model-row-title">@DisplayLemonadeLabel(model)</div>
-                                <div class="ollama-model-row-subtitle">@model.Name</div>
-                            </div>
-                            <div class="ollama-model-row-meta">
-                                @foreach (var badge in LemonadeBadges(model))
-                                {
-                                    <span class="ollama-vision-proxy-badge">@badge</span>
-                                }
-                            </div>
-                            <button type="button"
-                                    class="ollama-model-edit-btn"
-                                    title="Edit model settings"
-                                    @onclick="() => OpenLemonadeEditor(model.Name)">
-                                ✏️
-                            </button>
-                        </div>
-                    }
-                </div>
-            }
-            else
-            {
-                <div style="font-size: 0.8em; color: var(--cf-text-muted);">
-                    No models loaded. Start Lemonade and click refresh, or add a model name manually.
-                </div>
-            }
-        </div>
-
-        @if (editingLemonadeName != null && lemonadeEditDraft != null)
-        {
-            <div class="ollama-model-editor">
-                <h4>Edit Lemonade model</h4>
-
-                <label>Label</label>
-                <input type="text" @bind="lemonadeEditDraft.Label" class="form-control" />
-
-                <label>Model request name</label>
-                <input type="text" value="@lemonadeEditDraft.Name" class="form-control" readonly />
-
-                <label>Server endpoint</label>
-                <input type="text" value="@KeyStore.LemonadeChatEndpoint" class="form-control" readonly />
-                <div class="ollama-field-hint">
-                    Recipe: @(lemonadeEditDraft.Recipe ?? "—")
-                    @if (lemonadeEditDraft.Labels.Count > 0)
-                    {
-                        <span> · Labels: @string.Join(", ", lemonadeEditDraft.Labels)</span>
-                    }
-                </div>
-
-                @if (lemonadeEditDraft.IsChatEligible)
-                {
-                    <label>Context size</label>
-                    <input type="number" min="0" step="1" @bind="lemonadeEditDraft.ContextSize" class="form-control" />
-
-                    <div class="ollama-toggle-row">
-                        <div>
-                            <label class="ollama-toggle-label">Vision Support</label>
-                            <div class="ollama-field-hint">Allow image attachments in chat for this model.</div>
-                        </div>
-                        <label class="ollama-toggle">
-                            <input type="checkbox" @bind="lemonadeEditDraft.SupportsVision" />
-                            <span class="ollama-toggle-slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="ollama-toggle-row">
-                        <div>
-                            <label class="ollama-toggle-label">Tool Support</label>
-                            <div class="ollama-field-hint">Enable agentic tools for this chat model.</div>
-                        </div>
-                        <label class="ollama-toggle">
-                            <input type="checkbox" @bind="lemonadeEditDraft.SupportsTools" />
-                            <span class="ollama-toggle-slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="ollama-toggle-row @(lemonadeEditDraft.SupportsVision ? "" : "is-disabled")">
-                        <div>
-                            <label class="ollama-toggle-label">Vision proxy</label>
-                            <div class="ollama-field-hint">One vision proxy globally (Ollama or Lemonade).</div>
-                        </div>
-                        <label class="ollama-toggle">
-                            <input type="checkbox"
-                                   @bind="lemonadeEditDraft.IsVisionProxy"
-                                   disabled="@(!lemonadeEditDraft.SupportsVision)" />
-                            <span class="ollama-toggle-slider"></span>
-                        </label>
-                    </div>
-                }
-                else
-                {
-                    <div class="ollama-field-hint" style="margin: 0.5rem 0;">
-                        This is a modality model (not shown in the chat picker). It is used for image, speech, or other features.
-                    </div>
-                }
-
-                @if (!string.IsNullOrEmpty(saveFeedback) && saveFeedbackScope == "lemonade")
-                {
-                    <div class="ollama-save-feedback @(saveFeedbackIsError ? "is-error" : "is-success")" role="status">
-                        @saveFeedback
-                    </div>
-                }
-
-                <div class="ollama-editor-actions">
-                    <button type="button" @onclick="SaveLemonadeEditor" class="btn btn-primary">Save model</button>
-                    <button type="button" @onclick="CloseLemonadeEditor" class="btn btn-link-style">Close</button>
-                    <button type="button" @onclick="RemoveLemonadeEditingModel" class="btn btn-outline-secondary ollama-remove-btn">Remove model</button>
-                </div>
-            </div>
-        }
-
-        <div style="margin-top: 0.5rem;">
-            <label>Add model by name</label>
-            <div style="display: flex; gap: 4px;">
-                <input type="text" @bind="newLemonadeModel" placeholder="e.g. Qwen3-0.6B-GGUF" class="form-control" style="flex:1;" />
-                <button @onclick="AddCustomLemonadeModel" class="btn btn-outline-secondary">Add</button>
-            </div>
-        </div>
-
-        <div style="margin-top: 1.25rem;">
-            <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">Modality defaults</h4>
-            <p style="font-size: 0.8em; color: var(--cf-text-muted); margin-top: 0;">
-                Used by upcoming image generation, speech-to-text, and text-to-speech features in chat.
-            </p>
-
-            <label>Image generation model</label>
-            <select class="form-control" @bind="defaultImageModel">
-                <option value="">— none —</option>
-                @foreach (var m in lemonadeModelSettings.Where(x => x.IsImage))
-                {
-                    <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                }
-            </select>
-
-            <label style="margin-top: 0.4rem;">Image edit model</label>
-            <select class="form-control" @bind="defaultEditModel">
-                <option value="">— none —</option>
-                @foreach (var m in lemonadeModelSettings.Where(x => x.IsEdit))
-                {
-                    <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                }
-            </select>
-            <div style="font-size:0.72em; color:var(--cf-text-muted); margin:2px 0 4px;">
-                Only models with Lemonade’s <strong>edit</strong> label (e.g. Flux). Generate-only models like Z-Image-Turbo are not listed.
-            </div>
-
-            <label style="margin-top: 0.4rem;">Text-to-speech model</label>
-            <select class="form-control" @bind="defaultTtsModel">
-                <option value="">— none —</option>
-                @foreach (var m in lemonadeModelSettings.Where(x => x.IsTts))
-                {
-                    <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                }
-            </select>
-
-            <label style="margin-top: 0.4rem;">Speech-to-text model</label>
-            <select class="form-control" @bind="defaultSttModel">
-                <option value="">— none —</option>
-                @foreach (var m in lemonadeModelSettings.Where(x => x.IsTranscription))
-                {
-                    <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                }
-            </select>
-
-            <label style="margin-top: 0.4rem;">Default voice (TTS)</label>
-            <input type="text" @bind="defaultVoice" placeholder="shimmer" class="form-control" />
-            <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">
-                Kokoro examples: shimmer, alloy, af_sky, am_echo
-            </div>
-
-            <button type="button" @onclick="SaveModalityDefaults" class="btn btn-outline-primary" style="margin-top: 0.5rem;">
-                Save modality defaults
-            </button>
-        </div>
     </div>
 
     @if (!string.IsNullOrEmpty(pageFeedback))
@@ -406,7 +221,7 @@
     }
 
     <div style="margin-top: 1.5rem;">
-        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
+        <button type="button" @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
     </div>
 </div>
 
@@ -417,22 +232,16 @@
     string? editingOllamaName;
     OllamaModelSettings? ollamaEditDraft;
 
-    string lemonadeBaseUrl = "http://localhost:13305";
-    string lemonadeApiKey = "";
-    List<LemonadeModelSettings> lemonadeModelSettings = new();
-    string newLemonadeModel = "";
-    string? editingLemonadeName;
-    LemonadeModelSettings? lemonadeEditDraft;
-    string? lemonadeHealthSummary;
+    string pullModelId = "";
+    List<OllamaCapabilitiesResolver.OllamaLibraryModel> libraryModels = new();
+    List<OllamaCapabilitiesResolver.OllamaLibraryModel> pullChoices = new();
+    bool libraryLoaded;
+    string? libraryLoadError;
 
-    string defaultImageModel = "";
-    string defaultEditModel = "";
-    string defaultTtsModel = "";
-    string defaultSttModel = "";
-    string defaultVoice = "shimmer";
+    bool busy;
+    string busyAction = "";
 
     string? saveFeedback;
-    string saveFeedbackScope = "";
     bool saveFeedbackIsError;
     string? pageFeedback;
     bool pageFeedbackIsError;
@@ -443,86 +252,198 @@
     {
         await KeyStore.LoadAsync();
         await AuthService.LoadAsync();
-
         ollamaBaseUrl = KeyStore.OllamaBaseUrl;
-        lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
-        lemonadeApiKey = KeyStore.LemonadeApiKey ?? "";
         ReloadAll();
+        await LoadLibraryCatalog();
     }
 
     void ReloadAll()
     {
         ollamaModelSettings = KeyStore.OllamaModelSettingsList.ToList();
-        lemonadeModelSettings = KeyStore.LemonadeModelSettingsList.ToList();
-        defaultImageModel = KeyStore.LemonadeDefaultImageModel ?? "";
-        defaultEditModel = KeyStore.LemonadeDefaultEditModel ?? "";
-        defaultTtsModel = KeyStore.LemonadeDefaultTtsModel ?? "";
-        defaultSttModel = KeyStore.LemonadeDefaultSttModel ?? "";
-        defaultVoice = KeyStore.LemonadeDefaultVoice ?? "shimmer";
+        RebuildPullChoices();
+    }
+
+    void RebuildPullChoices()
+    {
+        var installed = new HashSet<string>(
+            ollamaModelSettings.Select(m => m.Name),
+            StringComparer.OrdinalIgnoreCase);
+        var installedBare = new HashSet<string>(
+            ollamaModelSettings.Select(m => m.Name.Split(':')[0]),
+            StringComparer.OrdinalIgnoreCase);
+
+        pullChoices = libraryModels
+            .Where(m =>
+            {
+                if (installed.Contains(m.Name))
+                    return false;
+                // Hide library entry if any installed tag shares the same model family
+                // (e.g. installed llama3.2:1b hides library "llama3.2").
+                var bare = m.Name.Split(':')[0];
+                if (installedBare.Contains(bare) && !m.Name.Contains(':', StringComparison.Ordinal))
+                    return false;
+                return true;
+            })
+            .ToList();
     }
 
     static string DisplayOllamaLabel(OllamaModelSettings model) =>
         string.IsNullOrWhiteSpace(model.Label) ? model.Name : model.Label;
 
-    static string DisplayLemonadeLabel(LemonadeModelSettings model) =>
-        string.IsNullOrWhiteSpace(model.Label) ? model.Name : model.Label;
+    static bool ShowModelSubtitle(OllamaModelSettings model) =>
+        !string.IsNullOrWhiteSpace(model.Label)
+        && !string.Equals(model.Label.Trim(), model.Name.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    static IEnumerable<string> LemonadeBadges(LemonadeModelSettings m)
+    async Task LoadLibraryCatalog()
     {
-        if (m.IsOmniCollection) yield return "Omni";
-        else if (m.IsChatEligible) yield return "Chat";
-        if (m.SupportsVision) yield return "Vision";
-        if (m.IsImage) yield return "Image";
-        if (m.IsEdit) yield return "Edit";
-        if (m.IsTts) yield return "TTS";
-        if (m.IsTranscription) yield return "STT";
-        if (m.IsEmbeddings) yield return "Embed";
-        if (m.IsReranking) yield return "Rerank";
-        if (m.IsVisionProxy) yield return "Vision proxy";
+        busy = true;
+        busyAction = "catalog";
+        libraryLoadError = null;
+        StateHasChanged();
+        try
+        {
+            libraryModels = (await OllamaCapabilitiesResolver.ListLibraryModelsAsync(Http)).ToList();
+            libraryLoaded = true;
+            RebuildPullChoices();
+            if (libraryModels.Count == 0)
+                libraryLoadError = "Could not load Ollama library catalog (network?). You can still pull by name.";
+        }
+        catch (Exception ex)
+        {
+            libraryLoadError = ex.Message;
+            libraryLoaded = true;
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+            StateHasChanged();
+        }
     }
 
     async Task RefreshOllamaModels()
     {
+        busy = true;
+        busyAction = "refresh";
+        StateHasChanged();
         try
         {
             await KeyStore.RefreshOllamaModelsFromServerAsync(Http, ollamaBaseUrl);
             ollamaBaseUrl = KeyStore.OllamaBaseUrl;
             ReloadAll();
-            if (editingOllamaName != null)
+            if (editingOllamaName != null
+                && ollamaModelSettings.All(m => !string.Equals(m.Name, editingOllamaName, StringComparison.OrdinalIgnoreCase)))
+                CloseOllamaEditor();
+            else if (editingOllamaName != null)
                 OpenOllamaEditor(editingOllamaName);
-            await ShowPageFeedbackAsync("Ollama models refreshed.", isError: false);
+
+            await ShowPageFeedbackAsync(
+                $"Ollama models refreshed ({ollamaModelSettings.Count}).",
+                isError: false);
         }
         catch (Exception ex)
         {
             var msg = ex.Message;
             if (IsNetworkError(msg))
             {
-                msg += "\n\nTip: On https://chatfish.me this is expected for http Ollama. Add model names manually, or set OLLAMA_ORIGINS / use HTTPS.";
+                msg += "\n\nTip: On https://chatfish.me this is expected for http Ollama. Set OLLAMA_ORIGINS or use the desktop app.";
             }
             await ShowPageFeedbackAsync(msg, isError: true);
         }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+            StateHasChanged();
+        }
     }
 
-    async Task AddCustomOllamaModel()
+    async Task PullSelectedModel()
     {
+        if (string.IsNullOrWhiteSpace(pullModelId))
+            return;
+        await PullModelInternal(pullModelId, "pull");
+        pullModelId = "";
+    }
+
+    async Task PullByName()
+    {
+        var name = (newOllamaModel ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+        await PullModelInternal(name, "pull-name");
+        newOllamaModel = "";
+    }
+
+    async Task PullModelInternal(string modelName, string action)
+    {
+        busy = true;
+        busyAction = action;
+        StateHasChanged();
         try
         {
             await KeyStore.SetOllamaBaseUrlAsync(ollamaBaseUrl);
-            await KeyStore.AddOllamaModelAsync(newOllamaModel, Http);
+            using var longHttp = CreateLongTimeoutClient();
+            await ShowPageFeedbackAsync($"Pulling {modelName}… (this can take a while)", isError: false);
+            await OllamaCapabilitiesResolver.PullModelAsync(longHttp, ollamaBaseUrl, modelName);
+            await KeyStore.RefreshOllamaModelsFromServerAsync(Http, ollamaBaseUrl);
             ReloadAll();
-            newOllamaModel = "";
+            await ShowPageFeedbackAsync($"Pulled {modelName}.", isError: false);
         }
         catch (Exception ex)
         {
-            await ShowPageFeedbackAsync($"Failed to add Ollama model: {ex.Message}", isError: true);
+            await ShowPageFeedbackAsync($"Pull failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+            StateHasChanged();
         }
     }
+
+    async Task DeleteOllamaModel(string modelName)
+    {
+        busy = true;
+        busyAction = "delete";
+        StateHasChanged();
+        try
+        {
+            await KeyStore.SetOllamaBaseUrlAsync(ollamaBaseUrl);
+            using var client = CreateLongTimeoutClient();
+            await OllamaCapabilitiesResolver.DeleteModelAsync(client, ollamaBaseUrl, modelName);
+            await KeyStore.RemoveOllamaModelAsync(modelName);
+            if (string.Equals(editingOllamaName, modelName, StringComparison.OrdinalIgnoreCase))
+                CloseOllamaEditor();
+            ReloadAll();
+            await ShowPageFeedbackAsync($"Removed {modelName} from Ollama.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            // Still drop from Chatfish list if user wants? Prefer fail loudly.
+            await ShowPageFeedbackAsync($"Remove failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+            StateHasChanged();
+        }
+    }
+
+    async Task DeleteEditingFromDisk()
+    {
+        if (editingOllamaName == null) return;
+        await DeleteOllamaModel(editingOllamaName);
+    }
+
+    static HttpClient CreateLongTimeoutClient() =>
+        new() { Timeout = TimeSpan.FromMinutes(45) };
 
     void OpenOllamaEditor(string modelName)
     {
         var settings = KeyStore.GetOllamaModelSettings(modelName);
         if (settings == null) return;
-        CloseLemonadeEditor();
         editingOllamaName = modelName;
         ollamaEditDraft = settings.Clone();
     }
@@ -546,151 +467,11 @@
             ReloadAll();
             editingOllamaName = ollamaEditDraft.Name;
             ollamaEditDraft = KeyStore.GetOllamaModelSettings(ollamaEditDraft.Name)?.Clone();
-            await ShowSaveFeedbackAsync("Ollama model settings saved.", "ollama", isError: false);
+            await ShowSaveFeedbackAsync("Ollama model settings saved.", isError: false);
         }
         catch (Exception ex)
         {
-            await ShowSaveFeedbackAsync($"Could not save: {ex.Message}", "ollama", isError: true);
-        }
-    }
-
-    async Task RemoveOllamaEditingModel()
-    {
-        if (editingOllamaName == null) return;
-        await KeyStore.RemoveOllamaModelAsync(editingOllamaName);
-        ReloadAll();
-        CloseOllamaEditor();
-    }
-
-    async Task TestLemonadeConnection()
-    {
-        try
-        {
-            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
-            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
-            var health = await LemonadeModelCatalogResolver.FetchHealthAsync(
-                Http, KeyStore.LemonadeBaseUrl, KeyStore.LemonadeApiKey);
-            lemonadeHealthSummary = health == null
-                ? "No health payload."
-                : $"OK · version {health.Version ?? "?"} · loaded: {health.ModelLoaded ?? "(none)"}";
-            await ShowPageFeedbackAsync("Lemonade connection OK.", isError: false);
-        }
-        catch (Exception ex)
-        {
-            lemonadeHealthSummary = null;
-            var msg = ex.Message;
-            if (IsNetworkError(msg))
-            {
-                msg += "\n\nTip: Ensure Lemonade is running on the base URL. On https://chatfish.me set LEMONADE_ALLOWED_ORIGINS and note that browsers block http://localhost from HTTPS pages (mixed content).";
-            }
-            await ShowPageFeedbackAsync(msg, isError: true);
-        }
-    }
-
-    async Task RefreshLemonadeModels()
-    {
-        try
-        {
-            await KeyStore.RefreshLemonadeModelsFromServerAsync(Http, lemonadeBaseUrl, lemonadeApiKey);
-            lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
-            lemonadeApiKey = KeyStore.LemonadeApiKey ?? "";
-            ReloadAll();
-            if (editingLemonadeName != null)
-                OpenLemonadeEditor(editingLemonadeName);
-            await ShowPageFeedbackAsync(
-                $"Lemonade models refreshed ({lemonadeModelSettings.Count} total, {lemonadeModelSettings.Count(m => m.IsChatEligible)} chat).",
-                isError: false);
-        }
-        catch (Exception ex)
-        {
-            var msg = ex.Message;
-            if (IsNetworkError(msg))
-            {
-                msg += "\n\nTip: On https://chatfish.me this often fails for http Lemonade (CORS / mixed content). Add model names manually or use the MAUI app.";
-            }
-            await ShowPageFeedbackAsync(msg, isError: true);
-        }
-    }
-
-    async Task AddCustomLemonadeModel()
-    {
-        try
-        {
-            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
-            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
-            await KeyStore.AddLemonadeModelAsync(newLemonadeModel);
-            ReloadAll();
-            newLemonadeModel = "";
-        }
-        catch (Exception ex)
-        {
-            await ShowPageFeedbackAsync($"Failed to add Lemonade model: {ex.Message}", isError: true);
-        }
-    }
-
-    void OpenLemonadeEditor(string modelName)
-    {
-        var settings = KeyStore.GetLemonadeModelSettings(modelName);
-        if (settings == null) return;
-        CloseOllamaEditor();
-        editingLemonadeName = modelName;
-        lemonadeEditDraft = settings.Clone();
-    }
-
-    void CloseLemonadeEditor()
-    {
-        editingLemonadeName = null;
-        lemonadeEditDraft = null;
-    }
-
-    async Task SaveLemonadeEditor()
-    {
-        if (lemonadeEditDraft == null) return;
-        try
-        {
-            if (!lemonadeEditDraft.SupportsVision)
-                lemonadeEditDraft.IsVisionProxy = false;
-
-            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
-            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
-            await KeyStore.SaveLemonadeModelSettingsAsync(lemonadeEditDraft);
-            ReloadAll();
-            editingLemonadeName = lemonadeEditDraft.Name;
-            lemonadeEditDraft = KeyStore.GetLemonadeModelSettings(lemonadeEditDraft.Name)?.Clone();
-            await ShowSaveFeedbackAsync("Lemonade model settings saved.", "lemonade", isError: false);
-        }
-        catch (Exception ex)
-        {
-            await ShowSaveFeedbackAsync($"Could not save: {ex.Message}", "lemonade", isError: true);
-        }
-    }
-
-    async Task RemoveLemonadeEditingModel()
-    {
-        if (editingLemonadeName == null) return;
-        await KeyStore.RemoveLemonadeModelAsync(editingLemonadeName);
-        ReloadAll();
-        CloseLemonadeEditor();
-    }
-
-    async Task SaveModalityDefaults()
-    {
-        try
-        {
-            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
-            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
-            await KeyStore.SetLemonadeModalityDefaultsAsync(
-                defaultImageModel,
-                defaultEditModel,
-                defaultTtsModel,
-                defaultSttModel,
-                defaultVoice);
-            ReloadAll();
-            await ShowPageFeedbackAsync("Modality defaults saved.", isError: false);
-        }
-        catch (Exception ex)
-        {
-            await ShowPageFeedbackAsync($"Could not save defaults: {ex.Message}", isError: true);
+            await ShowSaveFeedbackAsync($"Could not save: {ex.Message}", isError: true);
         }
     }
 
@@ -704,27 +485,22 @@
         msg.Contains("No connection", StringComparison.OrdinalIgnoreCase) ||
         msg.Contains("actively refused", StringComparison.OrdinalIgnoreCase);
 
-    async Task ShowSaveFeedbackAsync(string message, string scope, bool isError)
+    async Task ShowSaveFeedbackAsync(string message, bool isError)
     {
         _saveFeedbackCts?.Cancel();
         _saveFeedbackCts?.Dispose();
         _saveFeedbackCts = new CancellationTokenSource();
         var token = _saveFeedbackCts.Token;
-
         saveFeedback = message;
-        saveFeedbackScope = scope;
         saveFeedbackIsError = isError;
         StateHasChanged();
-
         try
         {
             await Task.Delay(4000, token);
             saveFeedback = null;
             StateHasChanged();
         }
-        catch (TaskCanceledException)
-        {
-        }
+        catch (TaskCanceledException) { }
     }
 
     async Task ShowPageFeedbackAsync(string message, bool isError)
@@ -733,19 +509,15 @@
         _pageFeedbackCts?.Dispose();
         _pageFeedbackCts = new CancellationTokenSource();
         var token = _pageFeedbackCts.Token;
-
         pageFeedback = message;
         pageFeedbackIsError = isError;
         StateHasChanged();
-
         try
         {
             await Task.Delay(isError ? 8000 : 4000, token);
             pageFeedback = null;
             StateHasChanged();
         }
-        catch (TaskCanceledException)
-        {
-        }
+        catch (TaskCanceledException) { }
     }
 }

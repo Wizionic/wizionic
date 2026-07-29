@@ -2564,6 +2564,17 @@ a:hover {
     background: var(--grey-100);
 }
 
+.settings-content .ollama-model-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
+}
+
+.settings-content .ollama-model-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .settings-content .ollama-model-editor {
     margin-top: 1rem;
     padding: 1rem;
@@ -5009,4 +5020,276 @@ body .message-bot,
 body.note-list-reordering {
   cursor: grabbing !important;
   user-select: none !important;
+}
+
+/* -------------------------------------------------------
+   Split config + embedded UI (Lemonade, Home Assistant)
+   ------------------------------------------------------- */
+.lemonade-page,
+.embed-split-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 3.5rem);
+    min-height: 480px;
+    padding: 0.75rem 1rem 0.5rem;
+    box-sizing: border-box;
+    max-width: none;
+    margin: 0;
+}
+
+.lemonade-page-header,
+.embed-split-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    flex-shrink: 0;
+}
+
+.lemonade-page-title,
+.embed-split-title {
+    margin: 0 0 0.25rem;
+}
+
+.lemonade-page-lead,
+.embed-split-lead {
+    margin: 0;
+    color: var(--color-text-muted, #666);
+    font-size: 0.9em;
+    max-width: 52rem;
+}
+
+.lemonade-page-split,
+.embed-split-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 0.75rem;
+    border-top: 1px solid var(--cf-border, #e5e5e5);
+    padding-top: 0.75rem;
+}
+
+.lemonade-config-pane,
+.embed-split-config {
+    flex: 0 0 min(42%, 440px);
+    min-width: 280px;
+    max-width: 480px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 0.5rem;
+    padding-bottom: 1rem;
+}
+
+.lemonade-embed-pane,
+.embed-split-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--cf-border, #ddd);
+    border-radius: 10px;
+    background: var(--color-surface, #fff);
+    overflow: hidden;
+}
+
+.lemonade-embed-toolbar,
+.embed-split-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.4rem 0.65rem;
+    border-bottom: 1px solid var(--cf-border, #e5e5e5);
+    background: var(--color-bg-muted, #f6f7f9);
+    flex-shrink: 0;
+}
+
+.lemonade-embed-url,
+.embed-split-url {
+    font-size: 0.8em;
+    color: var(--color-text-muted, #555);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.lemonade-embed-frame-wrap,
+.embed-split-frame-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+}
+
+.simple-url-embed {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #111;
+}
+
+/* MAUI native embed host — real WebView is laid over this placeholder */
+.simple-url-embed-host {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-height: 120px;
+    background: transparent;
+}
+
+.embed-split-frame-wrap,
+.lemonade-embed-frame-wrap {
+    /* Ensure host fills the pane so native WebView can match bounds */
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.simple-url-embed-placeholder {
+    padding: 1rem;
+    color: var(--color-text-muted, #888);
+    font-size: 0.9em;
+}
+
+.lemonade-embed-fallback,
+.embed-split-fallback {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 1.5rem;
+    color: var(--color-text-muted, #555);
+    font-size: 0.95em;
+}
+
+.embed-split-config .settings-card {
+    margin: 0 0 1rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+}
+
+.embed-split-config pre.device-summary-pre {
+    white-space: pre-wrap;
+    font-size: 0.8em;
+    background: var(--cf-bg-subtle, #f5f5f5);
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin: 0;
+    max-height: 40vh;
+    overflow: auto;
+}
+
+@media (max-width: 900px) {
+    .lemonade-page,
+    .embed-split-page {
+        height: auto;
+        min-height: 0;
+    }
+    .lemonade-page-split,
+    .embed-split-body {
+        flex-direction: column;
+    }
+    .lemonade-config-pane,
+    .embed-split-config {
+        flex: none;
+        max-width: none;
+        width: 100%;
+        max-height: none;
+        overflow: visible;
+    }
+    .lemonade-embed-pane,
+    .embed-split-pane {
+        min-height: 55vh;
+        height: 55vh;
+    }
+}
+
+/* Lemonade config pane model list (page is not under .settings-content) */
+.lemonade-config-pane .ollama-model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--color-border, #ddd);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--color-bg-surface, #fff);
+    min-width: 0;
+}
+
+.lemonade-config-pane .ollama-model-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.65rem;
+    border-bottom: 1px solid var(--grey-200, #e5e5e5);
+    min-width: 0;
+}
+
+.lemonade-config-pane .ollama-model-row:last-child {
+    border-bottom: none;
+}
+
+.lemonade-config-pane .ollama-model-row.is-active {
+    background: var(--light-blue-1, #eef6ff);
+}
+
+.lemonade-config-pane .ollama-model-row-main {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.lemonade-config-pane .ollama-model-row-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-dark, inherit);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lemonade-config-pane .ollama-model-row-subtitle {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #666);
+    margin-top: 0.1rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lemonade-config-pane .ollama-model-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    justify-content: flex-end;
+    max-width: 7.5rem;
+}
+
+.lemonade-config-pane .ollama-model-edit-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.2rem 0.3rem;
+    border-radius: 4px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.lemonade-config-pane .ollama-model-edit-btn:hover {
+    background: var(--grey-100, #f0f0f0);
+}
+
+.lemonade-config-pane .ollama-vision-proxy-badge {
+    white-space: nowrap;
 }

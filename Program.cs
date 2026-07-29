@@ -6,6 +6,7 @@ using ChatfishApp.Services;
 
 using ChatfishApp.Apis;
 using ChatfishApp.Core.Auth;
+using ChatfishApp.Core.Homeserver;
 using ChatfishApp.Core.Storage;
 using ChatfishApp.Core.Sync;
 using Microsoft.AspNetCore.Components;
@@ -17,7 +18,24 @@ using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
 using ChatfishApp.Shared.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+// Windows Service / homeserver: content root must be the published app directory (not System32).
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
+
+// Optional local homeserver overrides live outside the replaceable app folder so updates
+// never wipe connection strings or other durable settings.
+var homeserverSettingsPath = HomeserverPaths.AppsettingsPath;
+if (File.Exists(homeserverSettingsPath))
+{
+    builder.Configuration.AddJsonFile(homeserverSettingsPath, optional: false, reloadOnChange: true);
+    Console.WriteLine($"[Homeserver] Loaded config from {homeserverSettingsPath}");
+}
+
+// Allow running as a Windows Service (no-op when started interactively / in Docker).
+builder.Host.UseWindowsService();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -28,6 +46,10 @@ builder.Services.AddRazorComponents()
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 // Ensure SQLite parent directory exists (e.g. "data/chatfish.db" for local/dev).
 EnsureSqliteDirectory(connectionString);
+
+// Homeserver / HTTP-only: cookie Secure=Always breaks login on plain http://localhost.
+var homeserverHttpCookies = builder.Configuration.GetValue("Homeserver:AllowHttpCookies", false)
+    || File.Exists(homeserverSettingsPath);
 builder.Services.AddDbContext<ChatfishDbContext>(options =>
 {
     options.UseSqlite(connectionString);
@@ -154,6 +176,19 @@ builder.Services.AddDataProtection()
     .PersistKeysToDbContext<ChatfishDbContext>()
     .SetApplicationName("Chatfish");
 builder.Services.AddSingleton<KeyProtectionService>();
+builder.Services.AddSingleton<ChatfishApp.Core.Update.IUpdateService>(_ => ChatfishApp.Shared.Services.NullUpdateService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Homeserver.IHomeserverInstallService>(
+    _ => ChatfishApp.Shared.Services.NullHomeserverInstallService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Configuration.IChatfishServerEndpoint>(
+    _ => ChatfishApp.Shared.Services.NullChatfishServerEndpoint.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Setup.ISetupWizardHost>(
+    _ => ChatfishApp.Shared.Services.NullSetupWizardHost.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Lemonade.ILemonadeInstallService>(
+    _ => ChatfishApp.Shared.Services.NullLemonadeInstallService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Ollama.IOllamaInstallService>(
+    _ => ChatfishApp.Shared.Services.NullOllamaInstallService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.UI.IUrlEmbedOverlay>(
+    _ => ChatfishApp.Shared.Services.NullUrlEmbedOverlay.Instance);
 
 builder.Services.AddAuthentication("ChatfishAuth")
     .AddCookie("ChatfishAuth", options =>
@@ -174,8 +209,8 @@ builder.Services.AddAuthentication("ChatfishAuth")
         // Production hardening: always require Secure (https), and Lax SameSite so magic-link
         // email clicks (cross-site top-level navigation) still work while protecting against CSRF on APIs.
         options.Cookie.HttpOnly = true;
-        // Development may use plain http (e.g. MAUI dev against http://localhost:5136).
-        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        // Development and local homeserver use plain http — Secure cookies would never be stored.
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() || homeserverHttpCookies
             ? CookieSecurePolicy.SameAsRequest
             : CookieSecurePolicy.Always;
         options.Cookie.SameSite = SameSiteMode.Lax;
@@ -289,7 +324,7 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<ChatfishDbContext>();
     db.Database.Migrate();
 
-    var dbPath = Path.GetFullPath("chatfish.db");
+    var dbPath = ResolveSqlitePath(connectionString) ?? Path.GetFullPath("chatfish.db");
     long dbSizeBytes = File.Exists(dbPath) ? new FileInfo(dbPath).Length : -1;
     int dpKeyCount = db.DataProtectionKeys.Count();
     Console.WriteLine($"[Auth] Persistence: chatfish.db path={dbPath} sizeBytes={dbSizeBytes} dataProtectionKeyCount={dpKeyCount}");
@@ -307,11 +342,17 @@ if (app.Environment.IsDevelopment())
 else
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
-    app.UseHsts();
+    // HSTS is counterproductive for local HTTP homeserver installs.
+    if (!homeserverHttpCookies)
+    {
+        // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
+        app.UseHsts();
+    }
 }
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
+// Skip HTTPS redirection for local homeserver (HTTP-only on localhost).
+if (!homeserverHttpCookies)
+    app.UseHttpsRedirection();
 
 app.UseAntiforgery();
 
@@ -494,14 +535,33 @@ app.Run();
 /// </summary>
 static void EnsureSqliteDirectory(string? connectionString)
 {
-    if (string.IsNullOrWhiteSpace(connectionString))
+    var path = ResolveSqlitePath(connectionString);
+    if (path is null)
         return;
+
+    try
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[DB] WARNING: could not create SQLite directory for '{path}': {ex.Message}");
+    }
+}
+
+/// <summary>Extract absolute SQLite file path from a connection string, if present.</summary>
+static string? ResolveSqlitePath(string? connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+        return null;
 
     // "Data Source=data/chatfish.db" or "Data Source=./data/chatfish.db"
     const string prefix = "Data Source=";
     var idx = connectionString.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
     if (idx < 0)
-        return;
+        return null;
 
     var path = connectionString[(idx + prefix.Length)..].Trim();
     // Strip trailing ";Mode=..." etc.
@@ -510,18 +570,15 @@ static void EnsureSqliteDirectory(string? connectionString)
         path = path[..semi].Trim();
 
     if (string.IsNullOrWhiteSpace(path))
-        return;
+        return null;
 
     try
     {
-        var full = Path.GetFullPath(path);
-        var dir = Path.GetDirectoryName(full);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
+        return Path.GetFullPath(path);
     }
-    catch (Exception ex)
+    catch
     {
-        Console.WriteLine($"[DB] WARNING: could not create SQLite directory for '{path}': {ex.Message}");
+        return path;
     }
 }
 
