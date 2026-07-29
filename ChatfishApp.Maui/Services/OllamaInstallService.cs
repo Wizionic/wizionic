@@ -13,6 +13,7 @@ namespace ChatfishApp.Maui.Services;
 public sealed class OllamaInstallService : IOllamaInstallService
 {
     public const string SetupDownloadUrl = "https://ollama.com/download/OllamaSetup.exe";
+    public const string LinuxInstallScriptUrl = "https://ollama.com/install.sh";
 
     private const int PullTimeoutMs = 20 * 60 * 1000;
 
@@ -51,7 +52,9 @@ public sealed class OllamaInstallService : IOllamaInstallService
         _http.Timeout = TimeSpan.FromMinutes(30);
     }
 
-    public bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    public bool IsSupported =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        || RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
     public bool IsInstalled => DetectInstallation() is not OllamaDetection.NotFound;
 
@@ -78,7 +81,7 @@ public sealed class OllamaInstallService : IOllamaInstallService
         CancellationToken cancellationToken = default)
     {
         if (!IsSupported)
-            return OllamaInstallResult.Fail("Ollama install is only supported on Windows.");
+            return OllamaInstallResult.Fail("Ollama install is only supported on Windows and Linux.");
 
         try
         {
@@ -93,59 +96,119 @@ public sealed class OllamaInstallService : IOllamaInstallService
                 return OllamaInstallResult.Ok($"Ollama already installed ({detail}). Skipped reinstall.");
             }
 
-            // Prefer winget when available (no large download in-process).
-            progress?.Report("Installing Ollama via winget (if available)…");
-            var wingetOk = await RunProcessWithOutputAsync(
-                "winget",
-                "install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements --disable-interactivity",
-                cancellationToken,
-                timeoutMs: 15 * 60 * 1000);
+            if (OperatingSystem.IsLinux())
+                return await InstallServerLinuxAsync(progress, cancellationToken);
 
-            if (wingetOk.Ok || DetectInstallation() is not OllamaDetection.NotFound)
-            {
-                await TryEnsureServerRunningAsync(progress, cancellationToken);
-                return OllamaInstallResult.Ok("Ollama installed (winget).");
-            }
-
-            progress?.Report("Downloading OllamaSetup.exe…");
-            var setupPath = Path.Combine(Path.GetTempPath(), $"OllamaSetup-{Guid.NewGuid():N}.exe");
-            await using (var remote = await _http.GetStreamAsync(SetupDownloadUrl, cancellationToken))
-            await using (var file = File.Create(setupPath))
-                await remote.CopyToAsync(file, cancellationToken);
-
-            progress?.Report("Running Ollama installer (may prompt for permission)…");
-            // Inno Setup silent flags commonly used by OllamaSetup.
-            var silent = await RunProcessWithOutputAsync(
-                setupPath,
-                "/VERYSILENT /NORESTART",
-                cancellationToken,
-                timeoutMs: 15 * 60 * 1000,
-                elevate: true);
-
-            if (!silent.Ok)
-            {
-                progress?.Report("Silent install failed — opening interactive installer…");
-                await RunProcessWithOutputAsync(setupPath, "", cancellationToken, timeoutMs: 15 * 60 * 1000, elevate: true);
-                await Task.Delay(3000, cancellationToken);
-            }
-
-            try { File.Delete(setupPath); } catch { /* ignore */ }
-
-            await Task.Delay(2000, cancellationToken);
-            if (DetectInstallation() is OllamaDetection.NotFound)
-            {
-                return OllamaInstallResult.Fail(
-                    "Ollama installer finished but Ollama was not detected yet. " +
-                    "Finish the installer if it is still open, then re-run this step.");
-            }
-
-            await TryEnsureServerRunningAsync(progress, cancellationToken);
-            return OllamaInstallResult.Ok("Ollama installed.");
+            return await InstallServerWindowsAsync(progress, cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Ollama] Install failed");
             return OllamaInstallResult.Fail($"Ollama install failed: {ex.Message}");
+        }
+    }
+
+    private async Task<OllamaInstallResult> InstallServerWindowsAsync(
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        // Prefer winget when available (no large download in-process).
+        progress?.Report("Installing Ollama via winget (if available)…");
+        var wingetOk = await RunProcessWithOutputAsync(
+            "winget",
+            "install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements --disable-interactivity",
+            cancellationToken,
+            timeoutMs: 15 * 60 * 1000);
+
+        if (wingetOk.Ok || DetectInstallation() is not OllamaDetection.NotFound)
+        {
+            await TryEnsureServerRunningAsync(progress, cancellationToken);
+            return OllamaInstallResult.Ok("Ollama installed (winget).");
+        }
+
+        progress?.Report("Downloading OllamaSetup.exe…");
+        var setupPath = Path.Combine(Path.GetTempPath(), $"OllamaSetup-{Guid.NewGuid():N}.exe");
+        await using (var remote = await _http.GetStreamAsync(SetupDownloadUrl, cancellationToken))
+        await using (var file = File.Create(setupPath))
+            await remote.CopyToAsync(file, cancellationToken);
+
+        progress?.Report("Running Ollama installer (may prompt for permission)…");
+        var silent = await RunProcessWithOutputAsync(
+            setupPath,
+            "/VERYSILENT /NORESTART",
+            cancellationToken,
+            timeoutMs: 15 * 60 * 1000,
+            elevate: true);
+
+        if (!silent.Ok)
+        {
+            progress?.Report("Silent install failed — opening interactive installer…");
+            await RunProcessWithOutputAsync(setupPath, "", cancellationToken, timeoutMs: 15 * 60 * 1000, elevate: true);
+            await Task.Delay(3000, cancellationToken);
+        }
+
+        try { File.Delete(setupPath); } catch { /* ignore */ }
+
+        await Task.Delay(2000, cancellationToken);
+        if (DetectInstallation() is OllamaDetection.NotFound)
+        {
+            return OllamaInstallResult.Fail(
+                "Ollama installer finished but Ollama was not detected yet. " +
+                "Finish the installer if it is still open, then re-run this step.");
+        }
+
+        await TryEnsureServerRunningAsync(progress, cancellationToken);
+        return OllamaInstallResult.Ok("Ollama installed.");
+    }
+
+    private async Task<OllamaInstallResult> InstallServerLinuxAsync(
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        progress?.Report("Downloading official Ollama install script…");
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"ollama-install-{Guid.NewGuid():N}.sh");
+        await using (var remote = await _http.GetStreamAsync(LinuxInstallScriptUrl, cancellationToken))
+        await using (var file = File.Create(scriptPath))
+            await remote.CopyToAsync(file, cancellationToken);
+
+        try
+        {
+            await RunProcessWithOutputAsync("chmod", $"+x \"{scriptPath}\"", cancellationToken, timeoutMs: 5000);
+
+            progress?.Report("Running Ollama install script (may prompt for sudo/polkit)…");
+            // Official script expects root for system install; try elevated sh.
+            var elevated = await RunElevatedShellAsync($"sh \"{scriptPath}\"", cancellationToken, timeoutMs: 15 * 60 * 1000);
+            if (!elevated.Ok)
+            {
+                // Non-elevated attempt (script may still work for user install on some setups).
+                progress?.Report("Elevated install failed — trying without elevation…");
+                var plain = await RunProcessWithOutputAsync(
+                    "sh",
+                    $"\"{scriptPath}\"",
+                    cancellationToken,
+                    timeoutMs: 15 * 60 * 1000);
+                if (!plain.Ok && DetectInstallation() is OllamaDetection.NotFound)
+                {
+                    return OllamaInstallResult.Fail(
+                        "Ollama install script failed. Install manually with: " +
+                        "curl -fsSL https://ollama.com/install.sh | sh");
+                }
+            }
+
+            await Task.Delay(2000, cancellationToken);
+            if (DetectInstallation() is OllamaDetection.NotFound)
+            {
+                return OllamaInstallResult.Fail(
+                    "Ollama install finished but Ollama was not detected. " +
+                    "Try: curl -fsSL https://ollama.com/install.sh | sh");
+            }
+
+            await TryEnsureServerRunningAsync(progress, cancellationToken);
+            return OllamaInstallResult.Ok("Ollama installed.");
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { /* ignore */ }
         }
     }
 
@@ -340,6 +403,16 @@ public sealed class OllamaInstallService : IOllamaInstallService
 
     private static IEnumerable<string> EnumerateInstallDirs()
     {
+        if (OperatingSystem.IsLinux())
+        {
+            yield return "/usr/local/lib/ollama";
+            yield return "/usr/lib/ollama";
+            yield return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".ollama");
+            yield break;
+        }
+
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         yield return Path.Combine(local, "Programs", "Ollama");
@@ -349,11 +422,79 @@ public sealed class OllamaInstallService : IOllamaInstallService
     private static IEnumerable<string> EnumerateCliCandidates()
     {
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var cliName = OperatingSystem.IsWindows() ? "ollama.exe" : "ollama";
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-            yield return Path.Combine(dir, "ollama.exe");
+            yield return Path.Combine(dir, cliName);
+
+        if (OperatingSystem.IsLinux())
+        {
+            yield return "/usr/local/bin/ollama";
+            yield return "/usr/bin/ollama";
+            yield return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local", "bin", "ollama");
+        }
 
         foreach (var dir in EnumerateInstallDirs())
-            yield return Path.Combine(dir, "ollama.exe");
+            yield return Path.Combine(dir, cliName);
+    }
+
+    private async Task<(bool Ok, string Detail)> RunElevatedShellAsync(
+        string shellCommand,
+        CancellationToken ct,
+        int timeoutMs)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"chatfish-ollama-{Guid.NewGuid():N}.sh");
+        await File.WriteAllTextAsync(scriptPath, "#!/bin/bash\n" + shellCommand + "\n", ct);
+        try
+        {
+            await RunProcessWithOutputAsync("chmod", $"+x \"{scriptPath}\"", ct, timeoutMs: 5000);
+
+            foreach (var (file, args) in new[]
+                     {
+                         ("pkexec", $"bash \"{scriptPath}\""),
+                         ("sudo", $"-n bash \"{scriptPath}\""),
+                         ("sudo", $"bash \"{scriptPath}\"")
+                     })
+            {
+                if (!CommandExists(file))
+                    continue;
+
+                var result = await RunProcessWithOutputAsync(file, args, ct, timeoutMs);
+                if (result.Ok)
+                    return result;
+            }
+
+            return (false, "Elevation failed or cancelled.");
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { /* ignore */ }
+        }
+    }
+
+    private static bool CommandExists(string name)
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "which",
+                Arguments = name,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(3000);
+            return proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string QuoteArg(string arg) =>
@@ -370,7 +511,7 @@ public sealed class OllamaInstallService : IOllamaInstallService
     {
         try
         {
-            if (elevate)
+            if (elevate && OperatingSystem.IsWindows())
             {
                 var psiElev = new ProcessStartInfo
                 {

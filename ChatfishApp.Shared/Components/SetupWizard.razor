@@ -48,7 +48,7 @@
                     <h3>Home Server (login + website)</h3>
                     @if (!Homeserver.IsSupported)
                     {
-                        <p>Home Server install is only available on Windows right now.</p>
+                        <p>Home Server install is only available on Windows and Linux desktop right now.</p>
                     }
                     else
                     {
@@ -60,7 +60,11 @@
                         }
                         else
                         {
-                            <p>Install the Chatfish Home Server on this computer? It runs as a Windows service when possible and keeps logins in a separate SQLite database (not overwritten by updates).</p>
+                            <p>
+                                Install the Chatfish Home Server on this computer? It runs as a
+                                system service when possible (Windows Service / systemd) and keeps logins in a
+                                separate SQLite database (not overwritten by updates).
+                            </p>
                             <label class="setup-check">
                                 <input type="checkbox" @bind="wantHomeserver" disabled="@busy" />
                                 Yes, install Home Server and set login server to localhost:5050
@@ -90,14 +94,14 @@
                         </p>
                         @if (!Lemonade.IsSupported)
                         {
-                            <p>Lemonade install is only available on Windows right now.</p>
+                            <p>Lemonade install is only available on Windows and Linux desktop right now.</p>
                         }
                         else
                         {
                             @if (Lemonade.IsInstalled)
                             {
                                 <p class="setup-ok">
-                                    Already installed — MSI will <strong>not</strong> be reinstalled.
+                                    Already installed — the installer will <strong>not</strong> reinstall Lemonade.
                                 </p>
                                 <p style="font-size: 0.85em; color: var(--color-text-muted);">@Lemonade.GetInstalledStatusDescription()</p>
                             }
@@ -144,7 +148,7 @@
                         </p>
                         @if (!Ollama.IsSupported)
                         {
-                            <p>Ollama install is only available on Windows right now.</p>
+                            <p>Ollama install is only available on Windows and Linux desktop right now.</p>
                         }
                         else
                         {

@@ -260,14 +260,14 @@
         </div>
     }
 
-    <!-- Home Server status (Windows MAUI only) -->
+    <!-- Home Server status (Windows / Linux MAUI) -->
     @if (AppEnvironment.IsMaui && Homeserver.IsSupported)
     {
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
             <h4>Home Server</h4>
             <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
                 Optional local login server and website. Updates replace program files only —
-                your SQLite login database under ProgramData is never overwritten.
+                your SQLite login database (stable app data path) is never overwritten.
             </p>
             <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
                 Status: <strong>@(homeserverStatusText ?? "…")</strong>

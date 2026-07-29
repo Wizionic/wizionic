@@ -2,7 +2,7 @@ namespace ChatfishApp.Core.Homeserver;
 
 public interface IHomeserverInstallService
 {
-    /// <summary>True on platforms that can host a local homeserver (Windows desktop today).</summary>
+    /// <summary>True on platforms that can host a local homeserver (Windows / Linux desktop).</summary>
     bool IsSupported { get; }
 
     /// <summary>Set when Velopack reports first run after install; cleared after the prompt is handled.</summary>

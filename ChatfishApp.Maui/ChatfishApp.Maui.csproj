@@ -112,7 +112,8 @@
         <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.8" />
     </ItemGroup>
 
-    <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'windows'">
+    <!-- Install services: Windows desktop + Linux desktop (net10.0). Exclude mobile TFMs. -->
+    <ItemGroup Condition="'$(TargetFramework)' != 'net10.0' AND $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'windows'">
         <Compile Remove="Services\HomeserverInstallService.cs" />
         <Compile Remove="Services\LemonadeInstallService.cs" />
         <Compile Remove="Services\OllamaInstallService.cs" />
