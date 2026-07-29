@@ -68,6 +68,18 @@ builder.Services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<WasmCrypt
 builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationService>();
 builder.Services.AddScoped<WasmGuestDataMigrationService>();
 builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Homeserver.IHomeserverInstallService>(
+    _ => ChatfishApp.Shared.Services.NullHomeserverInstallService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Configuration.IChatfishServerEndpoint>(
+    _ => ChatfishApp.Shared.Services.NullChatfishServerEndpoint.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Setup.ISetupWizardHost>(
+    _ => ChatfishApp.Shared.Services.NullSetupWizardHost.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Lemonade.ILemonadeInstallService>(
+    _ => ChatfishApp.Shared.Services.NullLemonadeInstallService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.Ollama.IOllamaInstallService>(
+    _ => ChatfishApp.Shared.Services.NullOllamaInstallService.Instance);
+builder.Services.AddSingleton<ChatfishApp.Core.UI.IUrlEmbedOverlay>(
+    _ => ChatfishApp.Shared.Services.NullUrlEmbedOverlay.Instance);
 
 // Scoped with ChatCompletionService so each completion owns its tool trace
 // (ToolExecutionTrace no longer uses AsyncLocal — that type fails on WASM).

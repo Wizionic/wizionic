@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Text.Json.Serialization;
 using ChatfishApp.Core.Configuration;
+using ChatfishApp.Core.Homeserver;
 
 using ChatfishApp.Core.Update;
 using Microsoft.Extensions.Logging;
@@ -12,25 +13,31 @@ namespace ChatfishApp.Maui.Services;
 /// <summary>
 /// Velopack-based auto-updater for the MAUI desktop target.
 /// Reads the update feed URL from ChatfishServer options in appsettings.json.
+/// When a local Home Server is installed, also refreshes its binaries (never the SQLite data dir).
 /// </summary>
 public class MauiUpdateService : IUpdateService
 {
-    private readonly string _updateUrl;
+    private readonly IChatfishServerEndpoint _endpoint;
     private readonly ILogger<MauiUpdateService> _logger;
     private readonly HttpClient _http;
+    private readonly IHomeserverInstallService? _homeserver;
 
     public MauiUpdateService(
-        IOptions<ChatfishServerOptions> options,
+        IChatfishServerEndpoint endpoint,
         ILogger<MauiUpdateService> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IHomeserverInstallService? homeserver = null)
     {
-        _updateUrl = options.Value.GetUpdateFeedUrl();
+        _endpoint = endpoint;
         _logger = logger;
         _http = httpClientFactory.CreateClient(nameof(MauiUpdateService));
         _http.Timeout = TimeSpan.FromSeconds(30);
+        _homeserver = homeserver;
     }
 
-    public string? UpdateFeedUrl => _updateUrl;
+    public string? UpdateFeedUrl => _endpoint.UpdateFeedUrl;
+
+    private string _updateUrl => _endpoint.UpdateFeedUrl;
 
     public bool IsVelopackInstalled => CreateManager().IsInstalled;
 
@@ -294,6 +301,26 @@ public class MauiUpdateService : IUpdateService
         var mgr = CreateManager();
         if (_pendingUpdateInfo == null)
             throw new InvalidOperationException("No update available. Check for updates first.");
+
+        // Update homeserver binaries before MAUI restarts (if installed). Never re-prompts;
+        // never touches ProgramData data/chatfish.db.
+        if (_homeserver is { IsSupported: true })
+        {
+            try
+            {
+                var hs = _homeserver.GetState();
+                if (hs.IsInstalled)
+                {
+                    _logger.LogInformation("[Update] Updating Home Server binaries before app restart…");
+                    var result = await _homeserver.UpdateIfNeededAsync();
+                    _logger.LogInformation("[Update] Home Server: {Message}", result.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Update] Home Server update failed; continuing with MAUI update");
+            }
+        }
 
         await mgr.DownloadUpdatesAsync(_pendingUpdateInfo);
         mgr.ApplyUpdatesAndRestart(_pendingUpdateInfo);

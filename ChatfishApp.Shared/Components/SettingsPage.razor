@@ -1,20 +1,65 @@
 
 @inject ChatfishApp.Core.Storage.IKeyStore KeyStore
 @inject ChatfishApp.Core.Update.IUpdateService UpdateService
+@inject ChatfishApp.Core.Homeserver.IHomeserverInstallService Homeserver
+@inject ChatfishApp.Core.Configuration.IChatfishServerEndpoint ServerEndpoint
+@inject ChatfishApp.Core.Setup.ISetupWizardHost SetupWizard
 @inject ChatfishApp.Shared.Services.ThemeService Theme
 @inject INavLayoutState NavLayout
 @inject ChatfishApp.Core.Auth.IAuthService Auth
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @using ChatfishApp.Core.Update
+@using ChatfishApp.Core.Homeserver
 @using ChatfishApp.Shared.Services
 @implements IDisposable
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
     <h4 style="margin: 0;">Settings</h4>
     <p style="color: var(--color-text-muted); font-size: 0.9em;">
-        These preferences are stored only in your browser. About-you details and memories are included in every chat request.
+        These preferences are stored only on this device only.
     </p>
+
+    <!-- Login server (MAUI only — WASM always uses the page origin) -->
+    @if (AppEnvironment.IsMaui)
+    {
+        <div class="settings-card" style="margin-top: 1rem;">
+            <h3 style="margin: 0 0 0.25rem;">Login server</h3>
+            <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+                Where this app authenticates and syncs device presence. Installing a Home Server sets this to
+                <code>http://localhost:5050</code>. </p>
+            <label>Server URL</label>
+            <input type="text" class="form-control" @bind="loginServerDraft" placeholder="https://chatfish.me" />
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="SaveLoginServer" disabled="@loginServerBusy">
+                    @(loginServerBusy ? "Saving…" : "Save login server")
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => loginServerDraft = "https://chatfish.me"' disabled="@loginServerBusy">
+                    Public (chatfish.me)
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => loginServerDraft = "http://localhost:5050"' disabled="@loginServerBusy">
+                    Local homeserver
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(loginServerMessage))
+            {
+                <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(loginServerIsError ? "#c00" : "#1a7a3c");">
+                    @loginServerMessage
+                </div>
+            }
+            @if (Homeserver.IsSupported)
+            {
+                <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--cf-border, #eee);">
+                    <button type="button" class="btn btn-outline-primary btn-sm" @onclick="OpenSetupWizard">
+                        Run setup wizard
+                    </button>
+                    <span style="font-size: 0.85em; color: var(--color-text-muted); margin-left: 0.5rem;">
+                        To install the Home Login Server, Lemonade AI server, and Ollama AI server
+                    </span>
+                </div>
+            }
+        </div>
+    }
 
     <!-- Appearance -->
     <div class="settings-card">
@@ -215,6 +260,49 @@
         </div>
     }
 
+    <!-- Home Server status (Windows MAUI only) -->
+    @if (AppEnvironment.IsMaui && Homeserver.IsSupported)
+    {
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+            <h4>Home Server</h4>
+            <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
+                Optional local login server and website. Updates replace program files only —
+                your SQLite login database under ProgramData is never overwritten.
+            </p>
+            <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+                Status: <strong>@(homeserverStatusText ?? "…")</strong>
+            </div>
+            @if (!string.IsNullOrEmpty(homeserverActionMessage))
+            {
+                <div style="margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
+                            background: @(homeserverActionIsError ? "#fff0f0" : "#e6f2ff");
+                            border: 1px solid @(homeserverActionIsError ? "#f5c2c7" : "#b3d9ff");">
+                    @homeserverActionMessage
+                </div>
+            }
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                @if (homeserverState is { IsInstalled: false, InstallMode: not HomeserverInstallMode.Declined })
+                {
+                    <button class="btn btn-outline-primary btn-sm" @onclick="InstallHomeserver" disabled="@homeserverBusy">
+                        @(homeserverBusy ? "Installing…" : "Install Home Server")
+                    </button>
+                }
+                @if (homeserverState is { InstallMode: HomeserverInstallMode.Declined })
+                {
+                    <button class="btn btn-outline-primary btn-sm" @onclick="InstallHomeserver" disabled="@homeserverBusy">
+                        @(homeserverBusy ? "Installing…" : "Install Home Server")
+                    </button>
+                }
+                @if (homeserverState is { IsInstalled: true })
+                {
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="UpdateHomeserver" disabled="@homeserverBusy">
+                        @(homeserverBusy ? "Working…" : "Check Home Server update")
+                    </button>
+                }
+            </div>
+        </div>
+    }
+
     <!-- App Updates (MAUI only) -->
     @if (AppEnvironment.IsMaui)
     {
@@ -309,6 +397,17 @@
     // Avoid OperatingSystem.* here — that type can fail to resolve in trimmed WASM builds.
     private string installerDownloadUrl = "/releases/windows/Chatfish-win-Setup.exe";
 
+    private HomeserverState? homeserverState;
+    private string? homeserverStatusText;
+    private string? homeserverActionMessage;
+    private bool homeserverActionIsError;
+    private bool homeserverBusy;
+
+    private string loginServerDraft = "";
+    private string? loginServerMessage;
+    private bool loginServerIsError;
+    private bool loginServerBusy;
+
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
         UpdateCheckStatus.UpToDate => updateCheckResult.Message ?? "You're on the latest version.",
@@ -336,7 +435,42 @@
         ReloadMemories();
 
         if (AppEnvironment.IsMaui)
+        {
+            loginServerDraft = ServerEndpoint.BaseUrl;
+            if (string.IsNullOrWhiteSpace(loginServerDraft))
+                loginServerDraft = "https://chatfish.me";
             LoadInstalledVersion();
+            RefreshHomeserverStatus();
+        }
+    }
+
+    private async Task SaveLoginServer()
+    {
+        loginServerBusy = true;
+        loginServerMessage = null;
+        StateHasChanged();
+        try
+        {
+            await ServerEndpoint.SetBaseUrlAsync(loginServerDraft);
+            loginServerDraft = ServerEndpoint.BaseUrl;
+            loginServerMessage = $"Login server set to {ServerEndpoint.BaseUrl}";
+            loginServerIsError = false;
+        }
+        catch (Exception ex)
+        {
+            loginServerMessage = ex.Message;
+            loginServerIsError = true;
+        }
+        finally
+        {
+            loginServerBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenSetupWizard()
+    {
+        SetupWizard.Show();
     }
 
     private void LoadInstalledVersion()
@@ -353,6 +487,65 @@
         installerDownloadUrl = isLinuxFeed
             ? "https://chatfish.me/install.sh"
             : feed + "/Chatfish-win-Setup.exe";
+    }
+
+    private void RefreshHomeserverStatus()
+    {
+        if (!Homeserver.IsSupported)
+            return;
+        homeserverState = Homeserver.GetState();
+        homeserverStatusText = Homeserver.GetServiceStatusText()
+            ?? (homeserverState.InstallMode == HomeserverInstallMode.Declined
+                ? "Declined"
+                : "Not installed");
+    }
+
+    private async Task InstallHomeserver()
+    {
+        homeserverBusy = true;
+        homeserverActionMessage = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Homeserver.InstallAsync();
+            homeserverActionMessage = result.Message;
+            homeserverActionIsError = !result.Success;
+            RefreshHomeserverStatus();
+        }
+        catch (Exception ex)
+        {
+            homeserverActionMessage = ex.Message;
+            homeserverActionIsError = true;
+        }
+        finally
+        {
+            homeserverBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task UpdateHomeserver()
+    {
+        homeserverBusy = true;
+        homeserverActionMessage = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Homeserver.UpdateIfNeededAsync();
+            homeserverActionMessage = result.Message;
+            homeserverActionIsError = !result.Success;
+            RefreshHomeserverStatus();
+        }
+        catch (Exception ex)
+        {
+            homeserverActionMessage = ex.Message;
+            homeserverActionIsError = true;
+        }
+        finally
+        {
+            homeserverBusy = false;
+            StateHasChanged();
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

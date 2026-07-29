@@ -32,7 +32,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private readonly MauiAuthCookieStore _cookieStore;
     private readonly SqliteSettingsDatabase _settings;
     private readonly IAuthService _auth;
-    private readonly ChatfishServerOptions _serverOptions;
+    private readonly IChatfishServerEndpoint _serverEndpoint;
     private readonly IWebRtcTransport _webrtc;
     private readonly ISyncPreferencesStore _prefs;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -84,7 +84,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         MauiAuthCookieStore cookieStore,
         SqliteSettingsDatabase settings,
         IAuthService auth,
-        IOptions<ChatfishServerOptions> serverOptions,
+        IChatfishServerEndpoint serverEndpoint,
         IWebRtcTransport webrtc,
         ISyncPreferencesStore prefs,
         IServiceScopeFactory scopeFactory,
@@ -97,7 +97,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _cookieStore = cookieStore;
         _settings = settings;
         _auth = auth;
-        _serverOptions = serverOptions.Value;
+        _serverEndpoint = serverEndpoint;
         _webrtc = webrtc;
         _prefs = prefs;
         _scopeFactory = scopeFactory;
@@ -195,8 +195,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
         if (_hub is null)
         {
-            var hubUrl = $"{_serverOptions.SyncHubUrl}?deviceId={Uri.EscapeDataString(MyDeviceId ?? "")}";
-            var hubUri = new Uri(_serverOptions.SyncHubUrl);
+            var hubUrl = $"{_serverEndpoint.SyncHubUrl}?deviceId={Uri.EscapeDataString(MyDeviceId ?? "")}";
+            var hubUri = new Uri(_serverEndpoint.SyncHubUrl);
             var cookies = _cookieStore.Container;
 
             _hub = new HubConnectionBuilder()
@@ -217,7 +217,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                 .Build();
 
             var cookieCount = cookies.GetCookies(hubUri).Count;
-            Console.WriteLine($"[MauiSyncService] Hub cookies for {_serverOptions.SyncHubUrl}: {cookieCount}");
+            Console.WriteLine($"[MauiSyncService] Hub cookies for {_serverEndpoint.SyncHubUrl}: {cookieCount}");
             if (cookieCount == 0)
                 Console.WriteLine("[MauiSyncService] WARNING: No auth cookies — hub connection will likely fail.");
 

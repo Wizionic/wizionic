@@ -490,16 +490,31 @@ public class WasmKeyStore : IKeyStore
                 throw new InvalidOperationException(
                     "No models returned. Is the server running? For Lemonade, use port 13305 and ensure /v1/models is reachable.");
 
+            // Prefer /api/tags with sizes; fall back to name-only list.
+            var installed = await OllamaCapabilitiesResolver.ListInstalledModelsAsync(http, origin, ct);
             var existingMap = GetModelSettingsMap();
             var next = new Dictionary<string, OllamaModelSettings>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var tag in modelNames.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct(StringComparer.OrdinalIgnoreCase))
+            if (installed.Count > 0)
             {
-                existingMap.TryGetValue(tag, out var existing);
-                var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag, ct);
-                next[tag] = OllamaCapabilitiesResolver.ResolveSettings(tag, live, existing);
+                foreach (var tag in installed)
+                {
+                    existingMap.TryGetValue(tag.Name, out var existing);
+                    var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag.Name, ct);
+                    next[tag.Name] = OllamaCapabilitiesResolver.ResolveSettings(tag.Name, live, existing, tag.SizeBytes);
+                }
+            }
+            else
+            {
+                foreach (var tag in modelNames.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    existingMap.TryGetValue(tag, out var existing);
+                    var live = await OllamaCapabilitiesResolver.FetchLiveMetadataAsync(http, origin, tag, ct);
+                    next[tag] = OllamaCapabilitiesResolver.ResolveSettings(tag, live, existing);
+                }
             }
 
+            // Replace list entirely — do not keep models from a previous Base URL.
             _ollamaConfig = _ollamaConfig with
             {
                 Models = next.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(),
@@ -746,17 +761,12 @@ public class WasmKeyStore : IKeyStore
             var existingMap = GetLemonadeModelSettingsMap();
             var next = new Dictionary<string, LemonadeModelSettings>(StringComparer.OrdinalIgnoreCase);
 
+            // Replace the list with what this server reports (do not keep models from a previous Base URL).
+            // User overrides for models that still exist are preserved via ResolveSettings.
             foreach (var model in discovered)
             {
                 existingMap.TryGetValue(model.Name, out var existing);
                 next[model.Name] = LemonadeModelCatalogResolver.ResolveSettings(model, existing);
-            }
-
-            // Preserve manually-added models not returned by the server.
-            foreach (var (name, settings) in existingMap)
-            {
-                if (!next.ContainsKey(name))
-                    next[name] = settings;
             }
 
             var list = next.Values.ToList();

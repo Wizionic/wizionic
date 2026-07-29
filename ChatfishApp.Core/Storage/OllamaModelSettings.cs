@@ -11,6 +11,10 @@ public sealed class OllamaModelSettings
     public bool SupportsVision { get; set; }
     public bool IsVisionProxy { get; set; }
     public int ContextSize { get; set; }
+
+    /// <summary>On-disk size from Ollama <c>/api/tags</c> (bytes). 0 when unknown.</summary>
+    public long SizeBytes { get; set; }
+
     public bool UserOverrideTools { get; set; }
     public bool UserOverrideVision { get; set; }
     public bool UserOverrideContext { get; set; }
@@ -23,6 +27,7 @@ public sealed class OllamaModelSettings
         SupportsVision = SupportsVision,
         IsVisionProxy = IsVisionProxy,
         ContextSize = ContextSize,
+        SizeBytes = SizeBytes,
         UserOverrideTools = UserOverrideTools,
         UserOverrideVision = UserOverrideVision,
         UserOverrideContext = UserOverrideContext
