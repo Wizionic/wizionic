@@ -19,19 +19,37 @@ using System.Security.Claims;
 using ChatfishApp.Shared.Services;
 
 // Windows Service / homeserver: content root must be the published app directory (not System32).
+// For `dotnet run` / `dotnet watch` from the repo, keep the project directory so relative
+// paths and Development config match the source layout.
+var isHomeserverHost = IsRunningAsHomeserverHost();
+var contentRoot = ResolveContentRoot(isHomeserverHost);
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
-    ContentRootPath = AppContext.BaseDirectory
+    ContentRootPath = contentRoot
 });
 
-// Optional local homeserver overrides live outside the replaceable app folder so updates
+// Local homeserver overrides live outside the replaceable app folder so updates
 // never wipe connection strings or other durable settings.
+// IMPORTANT: only load them when THIS process is the installed Home Server host.
+// If we load them during `dotnet run`/`dotnet watch`, the connection string points at
+// %ProgramData%\Chatfish\Homeserver\data\chatfish.db — which is owned by the Windows
+// Service (Administrators) and is often read-only for the interactive user, producing
+// "attempt to write a readonly database" during Migrate(). Production Docker never has
+// this file, so it always uses appsettings + the mounted /app/data volume.
 var homeserverSettingsPath = HomeserverPaths.AppsettingsPath;
-if (File.Exists(homeserverSettingsPath))
+var homeserverConfigLoaded = false;
+if (isHomeserverHost && File.Exists(homeserverSettingsPath))
 {
     builder.Configuration.AddJsonFile(homeserverSettingsPath, optional: false, reloadOnChange: true);
+    homeserverConfigLoaded = true;
     Console.WriteLine($"[Homeserver] Loaded config from {homeserverSettingsPath}");
+}
+else if (File.Exists(homeserverSettingsPath))
+{
+    Console.WriteLine(
+        $"[Homeserver] Ignoring {homeserverSettingsPath} (not running as installed Home Server host). " +
+        "Using project/appsettings connection string so dev runs do not touch the service database.");
 }
 
 // Allow running as a Windows Service or Linux systemd unit
@@ -51,7 +69,7 @@ EnsureSqliteDirectory(connectionString);
 
 // Homeserver / HTTP-only: cookie Secure=Always breaks login on plain http://localhost.
 var homeserverHttpCookies = builder.Configuration.GetValue("Homeserver:AllowHttpCookies", false)
-    || File.Exists(homeserverSettingsPath);
+    || homeserverConfigLoaded;
 builder.Services.AddDbContext<ChatfishDbContext>(options =>
 {
     options.UseSqlite(connectionString);
@@ -191,6 +209,10 @@ builder.Services.AddSingleton<ChatfishApp.Core.Ollama.IOllamaInstallService>(
     _ => ChatfishApp.Shared.Services.NullOllamaInstallService.Instance);
 builder.Services.AddSingleton<ChatfishApp.Core.UI.IUrlEmbedOverlay>(
     _ => ChatfishApp.Shared.Services.NullUrlEmbedOverlay.Instance);
+// Shared layout (SetupWizard in AppLayout) injects IKeyStore. Real settings live in
+// WASM/MAUI; the host only needs a no-op so SSR DI can construct those components.
+builder.Services.AddSingleton<ChatfishApp.Core.Storage.IKeyStore>(
+    _ => ChatfishApp.Shared.Services.NullKeyStore.Instance);
 
 builder.Services.AddAuthentication("ChatfishAuth")
     .AddCookie("ChatfishAuth", options =>
@@ -324,9 +346,22 @@ app.UseAuthorization();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ChatfishDbContext>();
-    db.Database.Migrate();
-
     var dbPath = ResolveSqlitePath(connectionString) ?? Path.GetFullPath("chatfish.db");
+    try
+    {
+        db.Database.Migrate();
+    }
+    catch (Exception ex) when (ex.Message.Contains("readonly", StringComparison.OrdinalIgnoreCase)
+                            || (ex.InnerException?.Message.Contains("readonly", StringComparison.OrdinalIgnoreCase) == true))
+    {
+        Console.WriteLine(
+            $"[DB] FATAL: SQLite cannot write to '{dbPath}'. " +
+            "If this is a local Home Server DB under ProgramData, it is likely owned by the Windows Service " +
+            "and not writable from `dotnet run`. Dev builds should use appsettings (data/chatfish.db), not the service DB. " +
+            "Do not delete production/homeserver chatfish.db — it holds user login + DataProtection keys.");
+        throw;
+    }
+
     long dbSizeBytes = File.Exists(dbPath) ? new FileInfo(dbPath).Length : -1;
     int dpKeyCount = db.DataProtectionKeys.Count();
     Console.WriteLine($"[Auth] Persistence: chatfish.db path={dbPath} sizeBytes={dbSizeBytes} dataProtectionKeyCount={dpKeyCount}");
@@ -530,6 +565,72 @@ app.MapRazorComponents<App>()
 
 
 app.Run();
+
+/// <summary>
+/// True when this process is the installed Home Server host (published under
+/// HomeserverPaths.AppDirectory, or CHATFISH_HOMESERVER=1/true is set).
+/// False for normal Docker production and for `dotnet run` / `dotnet watch` from source.
+/// </summary>
+static bool IsRunningAsHomeserverHost()
+{
+    var flag = Environment.GetEnvironmentVariable("CHATFISH_HOMESERVER");
+    if (string.Equals(flag, "1", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(flag, "yes", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    try
+    {
+        var baseDir = NormalizeDir(AppContext.BaseDirectory);
+        var appDir = NormalizeDir(HomeserverPaths.AppDirectory);
+        if (baseDir.Equals(appDir, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Self-contained publish may nest under AppDirectory (e.g. extra subfolders).
+        var prefix = appDir + Path.DirectorySeparatorChar;
+        if (baseDir.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return true;
+    }
+    catch
+    {
+        // Fall through — treat as non-homeserver.
+    }
+
+    return false;
+}
+
+static string ResolveContentRoot(bool homeserverHost)
+{
+    if (homeserverHost)
+        return AppContext.BaseDirectory;
+
+    // Prefer the project / working directory for interactive dev so wwwroot and
+    // relative config match the repo layout. Fall back to BaseDirectory for
+    // published non-homeserver hosts (Docker, plain publish).
+    try
+    {
+        var cwd = Directory.GetCurrentDirectory();
+        if (File.Exists(Path.Combine(cwd, "ChatfishApp.csproj"))
+            || Directory.Exists(Path.Combine(cwd, "wwwroot")))
+        {
+            return cwd;
+        }
+    }
+    catch
+    {
+        // ignore
+    }
+
+    return AppContext.BaseDirectory;
+}
+
+static string NormalizeDir(string path)
+{
+    var full = Path.GetFullPath(path);
+    return full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+}
 
 /// <summary>
 /// Create the parent folder for a SQLite "Data Source=..." path so first-run

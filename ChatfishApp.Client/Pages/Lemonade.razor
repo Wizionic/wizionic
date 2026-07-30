@@ -1,4 +1,5 @@
 @page "/lemonade"
-@rendermode InteractiveWebAssembly
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@layout ChatfishApp.Shared.Layout.AppLayout
 
 <LemonadePage />

@@ -120,7 +120,11 @@
                         Use the <strong>desktop app</strong> (native WebView, no iframe),
                         or open Home Assistant in a browser:
                     </p>
-                    <a class="btn btn-primary" href="@embedUrl" target="_blank" rel="noopener">Open @embedUrl</a>
+                    <a class="btn btn-primary"
+                       href="@embedUrl"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       data-enhance-nav="false">Open @embedUrl</a>
                     <p style="font-size: 0.85em; margin-top: 0.75rem;">
                         Optional: allow iframe embedding in HA’s <code>configuration.yaml</code>:
                     </p>
@@ -147,6 +151,7 @@
 
     /// <summary>
     /// MAUI can always try the embed. WASM/host only when not mixed content (HTTPS page + HTTP HA).
+    /// Relative / non-absolute URLs must not be embedded — they resolve against chatfish.me and 404.
     /// </summary>
     private bool CanEmbed
     {
@@ -156,9 +161,17 @@
                 return false;
             if (AppEnvironment.IsMaui)
                 return true;
+            if (!Uri.TryCreate(embedUrl, UriKind.Absolute, out var target)
+                || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
+            {
+                return false;
+            }
+
             var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
-            var targetHttp = embedUrl.StartsWith("http:", StringComparison.OrdinalIgnoreCase);
-            return !(pageHttps && targetHttp);
+            if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
+                return false;
+
+            return true;
         }
     }
 

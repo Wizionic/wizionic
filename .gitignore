@@ -147,3 +147,6 @@ linux_releases/
 maui_publish/
 maui_releases/
 publish_output/
+homeserver_publish_win/
+homeserver_releases_win/
+
