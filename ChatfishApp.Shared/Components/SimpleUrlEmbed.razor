@@ -8,6 +8,7 @@
 @implements IAsyncDisposable
 @inject IUrlEmbedOverlay EmbedOverlay
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 @if (EmbedOverlay.IsNative)
 {
@@ -18,6 +19,14 @@
         {
             <div class="simple-url-embed-placeholder">No URL</div>
         }
+    </div>
+}
+else if (!CanUseIframe)
+{
+    @* Never put a relative/mixed-content URL in iframe src — browsers or Blazor enhanced
+       navigation can turn it into a same-origin path and dump the user on NotFound. *@
+    <div class="simple-url-embed-placeholder" style="padding:1.5rem;color:var(--cf-text-muted);">
+        Cannot embed this URL here (mixed content or invalid address). Open it in a new tab instead.
     </div>
 }
 else
@@ -47,10 +56,38 @@ else
             var u = (Url ?? "").Trim();
             if (string.IsNullOrWhiteSpace(u))
                 return "about:blank";
+            // Scheme-less values are relative to the site origin in HTML — force absolute.
             if (!u.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                && !u.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                u = "http://" + u;
+                && !u.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(u, "about:blank", StringComparison.OrdinalIgnoreCase))
+            {
+                u = "http://" + u.TrimStart('/');
+            }
             return u.TrimEnd('/');
+        }
+    }
+
+    /// <summary>
+    /// Iframe only for absolute http(s) URLs that are not mixed content on an HTTPS page.
+    /// </summary>
+    private bool CanUseIframe
+    {
+        get
+        {
+            var u = NormalizedUrl;
+            if (string.IsNullOrWhiteSpace(u) || string.Equals(u, "about:blank", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!Uri.TryCreate(u, UriKind.Absolute, out var target)
+                || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
+            {
+                return false;
+            }
+
+            var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
+            if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
+                return false;
+
+            return true;
         }
     }
 

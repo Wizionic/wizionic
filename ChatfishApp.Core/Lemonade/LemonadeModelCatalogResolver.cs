@@ -20,11 +20,23 @@ public static class LemonadeModelCatalogResolver
     public static string NormalizeBaseUrl(string? baseUrl)
     {
         var url = (baseUrl ?? "http://localhost:13305").Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(url))
+            return "http://localhost:13305";
+
+        // Scheme-less values (e.g. "localhost:13305") must not stay relative — in the browser
+        // they become same-origin paths like https://chatfish.me/localhost:13305 → NotFound.
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            url = "http://" + url.TrimStart('/');
+        }
+
         // Accept users pasting /v1 or /api/v1; store the server origin only.
         if (url.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
             url = url[..^"/api/v1".Length].TrimEnd('/');
         else if (url.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
             url = url[..^"/v1".Length].TrimEnd('/');
+
         return string.IsNullOrWhiteSpace(url) ? "http://localhost:13305" : url;
     }
 

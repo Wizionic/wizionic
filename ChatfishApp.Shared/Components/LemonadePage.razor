@@ -277,7 +277,12 @@
                     <p>
                         Use the <strong>desktop app</strong>, or open Lemonade directly:
                     </p>
-                    <a class="btn btn-primary" href="@embedUrl" target="_blank" rel="noopener">Open @embedUrl</a>
+                    @* data-enhance-nav=false: never let Blazor treat the local URL as an in-app route *@
+                    <a class="btn btn-primary"
+                       href="@embedUrl"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       data-enhance-nav="false">Open @embedUrl</a>
                 </div>
             }
         </div>
@@ -312,7 +317,9 @@
 
     /// <summary>
     /// MAUI can always try the embed. WASM/host only when the page itself is not HTTPS
-    /// (or Base URL is HTTPS) to avoid mixed-content blocks.
+    /// (or Base URL is HTTPS) to avoid mixed-content blocks. Never embed when the target
+    /// is not a valid absolute http(s) URL — relative values would hit chatfish.me routes
+    /// and surface the app NotFound page.
     /// </summary>
     bool CanEmbedLocalServer
     {
@@ -320,9 +327,18 @@
         {
             if (AppEnvironment.IsMaui)
                 return true;
+            if (!Uri.TryCreate(embedUrl, UriKind.Absolute, out var target)
+                || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
+            {
+                return false;
+            }
+
             var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
-            var targetHttp = embedUrl.StartsWith("http:", StringComparison.OrdinalIgnoreCase);
-            return !(pageHttps && targetHttp);
+            // HTTPS page + HTTP target = mixed content (blank iframe / browser block). Stay on-page with fallback UI.
+            if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
+                return false;
+
+            return true;
         }
     }
 
