@@ -7,6 +7,13 @@
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     <RootNamespace>ChatfishApp</RootNamespace>
     <UserSecretsId>a8d4cf06-2e6d-4968-9752-b26c847c8502</UserSecretsId>
+    <!--
+      The host .csproj lives at the repo root, so default globs only exclude the root-level
+      obj/ and bin/ folders. Leftover nested build outputs (e.g. an old ChatfishApp/obj from a
+      prior project layout) would otherwise be compiled and cause CS0579 duplicate assembly
+      attributes and CS0101 duplicate generated types.
+    -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -77,10 +84,13 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.11.70" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.8" />
     <!-- Real email sending for magic links (SMTP via MailKit). Configure in appsettings under "Email" section (use user-secrets for passwords in real deploys). -->
-    <PackageReference Include="MailKit" Version="4.8.0" />
+    <!-- 4.16+ fixes STARTTLS response injection (GHSA-9j88-vvj5-vhgr); pulls MimeKit ≥4.15.1 (GHSA-g7hc-96xr-gvvx). -->
+    <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.8" />
     <PackageReference Include="SIPSorcery" Version="10.0.10" />
+    <!-- Override transitive 2.1.11 (GHSA-2m69-gcr7-jv3q / CVE-2025-6965 in bundled SQLite). -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <ProjectReference Include="ChatfishApp.Client\ChatfishApp.Client.csproj" />
     <ProjectReference Include="ChatfishApp.Core\ChatfishApp.Core.csproj" />
     <ProjectReference Include="ChatfishApp.Shared\ChatfishApp.Shared.csproj" />
