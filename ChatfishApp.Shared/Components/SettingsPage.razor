@@ -482,11 +482,13 @@
         if (string.IsNullOrEmpty(feed))
             feed = "https://chatfish.me/releases/windows";
 
-        var isLinuxFeed = feed.Contains("/linux", StringComparison.OrdinalIgnoreCase);
+        // Treat unknown/empty as Windows only when the feed path is not clearly Linux.
+        var isLinuxFeed = feed.Contains("/linux", StringComparison.OrdinalIgnoreCase)
+            || feed.Contains("releases.linux", StringComparison.OrdinalIgnoreCase);
         // Linux: install.sh defaults to user AppImage (in-app updates). Windows: Setup.exe.
         installerDownloadUrl = isLinuxFeed
             ? "https://chatfish.me/install.sh"
-            : feed + "/Chatfish-win-Setup.exe";
+            : feed.TrimEnd('/') + "/Chatfish-win-Setup.exe";
     }
 
     private void RefreshHomeserverStatus()

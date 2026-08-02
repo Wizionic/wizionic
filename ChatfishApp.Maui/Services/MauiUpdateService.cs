@@ -171,7 +171,7 @@ public class MauiUpdateService : IUpdateService
                 UpdateCheckStatus.CheckFailed,
                 currentVersion,
                 latestFeedVersion,
-                message: $"Could not check for updates: {ex.Message}");
+                message: $"Could not check for updates: {ex.Message} (feed: {_updateUrl})");
         }
     }
 
