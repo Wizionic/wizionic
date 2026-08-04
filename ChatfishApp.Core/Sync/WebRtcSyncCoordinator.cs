@@ -2438,18 +2438,31 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             if (payload == null || string.IsNullOrEmpty(payload.NoteId))
                 return;
 
-            var entries = ChatMessageHelper.NormalizeAll(payload.Entries);
-            if (!await _noteStore.ShouldAcceptIncomingContentAsync(payload.NoteId, entries))
+            var remoteEntries = ChatMessageHelper.NormalizeAll(payload.Entries);
+            if (!await _noteStore.ShouldAcceptIncomingContentAsync(payload.NoteId, remoteEntries))
             {
                 SyncDebugLog.Info($"Ignoring stale note sync for {payload.NoteId} (local delete is newer)");
                 return;
             }
 
+            var localEntries = await _noteStore.LoadNoteAsync(payload.NoteId);
+            var merge = NoteSyncMerger.Merge(localEntries, remoteEntries);
+
             var localTitle = await _noteStore.GetMetaTitleAsync(payload.NoteId);
             var title = ChatMessageHelper.ResolveIncomingNoteTitle(payload.Title, localTitle);
 
-            await _noteStore.SaveNoteAsync(payload.NoteId, entries);
-            await _noteStore.UpdateIndexAfterSaveAsync(payload.NoteId, title, entries);
+            // Persist when the merge changed local content (or note was empty and remote arrived).
+            if (merge.DiffersFromLocal || localEntries.Count == 0)
+            {
+                await _noteStore.SaveNoteAsync(payload.NoteId, merge.Entries);
+                await _noteStore.UpdateIndexAfterSaveAsync(payload.NoteId, title, merge.Entries);
+            }
+            else if (!string.Equals(localTitle?.Trim(), title.Trim(), StringComparison.Ordinal))
+            {
+                // Title-only update from peer; keep entry list.
+                await _noteStore.UpdateIndexAfterSaveAsync(payload.NoteId, title, merge.Entries);
+            }
+
             // Only apply protection when the peer explicitly sent the field.
             // Older clients omit it (deserializes as null) — do not wipe local locks.
             if (payload.IsPasswordProtected is bool remoteProtected)
@@ -2458,7 +2471,22 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             OnNoteSyncPayloadReceived?.Invoke(payload.NoteId, json, fromDeviceId);
             OnNotesChanged?.Invoke();
 
-            SyncDebugLog.Info($"Auto-saved incoming note sync for {payload.NoteId} from {fromDeviceId} ({payload.Entries.Count} entries, protected={payload.IsPasswordProtected?.ToString() ?? "omit"})");
+            // If we kept local-only entries (or LWW chose local versions), push the merged
+            // notebook back so the peer converges instead of staying on a partial overwrite.
+            if (merge.DiffersFromRemote)
+            {
+                SyncDebugLog.Info(
+                    $"Note {payload.NoteId} merge kept local-only or newer local entries " +
+                    $"(localOnly={merge.LocalOnlyCount}, remoteOnly={merge.RemoteOnlyCount}, " +
+                    $"conflicts={merge.ResolvedConflicts}); scheduling push-back");
+                ScheduleAutoSyncNoteAfterLocalSave(payload.NoteId, title);
+            }
+
+            SyncDebugLog.Info(
+                $"Merged incoming note sync for {payload.NoteId} from {fromDeviceId} " +
+                $"(remote={remoteEntries.Count}, local={localEntries.Count}, merged={merge.Entries.Count}, " +
+                $"localOnly={merge.LocalOnlyCount}, remoteOnly={merge.RemoteOnlyCount}, " +
+                $"entryConflicts={merge.ResolvedConflicts}, protected={payload.IsPasswordProtected?.ToString() ?? "omit"})");
         }
         catch (Exception ex)
         {
