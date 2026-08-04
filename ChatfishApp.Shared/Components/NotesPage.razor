@@ -449,9 +449,89 @@
     {
         notes = await NoteStore.LoadIndexAsync();
 
-        if (!string.IsNullOrEmpty(activeNoteId) && notes.Any(n => n.Id == activeNoteId)
-            && !IsActiveNoteLocked)
-            currentNoteMessages = await NoteStore.LoadNoteAsync(activeNoteId);
+        if (string.IsNullOrEmpty(activeNoteId) || !notes.Any(n => n.Id == activeNoteId) || IsActiveNoteLocked)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var fromStore = await NoteStore.LoadNoteAsync(activeNoteId);
+
+        // Open editor can be ahead of the store. Fold the draft into memory, then per-entry
+        // merge so remote sync never silently drops unsaved typing.
+        var hasOpenEdit = editingMessageIndex is int openIdx
+            && openIdx >= 0
+            && openIdx < currentNoteMessages.Count;
+
+        if (hasOpenEdit)
+        {
+            var idx = editingMessageIndex!.Value;
+            var editingItemId = currentNoteMessages[idx].ItemId;
+
+            string? html = _activeEditDraftHtml;
+            if (html is null && quillEditor is not null)
+            {
+                try { html = await quillEditor.GetHTML(); }
+                catch { /* editor may be mid-dispose */ }
+            }
+
+            if (html is not null)
+            {
+                if (IsBlankQuillHtml(html))
+                    html = "";
+
+                currentNoteMessages[idx] = ChatMessageHelper.TouchModified(
+                    currentNoteMessages[idx],
+                    content: html,
+                    contentFormat: NoteContentFormatter.FormatHtml);
+                _activeEditDraftHtml = html;
+            }
+
+            var merge = NoteSyncMerger.Merge(currentNoteMessages, fromStore);
+            currentNoteMessages = merge.Entries;
+
+            if (!string.IsNullOrEmpty(editingItemId))
+            {
+                var newIdx = currentNoteMessages.FindIndex(m =>
+                    string.Equals(m.ItemId, editingItemId, StringComparison.OrdinalIgnoreCase)
+                    && m.DeletedAt is null);
+
+                if (newIdx >= 0)
+                {
+                    editingMessageIndex = newIdx;
+                    var msg = currentNoteMessages[newIdx];
+                    editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
+                    _activeEditDraftHtml = editingInitialHtml;
+                    editSessionKey++; // remount Quill on merged HTML
+                }
+                else
+                {
+                    CancelEdit();
+                }
+            }
+
+            // Persist only when memory still has content the store lacks (draft won LWW).
+            if (merge.DiffersFromRemote)
+            {
+                try
+                {
+                    var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
+                    var title = note?.Title ?? "Untitled";
+                    await NoteStore.SaveNoteAsync(activeNoteId, currentNoteMessages);
+                    await NoteStore.UpdateIndexAfterSaveAsync(activeNoteId, title, currentNoteMessages);
+                    notes = await NoteStore.LoadIndexAsync();
+                    SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Notes] Failed to persist merged note after sync: {ex.Message}");
+                }
+            }
+        }
+        else
+        {
+            currentNoteMessages = fromStore;
+        }
 
         await InvokeAsync(StateHasChanged);
     }

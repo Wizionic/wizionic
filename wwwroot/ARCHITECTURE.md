@@ -645,6 +645,18 @@ Sync requires **email login** on both devices. The server **never** stores or re
 4. Encrypted content never touches the server—payloads are JSON over the DataChannel (`sync-data`, `note-sync-data`, chunked for large blobs).
 5. Receiver decrypts with the shared per-user key and writes to IndexedDB; UI refreshes via `OnConversationsChanged` / `OnNotesChanged`.
 
+### Note conflict handling
+Notes are notebooks of entries (`ItemId`, `ModifiedAt`, HTML body). Incoming note payloads are **not** whole-notebook overwrites:
+
+1. `NoteSyncMerger` unions local + remote entries by `ItemId`.
+2. When the same entry exists on both sides, **last-write-wins** uses the newer of `ModifiedAt` / `DeletedAt` / `Timestamp`.
+3. Local-only and remote-only entries are both kept; local order is preserved and remote-only entries are appended.
+4. If the merge still differs from what the peer sent (local kept unique or newer entries), auto-sync **pushes the merged notebook back** so peers converge.
+5. Peer ack fingerprints only skip re-sending identical content — they are not the conflict rule.
+6. Open editors fold the draft into memory and re-merge on `OnNotesChanged` so unsaved typing is not wiped by a remote apply.
+
+Same-entry concurrent HTML edits can still lose one body (LWW by time). Full 3-way HTML merge / conflict clones are future work.
+
 ### AI relay (WebRTC)
 A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`chatfish-ai-proxy`) to the peer running local models (`WasmChatCompletionService` on the server device).
 
