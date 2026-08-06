@@ -1,7 +1,10 @@
 @using App.Core.Lemonade
 @using App.Core.Storage
+@using App.Core.Sync
 @using App.Shared.Services
 @inject IKeyStore KeyStore
+@inject ISettingsSyncStore SettingsSync
+@inject ISyncService SyncService
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IAuthService AuthService
@@ -500,6 +503,7 @@
             await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
             await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
             await KeyStore.SaveLemonadeModelSettingsAsync(lemonadeEditDraft);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
             ReloadAll();
             editingLemonadeName = lemonadeEditDraft.Name;
             lemonadeEditDraft = KeyStore.GetLemonadeModelSettings(lemonadeEditDraft.Name)?.Clone();
@@ -527,6 +531,7 @@
             await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
             await KeyStore.SetLemonadeModalityDefaultsAsync(
                 defaultImageModel, defaultEditModel, defaultTtsModel, defaultSttModel, defaultVoice);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
             ReloadAll();
             await ShowPageFeedbackAsync("Modality defaults saved.", isError: false);
         }

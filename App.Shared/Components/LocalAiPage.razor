@@ -1,6 +1,10 @@
 @using App.Core.Ollama
 @using App.Core.Storage
+@using App.Core.Sync
+@using App.Shared.Services
 @inject IKeyStore KeyStore
+@inject ISettingsSyncStore SettingsSync
+@inject ISyncService SyncService
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IAuthService AuthService
@@ -464,6 +468,7 @@
 
             await KeyStore.SetOllamaBaseUrlAsync(ollamaBaseUrl);
             await KeyStore.SaveOllamaModelSettingsAsync(ollamaEditDraft);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.LocalAi);
             ReloadAll();
             editingOllamaName = ollamaEditDraft.Name;
             ollamaEditDraft = KeyStore.GetOllamaModelSettings(ollamaEditDraft.Name)?.Clone();

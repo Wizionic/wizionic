@@ -18,10 +18,25 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
     bool IsAiProxyConnected { get; }
     string? AiProxyError { get; }
 
+    bool SyncToAllDevices { get; }
     bool AutoSyncChatHistory { get; }
     bool AutoSyncNotes { get; }
     bool AutoSyncBookmarks { get; }
     bool AutoSyncInstalledApps { get; }
+    bool AutoSyncLocalAi { get; }
+    bool AutoSyncLemonade { get; }
+    bool AutoSyncCloudProviders { get; }
+    bool AutoSyncHomeAssistant { get; }
+    bool AutoSyncTools { get; }
+    bool AutoSyncSystemPrompt { get; }
+    bool AutoSyncProfile { get; }
+    bool AutoSyncMemories { get; }
+    bool AutoSyncAppearance { get; }
+
+    /// <summary>
+    /// Explicit per-device targets when <see cref="SyncToAllDevices"/> is false.
+    /// Prefer <see cref="GetEffectiveSyncTargetDeviceIds"/> for sync operations.
+    /// </summary>
     IReadOnlyCollection<string> SyncTargetDeviceIds { get; }
 
     event Action? OnChanged;
@@ -32,6 +47,7 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
     event Action<string, string>? OnNoteSyncAckReceived;
     event Action? OnBookmarksChanged;
     event Action? OnInstalledAppsChanged;
+    event Action? OnSettingsChanged;
 
     Task InitializeAsync();
     Task EnsureConnectedAndRegisteredAsync();
@@ -40,10 +56,20 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
 
     Task SetDeviceNameAsync(string newName);
     Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds);
+    Task SetSyncToAllDevicesAsync(bool enabled);
     Task SetAutoSyncChatHistoryAsync(bool enabled);
     Task SetAutoSyncNotesAsync(bool enabled);
     Task SetAutoSyncBookmarksAsync(bool enabled);
     Task SetAutoSyncInstalledAppsAsync(bool enabled);
+    Task SetAutoSyncLocalAiAsync(bool enabled);
+    Task SetAutoSyncLemonadeAsync(bool enabled);
+    Task SetAutoSyncCloudProvidersAsync(bool enabled);
+    Task SetAutoSyncHomeAssistantAsync(bool enabled);
+    Task SetAutoSyncToolsAsync(bool enabled);
+    Task SetAutoSyncSystemPromptAsync(bool enabled);
+    Task SetAutoSyncProfileAsync(bool enabled);
+    Task SetAutoSyncMemoriesAsync(bool enabled);
+    Task SetAutoSyncAppearanceAsync(bool enabled);
 
     Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages);
 
@@ -52,11 +78,13 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
     Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark);
     Task StartWebRtcFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder);
     Task StartWebRtcSidebarAppSyncAsync(string targetDeviceId, SidebarApp app);
+    Task StartWebRtcSettingsSyncAsync(string targetDeviceId, string category);
 
     Task<int> SyncAllConversationsToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllNotesToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds);
+    Task<int> SyncSettingsCategoryToDevicesAsync(string category, IEnumerable<string> targetDeviceIds);
 
     void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null);
     void ScheduleAutoSyncConvoDeleteAfterLocalDelete(string convoId, DateTime deletedAtUtc);
@@ -67,6 +95,7 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
     void ScheduleAutoSyncFolderDeleteAfterLocalDelete(string folderId, DateTime deletedAtUtc);
     void ScheduleAutoSyncSidebarAppAfterLocalSave(string appId);
     void ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(string appId, DateTime deletedAtUtc);
+    void ScheduleAutoSyncSettingsAfterLocalSave(string category);
 
     string? GetAiServerDeviceName();
     Task SetAiServerDeviceAsync(string? deviceId);
@@ -79,4 +108,9 @@ public interface ISyncService : INotesSyncBridge, IAsyncDisposable
 
     bool IsSelf(string? deviceId);
     IEnumerable<SyncDeviceInfo> GetOtherDevices();
+
+    /// <summary>
+    /// Device ids that should receive sync: all others when SyncToAllDevices, else explicit targets.
+    /// </summary>
+    IReadOnlyCollection<string> GetEffectiveSyncTargetDeviceIds();
 }

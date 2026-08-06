@@ -16,6 +16,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     private readonly INoteStore _noteStore;
     private readonly IBrowserStore? _browserStore;
     private readonly IBrowserSidebarStore? _sidebarStore;
+    private readonly ISettingsSyncStore? _settingsStore;
     private readonly ISyncPreferencesStore _prefs;
     private readonly Func<string, string, string, Task> _sendSignalingAsync;
     private readonly Func<bool> _isHubConnected;
@@ -30,7 +31,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         Func<bool> isHubConnected,
         IWebRtcTransportCallbacks? transportCallbacks = null,
         IBrowserStore? browserStore = null,
-        IBrowserSidebarStore? sidebarStore = null)
+        IBrowserSidebarStore? sidebarStore = null,
+        ISettingsSyncStore? settingsStore = null)
     {
         _webrtc = webrtc;
         _conversationStore = conversationStore;
@@ -41,12 +43,22 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         _transportCallbacks = transportCallbacks ?? this;
         _browserStore = browserStore;
         _sidebarStore = sidebarStore;
+        _settingsStore = settingsStore;
     }
 
     public bool AutoSyncChatHistory { get; set; }
     public bool AutoSyncNotes { get; set; }
     public bool AutoSyncBookmarks { get; set; }
     public bool AutoSyncInstalledApps { get; set; }
+    public bool AutoSyncLocalAi { get; set; }
+    public bool AutoSyncLemonade { get; set; }
+    public bool AutoSyncCloudProviders { get; set; }
+    public bool AutoSyncHomeAssistant { get; set; }
+    public bool AutoSyncTools { get; set; }
+    public bool AutoSyncSystemPrompt { get; set; }
+    public bool AutoSyncProfile { get; set; }
+    public bool AutoSyncMemories { get; set; }
+    public bool AutoSyncAppearance { get; set; }
     public IReadOnlyCollection<string> SyncTargetDeviceIds { get; set; } = Array.Empty<string>();
     public Func<string, bool>? IsSelf { get; set; }
     public Func<bool>? IsAuthenticated { get; set; }
@@ -57,6 +69,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public event Action? OnNotesChanged;
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
+    public event Action? OnSettingsChanged;
     public event Action<string, string, string>? OnSyncPayloadReceived;
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;
@@ -534,6 +547,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Bookmark => $"b:{itemId}",
         SyncItemKind.BookmarkFolder => $"f:{itemId}",
         SyncItemKind.SidebarApp => $"a:{itemId}",
+        SyncItemKind.Settings => $"s:{itemId}",
         _ => $"c:{itemId}"
     };
 
@@ -544,6 +558,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Bookmark => "bookmark",
         SyncItemKind.BookmarkFolder => "folder",
         SyncItemKind.SidebarApp => "app",
+        SyncItemKind.Settings => "settings",
         _ => "item"
     };
 
@@ -554,6 +569,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Bookmark => "app-bookmark-sync",
         SyncItemKind.BookmarkFolder => "app-folder-sync",
         SyncItemKind.SidebarApp => "wizionic-app-sync",
+        SyncItemKind.Settings => "app-settings-sync",
         _ => "app-sync"
     };
 
@@ -574,8 +590,136 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Bookmark => "bookmark-sync-data",
         SyncItemKind.BookmarkFolder => "folder-sync-data",
         SyncItemKind.SidebarApp => "app-sync-data",
+        SyncItemKind.Settings => "settings-sync-data",
         _ => "sync-data"
     };
+
+    public bool IsSettingsAutoSyncEnabled(string category) => category switch
+    {
+        SettingsSyncCategory.LocalAi => AutoSyncLocalAi,
+        SettingsSyncCategory.Lemonade => AutoSyncLemonade,
+        SettingsSyncCategory.CloudProviders => AutoSyncCloudProviders,
+        SettingsSyncCategory.HomeAssistant => AutoSyncHomeAssistant,
+        SettingsSyncCategory.Tools => AutoSyncTools,
+        SettingsSyncCategory.SystemPrompt => AutoSyncSystemPrompt,
+        SettingsSyncCategory.Profile => AutoSyncProfile,
+        SettingsSyncCategory.Memories => AutoSyncMemories,
+        SettingsSyncCategory.Appearance => AutoSyncAppearance,
+        _ => false
+    };
+
+    public async Task EnqueueSettingsSyncAsync(string targetDeviceId, string category)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || _settingsStore == null || string.IsNullOrWhiteSpace(category))
+            return;
+
+        if (!_isHubConnected())
+        {
+            SyncDebugLog.Info($"Cannot enqueue settings {category}: hub not connected.");
+            return;
+        }
+
+        var payload = await _settingsStore.ExportAsync(category);
+        if (payload == null)
+            return;
+
+        var dataJson = SettingsSyncPayload.Serialize(payload.Category, payload.UpdatedTicks, payload.DataJson);
+        var fingerprint = SyncFingerprint.Compute(dataJson);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.Settings,
+            ItemId = category,
+            DataJson = dataJson,
+            ContentFingerprint = fingerprint
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task StartWebRtcSettingsSyncAsync(string targetDeviceId, string category) =>
+        await EnqueueSettingsSyncAsync(targetDeviceId, category);
+
+    public async Task<int> SyncSettingsCategoryToDevicesAsync(string category, IEnumerable<string> targetDeviceIds)
+    {
+        if (_settingsStore == null || string.IsNullOrWhiteSpace(category))
+            return 0;
+
+        var targets = targetDeviceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (targets.Count == 0 || !_isHubConnected())
+            return 0;
+
+        var queued = 0;
+        foreach (var targetId in targets)
+        {
+            var payload = await _settingsStore.ExportAsync(category);
+            if (payload == null)
+                continue;
+
+            var dataJson = SettingsSyncPayload.Serialize(payload.Category, payload.UpdatedTicks, payload.DataJson);
+            var fingerprint = SyncFingerprint.Compute(dataJson);
+            if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Settings, category, fingerprint))
+                continue;
+
+            await EnqueueSettingsSyncAsync(targetId, category);
+            queued++;
+        }
+
+        return Math.Min(queued, targets.Count);
+    }
+
+    public void ScheduleAutoSyncSettingsAfterLocalSave(string category)
+    {
+        if (_settingsStore == null
+            || string.IsNullOrWhiteSpace(category)
+            || !IsSettingsAutoSyncEnabled(category)
+            || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"settings:{category}", async () =>
+        {
+            if (!_isHubConnected() || _settingsStore == null)
+                return;
+
+            var payload = await _settingsStore.ExportAsync(category);
+            if (payload == null)
+                return;
+
+            var dataJson = SettingsSyncPayload.Serialize(payload.Category, payload.UpdatedTicks, payload.DataJson);
+            var fingerprint = SyncFingerprint.Compute(dataJson);
+
+            foreach (var targetId in SyncTargetDeviceIds)
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Settings, category, fingerprint))
+                    continue;
+                await EnqueueSettingsSyncAsync(targetId, category);
+            }
+        });
+    }
+
+    private async Task MaybeAutoSyncSettingsForPeerAsync(string deviceId)
+    {
+        if (_settingsStore == null)
+            return;
+
+        foreach (var category in SettingsSyncCategory.All)
+        {
+            if (!IsSettingsAutoSyncEnabled(category))
+                continue;
+
+            var payload = await _settingsStore.ExportAsync(category);
+            if (payload == null)
+                continue;
+
+            var dataJson = SettingsSyncPayload.Serialize(payload.Category, payload.UpdatedTicks, payload.DataJson);
+            var fingerprint = SyncFingerprint.Compute(dataJson);
+            if (await IsItemAcknowledgedAsync(deviceId, SyncItemKind.Settings, category, fingerprint))
+                continue;
+
+            await EnqueueSettingsSyncAsync(deviceId, category);
+        }
+    }
 
     private async Task<Dictionary<string, string>> LoadPeerAckStateAsync(string peerId)
     {
@@ -1522,46 +1666,56 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var supportsBrowser = DeviceSupportsBrowserSync(deviceId);
         var includeBookmarks = AutoSyncBookmarks && supportsBrowser && _browserStore != null;
         var includeApps = AutoSyncInstalledApps && supportsBrowser && _sidebarStore != null;
+        var anySettingsAuto = AutoSyncLocalAi || AutoSyncLemonade || AutoSyncCloudProviders
+            || AutoSyncHomeAssistant || AutoSyncTools || AutoSyncSystemPrompt
+            || AutoSyncProfile || AutoSyncMemories || AutoSyncAppearance;
 
-        if (!AutoSyncChatHistory && !AutoSyncNotes && !includeBookmarks && !includeApps)
+        if (!AutoSyncChatHistory && !AutoSyncNotes && !includeBookmarks && !includeApps && !anySettingsAuto)
             return;
 
         try
         {
-            if (!await HasPendingOutboundSyncAsync(
-                    deviceId,
-                    AutoSyncChatHistory,
-                    AutoSyncNotes,
-                    includeBookmarks,
-                    includeApps))
+            if (AutoSyncChatHistory || AutoSyncNotes || includeBookmarks || includeApps)
             {
-                SyncDebugLog.Info($"Skipping auto-sync for {deviceId} (all items already acknowledged)");
-                return;
+                if (!await HasPendingOutboundSyncAsync(
+                        deviceId,
+                        AutoSyncChatHistory,
+                        AutoSyncNotes,
+                        includeBookmarks,
+                        includeApps))
+                {
+                    SyncDebugLog.Info($"Skipping data auto-sync for {deviceId} (all items already acknowledged)");
+                }
+                else
+                {
+                    var lastVerified = await GetLastManifestVerifiedUtcAsync(deviceId);
+                    if (lastVerified.HasValue && DateTime.UtcNow - lastVerified.Value < ManifestRecheckCooldown)
+                    {
+                        var minutesAgo = (int)(DateTime.UtcNow - lastVerified.Value).TotalMinutes;
+                        SyncDebugLog.Info($"Skipping auto-sync for {deviceId} " +
+                            $"(manifest verified {minutesAgo}m ago)");
+                    }
+                    else
+                    {
+                        await EnqueueManifestExchangeAsync(
+                            deviceId,
+                            AutoSyncChatHistory,
+                            AutoSyncNotes,
+                            includeBookmarks,
+                            includeApps);
+                        SyncDebugLog.Info($"Auto-sync manifest queued for {deviceId}");
+                    }
+                }
             }
 
-            var lastVerified = await GetLastManifestVerifiedUtcAsync(deviceId);
-            if (lastVerified.HasValue && DateTime.UtcNow - lastVerified.Value < ManifestRecheckCooldown)
-            {
-                var minutesAgo = (int)(DateTime.UtcNow - lastVerified.Value).TotalMinutes;
-                SyncDebugLog.Info($"Skipping auto-sync for {deviceId} " +
-                    $"(manifest verified {minutesAgo}m ago)");
-                return;
-            }
-
-            await EnqueueManifestExchangeAsync(
-                deviceId,
-                AutoSyncChatHistory,
-                AutoSyncNotes,
-                includeBookmarks,
-                includeApps);
-            SyncDebugLog.Info($"Auto-sync manifest queued for {deviceId}");
+            if (anySettingsAuto)
+                await MaybeAutoSyncSettingsForPeerAsync(deviceId);
         }
         catch (Exception ex)
         {
             SyncDebugLog.Info($"Auto-sync failed for {deviceId}: {ex.Message}");
         }
     }
-
     private async Task AdvanceSyncQueueAsync(string peerId)
     {
         if (!_activeSyncByPeer.Remove(peerId))
@@ -1655,6 +1809,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             SyncItemKind.Bookmark => "bookmark-sync-chunk",
             SyncItemKind.BookmarkFolder => "folder-sync-chunk",
             SyncItemKind.SidebarApp => "app-sync-chunk",
+            SyncItemKind.Settings => "settings-sync-chunk",
             _ => "sync-chunk"
         };
 
@@ -1674,7 +1829,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 chunkIndex: i,
                 chunkCount: chunkCount,
                 chunkData: slice,
-                itemId: kind is SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp
+                itemId: kind is SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp or SyncItemKind.Settings
                     ? itemId
                     : null);
 
@@ -2085,6 +2240,33 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             else if (msg.type == "app-delete-ack" && msg.itemId != null)
             {
                 HandleGenericItemAck("app-delete-ack", msg.itemId, peerId);
+            }
+            else if ((msg.type == "settings-sync-data" || msg.type == "settings-sync-chunk")
+                     && (msg.content != null || msg.itemId != null))
+            {
+                var contentJson = msg.content;
+                if (msg.type == "settings-sync-chunk")
+                {
+                    if (msg.itemId == null
+                        || !TryAddChunk(peerId, msg.itemId, SyncItemKind.Settings, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingSettingsSyncPayload(contentJson, peerId);
+
+                var settingsPayload = SettingsSyncPayload.Deserialize(contentJson);
+                if (settingsPayload?.Category != null)
+                {
+                    var ack = new DataChannelMessage("settings-sync-ack", itemId: settingsPayload.Category);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "settings-sync-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("settings-sync-ack", msg.itemId, peerId);
             }
             else if (msg.type == "sync-manifest-offer" && msg.content != null)
             {
@@ -2617,6 +2799,36 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         catch (Exception ex)
         {
             SyncDebugLog.Info($"Failed to persist incoming sidebar app sync: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingSettingsSyncPayload(string json, string fromDeviceId)
+    {
+        if (_settingsStore == null)
+        {
+            SyncDebugLog.Warn($"Incoming settings sync from {fromDeviceId} ignored — no ISettingsSyncStore.");
+            return;
+        }
+
+        try
+        {
+            var payload = SettingsSyncPayload.Deserialize(json);
+            if (payload == null || string.IsNullOrWhiteSpace(payload.Category))
+                return;
+
+            if (!await _settingsStore.ShouldAcceptIncomingAsync(payload))
+            {
+                SyncDebugLog.Info($"Ignoring stale settings sync for {payload.Category} from {fromDeviceId}");
+                return;
+            }
+
+            await _settingsStore.ApplyAsync(payload);
+            OnSettingsChanged?.Invoke();
+            SyncDebugLog.Info($"Applied incoming settings sync for {payload.Category} from {fromDeviceId}");
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Failed to persist incoming settings sync: {ex.Message}");
         }
     }
 

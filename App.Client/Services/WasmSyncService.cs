@@ -37,6 +37,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private readonly IKeyStore _keyStore;
     private readonly ChatCompletionService _chatCompletion;
     private readonly ISyncPreferencesStore _prefs;
+    private readonly ISettingsSyncStore _settingsSync;
     private readonly WebRtcSyncCoordinator _coordinator;
 
     private HubConnection? _hub;
@@ -50,6 +51,16 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string SyncTargetDevicesKey = "app-sync-target-devices";
     private const string AutoSyncChatKey = "app-auto-sync-chat";
     private const string AutoSyncNotesKey = "app-auto-sync-notes";
+    private const string SyncToAllDevicesKey = "app-sync-to-all-devices";
+    private const string AutoSyncLocalAiKey = "app-auto-sync-local-ai";
+    private const string AutoSyncLemonadeKey = "app-auto-sync-lemonade";
+    private const string AutoSyncCloudProvidersKey = "app-auto-sync-cloud-providers";
+    private const string AutoSyncHomeAssistantKey = "app-auto-sync-home-assistant";
+    private const string AutoSyncToolsKey = "app-auto-sync-tools";
+    private const string AutoSyncSystemPromptKey = "app-auto-sync-system-prompt";
+    private const string AutoSyncProfileKey = "app-auto-sync-profile";
+    private const string AutoSyncMemoriesKey = "app-auto-sync-memories";
+    private const string AutoSyncAppearanceKey = "app-auto-sync-appearance";
     private const string AiProxyDataChannelLabel = "app-ai-proxy";
 
     public string? MyDeviceId { get; private set; }
@@ -74,13 +85,24 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 
     public string? AiProxyError { get; private set; }
 
-    public bool AutoSyncChatHistory { get; private set; }
-    public bool AutoSyncNotes { get; private set; }
+    public bool SyncToAllDevices { get; private set; } = true;
+    public bool AutoSyncChatHistory { get; private set; } = true;
+    public bool AutoSyncNotes { get; private set; } = true;
     public bool AutoSyncBookmarks => false;
     public bool AutoSyncInstalledApps => false;
+    public bool AutoSyncLocalAi { get; private set; } = true;
+    public bool AutoSyncLemonade { get; private set; } = true;
+    public bool AutoSyncCloudProviders { get; private set; } = true;
+    public bool AutoSyncHomeAssistant { get; private set; } = true;
+    public bool AutoSyncTools { get; private set; } = true;
+    public bool AutoSyncSystemPrompt { get; private set; } = true;
+    public bool AutoSyncProfile { get; private set; } = true;
+    public bool AutoSyncMemories { get; private set; } = true;
+    public bool AutoSyncAppearance { get; private set; } = true;
     public IReadOnlyCollection<string> SyncTargetDeviceIds => _syncTargetDeviceIds;
 
     public event Action? OnChanged;
+    public event Action? OnSettingsChanged;
 
     /// <summary>
     /// Fired whenever a conversation is added or updated via incoming sync (background or foreground).
@@ -113,7 +135,9 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         INoteStore noteStore,
         ChatModelCatalogService modelCatalog,
         IKeyStore keyStore,
-        ChatCompletionService chatCompletion, ISyncPreferencesStore prefs)
+        ChatCompletionService chatCompletion,
+        ISyncPreferencesStore prefs,
+        ISettingsSyncStore settingsSync)
     {
         _js = js;
         _webrtc = webrtc;
@@ -125,6 +149,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         _keyStore = keyStore;
         _chatCompletion = chatCompletion;
         _prefs = prefs;
+        _settingsSync = settingsSync;
 
         _coordinator = new WebRtcSyncCoordinator(
             _webrtc,
@@ -137,10 +162,12 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
                     await _hub.InvokeAsync("SendToDevice", target, type, payload);
             },
             () => _hub?.State == HubConnectionState.Connected,
-            transportCallbacks: this);
+            transportCallbacks: this,
+            settingsStore: _settingsSync);
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
+        _coordinator.OnSettingsChanged += () => OnSettingsChanged?.Invoke();
         _coordinator.OnSyncPayloadReceived += (c, j, f) => OnSyncPayloadReceived?.Invoke(c, j, f);
         _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
         _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => OnNoteSyncPayloadReceived?.Invoke(n, j, f);
@@ -282,14 +309,18 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
                 }
             }
 
-            AutoSyncChatHistory = string.Equals(
-                await GetUserSettingAsync(AutoSyncChatKey),
-                "true",
-                StringComparison.Ordinal);
-            AutoSyncNotes = string.Equals(
-                await GetUserSettingAsync(AutoSyncNotesKey),
-                "true",
-                StringComparison.Ordinal);
+            SyncToAllDevices = await LoadBoolPrefAsync(SyncToAllDevicesKey, defaultValue: true);
+            AutoSyncChatHistory = await LoadBoolPrefAsync(AutoSyncChatKey, defaultValue: true);
+            AutoSyncNotes = await LoadBoolPrefAsync(AutoSyncNotesKey, defaultValue: true);
+            AutoSyncLocalAi = await LoadBoolPrefAsync(AutoSyncLocalAiKey, defaultValue: true);
+            AutoSyncLemonade = await LoadBoolPrefAsync(AutoSyncLemonadeKey, defaultValue: true);
+            AutoSyncCloudProviders = await LoadBoolPrefAsync(AutoSyncCloudProvidersKey, defaultValue: true);
+            AutoSyncHomeAssistant = await LoadBoolPrefAsync(AutoSyncHomeAssistantKey, defaultValue: true);
+            AutoSyncTools = await LoadBoolPrefAsync(AutoSyncToolsKey, defaultValue: true);
+            AutoSyncSystemPrompt = await LoadBoolPrefAsync(AutoSyncSystemPromptKey, defaultValue: true);
+            AutoSyncProfile = await LoadBoolPrefAsync(AutoSyncProfileKey, defaultValue: true);
+            AutoSyncMemories = await LoadBoolPrefAsync(AutoSyncMemoriesKey, defaultValue: true);
+            AutoSyncAppearance = await LoadBoolPrefAsync(AutoSyncAppearanceKey, defaultValue: true);
         }
         catch
         {
@@ -297,6 +328,18 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         }
 
         EnsureCoordinatorWired();
+    }
+
+    private async Task<bool> LoadBoolPrefAsync(string key, bool defaultValue)
+    {
+        var raw = await GetUserSettingAsync(key);
+        if (raw is null)
+            return defaultValue;
+        if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return defaultValue;
     }
 
     private async Task LoadKnownDevicesAsync()
@@ -339,6 +382,23 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private async Task ApplyDevicesFromServerAsync(IReadOnlyList<SyncDeviceInfo>? serverList)
     {
         _knownDevices = DeviceListMerger.UpsertFromServer(_knownDevices, serverList);
+        if (SyncToAllDevices && serverList != null)
+        {
+            var changed = false;
+            foreach (var d in serverList)
+            {
+                if (IsSelf(d.DeviceId) || string.IsNullOrWhiteSpace(d.DeviceId))
+                    continue;
+                if (_syncTargetDeviceIds.Add(d.DeviceId))
+                    changed = true;
+            }
+            if (changed)
+            {
+                await SetUserSettingAsync(
+                    SyncTargetDevicesKey,
+                    System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
+            }
+        }
         await SaveKnownDevicesAsync();
 
         // Keep AI server name in sync when we still see the peer live.
@@ -425,6 +485,49 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 
     public Task SetAutoSyncBookmarksAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncInstalledAppsAsync(bool enabled) => Task.CompletedTask;
+
+    public async Task SetSyncToAllDevicesAsync(bool enabled)
+    {
+        SyncToAllDevices = enabled;
+        await SetUserSettingAsync(SyncToAllDevicesKey, enabled ? "true" : "false");
+        if (enabled)
+        {
+            foreach (var d in GetOtherDevices())
+                _syncTargetDeviceIds.Add(d.DeviceId);
+            await SetUserSettingAsync(
+                SyncTargetDevicesKey,
+                System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
+        }
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    private async Task SetAutoSyncFlagAsync(string key, Action<bool> assign, bool enabled)
+    {
+        assign(enabled);
+        await SetUserSettingAsync(key, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    public Task SetAutoSyncLocalAiAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncLocalAiKey, v => AutoSyncLocalAi = v, enabled);
+    public Task SetAutoSyncLemonadeAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncLemonadeKey, v => AutoSyncLemonade = v, enabled);
+    public Task SetAutoSyncCloudProvidersAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncCloudProvidersKey, v => AutoSyncCloudProviders = v, enabled);
+    public Task SetAutoSyncHomeAssistantAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncHomeAssistantKey, v => AutoSyncHomeAssistant = v, enabled);
+    public Task SetAutoSyncToolsAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncToolsKey, v => AutoSyncTools = v, enabled);
+    public Task SetAutoSyncSystemPromptAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncSystemPromptKey, v => AutoSyncSystemPrompt = v, enabled);
+    public Task SetAutoSyncProfileAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncProfileKey, v => AutoSyncProfile = v, enabled);
+    public Task SetAutoSyncMemoriesAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncMemoriesKey, v => AutoSyncMemories = v, enabled);
+    public Task SetAutoSyncAppearanceAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncAppearanceKey, v => AutoSyncAppearance = v, enabled);
 
     private static string DeriveFriendlyName(string ua)
     {
@@ -557,10 +660,27 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         try
         {
             await _hub.InvokeAsync("RegisterDevice", MyDeviceId ?? "", MyDeviceName);
+            await PublishClientCapabilitiesAsync();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[WasmSyncService] RegisterDevice failed: {ex.Message}");
+        }
+    }
+
+    private async Task PublishClientCapabilitiesAsync()
+    {
+        if (_hub?.State != HubConnectionState.Connected || string.IsNullOrEmpty(MyDeviceId))
+            return;
+
+        try
+        {
+            // WASM: not a native app, no bookmark/PWA browser-sync capability.
+            await _hub.InvokeAsync("UpdateBrowserCapabilities", MyDeviceId, false, false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSyncService] UpdateBrowserCapabilities failed: {ex.Message}");
         }
     }
 
@@ -639,7 +759,16 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         _coordinator.AutoSyncChatHistory = AutoSyncChatHistory;
         _coordinator.AutoSyncNotes = AutoSyncNotes;
-        _coordinator.SyncTargetDeviceIds = _syncTargetDeviceIds;
+        _coordinator.AutoSyncLocalAi = AutoSyncLocalAi;
+        _coordinator.AutoSyncLemonade = AutoSyncLemonade;
+        _coordinator.AutoSyncCloudProviders = AutoSyncCloudProviders;
+        _coordinator.AutoSyncHomeAssistant = AutoSyncHomeAssistant;
+        _coordinator.AutoSyncTools = AutoSyncTools;
+        _coordinator.AutoSyncSystemPrompt = AutoSyncSystemPrompt;
+        _coordinator.AutoSyncProfile = AutoSyncProfile;
+        _coordinator.AutoSyncMemories = AutoSyncMemories;
+        _coordinator.AutoSyncAppearance = AutoSyncAppearance;
+        _coordinator.SyncTargetDeviceIds = GetEffectiveSyncTargetDeviceIds();
         _coordinator.IsSelf = IsSelf;
         _coordinator.IsAuthenticated = () => _auth.IsAuthenticated;
         _coordinator.EnsureConnectedAsync = EnsureConnectedAndRegisteredAsync;
@@ -771,6 +900,24 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public void ScheduleAutoSyncFolderDeleteAfterLocalDelete(string folderId, DateTime deletedAtUtc) { }
     public void ScheduleAutoSyncSidebarAppAfterLocalSave(string appId) { }
     public void ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(string appId, DateTime deletedAtUtc) { }
+
+    public void ScheduleAutoSyncSettingsAfterLocalSave(string category)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncSettingsAfterLocalSave(category);
+    }
+
+    public async Task StartWebRtcSettingsSyncAsync(string targetDeviceId, string category)
+    {
+        EnsureCoordinatorWired();
+        await _coordinator.StartWebRtcSettingsSyncAsync(targetDeviceId, category);
+    }
+
+    public async Task<int> SyncSettingsCategoryToDevicesAsync(string category, IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return await _coordinator.SyncSettingsCategoryToDevicesAsync(category, targetDeviceIds);
+    }
 
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
@@ -1227,6 +1374,13 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     /// </summary>
     public IEnumerable<SyncDeviceInfo> GetOtherDevices() =>
         Devices.Where(d => !IsSelf(d.DeviceId));
+
+    public IReadOnlyCollection<string> GetEffectiveSyncTargetDeviceIds()
+    {
+        if (SyncToAllDevices)
+            return GetOtherDevices().Select(d => d.DeviceId).ToList();
+        return _syncTargetDeviceIds.ToList();
+    }
 
     public async ValueTask DisposeAsync()
     {
