@@ -1,6 +1,6 @@
 using Microsoft.Extensions.AI;
 
-namespace ChatfishApp.Services.Tools;
+namespace App.Services.Tools;
 
 /// <summary>
 /// Simple registry of AIFunction tools available to models.

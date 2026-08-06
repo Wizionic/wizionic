@@ -1,19 +1,19 @@
-using ChatfishApp.Data;
+using App.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 public class MagicLinkService
 {
-    private readonly ChatfishDbContext _db;
+    private readonly AppDbContext _db;
     private readonly KeyProtectionService _keyProtector;
 
     // Unambiguous uppercase alphanumeric (no 0/O, 1/I/L).
     private const string LoginCodeChars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
     private const int LoginCodeLength = 8;
 
-    public MagicLinkService(ChatfishDbContext db, KeyProtectionService keyProtector)
+    public MagicLinkService(AppDbContext db, KeyProtectionService keyProtector)
     {
         _db = db;
         _keyProtector = keyProtector;

@@ -1,23 +1,23 @@
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Shared login email body for web (magic link) and native (copy/paste code) clients.
 /// </summary>
 public static class LoginEmailContent
 {
-    public const string Subject = "Your Chatfish Login Code";
+    public const string Subject = "Your Wizionic Login Code";
 
     public static (string Text, string Html) Build(string loginCode, string magicLinkUrl)
     {
         var textBody = $@"Hello,
 
-You (or someone using your email) requested to log in to Chatfish.
+You (or someone using your email) requested to log in to Wizionic.
 
 Your one-time login code:
 
 {loginCode}
 
-Enter this code in the Chatfish app (web or mobile) to sign in.
+Enter this code in the Wizionic app (web or mobile) to sign in.
 
 On the web, you can also click this link to sign in directly:
 
@@ -27,7 +27,7 @@ This code and link expire in 15 minutes and can only be used once.
 
 If you did not request this login, you can safely ignore this email.
 
--- The Chatfish Team
+-- The Wizionic Team
 ";
 
         var htmlBody = $@"<!DOCTYPE html>
@@ -44,14 +44,14 @@ If you did not request this login, you can safely ignore this email.
 </head>
 <body>
   <p>Hello,</p>
-  <p>You (or someone using your email) requested to log in to <strong>Chatfish</strong>.</p>
+  <p>You (or someone using your email) requested to log in to <strong>Wizionic</strong>.</p>
 
   <p>Your one-time login code:</p>
   <p class=""code"">{loginCode}</p>
-  <p style=""font-size:0.9em;"">Enter this code in the Chatfish app (web or mobile).</p>
+  <p style=""font-size:0.9em;"">Enter this code in the Wizionic app (web or mobile).</p>
 
   <p>On the web, you can also click the button below:</p>
-  <p><a class=""btn"" href=""{magicLinkUrl}"">Log in to Chatfish</a></p>
+  <p><a class=""btn"" href=""{magicLinkUrl}"">Log in to Wizionic</a></p>
 
   <p>Or copy and paste this link:</p>
   <p class=""link"">{magicLinkUrl}</p>
@@ -59,7 +59,7 @@ If you did not request this login, you can safely ignore this email.
   <p style=""font-size:0.9em;"">The code and link expire in 15 minutes and can only be used once.</p>
   <p style=""font-size:0.9em;"">If you did not request this, you can safely ignore this email.</p>
 
-  <div class=""footer"">-- The Chatfish Team</div>
+  <div class=""footer"">-- The Wizionic Team</div>
 </body>
 </html>";
 

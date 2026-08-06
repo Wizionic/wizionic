@@ -93,7 +93,7 @@ wwwroot/_blazor/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-chatfish.db
+homeserver.db
 
 # User secrets
 secrets.json
@@ -137,7 +137,7 @@ $RECYCLE.BIN/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-chatfish.db
+homeserver.db
 
 terminals/
 

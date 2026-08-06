@@ -1,0 +1,3372 @@
+@implements IDisposable
+
+@using Markdig
+@using Microsoft.JSInterop
+@using Microsoft.Extensions.AI
+@using App.Core.Auth
+@using App.Core.Chat
+@using App.Core.Lemonade
+@using App.Core.Storage
+@using App.Core.Sync
+@using App.Core.UI
+@using App.Core.Browser
+@using App.Shared.Services
+@using App.Shared.Services.Lemonade
+@using Microsoft.AspNetCore.Components.Forms
+@using ChatMessage = App.Core.Storage.ChatMessage
+@using Attachment = App.Core.Storage.Attachment
+@using LocalConvo = App.Core.Storage.LocalConvo
+@using LocalNote = App.Core.Storage.LocalNote
+
+@inject IJSRuntime JS
+@inject IKeyStore KeyStore
+@inject IConversationStore ConversationStore
+@inject IChatModelCatalog ModelCatalog
+@inject IAuthService AuthService
+@inject IGuestDataMigrationService GuestMigration
+@inject ISyncService SyncService
+@inject IChatCompletionService ChatCompletionService
+@inject ILemonadeImageService LemonadeImages
+@inject ILemonadeSpeechService LemonadeSpeech
+@inject INoteStore NoteStore
+@inject ISidebarState SidebarState
+@inject IBrowserPanelState BrowserPanel
+@inject IChatPanelState ChatPanel
+
+<WasmSidebarSync />
+
+<div class="page @((SidebarState.IsCollapsed || (AppEnvironment.IsMaui && !ChatPanel.IsOpen)) ? "sidebar-collapsed" : "") @(AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")">
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <nav class="cf-nav cf-column">
+            <!-- AI Chats header -->
+            <div class="cf-item">
+                <span class="cf-link small">
+                   <h4>AI Chats</h4>
+                    <button class="menu-button" @onclick="NewConversation" title="New chat">
+                        <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
+                    </button>
+                </span>
+            </div>
+
+            <!-- Local convos list (stable SortOrder; pointer drag-reorder like Notes) -->
+            @if (_chatIndexLoading && !localConvos.Any())
+            {
+                <div class="cf-item" style="font-size:0.75em; color:var(--cf-text-muted); padding-left:12px;">Loading chats…</div>
+            }
+            @foreach (var c in localConvos.OrderBy(x => x.SortOrder).ThenByDescending(x => x.LastUpdated))
+            {
+                var isActive = activeConvoId == c.Id;
+                <div class="conversation-item @(isActive ? "active" : "") @(_dragConvoId == c.Id ? "note-dragging" : "") @(_dragOverConvoId == c.Id ? "note-drag-over" : "")"
+                     data-reorder-id="@c.Id"
+                     @onpointerdown="e => OnConvoPointerDown(e, c.Id)"
+                     @onpointerdown:preventDefault="false">
+                    <div class="row-top">
+                        <div class="title">
+                            @if (c.IsPasswordProtected)
+                            {
+                                <i class="cf-icon bi bi-lock-fill" style="font-size:0.85em; margin-right:4px; opacity:0.85;" title="Password protected"></i>
+                            }
+                            @c.Title
+                        </div>
+                        <div class="menu" @onclick:stopPropagation @onpointerdown:stopPropagation>
+                            <button id="menu-btn-@c.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(c.Id)">⋮</button>
+                        </div>
+                    </div>
+                    <div class="date">@c.LastUpdated.ToLocalTime().ToString("MMM d")</div>
+                </div>
+            }
+            @if (!_chatIndexLoading && !localConvos.Any())
+            {
+                <div class="cf-item" style="font-size:0.75em; color:var(--cf-text-muted); padding-left:12px;">No local conversations yet.</div>
+            }
+        </nav>
+    </div>
+
+    <!-- Main content -->
+    <main>
+        <div id="chat-split-wrapper" class="chat-wrapper @(BrowserPanel.IsOpen ? "browser-panel-open" : "") @(AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" @ref="_splitWrapper">
+            <div class="chat-column" style="@ChatColumnStyle">
+            @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+            {
+                <div style="padding: 0.35rem 1rem; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; font-size: 0.85em; color: #166534;">
+                    AI via <strong>@(SyncService.GetAiServerDeviceName() ?? "remote device")</strong>
+                    @if (SyncService.IsAiProxyConnected)
+                    {
+                        <span> — connected</span>
+                    }
+                    else
+                    {
+                        <span> — connecting…</span>
+                    }
+                    @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
+                    {
+                        <span style="color:#b45309;"> (@SyncService.AiProxyError)</span>
+                    }
+                </div>
+            }
+            <div class="chat-container" @ref="chatContainer" id="chat-container">
+                @if (IsActiveChatLocked)
+                {
+                    <div style="padding:2rem 1rem; text-align:center; color:var(--cf-text-muted);">
+                        <i class="bi bi-lock-fill" style="font-size:1.5rem; display:block; margin-bottom:0.5rem;"></i>
+                        <div style="margin-bottom:0.75rem;">This chat is password protected.</div>
+                        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => PromptUnlockChat(activeConvoId)">Unlock</button>
+                    </div>
+                }
+                else
+                {
+                @for (var msgIndex = 0; msgIndex < messages.Count; msgIndex++)
+                {
+                    var capturedIndex = msgIndex;
+                    var msg = messages[capturedIndex];
+                    @if (msg.DeletedAt is null)
+                    {
+                    <div class="message-row">
+                        @if ((msg.User == currentUser) || msg.Role == "user")
+                        {
+                            <div class="message-me">
+                                <div class="message-bot-menu" @onclick:stopPropagation>
+                                    <button id="user-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleUserMenu(capturedIndex)" title="Message options">⋮</button>
+                                </div>
+                                @((MarkupString)FormatMessage(msg.Content ?? ""))
+                                @if (msg.Attachments != null && msg.Attachments.Any())
+                                {
+                                    <div class="message-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;">
+                                        @foreach (var att in msg.Attachments)
+                                        {
+                                            <div style="width:52px; height:52px; border:1px solid var(--cf-border); border-radius:4px; overflow:hidden; background:var(--cf-bg-subtle); position:relative; flex-shrink:0;">
+                                                @{
+                                                    var thumbSrc = att.DataUrl;
+                                                    if (thumbSrc == null && att.ContentType != null && att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(att.DataBase64))
+                                                    {
+                                                        thumbSrc = $"data:{att.ContentType};base64,{att.DataBase64}";
+                                                    }
+                                                }
+                                                @if (thumbSrc != null)
+                                                {
+                                                    <img src="@thumbSrc" alt="@att.Name" style="width:100%; height:100%; object-fit:cover;" title="@att.Name" />
+                                                }
+                                                else
+                                                {
+                                                    <div style="font-size:9px; display:flex; align-items:center; justify-content:center; height:100%; color:var(--cf-text-muted); text-align:center; padding:2px;">
+                                                        📄<br /><span style="font-size:6px; word-break:break-all; line-height:1;">@att.Name</span>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                @if (msg.Timestamp.HasValue)
+                                {
+                                    <div style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
+                                        @msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm")
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="message-bot">
+                                <div class="message-bot-menu" @onclick:stopPropagation>
+                                    <button id="bot-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleBotMenu(capturedIndex)" title="Message options">⋮</button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(msg.ToolTrace) || !string.IsNullOrWhiteSpace(msg.StatsLine))
+                                {
+                                    <details style="margin-bottom: 2px; font-size: 0.7em;">
+                                        <summary style="cursor:pointer; color:var(--cf-text-muted);">Model reasoning / tool calls / stats</summary>
+                                        @if (!string.IsNullOrWhiteSpace(msg.StatsLine))
+                                        {
+                                            <div style="font-size:0.85em; background:var(--cf-bg-subtle); padding:4px 6px; border-radius:3px; margin:2px 0; color:var(--cf-text-muted);"
+                                                 title="TTFT = time to first token after the model request starts. Prep (if shown) is client setup before the request.">
+                                                ⏱️ @msg.StatsLine
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(msg.ToolTrace))
+                                        {
+                                            <pre style="white-space:pre-wrap; font-size:0.85em; background:var(--cf-bg-subtle); padding:4px; border-radius:3px; margin:2px 0;">@msg.ToolTrace</pre>
+                                        }
+                                    </details>
+                                }
+                                <div class="chat-markdown">
+                                    @((MarkupString)FormatMessage(msg.Content ?? ""))
+                                </div>
+                                @if (msg.Attachments != null && msg.Attachments.Any())
+                                {
+                                    <div class="message-attachments" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+                                        @foreach (var att in msg.Attachments)
+                                        {
+                                            var botThumb = AttachmentDataUrl(att);
+                                            <div style="max-width:min(320px,100%); border:1px solid var(--cf-border); border-radius:8px; overflow:hidden; background:var(--cf-bg-subtle);">
+                                                @if (botThumb != null)
+                                                {
+                                                    <img src="@botThumb" alt="@att.Name"
+                                                         style="display:block; max-width:100%; height:auto; cursor:pointer;"
+                                                         title="@att.Name"
+                                                         @onclick="() => OpenImagePreview(botThumb, att.Name, att.DataBase64, att.ContentType)" />
+                                                    <div style="display:flex; gap:4px; padding:4px 6px; border-top:1px solid var(--cf-border); background:var(--cf-bg, #fff);">
+                                                        <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
+                                                                title="Download" @onclick="() => DownloadAttachment(att)" @onclick:stopPropagation>
+                                                            <i class="bi bi-download"></i> Download
+                                                        </button>
+                                                        <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
+                                                                title="Copy image" @onclick="() => CopyAttachment(att)" @onclick:stopPropagation>
+                                                            <i class="bi bi-clipboard"></i> Copy
+                                                        </button>
+                                                    </div>
+                                                }
+                                                else if (att.ContentType != null && att.ContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div style="padding:6px 8px; font-size:0.8em;">
+                                                        <button type="button" class="btn btn-link-style" style="padding:2px 4px;"
+                                                                @onclick="() => PlayAttachmentAudio(att)" @onclick:stopPropagation>
+                                                            <i class="bi bi-play-circle"></i> Play audio
+                                                        </button>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div style="padding:8px; font-size:0.75em; color:var(--cf-text-muted);">@att.Name</div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px; margin-top:4px;">
+                                    @if (LemonadeSpeech.IsTtsAvailable && !string.IsNullOrWhiteSpace(msg.Content) && !IsImageOnlyAssistantMessage(msg))
+                                    {
+                                        <button type="button"
+                                                class="btn btn-link-style"
+                                                style="font-size:0.75em; padding:2px 6px; opacity:0.85;"
+                                                title="Read aloud with Lemonade TTS"
+                                                disabled="@(ttsBusyIndex == capturedIndex)"
+                                                @onclick="() => SpeakMessageAsync(capturedIndex)"
+                                                @onclick:stopPropagation>
+                                            @if (ttsBusyIndex == capturedIndex)
+                                            {
+                                                <i class="bi bi-hourglass-split"></i>
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-volume-up"></i>
+                                            }
+                                            <span style="margin-left:2px;">@(ttsBusyIndex == capturedIndex ? "Speaking…" : "Speak")</span>
+                                        </button>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(msg.ModelUsed))
+                                    {
+                                        <div class="model-label" style="font-size: 0.6em; color: #888; opacity: 0.7;">
+                                            via @msg.ModelUsed
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    }
+                }
+                }
+
+                @if (isTyping && !IsActiveChatLocked)
+                {
+                    <div class="message-row">
+                        <div class="message-bot typing">@typingLabel</div>
+                    </div>
+                }
+            </div>
+
+            <!-- === COMPACT SEAMLESS INPUT BAR === -->
+            @if (!IsActiveChatLocked)
+            {
+            <div class="input-area">
+                <div class="input-container">
+                    <div class="message-wrapper flex-grow-1">
+                        @if (pendingFiles.Any())
+                        {
+                            <div class="pending-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid #f0f0f0;">
+                                @foreach (var f in pendingFiles)
+                                {
+                                    <div style="position:relative; width:42px; height:42px; border:1px solid #ddd; border-radius:4px; overflow:hidden; background:#fafafa; flex-shrink:0;">
+                                        @{
+                                            var thumbSrc = f.DataUrl;
+                                            if (thumbSrc == null && f.ContentType != null && f.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(f.DataBase64))
+                                            {
+                                                thumbSrc = $"data:{f.ContentType};base64,{f.DataBase64}";
+                                            }
+                                        }
+                                        @if (thumbSrc != null)
+                                        {
+                                            <img src="@thumbSrc" alt="@f.Name" style="width:100%; height:100%; object-fit:cover;" />
+                                        }
+                                        else
+                                        {
+                                            <div style="font-size:9px; height:100%; display:flex; align-items:center; justify-content:center; color:var(--cf-text-muted); text-align:center; padding:1px; line-height:1.1;">
+                                                📄<br /><span style="font-size:7px; word-break:break-all;">@f.Name</span>
+                                            </div>
+                                        }
+                                        <button @onclick:stopPropagation @onclick="() => RemovePendingFile(f)" 
+                                                style="position:absolute; top:-1px; right:-1px; background:#e11d48; color:white; border:none; border-radius:50%; width:13px; height:13px; font-size:8px; line-height:11px; cursor:pointer;">×</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <textarea @ref="messageTextarea"
+                                  id="chat-message-input"
+                                  placeholder="@ChatPlaceholder"
+                                  class="message-input"
+                                  rows="3"></textarea>
+
+                        @if (IsImageGenerationModel)
+                        {
+                            <div class="image-param-strip" style="display:flex; flex-wrap:wrap; gap:6px; align-items:flex-end; margin-top:6px; padding-top:6px; border-top:1px solid var(--cf-border,#eee); font-size:0.72em;">
+                                <div>
+                                    <div style="color:var(--cf-text-muted); margin-bottom:2px;">Steps</div>
+                                    <input type="number" min="1" max="50" @bind="imageSteps" class="form-control" style="width:64px; font-size:0.9em; padding:2px 4px;" />
+                                </div>
+                                <div>
+                                    <div style="color:var(--cf-text-muted); margin-bottom:2px;">CFG</div>
+                                    <input type="number" min="0" max="20" step="0.1" @bind="imageCfg" class="form-control" style="width:64px; font-size:0.9em; padding:2px 4px;" />
+                                </div>
+                                <div>
+                                    <div style="color:var(--cf-text-muted); margin-bottom:2px;">Width</div>
+                                    <select @bind="imageWidth" class="form-control" style="width:78px; font-size:0.9em; padding:2px 4px;">
+                                        <option value="256">256</option>
+                                        <option value="512">512</option>
+                                        <option value="768">768</option>
+                                        <option value="1024">1024</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <div style="color:var(--cf-text-muted); margin-bottom:2px;">Height</div>
+                                    <select @bind="imageHeight" class="form-control" style="width:78px; font-size:0.9em; padding:2px 4px;">
+                                        <option value="256">256</option>
+                                        <option value="512">512</option>
+                                        <option value="768">768</option>
+                                        <option value="1024">1024</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <div style="color:var(--cf-text-muted); margin-bottom:2px;">Seed</div>
+                                    <input type="text" @bind="imageSeedText" placeholder="random" class="form-control" style="width:72px; font-size:0.9em; padding:2px 4px;" title="Leave empty for random" />
+                                </div>
+                                <div>
+                                    <div style="color:var(--cf-text-muted); margin-bottom:2px;">Upscale</div>
+                                    <select @bind="imageUpscale" class="form-control" style="width:120px; font-size:0.9em; padding:2px 4px;">
+                                        <option value="off">Off</option>
+                                        <option value="RealESRGAN-x4plus">x4 plus</option>
+                                        <option value="RealESRGAN-x4plus-anime">x4 anime</option>
+                                    </select>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="input-toolbar">
+                        <!-- Plus menu replaced New Chat (new chat is in sidebar). Opens attach actions. -->
+                        <div class="attach-btn-wrap">
+                            <button class="action-btn" @onclick:stopPropagation @onclick="ToggleAttachMenu" title="Attach file or more">
+                                <i class="bi bi-plus-circle"></i>
+                            </button>
+
+                            @if (showAttachMenu)
+                            {
+                                <div class="menu-popup" style="position: absolute; bottom: 100%; left: 0; margin-bottom: 4px; min-width: 180px;" @onclick:stopPropagation>
+                                    <div @onclick="async () => { showAttachMenu = false; await TriggerFileUpload(); }">
+                                        <i class="bi bi-upload" style="margin-right:4px;"></i> Upload a file
+                                    </div>
+                                    @if (ShowLemonadeImageActions)
+                                    {
+                                        <div @onclick="() => { showAttachMenu = false; OpenImageGenPanel(); }">
+                                            <i class="bi bi-palette" style="margin-right:4px;"></i> Generate image
+                                        </div>
+                                    }
+                                    @if (ShowLemonadeImageEditActions && FindLatestImageAttachment() != null)
+                                    {
+                                        <div @onclick="() => { showAttachMenu = false; OpenImageEditPanel(null); }">
+                                            <i class="bi bi-pencil-square" style="margin-right:4px;"></i> Edit last image
+                                        </div>
+                                    }
+                                </div>
+                                <div class="menu-overlay" @onclick="() => showAttachMenu = false"></div>
+                            }
+                        </div>
+
+                        <select @bind="selectedModel" @bind:after="OnSelectedModelChanged" class="model-selector">
+                            @foreach (var group in modelList.GroupBy(m => m.ProviderName))
+                            {
+                                <optgroup label="@group.Key">
+                                    @foreach (var m in group)
+                                    {
+                                        <option value="@m.Id">@m.Icon @m.Label</option>
+                                    }
+                                </optgroup>
+                            }
+                        </select>
+
+                        @* Context usage — always visible when a chat model has a known window; click to compact *@
+                        @if (ShowContextButton)
+                        {
+                            <button type="button"
+                                    class="ctx-btn @ContextButtonCssClass"
+                                    title="@ContextButtonTitle"
+                                    disabled="@(isSending || isCompacting || !CanCompactConversation)"
+                                    @onclick="CompactConversationAsync">
+                                @if (isCompacting)
+                                {
+                                    <i class="bi bi-hourglass-split"></i>
+                                    <span>…</span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-bricks"></i>
+                                    <span>@ContextButtonLabel</span>
+                                }
+                            </button>
+                        }
+
+                        @if (IsImageGenerationModel)
+                        {
+                            <i class="bi bi-palette capability-icon" title="Image generation model. Type a prompt and press send to generate with Lemonade."></i>
+                        }
+                        else if (CurrentModelInfo?.IsOmniCollection == true)
+                        {
+                            <i class="bi bi-stars capability-icon" title="Lemonade Omni collection: can plan, generate/edit images, and speak in one reply (server-side tools)."></i>
+                        }
+                        else if (CurrentModelSupportsTools)
+                        {
+                            <i class="bi bi-tools capability-icon" title="This model supports tool calling (e.g. web search, page summarization). The model can use available tools when it needs fresh or external information."></i>
+                        }
+                        @if (!IsImageGenerationModel && CurrentModelSupportsVision)
+                        {
+                            var visionTitle = CurrentModelInfo is { SupportsVision: true }
+                                ? "This model supports vision (images and PDFs). Upload files using the + menu to have the model analyze them."
+                                : $"This model uses the vision proxy ({CurrentVisionProxyModelName}) to describe images before answering.";
+                            <i class="bi bi-image capability-icon" title="@visionTitle"></i>
+                        }
+                        @* Image / speech toolbar actions only when the selected model (or Lemonade modality) can use them *@
+                        @if (ShowLemonadeImageActions)
+                        {
+                            <button type="button" class="action-btn" title="Generate image with Lemonade (advanced options)"
+                                    disabled="@isSending"
+                                    @onclick="OpenImageGenPanel">
+                                <i class="bi bi-palette"></i>
+                            </button>
+                        }
+
+                        @if (ShowLemonadeSpeechActions && LemonadeSpeech.IsSttAvailable)
+                        {
+                            <button type="button"
+                                    class="action-btn @(isMicRecording ? "mic-recording" : "")"
+                                    title="@(isMicRecording ? "Stop recording and transcribe" : "Speak — record with Lemonade Whisper")"
+                                    disabled="@(isSending || isMicTranscribing)"
+                                    @onclick="ToggleMicRecording"
+                                    style="@(isMicRecording ? "color:#e11d48;" : null)">
+                                @if (isMicTranscribing)
+                                {
+                                    <i class="bi bi-hourglass-split"></i>
+                                }
+                                else if (isMicRecording)
+                                {
+                                    <i class="bi bi-stop-circle-fill"></i>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-mic"></i>
+                                }
+                            </button>
+                        }
+
+                        @if (ShowLemonadeSpeechActions && LemonadeSpeech.IsTtsAvailable)
+                        {
+                            <button type="button"
+                                    class="action-btn"
+                                    title="@(autoSpeakReplies ? "Auto-speak replies: on (click to turn off)" : "Auto-speak replies: off (click to turn on)")"
+                                    @onclick="() => autoSpeakReplies = !autoSpeakReplies"
+                                    style="@(autoSpeakReplies ? "color:var(--color-accent, #2563eb);" : null)">
+                                <i class="bi @(autoSpeakReplies ? "bi-volume-up-fill" : "bi-volume-mute")"></i>
+                            </button>
+                            <button type="button"
+                                    class="action-btn"
+                                    title="Read last assistant reply aloud"
+                                    disabled="@(isSending || ttsBusyIndex != null)"
+                                    @onclick="SpeakLastAssistantMessageAsync">
+                                <i class="bi bi-soundwave"></i>
+                            </button>
+                        }
+
+                        @if (isSending)
+                        {
+                            <button type="button"
+                                    id="chat-stop-btn"
+                                    class="send-btn"
+                                    title="Stop generation"
+                                    @onclick="StopGeneration"
+                                    style="background:#e11d48; border-color:#e11d48;">
+                                <i class="bi bi-stop-fill"></i>
+                            </button>
+                        }
+                        else
+                        {
+                            <button id="chat-send-btn"
+                                    class="send-btn"
+                                    @onclick="Send">
+                                <i class="bi bi-arrow-up-circle-fill"></i>
+                            </button>
+                        }
+                    </div>
+                    @if (isMicRecording)
+                    {
+                        <div style="font-size:0.75em; color:#e11d48; padding:2px 8px 6px;">
+                            Recording… click the mic again to stop and transcribe with @(LemonadeSpeech.DefaultSttModel ?? "Whisper").
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(micStatusMessage))
+                    {
+                        <div style="font-size:0.75em; color:@(micStatusIsError ? "#b91c1c" : "var(--cf-text-muted)"); padding:2px 8px 6px; white-space:pre-wrap;">
+                            @micStatusMessage
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(ttsStatusMessage))
+                    {
+                        <div style="font-size:0.75em; color:#b91c1c; padding:2px 8px 6px; white-space:pre-wrap;">
+                            @ttsStatusMessage
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(contextStatusMessage))
+                    {
+                        <div style="font-size:0.75em; color:@(contextStatusIsError ? "#b91c1c" : "var(--cf-text-muted)"); padding:2px 8px 6px; white-space:pre-wrap;">
+                            @contextStatusMessage
+                        </div>
+                    }
+                </div>
+
+                <!-- Hidden file picker for attachments (triggered by the + menu) -->
+                <InputFile id="file-attach-input" style="display:none;" OnChange="OnFileSelected" />
+            </div>
+            }
+
+            </div>
+
+            @if (BrowserPanel.IsOpen && AppEnvironment.IsMaui)
+            {
+                <EmbeddedBrowser />
+            }
+        </div>
+    </main>
+
+    @if (openMenuId != null)
+    {
+        <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
+            @if (IsBotMenuOpen)
+            {
+                <div @onclick="async () => { await OpenAddToNotesFromMenu(openMenuId); CloseMenu(); }">
+                    <button type="button" class="menu-button"><i class="bi bi-journal-plus"></i></button>
+                    Add to notes
+                </div>
+                @if (LemonadeSpeech.IsTtsAvailable && _botMenuMessageIndex is int speakIdx
+                    && speakIdx >= 0 && speakIdx < messages.Count
+                    && !string.IsNullOrWhiteSpace(messages[speakIdx].Content)
+                    && !IsImageOnlyAssistantMessage(messages[speakIdx]))
+                {
+                    <div @onclick="async () => { var i = speakIdx; CloseMenu(); await SpeakMessageAsync(i); }">
+                        <button type="button" class="menu-button"><i class="bi bi-volume-up"></i></button>
+                        Read aloud
+                    </div>
+                }
+                @if (ShowLemonadeImageEditActions && _botMenuMessageIndex is int botMsgIdx && MessageHasImageAttachment(botMsgIdx))
+                {
+                    <div @onclick="() => { var idx = botMsgIdx; CloseMenu(); OpenImageEditPanel(idx); }">
+                        <button type="button" class="menu-button"><i class="bi bi-pencil-square"></i></button>
+                        Edit image
+                    </div>
+                }
+                <div @onclick="() => PromptDeleteMessage(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete message
+                </div>
+            }
+            else if (IsUserMenuOpen)
+            {
+                <div @onclick="async () => { await OpenAddToNotesFromMenu(openMenuId); CloseMenu(); }">
+                    <button type="button" class="menu-button"><i class="bi bi-journal-plus"></i></button>
+                    Add to notes
+                </div>
+                @if (LemonadeSpeech.IsTtsAvailable && _userMenuMessageIndex is int userSpeakIdx
+                    && userSpeakIdx >= 0 && userSpeakIdx < messages.Count
+                    && !string.IsNullOrWhiteSpace(messages[userSpeakIdx].Content))
+                {
+                    <div @onclick="async () => { var i = userSpeakIdx; CloseMenu(); await SpeakMessageAsync(i); }">
+                        <button type="button" class="menu-button"><i class="bi bi-volume-up"></i></button>
+                        Read aloud
+                    </div>
+                }
+                <div @onclick="() => PromptDeleteMessage(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete message
+                </div>
+            }
+            else
+            {
+                <div @onclick="() => OpenRenameConvoDialog(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
+                    Rename
+                </div>
+                @if (AuthService.IsAuthenticated && AuthService.HasPassword)
+                {
+                    var menuConvo = localConvos.FirstOrDefault(c => c.Id == openMenuId);
+                    @if (menuConvo?.IsPasswordProtected == true)
+                    {
+                        <div @onclick="() => RemoveChatProtection(openMenuId)">
+                            <button type="button" class="menu-button"><i class="bi bi-unlock"></i></button>
+                            Remove password protection
+                        </div>
+                    }
+                    else
+                    {
+                        <div @onclick="() => ProtectChat(openMenuId)">
+                            <button type="button" class="menu-button"><i class="bi bi-lock-fill"></i></button>
+                            Protect with password
+                        </div>
+                    }
+                }
+                <div @onclick="() => PromptDeleteConvo(openMenuId)">
+                    <button class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete
+                </div>
+            }
+        </div>
+        <div class="menu-overlay" @onclick="CloseMenu"></div>
+    }
+
+    @if (showChatUnlockDialog)
+    {
+        <div class="newnote-overlay" @onclick="CancelChatUnlockDialog">
+            <div class="newnote-modal" @onclick:stopPropagation>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">
+                    <i class="cf-icon bi bi-lock-fill" style="margin-right:6px;"></i>
+                    @(pendingRemoveChatProtectionId != null ? "Remove password protection" : "Unlock chat")
+                </h4>
+                <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 12px 0;">
+                    @(pendingRemoveChatProtectionId != null
+                        ? "Enter your account password to remove protection from this chat."
+                        : "Enter your account password to open this chat.")
+                </p>
+                @if (!string.IsNullOrEmpty(chatUnlockError))
+                {
+                    <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@chatUnlockError</div>
+                }
+                <input type="password"
+                       @bind="chatUnlockPassword"
+                       @bind:event="oninput"
+                       placeholder="Password"
+                       class="newnote-input"
+                       autocomplete="current-password"
+                       @onkeydown="ChatUnlockDialogKeyHandler" />
+                <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelChatUnlockDialog" disabled="@chatUnlockBusy">Cancel</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmChatUnlockDialog" disabled="@(chatUnlockBusy || string.IsNullOrWhiteSpace(chatUnlockPassword))">
+                        @(pendingRemoveChatProtectionId != null ? "Remove protection" : "Unlock")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (showImagePanel)
+{
+    <div class="menu-overlay" style="z-index: 40;" @onclick="CloseImagePanel"></div>
+    <div class="image-gen-panel" style="position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:41; width:min(420px,92vw); background:var(--cf-bg, #fff); border:1px solid var(--cf-border,#ddd); border-radius:12px; padding:1rem 1.1rem; box-shadow:0 12px 40px rgba(0,0,0,.18);" @onclick:stopPropagation>
+        <h4 style="margin:0 0 0.75rem 0; font-size:1.05rem;">
+            @(imagePanelMode == "edit" ? "Edit image (Lemonade)" : "Generate image (Lemonade)")
+        </h4>
+
+        @if (imagePanelMode == "edit" && imageEditPreviewUrl != null)
+        {
+            <div style="margin-bottom:0.6rem;">
+                <div style="font-size:0.75em; color:var(--cf-text-muted); margin-bottom:4px;">Source</div>
+                <img src="@imageEditPreviewUrl" alt="Source" style="max-width:100%; max-height:160px; border-radius:8px; border:1px solid var(--cf-border,#ddd);" />
+            </div>
+        }
+
+        <label style="font-size:0.8em;">Prompt</label>
+        <textarea class="form-control" rows="3" style="width:100%; resize:vertical; margin-bottom:0.5rem;"
+                  @bind="imagePrompt" placeholder="@(imagePanelMode == "edit" ? "Describe the change…" : "Describe the image…")"></textarea>
+
+        <label style="font-size:0.8em;">Model</label>
+        <select class="form-control" style="width:100%; margin-bottom:0.5rem;" @bind="imageModel" @bind:after="OnImagePanelModelChanged">
+            @foreach (var m in (imagePanelMode == "edit" ? LemonadeImages.EditModelNames : LemonadeImages.ImageModelNames))
+            {
+                <option value="@m">@m</option>
+            }
+        </select>
+
+        <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
+            <div style="width:72px;">
+                <label style="font-size:0.8em;">Steps</label>
+                <input type="number" min="1" max="50" class="form-control" style="width:100%;" @bind="imageSteps" />
+            </div>
+            <div style="width:72px;">
+                <label style="font-size:0.8em;">CFG</label>
+                <input type="number" min="0" max="20" step="0.1" class="form-control" style="width:100%;" @bind="imageCfg" />
+            </div>
+            <div style="width:88px;">
+                <label style="font-size:0.8em;">Width</label>
+                <select class="form-control" style="width:100%;" @bind="imageWidth">
+                    <option value="256">256</option>
+                    <option value="512">512</option>
+                    <option value="768">768</option>
+                    <option value="1024">1024</option>
+                </select>
+            </div>
+            <div style="width:88px;">
+                <label style="font-size:0.8em;">Height</label>
+                <select class="form-control" style="width:100%;" @bind="imageHeight">
+                    <option value="256">256</option>
+                    <option value="512">512</option>
+                    <option value="768">768</option>
+                    <option value="1024">1024</option>
+                </select>
+            </div>
+            <div style="width:88px;">
+                <label style="font-size:0.8em;">Seed</label>
+                <input type="text" class="form-control" style="width:100%;" @bind="imageSeedText" placeholder="random" />
+            </div>
+            <div style="flex:1; min-width:120px;">
+                <label style="font-size:0.8em;">Upscale</label>
+                <select class="form-control" style="width:100%;" @bind="imageUpscale">
+                    <option value="off">Off</option>
+                    <option value="RealESRGAN-x4plus">x4 plus</option>
+                    <option value="RealESRGAN-x4plus-anime">x4 anime</option>
+                </select>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(imagePanelError))
+        {
+            <div style="font-size:0.8em; color:#b91c1c; margin-bottom:0.5rem; white-space:pre-wrap;">@imagePanelError</div>
+        }
+
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:0.5rem;">
+            <button type="button" class="btn btn-outline-secondary" @onclick="CloseImagePanel" disabled="@imageBusy">Cancel</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitImagePanel" disabled="@imageBusy">
+                @(imageBusy ? "Working…" : (imagePanelMode == "edit" ? "Edit" : "Generate"))
+            </button>
+        </div>
+    </div>
+}
+
+@if (imagePreviewUrl != null)
+{
+    <div class="menu-overlay" style="z-index:50; background:rgba(0,0,0,.65);" @onclick="() => imagePreviewUrl = null"></div>
+    <div style="position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:51; max-width:92vw; max-height:90vh;" @onclick:stopPropagation>
+        <img src="@imagePreviewUrl" alt="@imagePreviewName" style="max-width:92vw; max-height:80vh; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,.4);" />
+        <div style="text-align:center; margin-top:8px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+            <button type="button" class="btn btn-outline-secondary" style="background:#fff;"
+                    @onclick="() => DownloadPreviewImage()">
+                <i class="bi bi-download"></i> Download
+            </button>
+            <button type="button" class="btn btn-outline-secondary" style="background:#fff;"
+                    @onclick="() => CopyPreviewImage()">
+                <i class="bi bi-clipboard"></i> Copy
+            </button>
+            <button type="button" class="btn btn-outline-secondary" style="background:#fff;" @onclick="() => imagePreviewUrl = null">Close</button>
+        </div>
+        @if (!string.IsNullOrEmpty(imageActionFeedback))
+        {
+            <div style="text-align:center; font-size:0.8em; margin-top:6px; color:#fff;">@imageActionFeedback</div>
+        }
+    </div>
+}
+
+<ConfirmDialog IsVisible="showDeleteConfirm"
+               Title="@deleteConfirmTitle"
+               Message="@deleteConfirmMessage"
+               OnConfirm="ConfirmPendingDelete"
+               OnCancel="CancelPendingDelete" />
+
+@if (renameConvoId is not null)
+{
+    <div class="newnote-overlay" @onclick="CancelRenameConvo">
+        <div class="newnote-modal" @onclick:stopPropagation>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Rename Chat</h4>
+            <input type="text"
+                   @bind="renameConvoTitle"
+                   @bind:event="oninput"
+                   placeholder="Chat name..."
+                   class="newnote-input"
+                   @onkeydown="RenameConvoKeyHandler" />
+            <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelRenameConvo">Cancel</button>
+                <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmRenameConvo" disabled="@(string.IsNullOrWhiteSpace(renameConvoTitle))">
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showNewNote)
+{
+    <div class="newnote-overlay" @onclick="CloseNewNote">
+        <div class="newnote-modal" @onclick:stopPropagation>
+                @if (_noteShowExisting && _noteDialogNotes.Any())
+                {
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add to Note</h4>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin-bottom:12px;">Select an existing note or create a new one:</p>
+                    <select @bind="_noteSelectedId" class="newnote-select">
+                        <option value="">— New note —</option>
+                        @foreach (var n in _noteDialogNotes.OrderByDescending(x => x.LastUpdated))
+                        {
+                            <option value="@n.Id">@n.Title (@n.LastUpdated.ToLocalTime().ToString("MMM d"))</option>
+                        }
+                    </select>
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        @if (string.IsNullOrEmpty(_noteSelectedId))
+                        {
+                            <button class="newnote-btn newnote-btn-primary" @onclick="NoteShowNewInput">Create new note</button>
+                        }
+                        else
+                        {
+                            <button class="newnote-btn newnote-btn-primary" @onclick="NotePickExisting">Add to this note</button>
+                        }
+                    </div>
+                    <div style="margin-top:12px;text-align:right;">
+                        <button class="newnote-btn newnote-btn-ghost" @onclick="CloseNewNote">Cancel</button>
+                    </div>
+                }
+                else if (_noteShowNewInput)
+                {
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Create New Note</h4>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin-bottom:12px;">
+                        @if (!_noteDialogNotes.Any())
+                        {
+                            <span>You don't have any notes yet. Enter a name for your first note:</span>
+                        }
+                        else
+                        {
+                            <span>Enter a name for the new note:</span>
+                        }
+                    </p>
+                    <input type="text" @bind="_newNoteName" @bind:event="oninput" placeholder="Note name..." class="newnote-input" @onkeydown="NoteNameKeyHandler" />
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        @if (_noteDialogNotes.Any())
+                        {
+                            <button class="newnote-btn newnote-btn-secondary" @onclick="NoteBackToPicker">Back</button>
+                        }
+                        <button class="newnote-btn newnote-btn-secondary" @onclick="CloseNewNote">Cancel</button>
+                        <button class="newnote-btn newnote-btn-primary" @onclick="NoteCreateAndSave" disabled="@(string.IsNullOrWhiteSpace(_newNoteName))">Create &amp; Save</button>
+                    </div>
+                }
+                else if (_noteConfirming)
+                {
+                    <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add to Note</h4>
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin-bottom:12px;">Add this message to <strong>@_noteTargetName</strong>?</p>
+                    @if (_noteSourceMessage != null && !string.IsNullOrEmpty(_noteSourceMessage.Content))
+                    {
+                        <div style="background:#f1f5f9;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:0.8rem;color:#475569;max-height:120px;overflow-y:auto;">
+                            @_noteSourceMessage.Content.Substring(0, Math.Min(_noteSourceMessage.Content.Length, 200))
+                            @(_noteSourceMessage.Content.Length > 200 ? "..." : "")
+                        </div>
+                    }
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="newnote-btn newnote-btn-secondary" @onclick="CloseNewNote">Cancel</button>
+                        <button class="newnote-btn newnote-btn-primary" @onclick="NoteConfirmAdd">Yes, add</button>
+                    </div>
+                }
+                else
+                {
+                    <p style="margin:0;font-size:0.9rem;color:var(--cf-text-muted);">Loading notes...</p>
+                }
+            </div>
+        </div>
+}
+
+@code {
+    string currentUser = "LocalUser";
+    string selectedModel = ""; // will be set to a valid model from the current list in OnInitializedAsync
+    bool isTyping = false;
+    bool isSending = false;
+    string typingLabel = "Wizionic is thinking…";
+
+    // Lemonade image gen / edit panel
+    bool showImagePanel;
+    string imagePanelMode = "generate"; // generate | edit
+    string imagePrompt = "";
+    string imageModel = "";
+    int imageSteps = 4;
+    double imageCfg = 1.0;
+    string imageWidth = "512";
+    string imageHeight = "512";
+    string imageSeedText = "";
+    string imageUpscale = "off";
+    bool imageBusy;
+    string? imagePanelError;
+    byte[]? imageEditSourceBytes;
+    string? imageEditPreviewUrl;
+    string? imagePreviewUrl;
+    string? imagePreviewName;
+    string? imagePreviewBase64;
+    string? imagePreviewContentType;
+    string? imageActionFeedback;
+    CancellationTokenSource? _imageCts;
+
+    // Speech-to-text (Lemonade Whisper)
+    bool isMicRecording;
+    bool isMicTranscribing;
+    string? micStatusMessage;
+    bool micStatusIsError;
+    CancellationTokenSource? _micCts;
+
+    // Text-to-speech (Lemonade Kokoro)
+    bool autoSpeakReplies;
+    int? ttsBusyIndex;
+    string? ttsStatusMessage;
+    CancellationTokenSource? _ttsCts;
+
+    string ImageSizeString => $"{imageWidth}x{imageHeight}";
+
+    long? ParsedImageSeed
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(imageSeedText)) return null;
+            return long.TryParse(imageSeedText.Trim(), out var s) ? s : null;
+        }
+    }
+
+    // Captured during the current CallProvider for the just-generated bot message.
+    private string _pendingToolTrace = "";
+    private List<Attachment>? _pendingResultAttachments;
+    private string? _pendingStatsLine;
+    private CancellationTokenSource? _sendCts;
+
+    // Context window indicator + compact
+    int? _contextUsed;
+    int? _contextLimit;
+    bool isCompacting;
+    string? contextStatusMessage;
+    bool contextStatusIsError;
+    const int ContextWarnPercent = 80;
+    const int ContextDangerPercent = 90;
+    /// <summary>Keep this many newest visible messages after compact.</summary>
+    const int CompactKeepRecentMessages = 6;
+
+    private ChatModelInfo? CurrentModelInfo =>
+        string.IsNullOrEmpty(selectedModel)
+            ? null
+            : modelList.FirstOrDefault(m => m.Id == selectedModel);
+
+    /// <summary>Selected Lemonade image model — Send generates an image instead of chat.</summary>
+    private bool IsImageGenerationModel => CurrentModelInfo?.IsImageGeneration == true;
+
+    /// <summary>Selected model is served by Lemonade (chat, image, omni, etc.).</summary>
+    private bool IsLemonadeModelSelected =>
+        !string.IsNullOrEmpty(selectedModel) &&
+        selectedModel.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Lemonade image toolbar / + menu — only when a Lemonade model is selected
+    /// (chat, image, or omni). Hidden for Ollama and cloud models.
+    /// </summary>
+    private bool ShowLemonadeImageActions =>
+        LemonadeImages.IsGenerateAvailable && IsLemonadeModelSelected;
+
+    private bool ShowLemonadeImageEditActions =>
+        LemonadeImages.IsEditAvailable && IsLemonadeModelSelected;
+
+    /// <summary>
+    /// Mic / TTS toolbar — Lemonade speech is model-agnostic input/output, but hide
+    /// on pure image-generation models where chat text is not the primary flow.
+    /// </summary>
+    private bool ShowLemonadeSpeechActions => !IsImageGenerationModel;
+
+    private bool CurrentModelSupportsTools
+    {
+        get
+        {
+            if (IsImageGenerationModel) return false;
+            return CurrentModelInfo?.SupportsTools ?? false;
+        }
+    }
+
+    private bool HasVisionProxyConfigured =>
+        !string.IsNullOrWhiteSpace(KeyStore.GetVisionProxyModelName()) ||
+        modelList.Any(m => !string.IsNullOrWhiteSpace(m.VisionProxyModelId));
+
+    private string? CurrentVisionProxyModelName
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(selectedModel) || IsImageGenerationModel) return null;
+            var mi = CurrentModelInfo;
+            if (mi != null && !mi.SupportsVision && !string.IsNullOrWhiteSpace(mi.VisionProxyModelId))
+                return mi.VisionProxyModelId;
+            return KeyStore.GetVisionProxyModelName();
+        }
+    }
+
+    private bool CurrentModelSupportsVision
+    {
+        get
+        {
+            if (IsImageGenerationModel) return false;
+            if (CurrentModelInfo is { SupportsVision: true }) return true;
+            return !string.IsNullOrWhiteSpace(CurrentVisionProxyModelName);
+        }
+    }
+
+    private int ResolvedContextLimit
+    {
+        get
+        {
+            if (CurrentModelInfo is { ContextSize: > 0 } mi)
+                return mi.ContextSize;
+            return _contextLimit is > 0 ? _contextLimit.Value : 0;
+        }
+    }
+
+    private int ResolvedContextUsed
+    {
+        get
+        {
+            if (_contextUsed is int used and > 0)
+                return used;
+            return EstimateVisibleMessagesTokens();
+        }
+    }
+
+    private int ContextUsagePercent
+    {
+        get
+        {
+            var limit = ResolvedContextLimit;
+            if (limit <= 0) return 0;
+            return Math.Min(100, (int)Math.Round(100.0 * ResolvedContextUsed / limit));
+        }
+    }
+
+    private bool ShowContextButton =>
+        !IsImageGenerationModel &&
+        ResolvedContextLimit > 0 &&
+        messages.Any(m => m.DeletedAt is null && (!string.IsNullOrWhiteSpace(m.Content) || m.Attachments is { Count: > 0 }));
+
+    private bool CanCompactConversation
+    {
+        get
+        {
+            if (isCompacting || isSending || IsImageGenerationModel)
+                return false;
+            var visible = messages.Where(m => m.DeletedAt is null &&
+                (!string.IsNullOrWhiteSpace(m.Content) || m.Attachments is { Count: > 0 })).ToList();
+            return visible.Count > CompactKeepRecentMessages;
+        }
+    }
+
+    private string ContextButtonLabel
+    {
+        get
+        {
+            var used = FormatTokenCount(ResolvedContextUsed);
+            var limit = FormatTokenCount(ResolvedContextLimit);
+            return $"{used}/{limit}";
+        }
+    }
+
+    private string ContextButtonCssClass
+    {
+        get
+        {
+            var pct = ContextUsagePercent;
+            if (pct >= ContextDangerPercent) return "ctx-btn--danger";
+            if (pct >= ContextWarnPercent) return "ctx-btn--warn";
+            return "ctx-btn--ok";
+        }
+    }
+
+    private string ContextButtonTitle
+    {
+        get
+        {
+            var pct = ContextUsagePercent;
+            var baseText =
+                $"Context {ContextButtonLabel} ({pct}%). " +
+                "Click to compact: summarize older turns into a short memory and keep recent messages.";
+            if (pct >= ContextDangerPercent)
+                return baseText + " Window is nearly full — compact recommended.";
+            if (pct >= ContextWarnPercent)
+                return baseText + " Window is filling up.";
+            if (!CanCompactConversation)
+                return $"Context {ContextButtonLabel} ({pct}%). Not enough older messages to compact yet.";
+            return baseText;
+        }
+    }
+
+    private ElementReference chatContainer;
+    private ElementReference messageTextarea;
+    private bool _hasRendered = false;
+    private bool _pendingScroll = false;
+
+    private DotNetObjectReference<object>? dotNetRef;
+
+    List<ChatMessage> messages = new();
+
+    List<ChatModelInfo> modelList = new();
+
+    // Local history via store (types come from WasmConversationStore)
+    List<LocalConvo> localConvos = new();
+    string? activeConvoId;
+    bool _chatIndexLoading;
+    /// <summary>Chat IDs unlocked for this page session only.</summary>
+    private readonly HashSet<string> unlockedChatIds = new(StringComparer.OrdinalIgnoreCase);
+    bool showChatUnlockDialog;
+    string? unlockTargetChatId;
+    string chatUnlockPassword = "";
+    string? chatUnlockError;
+    bool chatUnlockBusy;
+    string? pendingRemoveChatProtectionId;
+
+    private bool IsActiveChatLocked =>
+        !string.IsNullOrEmpty(activeConvoId)
+        && localConvos.FirstOrDefault(c => c.Id == activeConvoId)?.IsPasswordProtected == true
+        && !unlockedChatIds.Contains(activeConvoId);
+
+    private string? _dragConvoId;
+    private string? _dragOverConvoId;
+    private DotNetObjectReference<ChatPage>? _reorderDotNetRef;
+
+    string? openMenuId;
+    string? renameConvoId;
+    string renameConvoTitle = "";
+    bool showDeleteConfirm;
+    string deleteConfirmTitle = "";
+    string deleteConfirmMessage = "";
+    string? pendingDeleteConvoId;
+    string? pendingDeleteMessageMenuKey;
+    const string BotMenuPrefix = "bot-";
+    const string UserMenuPrefix = "user-";
+    int? _botMenuMessageIndex;
+    int? _userMenuMessageIndex;
+
+    bool IsBotMenuOpen => openMenuId != null && openMenuId.StartsWith(BotMenuPrefix, StringComparison.Ordinal);
+    bool IsUserMenuOpen => openMenuId != null && openMenuId.StartsWith(UserMenuPrefix, StringComparison.Ordinal);
+
+    bool showNewNote;
+    ChatMessage? _noteSourceMessage;
+    List<LocalNote> _noteDialogNotes = new();
+    bool _noteShowExisting;
+    bool _noteShowNewInput;
+    bool _noteConfirming;
+    string _noteSelectedId = "";
+    string _newNoteName = "";
+    string _noteTargetId = "";
+    string _noteTargetName = "";
+
+    private List<Attachment> pendingFiles = new();
+    private bool showAttachMenu = false;
+
+    private string activePopupStyle = "";
+
+    private class PopupPosition
+    {
+        public double top { get; set; }
+        public double left { get; set; }
+    }
+
+    private ElementReference _splitWrapper;
+
+    private string ChatPlaceholder =>
+        IsImageGenerationModel
+            ? "Describe the image to generate…"
+            : BrowserPanel.IsOpen
+                ? "Ask about this page, or say 'navigate to...'"
+                : "Message Wizionic...";
+
+    private string ChatColumnStyle
+    {
+        get
+        {
+            if (!ChatPanel.IsOpen || !BrowserPanel.IsOpen)
+                return "";
+
+            var width = BrowserPanel.ChatPaneWidthPx;
+            if (width <= 0)
+                return "flex: 0 0 32%; min-width: 280px; max-width: none;";
+
+            // Avoid FormattableString.Invariant — it requires FormattableStringFactory,
+            // which aggressive WASM IL trimming can strip (TypeLoadException in production).
+            var w = width.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return "flex: 0 0 " + w + "px; width: " + w + "px; min-width: 280px; max-width: none;";
+        }
+    }
+
+    private Action? _sidebarStateChangedHandler;
+    private Action? _browserPanelChangedHandler;
+    private Action? _chatPanelChangedHandler;
+    private Action? _syncChangedHandler;
+    private string? _lastSyncedAiServerId;
+    private int _lastSyncedRemoteModelCount = -1;
+    private bool _lastSyncedAiProxyConnected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        dotNetRef ??= DotNetObjectReference.Create<object>(this);
+        RegisterEventHandlers();
+
+        if (BrowserPanel.IsOpen && AppEnvironment.IsMaui)
+        {
+            _ = InitializeChatDataAsync();
+            return;
+        }
+
+        await InitializeChatDataAsync();
+    }
+
+    private void RegisterEventHandlers()
+    {
+        _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
+        SidebarState.OnChanged += _sidebarStateChangedHandler;
+
+        _browserPanelChangedHandler = () => InvokeAsync(OnBrowserPanelChangedAsync);
+        BrowserPanel.OnChanged += _browserPanelChangedHandler;
+
+        _chatPanelChangedHandler = () => InvokeAsync(OnChatPanelChangedAsync);
+        ChatPanel.OnChanged += _chatPanelChangedHandler;
+
+        SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
+
+        _syncChangedHandler = () => InvokeAsync(async () =>
+        {
+            var aiStateChanged =
+                _lastSyncedAiServerId != SyncService.AiServerDeviceId
+                || _lastSyncedRemoteModelCount != SyncService.RemoteModels.Count
+                || _lastSyncedAiProxyConnected != SyncService.IsAiProxyConnected;
+
+            _lastSyncedAiServerId = SyncService.AiServerDeviceId;
+            _lastSyncedRemoteModelCount = SyncService.RemoteModels.Count;
+            _lastSyncedAiProxyConnected = SyncService.IsAiProxyConnected;
+
+            if (aiStateChanged)
+            {
+                await RefreshModelListAsync();
+                EnsureValidModelSelection();
+            }
+
+            StateHasChanged();
+        });
+        SyncService.OnChanged += _syncChangedHandler;
+    }
+
+    private async Task InitializeChatDataAsync()
+    {
+        _chatIndexLoading = true;
+
+        // Phase 1 — local only (fast): paint titles + model list before network/sync.
+        await KeyStore.LoadAsync();
+        await AuthService.LoadAsync();
+        if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
+            currentUser = AuthService.Email;
+
+        // Local catalog from KeyStore — no HTTP wait for proxy providers.
+        modelList = ModelCatalog.GetAvailableModels();
+        EnsureValidModelSelection();
+
+        localConvos = await ConversationStore.LoadIndexAsync();
+        _chatIndexLoading = false;
+        var lastId = await ConversationStore.GetLastConvoIdAsync();
+        await InvokeAsync(StateHasChanged);
+
+        // Phase 2 — active conversation body only (not every chat).
+        if (!string.IsNullOrEmpty(lastId) && localConvos.Any(c => c.Id == lastId))
+        {
+            activeConvoId = lastId;
+            await LoadConversation(lastId);
+        }
+        else if (localConvos.Any())
+        {
+            activeConvoId = localConvos.OrderBy(c => c.SortOrder).ThenByDescending(c => c.LastUpdated).First().Id;
+            await LoadConversation(activeConvoId);
+        }
+        else
+        {
+            await NewConversation();
+        }
+
+        await InvokeAsync(StateHasChanged);
+
+        // Phase 3 — background: guest migration, proxied models, sync hub.
+        _ = CompleteChatInitInBackgroundAsync();
+    }
+
+    private async Task CompleteChatInitInBackgroundAsync()
+    {
+        try
+        {
+            if (AuthService.IsAuthenticated)
+                await GuestMigration.MigrateIfNeededAsync();
+
+            await ModelCatalog.RefreshAsync();
+            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
+                modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
+            else
+                modelList = ModelCatalog.GetAvailableModels();
+            EnsureValidModelSelection();
+            await InvokeAsync(StateHasChanged);
+
+            if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
+            {
+                await SyncService.EnsureConnectedAndRegisteredAsync();
+                if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+                    await SyncService.EnsureAiProxyConnectionAsync();
+
+                if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
+                {
+                    modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
+                    EnsureValidModelSelection();
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Chat] Background init: {ex.Message}");
+        }
+    }
+
+    private async Task RefreshModelListAsync()
+    {
+        await ModelCatalog.RefreshAsync();
+
+        if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
+            modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
+        else
+            modelList = ModelCatalog.GetAvailableModels();
+    }
+
+    private void EnsureValidModelSelection()
+    {
+        if (!modelList.Any())
+        {
+            selectedModel = "";
+            return;
+        }
+
+        if (IsModelInList(selectedModel))
+            return;
+
+        var savedModel = KeyStore.LastSelectedModel;
+        if (IsModelInList(savedModel))
+        {
+            selectedModel = savedModel;
+            return;
+        }
+
+        var configuredDefault = ModelCatalog.GetConfiguredDefaultModelId(modelList);
+        if (!string.IsNullOrEmpty(configuredDefault))
+        {
+            selectedModel = configuredDefault;
+            return;
+        }
+
+        selectedModel = modelList.First().Id;
+    }
+
+    private bool IsModelInList(string? modelId) =>
+        !string.IsNullOrEmpty(modelId) && modelList.Any(m => m.Id == modelId);
+
+    private async Task OnSelectedModelChanged()
+    {
+        if (string.IsNullOrEmpty(selectedModel))
+            return;
+
+        await KeyStore.SetLastSelectedModelAsync(selectedModel);
+        if (IsImageGenerationModel)
+            ApplyImageParamsFromModel(selectedModel);
+        RefreshContextEstimate(preferServerUsage: false);
+    }
+
+    private void RefreshContextEstimate(bool preferServerUsage)
+    {
+        var limit = CurrentModelInfo is { ContextSize: > 0 } mi
+            ? mi.ContextSize
+            : (_contextLimit ?? 0);
+        if (limit > 0)
+            _contextLimit = limit;
+
+        if (!preferServerUsage || _contextUsed is null or <= 0)
+            _contextUsed = EstimateVisibleMessagesTokens();
+    }
+
+    private int EstimateVisibleMessagesTokens()
+    {
+        int n = 0;
+        foreach (var m in messages)
+        {
+            if (m.DeletedAt != null) continue;
+            n += 4;
+            if (!string.IsNullOrEmpty(m.Content))
+                n += Math.Max(1, (int)Math.Ceiling(m.Content.Length / 4.0));
+            if (m.Attachments != null)
+                n += m.Attachments.Count * 256;
+        }
+        return n;
+    }
+
+    private static string FormatTokenCount(int n)
+    {
+        if (n >= 1_000_000)
+            return $"{n / 1_000_000.0:0.#}M";
+        if (n >= 10_000)
+            return $"{n / 1000.0:0.#}k";
+        if (n >= 1000)
+            return $"{n / 1000.0:0.#}k";
+        return n.ToString();
+    }
+
+    private void ApplyStatsToContext(ChatCompletionStats? stats)
+    {
+        if (stats == null)
+        {
+            RefreshContextEstimate(preferServerUsage: false);
+            return;
+        }
+
+        if (stats.ContextLimit is int lim and > 0)
+            _contextLimit = lim;
+        else if (CurrentModelInfo is { ContextSize: > 0 } mi)
+            _contextLimit = mi.ContextSize;
+
+        if (stats.ContextUsed is int used and > 0)
+            _contextUsed = used;
+        else if (stats.PromptTokens is int pin)
+            _contextUsed = pin + (stats.CompletionTokens ?? 0);
+        else
+            RefreshContextEstimate(preferServerUsage: false);
+    }
+
+    /// <summary>
+    /// Summarize older turns into one memory message and keep the most recent messages.
+    /// Frees context for longer chats (manual compact; button warns at 80%/90%).
+    /// </summary>
+    async Task CompactConversationAsync()
+    {
+        if (!CanCompactConversation || string.IsNullOrEmpty(selectedModel) || IsImageGenerationModel)
+            return;
+
+        isCompacting = true;
+        contextStatusIsError = false;
+        contextStatusMessage = "Compacting conversation…";
+        StateHasChanged();
+
+        try
+        {
+            var visible = messages
+                .Where(m => m.DeletedAt is null &&
+                            (!string.IsNullOrWhiteSpace(m.Content) || m.Attachments is { Count: > 0 }))
+                .ToList();
+
+            if (visible.Count <= CompactKeepRecentMessages)
+            {
+                contextStatusMessage = "Not enough messages to compact.";
+                return;
+            }
+
+            var visibleIndexed = messages
+                .Select((m, i) => (m, i))
+                .Where(x => x.m.DeletedAt is null &&
+                            (!string.IsNullOrWhiteSpace(x.m.Content) || x.m.Attachments is { Count: > 0 }))
+                .ToList();
+
+            var dropCount = visibleIndexed.Count - CompactKeepRecentMessages;
+            var indicesToDrop = visibleIndexed.Take(dropCount).Select(x => x.i).ToHashSet();
+            var toSummarize = visibleIndexed.Take(dropCount).Select(x => x.m).ToList();
+
+            var transcript = new System.Text.StringBuilder();
+            foreach (var m in toSummarize)
+            {
+                var role = (m.Role ?? "assistant").ToLowerInvariant();
+                if (role is not ("user" or "assistant" or "system"))
+                    role = string.Equals(m.User, currentUser, StringComparison.OrdinalIgnoreCase) ? "user" : "assistant";
+                var text = m.Content ?? "";
+                if (text.Length > 4000)
+                    text = text[..4000] + "…";
+                transcript.AppendLine($"{role}: {text}");
+                transcript.AppendLine();
+                if (transcript.Length > 48_000)
+                {
+                    transcript.AppendLine("…[transcript truncated]");
+                    break;
+                }
+            }
+
+            var prompt =
+                "Summarize the following earlier conversation turns for future context. " +
+                "Capture key facts, decisions, names, preferences, and open questions. " +
+                "Use concise bullet points. Do not greet or add preamble.\n\n" +
+                transcript.ToString();
+
+            // Isolated request so we don't re-send the full chat while summarizing.
+            var compactMsgs = new List<ChatMessage>
+            {
+                new(Role: "user", Content: prompt, Timestamp: DateTime.UtcNow)
+            };
+
+            var result = await ChatCompletionService.CompleteAsync(
+                selectedModel,
+                compactMsgs,
+                currentUser,
+                conversationId: activeConvoId + ":compact",
+                ct: default);
+
+            if (!string.IsNullOrEmpty(result.Error) || string.IsNullOrWhiteSpace(result.Text))
+            {
+                contextStatusIsError = true;
+                contextStatusMessage = result.Error ?? "Compact failed: empty summary.";
+                return;
+            }
+
+            var summary = result.Text.Trim();
+            if (summary.Length > 6000)
+                summary = summary[..6000] + "…";
+
+            var summaryMsg = new ChatMessage(
+                Role: "assistant",
+                Content:
+                    "📦 **Conversation compacted** — earlier turns summarized to free context:\n\n" + summary,
+                ModelUsed: selectedModel,
+                Timestamp: DateTime.UtcNow,
+                ToolTrace: $"📦 Compacted {dropCount} older message(s); kept last {CompactKeepRecentMessages}.",
+                StatsLine: result.Stats?.FormatLine());
+
+            var rebuilt = new List<ChatMessage> { summaryMsg };
+            for (var i = 0; i < messages.Count; i++)
+            {
+                if (indicesToDrop.Contains(i))
+                    continue;
+                rebuilt.Add(messages[i]);
+            }
+            messages = rebuilt;
+
+            await SaveCurrentConvo();
+            RefreshContextEstimate(preferServerUsage: false);
+            contextStatusIsError = false;
+            contextStatusMessage =
+                $"Compacted {dropCount} messages → summary. Context now ~{ContextButtonLabel} ({ContextUsagePercent}%).";
+            RequestScrollToBottom();
+        }
+        catch (Exception ex)
+        {
+            contextStatusIsError = true;
+            contextStatusMessage = "Compact error: " + ex.Message;
+        }
+        finally
+        {
+            isCompacting = false;
+            StateHasChanged();
+            _ = ClearContextStatusSoonAsync();
+        }
+    }
+
+    async Task ClearContextStatusSoonAsync()
+    {
+        try
+        {
+            await Task.Delay(8000);
+            if (!contextStatusIsError)
+            {
+                contextStatusMessage = null;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { /* ignore */ }
+    }
+
+    async Task ToggleMicRecording()
+    {
+        if (isMicTranscribing || isSending)
+            return;
+
+        if (isMicRecording)
+        {
+            await StopMicAndTranscribeAsync();
+            return;
+        }
+
+        micStatusMessage = null;
+        micStatusIsError = false;
+        try
+        {
+            var start = await JS.InvokeAsync<MicStartResult>("appMicStart");
+            if (start is not { Ok: true })
+            {
+                micStatusIsError = true;
+                micStatusMessage = start?.Error ?? "Could not start microphone.";
+                if (micStatusMessage.Contains("Permission", StringComparison.OrdinalIgnoreCase) ||
+                    micStatusMessage.Contains("NotAllowed", StringComparison.OrdinalIgnoreCase) ||
+                    micStatusMessage.Contains("denied", StringComparison.OrdinalIgnoreCase))
+                {
+                    micStatusMessage = "Microphone permission denied. Allow mic access for this app/site and try again.";
+                }
+                return;
+            }
+
+            isMicRecording = true;
+            micStatusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            micStatusIsError = true;
+            micStatusMessage = "Microphone error: " + ex.Message;
+            isMicRecording = false;
+            try { await JS.InvokeVoidAsync("appMicCancel"); } catch { }
+        }
+    }
+
+    async Task StopMicAndTranscribeAsync()
+    {
+        isMicRecording = false;
+        isMicTranscribing = true;
+        micStatusMessage = "Transcribing…";
+        micStatusIsError = false;
+        StateHasChanged();
+
+        _micCts?.Cancel();
+        _micCts = new CancellationTokenSource();
+        var ct = _micCts.Token;
+
+        try
+        {
+            var stop = await JS.InvokeAsync<MicStopResult>("appMicStop");
+            if (stop is not { Ok: true } || string.IsNullOrWhiteSpace(stop.Base64))
+            {
+                micStatusIsError = true;
+                micStatusMessage = stop?.Error ?? "No audio recorded.";
+                return;
+            }
+
+            if (stop.DurationMs is < 250)
+            {
+                micStatusIsError = true;
+                micStatusMessage = "Recording too short. Hold a bit longer before stopping.";
+                return;
+            }
+
+            byte[] wavBytes;
+            try { wavBytes = Convert.FromBase64String(stop.Base64); }
+            catch
+            {
+                micStatusIsError = true;
+                micStatusMessage = "Could not decode recorded audio.";
+                return;
+            }
+
+            var result = await LemonadeSpeech.TranscribeAsync(new LemonadeTranscriptionRequest(
+                WavBytes: wavBytes,
+                Model: LemonadeSpeech.DefaultSttModel,
+                Language: null,
+                FileName: "chat-recording.wav"), ct);
+
+            if (!result.Success || string.IsNullOrWhiteSpace(result.Text))
+            {
+                micStatusIsError = true;
+                micStatusMessage = result.Error ?? "Transcription failed.";
+                return;
+            }
+
+            try
+            {
+                await JS.InvokeVoidAsync("appendChatTextareaText", messageTextarea, result.Text);
+            }
+            catch
+            {
+                // Fallback: show transcript in status if textarea interop fails
+                micStatusMessage = "Transcript: " + result.Text;
+                micStatusIsError = false;
+                return;
+            }
+
+            micStatusMessage = $"Transcribed with {result.Model ?? "Whisper"}.";
+            micStatusIsError = false;
+            _ = ClearMicStatusAfterDelayAsync();
+        }
+        catch (Exception ex)
+        {
+            micStatusIsError = true;
+            micStatusMessage = "Speech-to-text error: " + ex.Message;
+            try { await JS.InvokeVoidAsync("appMicCancel"); } catch { }
+        }
+        finally
+        {
+            isMicTranscribing = false;
+            isMicRecording = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task ClearMicStatusAfterDelayAsync()
+    {
+        try
+        {
+            await Task.Delay(4000);
+            if (!micStatusIsError)
+            {
+                micStatusMessage = null;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+    }
+
+    private sealed class MicStartResult
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("ok")]
+        public bool Ok { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("already")]
+        public bool Already { get; set; }
+    }
+
+    private sealed class MicStopResult
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("ok")]
+        public bool Ok { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("base64")]
+        public string? Base64 { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("mimeType")]
+        public string? MimeType { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("durationMs")]
+        public int? DurationMs { get; set; }
+    }
+
+    void OnImagePanelModelChanged()
+    {
+        if (!string.IsNullOrWhiteSpace(imageModel))
+            ApplyImageParamsFromModel(imageModel);
+    }
+
+    void ApplyImageParamsFromModel(string modelIdOrName)
+    {
+        var bare = modelIdOrName.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase)
+            ? modelIdOrName.Split('/', 2)[1]
+            : modelIdOrName;
+        var settings = KeyStore.GetLemonadeModelSettings(bare);
+        if (settings == null)
+            return;
+
+        if (settings.DefaultSteps is > 0)
+            imageSteps = settings.DefaultSteps.Value;
+        if (settings.DefaultCfgScale is not null)
+            imageCfg = settings.DefaultCfgScale.Value;
+        if (settings.DefaultWidth is > 0)
+            imageWidth = settings.DefaultWidth.Value.ToString();
+        if (settings.DefaultHeight is > 0)
+            imageHeight = settings.DefaultHeight.Value.ToString();
+    }
+
+    public void Dispose()
+    {
+        if (_sidebarStateChangedHandler != null)
+            SidebarState.OnChanged -= _sidebarStateChangedHandler;
+
+        if (_browserPanelChangedHandler != null)
+            BrowserPanel.OnChanged -= _browserPanelChangedHandler;
+
+        if (_chatPanelChangedHandler != null)
+            ChatPanel.OnChanged -= _chatPanelChangedHandler;
+
+        SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
+
+        if (_syncChangedHandler != null)
+            SyncService.OnChanged -= _syncChangedHandler;
+
+        _micCts?.Cancel();
+        _imageCts?.Cancel();
+        _ttsCts?.Cancel();
+        _sendCts?.Cancel();
+        try { _ = JS.InvokeVoidAsync("appMicCancel"); } catch { }
+        try { _ = JS.InvokeVoidAsync("appStopAudio"); } catch { }
+
+        dotNetRef?.Dispose();
+        _reorderDotNetRef?.Dispose();
+        _reorderDotNetRef = null;
+    }
+
+    static bool IsImageOnlyAssistantMessage(ChatMessage msg)
+    {
+        if (string.IsNullOrWhiteSpace(msg.Content))
+            return msg.Attachments?.Any() == true;
+        var c = msg.Content.Trim();
+        return c.StartsWith("Generated image for:", StringComparison.OrdinalIgnoreCase)
+               || c.StartsWith("Edited image for:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string StripMarkdownForSpeech(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        // Light cleanup so TTS doesn't read markdown noise.
+        var s = System.Text.RegularExpressions.Regex.Replace(raw, @"!\[.*?\]\(.*?\)", " ");
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\[([^\]]+)\]\([^)]+\)", "$1");
+        s = System.Text.RegularExpressions.Regex.Replace(s, "[`*_#>]+", " ");
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+        return s;
+    }
+
+    async Task SpeakLastAssistantMessageAsync()
+    {
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            var m = messages[i];
+            if (m.DeletedAt != null) continue;
+            if (m.Role == "user" || m.User == currentUser) continue;
+            if (string.IsNullOrWhiteSpace(m.Content)) continue;
+            if (IsImageOnlyAssistantMessage(m)) continue;
+            await SpeakMessageAsync(i);
+            return;
+        }
+        ttsStatusMessage = "No assistant message to read.";
+        StateHasChanged();
+    }
+
+    async Task SpeakMessageAsync(int index)
+    {
+        if (!LemonadeSpeech.IsTtsAvailable)
+            return;
+        if (index < 0 || index >= messages.Count)
+            return;
+        if (ttsBusyIndex != null)
+            return;
+
+        var msg = messages[index];
+        var text = StripMarkdownForSpeech(msg.Content ?? "");
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            ttsStatusMessage = "Nothing to speak in that message.";
+            return;
+        }
+
+        ttsBusyIndex = index;
+        ttsStatusMessage = null;
+        StateHasChanged();
+
+        _ttsCts?.Cancel();
+        _ttsCts = new CancellationTokenSource();
+        var ct = _ttsCts.Token;
+
+        try
+        {
+            try { await JS.InvokeVoidAsync("appStopAudio"); } catch { }
+
+            var result = await LemonadeSpeech.SpeakAsync(new LemonadeSpeechRequest(
+                Input: text,
+                Model: LemonadeSpeech.DefaultTtsModel,
+                Voice: LemonadeSpeech.DefaultVoice,
+                Speed: 1.0,
+                ResponseFormat: "mp3"), ct);
+
+            if (!result.Success || result.AudioBytes is not { Length: > 0 })
+            {
+                ttsStatusMessage = result.Error ?? "Text-to-speech failed.";
+                return;
+            }
+
+            var b64 = result.ToBase64();
+            var play = await JS.InvokeAsync<string>("appPlayAudioBase64", b64, result.ContentType ?? "audio/mpeg");
+            if (play != "ok")
+                ttsStatusMessage = "Playback failed: " + play;
+        }
+        catch (Exception ex)
+        {
+            ttsStatusMessage = "Text-to-speech error: " + ex.Message;
+        }
+        finally
+        {
+            ttsBusyIndex = null;
+            StateHasChanged();
+            if (!string.IsNullOrEmpty(ttsStatusMessage))
+            {
+                try
+                {
+                    await Task.Delay(5000);
+                    ttsStatusMessage = null;
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch { }
+            }
+        }
+    }
+
+    async Task PlayAttachmentAudio(Attachment att)
+    {
+        try
+        {
+            await JS.InvokeAsync<string>("appPlayAudioBase64", att.DataBase64, att.ContentType ?? "audio/mpeg");
+        }
+        catch (Exception ex)
+        {
+            ttsStatusMessage = "Audio playback failed: " + ex.Message;
+        }
+    }
+
+    private async Task OnConvoPointerDown(PointerEventArgs e, string convoId)
+    {
+        if (string.Equals(e.PointerType, "mouse", StringComparison.OrdinalIgnoreCase) && e.Button != 0)
+            return;
+
+        _reorderDotNetRef ??= DotNetObjectReference.Create(this);
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "appNotesReorder.start",
+                _reorderDotNetRef,
+                convoId,
+                e.ClientX,
+                e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Chat] Reorder gesture start failed: {ex.Message}");
+            await SwitchConvo(convoId);
+        }
+    }
+
+    [JSInvokable]
+    public void OnReorderDragStarted(string convoId)
+    {
+        _dragConvoId = convoId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnReorderDragOver(string? overConvoId)
+    {
+        if (_dragOverConvoId == overConvoId)
+            return;
+        _dragOverConvoId = overConvoId;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnReorderClick(string convoId)
+    {
+        _dragConvoId = null;
+        _dragOverConvoId = null;
+        await SwitchConvo(convoId);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnReorderDrop(string sourceId, string targetId)
+    {
+        _dragConvoId = null;
+        _dragOverConvoId = null;
+
+        if (string.IsNullOrEmpty(sourceId) || string.IsNullOrEmpty(targetId) || sourceId == targetId)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var ordered = localConvos
+            .OrderBy(c => c.SortOrder)
+            .ThenByDescending(c => c.LastUpdated)
+            .ToList();
+
+        var from = ordered.FindIndex(c => c.Id == sourceId);
+        var to = ordered.FindIndex(c => c.Id == targetId);
+        if (from < 0 || to < 0)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var item = ordered[from];
+        ordered.RemoveAt(from);
+        ordered.Insert(to, item);
+
+        await ConversationStore.ReorderConversationsAsync(ordered.Select(c => c.Id).ToList());
+        localConvos = await ConversationStore.LoadIndexAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnConversationsChangedFromSync()
+    {
+        _ = RefreshConversationsFromSyncAsync();
+    }
+
+    private async Task RefreshConversationsFromSyncAsync()
+    {
+        // A sync arrived (via WebRTC, while on this page or in background).
+        // Reload the conversation list so the sidebar automatically reflects the new/updated chat.
+        localConvos = await ConversationStore.LoadIndexAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnBrowserPanelChangedAsync()
+    {
+        if (BrowserPanel.IsOpen && ChatPanel.IsOpen && !SidebarState.IsCollapsed)
+            await SidebarState.SetCollapsedAsync(true, JS);
+
+        StateHasChanged();
+    }
+
+    private async Task OnChatPanelChangedAsync()
+    {
+        if (ChatPanel.IsOpen && AppEnvironment.IsMaui)
+            await SidebarState.SetCollapsedAsync(false, JS);
+        else if (!ChatPanel.IsOpen && !SidebarState.IsCollapsed)
+            await SidebarState.SetCollapsedAsync(true, JS);
+
+        StateHasChanged();
+    }
+
+    void ToggleAttachMenu()
+    {
+        showAttachMenu = !showAttachMenu;
+        StateHasChanged();
+    }
+
+    async Task TriggerFileUpload()
+    {
+        showAttachMenu = false;
+        StateHasChanged();
+        await Task.Delay(30); // allow menu to close in render
+        try
+        {
+            await JS.InvokeVoidAsync("eval", "document.getElementById('file-attach-input').click()");
+        }
+        catch { /* ignore */ }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        const long maxSize = 15 * 1024 * 1024; // 15 MB limit for attachments for now
+        if (file.Size > maxSize)
+        {
+            await JS.InvokeVoidAsync("alert", $"File is too large ({file.Size / 1024 / 1024}MB). Max 15MB supported for attachments currently.");
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: maxSize + 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            var base64 = Convert.ToBase64String(bytes);
+
+            var att = new Attachment(
+                Name: file.Name,
+                ContentType: string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                DataBase64: base64,
+                Size: file.Size
+            );
+
+            pendingFiles.Add(att);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", "Could not read file: " + ex.Message);
+        }
+    }
+
+    void RemovePendingFile(Attachment att)
+    {
+        pendingFiles.Remove(att);
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnImagePasted(string base64, string mimeType, string? fileName, long size)
+    {
+        if (string.IsNullOrWhiteSpace(base64)) return;
+
+        // Normalize to a proper image content type. Some paste sources (especially "copy image")
+        // can report odd types or the interop can be picky.
+        string contentType = mimeType;
+        if (string.IsNullOrWhiteSpace(contentType) || !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            contentType = "image/png";
+        }
+
+        var name = string.IsNullOrWhiteSpace(fileName)
+            ? $"pasted-image.{(contentType.Split('/').LastOrDefault() ?? "png")}"
+            : fileName;
+
+        var att = new Attachment(
+            Name: name,
+            ContentType: contentType,
+            DataBase64: base64,
+            Size: size > 0 ? size : (long)(base64.Length * 0.75)
+        );
+
+        pendingFiles.Add(att);
+        StateHasChanged();
+    }
+
+    async Task LoadConversation(string id)
+    {
+        activeConvoId = id;
+        await ConversationStore.SetLastConvoIdAsync(id);
+        pendingFiles.Clear();
+        contextStatusMessage = null;
+
+        var meta = localConvos.FirstOrDefault(c => c.Id == id);
+        if (meta?.IsPasswordProtected == true && !unlockedChatIds.Contains(id))
+        {
+            // Do not decrypt/load body until unlocked this session.
+            messages = new();
+            RequestScrollToBottom();
+            StateHasChanged();
+            return;
+        }
+
+        messages = await ConversationStore.LoadConversationAsync(id);
+        RefreshContextEstimate(preferServerUsage: false);
+        RequestScrollToBottom();
+        StateHasChanged();
+    }
+
+    void RequestScrollToBottom() => _pendingScroll = true;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+        _hasRendered = true;
+
+        if (firstRender)
+        {
+            try
+            {
+                var collapsedForMobile = await JS.InvokeAsync<bool>("appSidebar.initForViewport");
+                if (collapsedForMobile)
+                {
+                    SidebarState.SetCollapsedSilently(true);
+                    StateHasChanged();
+                }
+            }
+            catch { /* ignore if host script not ready */ }
+
+            dotNetRef ??= DotNetObjectReference.Create<object>(this);
+            try { await JS.InvokeVoidAsync("setupChatImagePaste", dotNetRef, messageTextarea); } catch { /* host script may not be ready */ }
+            try { await JS.InvokeVoidAsync("setupChatEnterToSend", messageTextarea); } catch { /* host script may not be ready */ }
+        }
+
+        if (_pendingScroll)
+        {
+            _pendingScroll = false;
+            await Task.Delay(80);
+            try { await JS.InvokeVoidAsync("scrollChatToBottom"); } catch { }
+        }
+
+    }
+
+    void StopGeneration()
+    {
+        try { _sendCts?.Cancel(); } catch { }
+    }
+
+    async Task Send()
+    {
+        string currentMessage = "";
+        try { currentMessage = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
+        catch { /* ignore */ }
+
+        if (isSending || (string.IsNullOrWhiteSpace(currentMessage) && !pendingFiles.Any()))
+            return;
+
+        // Image models in the picker: prompt + Send → generate (or edit if an image is attached).
+        if (IsImageGenerationModel)
+        {
+            await SendAsImageRequestAsync(currentMessage.Trim());
+            return;
+        }
+
+        isSending = true;
+        _sendCts?.Cancel();
+        _sendCts?.Dispose();
+        _sendCts = new CancellationTokenSource();
+        var sendCt = _sendCts.Token;
+
+        if (string.IsNullOrEmpty(activeConvoId))
+        {
+            activeConvoId = Guid.NewGuid().ToString();
+            await ConversationStore.SetLastConvoIdAsync(activeConvoId);
+        }
+
+        // Store *raw* text (markdown/plain) for persistence, LLM history, and tool use.
+        // Rendering always applies FormatMessage for display.
+        var rawUser = currentMessage;
+        var attachmentsForThisTurn = pendingFiles.Any() ? pendingFiles.ToList() : null;
+        var now = DateTime.UtcNow;
+        messages.Add(new ChatMessage(
+            Role: "user", Content: rawUser, ModelUsed: null, Timestamp: now, User: currentUser,
+            Attachments: attachmentsForThisTurn, ItemId: Guid.NewGuid().ToString("N"), ModifiedAt: now));
+
+        var botIndex = messages.Count;
+        messages.Add(new ChatMessage(
+            Role: "assistant", Content: "", ModelUsed: selectedModel, Timestamp: now,
+            ItemId: Guid.NewGuid().ToString("N"), ModifiedAt: now));
+
+        isTyping = true;
+        pendingFiles.Clear();
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        RequestScrollToBottom();
+        StateHasChanged();
+
+        await KeyStore.SetLastSelectedModelAsync(selectedModel);
+
+        var accumulated = "";
+        var lastUiUpdate = DateTime.MinValue;
+        var streamBotIndex = botIndex;
+
+        try
+        {
+            accumulated = await CallProvider(async partial =>
+            {
+                // Throttle Blazor re-renders while tokens arrive (local Ollama/Lemonade stream).
+                var nowUtc = DateTime.UtcNow;
+                var prevLen = messages[streamBotIndex].Content?.Length ?? 0;
+                if ((nowUtc - lastUiUpdate).TotalMilliseconds < 40 &&
+                    partial.Length - prevLen < 24)
+                    return;
+
+                lastUiUpdate = nowUtc;
+                if (isTyping)
+                    isTyping = false; // first token: drop "thinking…"
+
+                var current = messages[streamBotIndex];
+                messages[streamBotIndex] = current with { Content = partial, ModifiedAt = DateTime.UtcNow };
+                RequestScrollToBottom();
+                await InvokeAsync(StateHasChanged);
+            }, sendCt);
+
+            var currentModel = messages[botIndex].ModelUsed;
+            var resultAtts = _pendingResultAttachments;
+            _pendingResultAttachments = null;
+            var statsLine = _pendingStatsLine;
+            _pendingStatsLine = null;
+            if (string.IsNullOrWhiteSpace(accumulated) &&
+                !string.IsNullOrWhiteSpace(messages[botIndex].Content))
+            {
+                accumulated = messages[botIndex].Content!;
+            }
+
+            var touched = ChatMessageHelper.TouchModified(messages[botIndex], content: accumulated);
+            messages[botIndex] = touched with
+            {
+                ModelUsed = currentModel,
+                ToolTrace = _pendingToolTrace,
+                Attachments = resultAtts is { Count: > 0 } ? resultAtts : touched.Attachments,
+                StatsLine = statsLine
+            };
+            _pendingToolTrace = ""; // consumed
+            RequestScrollToBottom();
+            StateHasChanged();
+
+            // Save to local
+            await SaveCurrentConvo();
+
+            // Omni may already return speech as an audio attachment — prefer that over auto-TTS.
+            var hasOmniAudio = resultAtts?.Any(a =>
+                a.ContentType != null &&
+                a.ContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)) == true;
+
+            var wasStopped = statsLine?.Contains("stopped", StringComparison.OrdinalIgnoreCase) == true
+                             || accumulated.Contains("Generation stopped", StringComparison.OrdinalIgnoreCase);
+
+            if (!wasStopped && autoSpeakReplies && LemonadeSpeech.IsTtsAvailable && !hasOmniAudio &&
+                !string.IsNullOrWhiteSpace(accumulated) &&
+                !accumulated.StartsWith("Error calling provider", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = SpeakMessageAsync(botIndex);
+            }
+            else if (!wasStopped && hasOmniAudio && resultAtts != null)
+            {
+                var audio = resultAtts.First(a =>
+                    a.ContentType != null &&
+                    a.ContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase));
+                _ = PlayAttachmentAudio(audio);
+            }
+        }
+        finally
+        {
+            isTyping = false;
+            isSending = false;
+            RequestScrollToBottom();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// When a Lemonade image model is selected in the chat picker, treat the message as an image prompt.
+    /// If a pending image attachment exists, run edit (only when the model supports edit); otherwise generate.
+    /// </summary>
+    async Task SendAsImageRequestAsync(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+            return;
+
+        var modelName = selectedModel.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase)
+            ? selectedModel.Split('/', 2)[1]
+            : selectedModel;
+
+        var sourceImage = pendingFiles.LastOrDefault(IsImageAttachment);
+        var wantsEdit = sourceImage != null;
+        byte[]? sourceBytes = null;
+        if (wantsEdit)
+        {
+            try { sourceBytes = Convert.FromBase64String(sourceImage!.DataBase64); }
+            catch
+            {
+                wantsEdit = false;
+            }
+        }
+
+        if (wantsEdit && !LemonadeImages.ModelSupportsEdit(modelName))
+        {
+            await AppendImageErrorMessageAsync(
+                $"(Edit image) {prompt}",
+                $"{modelName} does not support image editing (generate-only). " +
+                "Pick a model labeled Image+Edit (e.g. Flux-2-Klein), or remove the attachment to generate a new image. " +
+                "Z-Image-Turbo is generate-only.");
+            pendingFiles.Clear();
+            try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+            return;
+        }
+
+        isSending = true;
+        isTyping = true;
+        typingLabel = wantsEdit ? "Editing image…" : "Generating image…";
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        pendingFiles.Clear();
+        RequestScrollToBottom();
+        StateHasChanged();
+
+        await KeyStore.SetLastSelectedModelAsync(selectedModel);
+
+        LemonadeImageResult result;
+        try
+        {
+            if (wantsEdit && sourceBytes is { Length: > 0 })
+            {
+                result = await LemonadeImages.EditAsync(new LemonadeImageEditRequest(
+                    Prompt: prompt,
+                    ImagePngBytes: sourceBytes,
+                    Model: modelName,
+                    Size: ImageSizeString,
+                    Steps: imageSteps > 0 ? imageSteps : null,
+                    CfgScale: imageCfg,
+                    Seed: ParsedImageSeed));
+            }
+            else
+            {
+                result = await LemonadeImages.GenerateAsync(new LemonadeImageGenerateRequest(
+                    Prompt: prompt,
+                    Model: modelName,
+                    Size: ImageSizeString,
+                    Steps: imageSteps > 0 ? imageSteps : null,
+                    CfgScale: imageCfg,
+                    Seed: ParsedImageSeed));
+            }
+
+            if (result.Success && !string.IsNullOrWhiteSpace(result.Base64Png) &&
+                !string.Equals(imageUpscale, "off", StringComparison.OrdinalIgnoreCase))
+            {
+                typingLabel = "Upscaling…";
+                StateHasChanged();
+                result = await MaybeUpscaleAsync(result);
+            }
+        }
+        catch (Exception ex)
+        {
+            result = LemonadeImageResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isTyping = false;
+            isSending = false;
+            typingLabel = "Wizionic is thinking…";
+        }
+
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
+        {
+            await AppendImageErrorMessageAsync(
+                wantsEdit ? $"(Edit image) {prompt}" : $"(Generate image) {prompt}",
+                result.Error ?? "Image request failed.");
+            return;
+        }
+
+        await AppendGeneratedImageMessageAsync(prompt, result.Base64Png, result.Model ?? modelName, wantsEdit);
+        StateHasChanged();
+    }
+
+    async Task AppendImageErrorMessageAsync(string userLine, string error)
+    {
+        if (string.IsNullOrEmpty(activeConvoId))
+        {
+            activeConvoId = Guid.NewGuid().ToString();
+            await ConversationStore.SetLastConvoIdAsync(activeConvoId);
+        }
+
+        var now = DateTime.UtcNow;
+        messages.Add(new ChatMessage(
+            Role: "user", Content: userLine,
+            Timestamp: now, User: currentUser,
+            ItemId: Guid.NewGuid().ToString("N"), ModifiedAt: now));
+        messages.Add(new ChatMessage(
+            Role: "assistant",
+            Content: error,
+            ModelUsed: selectedModel,
+            Timestamp: now,
+            ItemId: Guid.NewGuid().ToString("N"),
+            ModifiedAt: now));
+        await SaveCurrentConvo();
+        RequestScrollToBottom();
+        StateHasChanged();
+    }
+
+    async Task<LemonadeImageResult> MaybeUpscaleAsync(LemonadeImageResult result)
+    {
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
+            return result;
+        if (string.IsNullOrWhiteSpace(imageUpscale) ||
+            imageUpscale.Equals("off", StringComparison.OrdinalIgnoreCase))
+            return result;
+
+        var up = await LemonadeImages.UpscaleAsync(result.Base64Png, imageUpscale);
+        if (!up.Success || string.IsNullOrWhiteSpace(up.Base64Png))
+        {
+            // Keep original image; surface upscale failure in content via caller if needed.
+            return result with { Error = null }; // still success with original
+        }
+
+        return result with { Base64Png = up.Base64Png, Model = $"{result.Model}+{imageUpscale}" };
+    }
+
+    string ApplyOmniMediaExtraction(string text)
+    {
+        if (!OmniMediaExtractor.LooksLikeEmbeddedMedia(text))
+            return text;
+
+        var extracted = OmniMediaExtractor.Extract(text);
+        if (extracted.Attachments.Count == 0)
+            return text;
+
+        _pendingResultAttachments = extracted.Attachments;
+        return string.IsNullOrWhiteSpace(extracted.CleanText)
+            ? "Generated media:"
+            : extracted.CleanText;
+    }
+
+    async Task<string> CallProvider(Func<string, Task>? onPartialText = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(selectedModel))
+            return "No model selected.";
+
+        try
+        {
+            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+            {
+                await SyncService.EnsureAiProxyConnectionAsync();
+                var (text, toolTrace) = await SyncService.SendChatRequestAsync(selectedModel, messages);
+                _pendingToolTrace = toolTrace;
+                // WebRTC AI relay is non-streaming today; deliver full text once.
+                var extracted = ApplyOmniMediaExtraction(text);
+                if (onPartialText != null && !string.IsNullOrEmpty(extracted))
+                    await onPartialText(extracted);
+                return extracted;
+            }
+
+            var result = await ChatCompletionService.CompleteAsync(
+                selectedModel,
+                messages,
+                currentUser,
+                activeConvoId,
+                ct: ct,
+                onPartialText: onPartialText);
+            _pendingToolTrace = result.ToolTrace;
+            _pendingResultAttachments = result.Attachments?.ToList();
+            _pendingStatsLine = result.Stats?.FormatLine();
+            ApplyStatsToContext(result.Stats);
+
+            if (!string.IsNullOrEmpty(result.Error))
+            {
+                _pendingToolTrace = string.IsNullOrEmpty(result.ToolTrace) ? "" : result.ToolTrace;
+                _pendingResultAttachments = null;
+                return result.Error.StartsWith("Error calling provider", StringComparison.OrdinalIgnoreCase)
+                    ? result.Error
+                    : $"Error calling provider: {result.Error}";
+            }
+
+            // Safety net if completion returned embedded media without Attachments.
+            if (_pendingResultAttachments is not { Count: > 0 })
+                return ApplyOmniMediaExtraction(result.Text);
+
+            return result.Text;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _pendingStatsLine ??= "stopped";
+            return "(Generation stopped.)";
+        }
+        catch (Exception ex)
+        {
+            _pendingToolTrace = "";
+            _pendingResultAttachments = null;
+            _pendingStatsLine = null;
+            return $"Error calling provider: {ex.Message}";
+        }
+    }
+
+    async Task NewConversation()
+    {
+        activeConvoId = Guid.NewGuid().ToString();
+        await ConversationStore.SetLastConvoIdAsync(activeConvoId);
+        messages.Clear();
+        pendingFiles.Clear();
+        isTyping = false;
+        _contextUsed = null;
+        contextStatusMessage = null;
+        try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
+        RequestScrollToBottom();
+        StateHasChanged();
+        await SaveCurrentConvo();
+        await SidebarState.CollapseIfMobileAsync(JS);
+    }
+
+    async Task SwitchConvo(string id)
+    {
+        if (activeConvoId != id)
+        {
+            await SaveCurrentConvo(); // save current first
+            await LoadConversation(id);
+        }
+        await SidebarState.CollapseIfMobileAsync(JS);
+    }
+
+    async Task ProtectChat(string? chatId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(chatId))
+            return;
+        if (!AuthService.IsAuthenticated || !AuthService.HasPassword)
+            return;
+
+        await ConversationStore.SetPasswordProtectedAsync(chatId, true);
+        localConvos = await ConversationStore.LoadIndexAsync();
+        if (activeConvoId == chatId)
+            unlockedChatIds.Add(chatId);
+        SyncService.ScheduleAutoSyncConvoAfterLocalSave(
+            chatId,
+            localConvos.FirstOrDefault(c => c.Id == chatId)?.Title ?? "");
+        StateHasChanged();
+    }
+
+    void RemoveChatProtection(string? chatId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(chatId))
+            return;
+
+        unlockTargetChatId = chatId;
+        chatUnlockPassword = "";
+        chatUnlockError = null;
+        chatUnlockBusy = false;
+        pendingRemoveChatProtectionId = chatId;
+        showChatUnlockDialog = true;
+    }
+
+    void PromptUnlockChat(string? chatId)
+    {
+        if (string.IsNullOrEmpty(chatId))
+            return;
+        unlockTargetChatId = chatId;
+        chatUnlockPassword = "";
+        chatUnlockError = null;
+        chatUnlockBusy = false;
+        pendingRemoveChatProtectionId = null;
+        showChatUnlockDialog = true;
+    }
+
+    void CancelChatUnlockDialog()
+    {
+        showChatUnlockDialog = false;
+        unlockTargetChatId = null;
+        chatUnlockPassword = "";
+        chatUnlockError = null;
+        chatUnlockBusy = false;
+        pendingRemoveChatProtectionId = null;
+    }
+
+    async Task ChatUnlockDialogKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !chatUnlockBusy && !string.IsNullOrWhiteSpace(chatUnlockPassword))
+            await ConfirmChatUnlockDialog();
+        else if (e.Key == "Escape")
+            CancelChatUnlockDialog();
+    }
+
+    async Task ConfirmChatUnlockDialog()
+    {
+        if (string.IsNullOrEmpty(unlockTargetChatId) || string.IsNullOrWhiteSpace(chatUnlockPassword))
+            return;
+
+        chatUnlockBusy = true;
+        chatUnlockError = null;
+        StateHasChanged();
+        try
+        {
+            var (success, err) = await AuthService.VerifyPasswordAsync(chatUnlockPassword);
+            if (!success)
+            {
+                chatUnlockError = err ?? "Incorrect password.";
+                return;
+            }
+
+            var chatId = unlockTargetChatId;
+            var remove = pendingRemoveChatProtectionId != null;
+            CancelChatUnlockDialog();
+
+            if (remove)
+            {
+                await ConversationStore.SetPasswordProtectedAsync(chatId, false);
+                localConvos = await ConversationStore.LoadIndexAsync();
+                unlockedChatIds.Remove(chatId);
+                SyncService.ScheduleAutoSyncConvoAfterLocalSave(
+                    chatId,
+                    localConvos.FirstOrDefault(c => c.Id == chatId)?.Title ?? "");
+            }
+            else
+            {
+                unlockedChatIds.Add(chatId);
+                if (activeConvoId == chatId)
+                    await LoadConversation(chatId);
+            }
+
+            StateHasChanged();
+        }
+        finally
+        {
+            chatUnlockBusy = false;
+        }
+    }
+
+    async Task ScrollToBottom()
+    {
+        RequestScrollToBottom();
+        if (_hasRendered)
+            await InvokeAsync(StateHasChanged);
+    }
+
+    string FormatMessage(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "";
+
+        var pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .UseEmojiAndSmiley()
+            .Build();
+
+        return Markdown.ToHtml(raw, pipeline);
+    }
+
+    static string? AttachmentDataUrl(Attachment att)
+    {
+        if (att.DataUrl != null)
+            return att.DataUrl;
+        if (att.ContentType != null &&
+            att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(att.DataBase64))
+        {
+            return $"data:{att.ContentType};base64,{att.DataBase64}";
+        }
+        return null;
+    }
+
+    void OpenImagePreview(string? url, string? name, string? base64 = null, string? contentType = null)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        imagePreviewUrl = url;
+        imagePreviewName = name;
+        imagePreviewBase64 = base64;
+        imagePreviewContentType = contentType ?? "image/png";
+        imageActionFeedback = null;
+    }
+
+    async Task DownloadAttachment(Attachment att)
+    {
+        try
+        {
+            await JS.InvokeAsync<bool>("downloadBase64File", att.DataBase64, att.Name, att.ContentType);
+        }
+        catch
+        {
+            await JS.InvokeVoidAsync("alert", "Download failed.");
+        }
+    }
+
+    async Task CopyAttachment(Attachment att)
+    {
+        try
+        {
+            var status = await JS.InvokeAsync<string>("copyImageFromDataUrl", att.DataBase64, att.ContentType);
+            imageActionFeedback = status == "ok" ? "Copied to clipboard." :
+                status == "unsupported" ? "Clipboard image copy not supported in this browser." :
+                $"Copy failed: {status}";
+            StateHasChanged();
+            await Task.Delay(2000);
+            imageActionFeedback = null;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", "Copy failed: " + ex.Message);
+        }
+    }
+
+    async Task DownloadPreviewImage()
+    {
+        if (string.IsNullOrWhiteSpace(imagePreviewBase64) && string.IsNullOrWhiteSpace(imagePreviewUrl))
+            return;
+        try
+        {
+            await JS.InvokeAsync<bool>(
+                "downloadBase64File",
+                imagePreviewBase64 ?? imagePreviewUrl,
+                imagePreviewName ?? "image.png",
+                imagePreviewContentType ?? "image/png");
+            imageActionFeedback = "Download started.";
+        }
+        catch
+        {
+            imageActionFeedback = "Download failed.";
+        }
+    }
+
+    async Task CopyPreviewImage()
+    {
+        try
+        {
+            var data = imagePreviewBase64 ?? imagePreviewUrl;
+            var status = await JS.InvokeAsync<string>("copyImageFromDataUrl", data, imagePreviewContentType ?? "image/png");
+            imageActionFeedback = status == "ok" ? "Copied to clipboard." :
+                status == "unsupported" ? "Clipboard image copy not supported here." :
+                $"Copy failed: {status}";
+        }
+        catch (Exception ex)
+        {
+            imageActionFeedback = "Copy failed: " + ex.Message;
+        }
+    }
+
+    bool MessageHasImageAttachment(int index)
+    {
+        if (index < 0 || index >= messages.Count) return false;
+        var atts = messages[index].Attachments;
+        return atts != null && atts.Any(IsImageAttachment);
+    }
+
+    static bool IsImageAttachment(Attachment att) =>
+        att.ContentType != null &&
+        att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(att.DataBase64);
+
+    Attachment? FindLatestImageAttachment()
+    {
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            var atts = messages[i].Attachments;
+            if (atts == null) continue;
+            var img = atts.LastOrDefault(IsImageAttachment);
+            if (img != null) return img;
+        }
+
+        return pendingFiles.LastOrDefault(IsImageAttachment);
+    }
+
+    void OpenImageGenPanel()
+    {
+        imagePanelMode = "generate";
+        imagePanelError = null;
+        imageEditSourceBytes = null;
+        imageEditPreviewUrl = null;
+        imagePrompt = "";
+        imageModel = LemonadeImages.DefaultImageModel ?? LemonadeImages.ImageModelNames.FirstOrDefault() ?? "";
+        ApplyImageParamsFromModel(imageModel);
+        showImagePanel = true;
+    }
+
+    void OpenImageEditPanel(int? messageIndex)
+    {
+        if (!LemonadeImages.IsEditAvailable)
+        {
+            imagePanelError =
+                "No edit-capable Lemonade models found. Install a model with the “edit” label (e.g. Flux-2-Klein) and refresh Local AI. " +
+                "Generate-only models like Z-Image-Turbo cannot edit.";
+            imagePanelMode = "edit";
+            showImagePanel = true;
+            imageEditSourceBytes = null;
+            imageEditPreviewUrl = null;
+            return;
+        }
+
+        Attachment? source = null;
+        if (messageIndex is int idx && idx >= 0 && idx < messages.Count)
+            source = messages[idx].Attachments?.LastOrDefault(IsImageAttachment);
+        source ??= FindLatestImageAttachment();
+
+        if (source == null)
+        {
+            imagePanelError = "No image found to edit. Generate or attach an image first.";
+            imagePanelMode = "edit";
+            showImagePanel = true;
+            imageEditSourceBytes = null;
+            imageEditPreviewUrl = null;
+            return;
+        }
+
+        try
+        {
+            imageEditSourceBytes = Convert.FromBase64String(source.DataBase64);
+        }
+        catch
+        {
+            imagePanelError = "Could not decode the source image.";
+            showImagePanel = true;
+            return;
+        }
+
+        imagePanelMode = "edit";
+        imagePanelError = null;
+        imageEditPreviewUrl = AttachmentDataUrl(source);
+        imagePrompt = "";
+        imageModel = LemonadeImages.DefaultEditModel ?? LemonadeImages.EditModelNames.FirstOrDefault() ?? "";
+        ApplyImageParamsFromModel(imageModel);
+        showImagePanel = true;
+    }
+
+    void CloseImagePanel()
+    {
+        if (imageBusy) return;
+        showImagePanel = false;
+        imagePanelError = null;
+        imageEditSourceBytes = null;
+        imageEditPreviewUrl = null;
+        _imageCts?.Cancel();
+    }
+
+    async Task SubmitImagePanel()
+    {
+        if (imageBusy) return;
+        imagePanelError = null;
+
+        if (string.IsNullOrWhiteSpace(imagePrompt))
+        {
+            imagePanelError = "Enter a prompt.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(imageModel))
+        {
+            imagePanelError = "Select a Lemonade image model. Refresh models on Local AI if the list is empty.";
+            return;
+        }
+
+        if (imagePanelMode == "edit" && !LemonadeImages.ModelSupportsEdit(imageModel))
+        {
+            imagePanelError =
+                $"{imageModel} does not support editing. Choose a model labeled edit (e.g. Flux-2-Klein).";
+            return;
+        }
+
+        imageBusy = true;
+        isSending = true;
+        isTyping = true;
+        typingLabel = imagePanelMode == "edit" ? "Editing image…" : "Generating image…";
+        StateHasChanged();
+
+        _imageCts?.Cancel();
+        _imageCts = new CancellationTokenSource();
+        var ct = _imageCts.Token;
+
+        LemonadeImageResult result;
+        try
+        {
+            if (imagePanelMode == "edit")
+            {
+                if (imageEditSourceBytes is not { Length: > 0 })
+                {
+                    imagePanelError = "No source image for edit.";
+                    return;
+                }
+
+                result = await LemonadeImages.EditAsync(new LemonadeImageEditRequest(
+                    Prompt: imagePrompt.Trim(),
+                    ImagePngBytes: imageEditSourceBytes,
+                    Model: imageModel,
+                    Size: ImageSizeString,
+                    Steps: imageSteps > 0 ? imageSteps : null,
+                    CfgScale: imageCfg,
+                    Seed: ParsedImageSeed), ct);
+            }
+            else
+            {
+                result = await LemonadeImages.GenerateAsync(new LemonadeImageGenerateRequest(
+                    Prompt: imagePrompt.Trim(),
+                    Model: imageModel,
+                    Size: ImageSizeString,
+                    Steps: imageSteps > 0 ? imageSteps : null,
+                    CfgScale: imageCfg,
+                    Seed: ParsedImageSeed), ct);
+            }
+
+            if (result.Success && !string.IsNullOrWhiteSpace(result.Base64Png) &&
+                !string.Equals(imageUpscale, "off", StringComparison.OrdinalIgnoreCase))
+            {
+                typingLabel = "Upscaling…";
+                StateHasChanged();
+                result = await MaybeUpscaleAsync(result);
+            }
+        }
+        catch (Exception ex)
+        {
+            result = LemonadeImageResult.Fail(ex.Message);
+        }
+        finally
+        {
+            imageBusy = false;
+            isSending = false;
+            isTyping = false;
+            typingLabel = "Wizionic is thinking…";
+        }
+
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
+        {
+            imagePanelError = result.Error ?? "Image request failed.";
+            StateHasChanged();
+            return;
+        }
+
+        await AppendGeneratedImageMessageAsync(
+            imagePrompt.Trim(),
+            result.Base64Png,
+            result.Model ?? imageModel,
+            isEdit: imagePanelMode == "edit");
+
+        showImagePanel = false;
+        imageEditSourceBytes = null;
+        imageEditPreviewUrl = null;
+        imagePrompt = "";
+        StateHasChanged();
+    }
+
+    async Task AppendGeneratedImageMessageAsync(string prompt, string base64Png, string modelName, bool isEdit)
+    {
+        if (string.IsNullOrEmpty(activeConvoId))
+        {
+            activeConvoId = Guid.NewGuid().ToString();
+            await ConversationStore.SetLastConvoIdAsync(activeConvoId);
+        }
+
+        var now = DateTime.UtcNow;
+        var userLine = isEdit
+            ? $"(Edit image) {prompt}"
+            : $"(Generate image) {prompt}";
+
+        messages.Add(new ChatMessage(
+            Role: "user",
+            Content: userLine,
+            Timestamp: now,
+            User: currentUser,
+            ItemId: Guid.NewGuid().ToString("N"),
+            ModifiedAt: now));
+
+        var fileName = isEdit
+            ? $"edited-{now:yyyyMMdd-HHmmss}.png"
+            : $"generated-{now:yyyyMMdd-HHmmss}.png";
+        var att = new Attachment(fileName, "image/png", base64Png, EstimateBase64Bytes(base64Png));
+        var caption = isEdit
+            ? $"Edited image for: {prompt}"
+            : $"Generated image for: {prompt}";
+
+        messages.Add(new ChatMessage(
+            Role: "assistant",
+            Content: caption,
+            ModelUsed: $"lemonade/{modelName}",
+            Timestamp: now,
+            Attachments: new List<Attachment> { att },
+            ItemId: Guid.NewGuid().ToString("N"),
+            ModifiedAt: now));
+
+        RequestScrollToBottom();
+        await SaveCurrentConvo();
+    }
+
+    static long EstimateBase64Bytes(string b64)
+    {
+        // Approx decoded size; enough for UI/storage metadata.
+        return (long)(b64.Length * 3L / 4L);
+    }
+
+    async Task SaveCurrentConvo()
+    {
+        if (string.IsNullOrEmpty(activeConvoId)) return;
+        // Never overwrite a locked chat — body is not loaded until unlock this session.
+        if (IsActiveChatLocked)
+            return;
+        await ConversationStore.SaveConversationAsync(activeConvoId, messages);
+        await ConversationStore.UpdateIndexAfterSaveAsync(activeConvoId, messages, localConvos);
+        localConvos = await ConversationStore.LoadIndexAsync();
+        SyncService.ScheduleAutoSyncConvoAfterLocalSave(activeConvoId);
+    }
+
+    void OpenRenameConvoDialog(string? convoId)
+    {
+        if (string.IsNullOrEmpty(convoId))
+            return;
+
+        CloseMenu();
+        renameConvoId = convoId;
+        var convo = localConvos.FirstOrDefault(c => c.Id == convoId);
+        renameConvoTitle = convo?.Title ?? "";
+    }
+
+    void CancelRenameConvo()
+    {
+        renameConvoId = null;
+        renameConvoTitle = "";
+    }
+
+    async Task ConfirmRenameConvo()
+    {
+        if (renameConvoId is null || string.IsNullOrWhiteSpace(renameConvoTitle))
+            return;
+
+        var title = renameConvoTitle.Trim();
+        await ConversationStore.SetConversationTitleAsync(renameConvoId, title);
+        localConvos = await ConversationStore.LoadIndexAsync();
+        SyncService.ScheduleAutoSyncConvoAfterLocalSave(renameConvoId, title);
+        CancelRenameConvo();
+        StateHasChanged();
+    }
+
+    async Task RenameConvoKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(renameConvoTitle))
+            await ConfirmRenameConvo();
+        else if (e.Key == "Escape")
+            CancelRenameConvo();
+    }
+
+    void PromptDeleteConvo(string? convoId)
+    {
+        if (string.IsNullOrEmpty(convoId))
+            return;
+
+        CloseMenu();
+        pendingDeleteConvoId = convoId;
+        pendingDeleteMessageMenuKey = null;
+        deleteConfirmTitle = "Delete conversation?";
+        deleteConfirmMessage = "This permanently removes the entire chat history on this device and syncs the delete to your other devices.";
+        showDeleteConfirm = true;
+    }
+
+    void PromptDeleteMessage(string? menuKey)
+    {
+        if (string.IsNullOrEmpty(menuKey))
+            return;
+
+        CloseMenu();
+        pendingDeleteMessageMenuKey = menuKey;
+        pendingDeleteConvoId = null;
+        deleteConfirmTitle = "Delete message?";
+        deleteConfirmMessage = "This message will be removed from the conversation and the change will sync to your other devices.";
+        showDeleteConfirm = true;
+    }
+
+    void CancelPendingDelete()
+    {
+        showDeleteConfirm = false;
+        pendingDeleteConvoId = null;
+        pendingDeleteMessageMenuKey = null;
+    }
+
+    async Task ConfirmPendingDelete()
+    {
+        if (!string.IsNullOrEmpty(pendingDeleteConvoId))
+            await DeleteConvo(pendingDeleteConvoId);
+        else if (!string.IsNullOrEmpty(pendingDeleteMessageMenuKey))
+            await DeleteMessageFromMenu(pendingDeleteMessageMenuKey);
+
+        CancelPendingDelete();
+    }
+
+    async Task DeleteConvo(string id)
+    {
+        var deletedAt = await ConversationStore.DeleteConversationAsync(id);
+        localConvos = await ConversationStore.LoadIndexAsync();
+        SyncService.ScheduleAutoSyncConvoDeleteAfterLocalDelete(id, deletedAt);
+
+        if (activeConvoId == id)
+        {
+            if (localConvos.Any())
+            {
+                activeConvoId = localConvos.OrderBy(c => c.SortOrder).ThenByDescending(c => c.LastUpdated).First().Id;
+                await LoadConversation(activeConvoId);
+            }
+            else
+            {
+                await NewConversation();
+            }
+        }
+        StateHasChanged();
+    }
+
+    void ToggleMenu(string id)
+    {
+        if (openMenuId == id)
+        {
+            CloseMenu();
+        }
+        else
+        {
+            openMenuId = id;
+            _ = PositionPopupAtButton($"menu-btn-{id}");
+        }
+    }
+
+    void CloseMenu()
+    {
+        _ = NoteDebugLog("CloseMenu");
+        openMenuId = null;
+        activePopupStyle = "";
+        _botMenuMessageIndex = null;
+        _userMenuMessageIndex = null;
+    }
+
+    void ToggleUserMenu(int index)
+    {
+        var menuKey = $"{UserMenuPrefix}{index}";
+        if (openMenuId == menuKey)
+        {
+            CloseMenu();
+        }
+        else
+        {
+            openMenuId = menuKey;
+            _userMenuMessageIndex = index;
+            // MAUI: pin under ⋮ with right edges flush (menu sits just left of the dots).
+            // WASM keeps getMenuPopupPosition via default alignMessageMenu=false path below.
+            _ = PositionPopupAtButton($"user-menu-btn-{index}", alignMessageMenu: AppEnvironment.IsMaui);
+        }
+    }
+
+    void ToggleBotMenu(int index)
+    {
+        var menuKey = $"{BotMenuPrefix}{index}";
+        _ = NoteDebugLog($"ToggleBotMenu index={index} key={menuKey} openMenuId={openMenuId ?? "null"}");
+        if (openMenuId == menuKey)
+        {
+            CloseMenu();
+        }
+        else
+        {
+            openMenuId = menuKey;
+            _botMenuMessageIndex = index;
+            _ = PositionPopupAtButton($"bot-menu-btn-{index}", alignMessageMenu: AppEnvironment.IsMaui);
+        }
+    }
+
+    async Task DeleteMessageFromMenu(string? menuKey)
+    {
+        if (string.IsNullOrEmpty(menuKey))
+            return;
+
+        int? index = null;
+        if (menuKey.StartsWith(BotMenuPrefix, StringComparison.Ordinal))
+            index = int.TryParse(menuKey.Substring(BotMenuPrefix.Length), out var botIdx) ? botIdx : null;
+        else if (menuKey.StartsWith(UserMenuPrefix, StringComparison.Ordinal))
+            index = int.TryParse(menuKey.Substring(UserMenuPrefix.Length), out var userIdx) ? userIdx : null;
+
+        if (index is null || index < 0 || index >= messages.Count)
+            return;
+
+        var i = index.Value;
+        messages[i] = ChatMessageHelper.SoftDelete(messages[i]);
+        await SaveCurrentConvo();
+        StateHasChanged();
+    }
+
+    async Task OpenAddToNotesFromMenu(string? menuKey)
+    {
+        await NoteDebugLog($"OpenAddToNotesFromMenu called menuKey={menuKey ?? "null"}");
+
+        if (string.IsNullOrEmpty(menuKey) || !menuKey.StartsWith(BotMenuPrefix, StringComparison.Ordinal))
+        {
+            await NoteDebugLog("ABORT: not a bot menu key");
+            return;
+        }
+
+        if (!int.TryParse(menuKey.AsSpan(BotMenuPrefix.Length), out var index))
+        {
+            await NoteDebugLog("ABORT: could not parse message index from menu key");
+            return;
+        }
+
+        if (index < 0 || index >= messages.Count)
+        {
+            await NoteDebugLog($"ABORT: index {index} out of range (messages.Count={messages.Count})");
+            return;
+        }
+
+        _noteSourceMessage = messages[index];
+        _noteSelectedId = "";
+        _newNoteName = "";
+        _noteTargetId = "";
+        _noteTargetName = "";
+        _noteConfirming = false;
+        _noteShowExisting = false;
+        _noteShowNewInput = false;
+        _noteDialogNotes = new();
+
+        showNewNote = true;
+        await NoteDebugLog($"showNewNote=true, message length={_noteSourceMessage.Content?.Length ?? 0}");
+        StateHasChanged();
+
+        _ = LoadNoteDialogAsync();
+    }
+
+    async Task NoteDebugLog(string message)
+    {
+        Console.WriteLine($"[Chat.AddToNotes] {message}");
+        try { await JS.InvokeVoidAsync("console.log", $"[Chat.AddToNotes] {message}"); } catch { }
+    }
+
+    async Task LoadNoteDialogAsync()
+    {
+        await NoteDebugLog("LoadNoteDialogAsync started");
+        try
+        {
+            _noteDialogNotes = await NoteStore.LoadIndexAsync();
+            await NoteDebugLog($"LoadNoteDialogAsync loaded {_noteDialogNotes.Count} notes");
+        }
+        catch (Exception ex)
+        {
+            await NoteDebugLog($"LoadNoteDialogAsync FAILED: {ex.Message}");
+            _noteDialogNotes = new();
+        }
+
+        if (_noteDialogNotes.Any())
+        {
+            _noteSelectedId = "";
+            _noteShowNewInput = false;
+            _noteShowExisting = true;
+        }
+        else
+        {
+            _noteShowExisting = false;
+            _noteShowNewInput = true;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await NoteDebugLog($"LoadNoteDialogAsync done showExisting={_noteShowExisting} showNewInput={_noteShowNewInput}");
+    }
+
+    void NotePickExisting()
+    {
+        if (string.IsNullOrEmpty(_noteSelectedId)) return;
+        var note = _noteDialogNotes.FirstOrDefault(n => n.Id == _noteSelectedId);
+        _noteTargetId = _noteSelectedId;
+        _noteTargetName = note?.Title ?? "this note";
+        _noteShowExisting = false;
+        _noteConfirming = true;
+        StateHasChanged();
+    }
+
+    void NoteShowNewInput()
+    {
+        _noteShowExisting = false;
+        _noteShowNewInput = true;
+        StateHasChanged();
+    }
+
+    void NoteBackToPicker()
+    {
+        _noteSelectedId = "";
+        _newNoteName = "";
+        _noteShowNewInput = false;
+        _noteShowExisting = true;
+        StateHasChanged();
+    }
+
+    async Task NoteConfirmAdd()
+    {
+        if (_noteSourceMessage == null || string.IsNullOrEmpty(_noteTargetId)) return;
+        var entries = await NoteStore.LoadNoteAsync(_noteTargetId);
+        entries.Add(_noteSourceMessage);
+        await NoteStore.SaveNoteAsync(_noteTargetId, entries);
+        var note = _noteDialogNotes.FirstOrDefault(n => n.Id == _noteTargetId);
+        await NoteStore.UpdateIndexAfterSaveAsync(_noteTargetId, note?.Title ?? _noteTargetName);
+        CloseNewNote();
+    }
+
+    async Task NoteCreateAndSave()
+    {
+        if (_noteSourceMessage == null || string.IsNullOrWhiteSpace(_newNoteName)) return;
+        var id = Guid.NewGuid().ToString();
+        var title = _newNoteName.Trim();
+        await NoteStore.SaveNoteAsync(id, new List<ChatMessage> { _noteSourceMessage });
+        await NoteStore.UpdateIndexAfterSaveAsync(id, title);
+        CloseNewNote();
+    }
+
+    async Task NoteNameKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_newNoteName))
+            await NoteCreateAndSave();
+    }
+
+    void CloseNewNote()
+    {
+        showNewNote = false;
+        _noteSourceMessage = null;
+        _noteShowExisting = false;
+        _noteShowNewInput = false;
+        _noteConfirming = false;
+        _noteSelectedId = "";
+        _newNoteName = "";
+        _noteTargetId = "";
+        _noteTargetName = "";
+        StateHasChanged();
+    }
+
+    private async Task PositionPopupAtButton(string buttonId, bool alignMessageMenu = false)
+    {
+        try
+        {
+            // Message ⋮ menus on MAUI use right-edge alignment under the button.
+            // Sidebar/other menus (and all WASM menus) keep getMenuPopupPosition.
+            var fn = alignMessageMenu ? "getBotMenuPopupPosition" : "getMenuPopupPosition";
+            var pos = await JS.InvokeAsync<PopupPosition>(fn, buttonId);
+            activePopupStyle = $"position: fixed; top: {pos.top}px; left: {pos.left}px; z-index: 10000;";
+            StateHasChanged();
+        }
+        catch
+        {
+            activePopupStyle = "position: fixed; top: 120px; left: 260px; z-index: 10000;";
+            StateHasChanged();
+        }
+    }
+
+}

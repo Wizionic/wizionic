@@ -1,4 +1,4 @@
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Configuration for CORS-restricted AI providers that are proxied through the ASP.NET backend.

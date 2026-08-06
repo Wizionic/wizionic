@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Chatfish.me** — a privacy-first, local-first AI chat hub supporting multiple delivery targets from one shared core:
-1. **Host** (`ChatfishApp.csproj`) — ASP.NET Core Blazor Web App (InteractiveServer + InteractiveWebAssembly), the current production deployment target
-2. **WASM** (`ChatfishApp.Client/`) — Browser-native client with encrypted IndexedDB storage, direct Ollama access, and WebRTC sync
-3. **MAUI** (`ChatfishApp.Maui/`) — Native desktop/mobile app via Blazor Hybrid with SQLite-backed local storage
+**Wizionic** (wizionic.com) — a privacy-first, local-first AI chat hub supporting multiple delivery targets from one shared core:
+1. **Host** (`App.csproj`) — ASP.NET Core Blazor Web App (InteractiveServer + InteractiveWebAssembly), the current production deployment target
+2. **WASM** (`App.Client/`) — Browser-native client with encrypted IndexedDB storage, direct Ollama access, and WebRTC sync
+3. **MAUI** (`App.Maui/`) — Native desktop/mobile app via Blazor Hybrid with SQLite-backed local storage
 
 Stack: .NET 10 · Blazor Web App (Auto) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI · Ollama
 
@@ -17,17 +17,17 @@ Full architecture is documented in `wwwroot/ARCHITECTURE.md`. The product roadma
 
 ```bash
 # Run the host app (development server)
-dotnet run --project ChatfishApp.csproj
+dotnet run --project App.csproj
 
 # Build entire solution
-dotnet build ChatfishApp.sln
+dotnet build App.sln
 
 # MAUI builds/runs (Windows desktop target)
-dotnet publish ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0-windows10.0.19041.0 -r win-x64 --self-contained
+dotnet publish App.Maui/App.Maui.csproj -f net10.0-windows10.0.19041.0 -r win-x64 --self-contained
 
-# Entity Framework migrations (run from repo root or ChatfishApp project dir)
-dotnet ef migrations add <Name> --project ChatfishApp.csproj
-dotnet ef database update --project ChatfishApp.csproj
+# Entity Framework migrations (run from repo root or App project dir)
+dotnet ef migrations add <Name> --project App.csproj
+dotnet ef database update --project App.csproj
 ```
 
 There are **no unit tests** in this repository. Manual validation through the running app is the primary testing approach. Use `dotnet run` and verify functionality in browser/MAUI UI.
@@ -43,15 +43,15 @@ There are **no unit tests** in this repository. Manual validation through the ru
 ## Solution Layout & Architecture
 
 ```
-ChatfishApp/
-├── ChatfishApp.csproj           # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite DB, auth
-├── ChatfishApp.Core/            # Business logic & contracts: interfaces, DTOs, shared models — NO platform code
-├── ChatfishApp.Shared/          # Shared UI & logic: Razor components, layouts, services used by both WASM & MAUI
-├── ChatfishApp.Client/          # WASM implementation: browser-specific (IndexedDB, JS crypto, WebRTC)
-├── ChatfishApp.Maui/            # MAUI app: native shell, platform storage (SQLite), SIPSorcery WebRTC
-├── Components/                  # Server-shell Blazor root (App.razor, Routes.razor)
+App/
+├── App.csproj           # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite DB, auth
+├── App.Core/            # Business logic & contracts: interfaces, DTOs, shared models — NO platform code
+├── App.Shared/          # Shared UI & logic: Razor components, layouts, services used by both WASM & MAUI
+├── App.Client/          # WASM implementation: browser-specific (IndexedDB, JS crypto, WebRTC)
+├── App.Maui/            # MAUI app: native shell, platform storage (SQLite), SIPSorcery WebRTC
+├── Components/                  # Server-shell Blazor root (AppRoot.razor, Routes.razor)
 ├── Apis/                        # API endpoint groups (WasmApiEndpoints, AiProxyEndpoints, SyncHub)
-├── Data/                        # EF Core entities + ChatfishDbContext (Users, UserProviderKeys, DataProtectionKeys)
+├── Data/                        # EF Core entities + AppDbContext (Users, UserProviderKeys, DataProtectionKeys)
 ├── Services/                    # Server-only services (email, key protection, AI proxy)
 └── Pages/                       # Server-rendered pages (Roadmap, Architecture, Styleguide)
 ```
@@ -60,23 +60,23 @@ ChatfishApp/
 
 | Layer | Role | Platform-specific? |
 |-------|------|-------------------|
-| `ChatfishApp.Core` | Interfaces + DTOs (`IConversationStore`, `ICryptoService`, `ISyncService`, etc.) | No |
-| `ChatfishApp.Shared` | Razor components (`ChatPage`, `NotesPage`, etc.), shared services, layouts | No |
-| `ChatfishApp.Client` | WASM implementations: `WasmConversationStore` (IndexedDB), `WasmCryptoService` (WebCrypto), `WasmSyncService` (WebRTC via JS interop) | Yes — browser |
-| `ChatfishApp.Maui` | MAUI implementations: `SqliteConversationStore`, `MauiCryptoService`, `MauiSyncService` (SIPSorcery WebRTC), `SqliteKeyStore` | Yes — native |
+| `App.Core` | Interfaces + DTOs (`IConversationStore`, `ICryptoService`, `ISyncService`, etc.) | No |
+| `App.Shared` | Razor components (`ChatPage`, `NotesPage`, etc.), shared services, layouts | No |
+| `App.Client` | WASM implementations: `WasmConversationStore` (IndexedDB), `WasmCryptoService` (WebCrypto), `WasmSyncService` (WebRTC via JS interop) | Yes — browser |
+| `App.Maui` | MAUI implementations: `SqliteConversationStore`, `MauiCryptoService`, `MauiSyncService` (SIPSorcery WebRTC), `SqliteKeyStore` | Yes — native |
 
 ### Key Files Reference
 
 **Startup & routing:**
 - `Program.cs` — app builder: Blazor modes, EF Core SQLite, cookie auth (10-year sliding), SignalR hub, forwarded headers, magic-link routes
-- `ChatfishApp.Client/Program.cs` — WASM DI setup + service registrations
-- `ChatfishApp.Maui/MauiProgram.cs` — MAUI app initialization
+- `App.Client/Program.cs` — WASM DI setup + service registrations
+- `App.Maui/MauiProgram.cs` — MAUI app initialization
 
 **APIs (in `Apis/`):**
 - `WasmApiEndpoints.cs` — `/api/auth/*`, `/api/user/encryption-key`, `/api/keys`, `/api/tools/*`
 - `AiProxyEndpoints.cs` — `/api/proxy/providers`, `/api/proxy/chat` for CORS-restricted cloud models
 
-**Shared UI components (in `ChatfishApp.Shared/Components/`):**
+**Shared UI components (in `App.Shared/Components/`):**
 | Route | Component | Purpose |
 |-------|-----------|---------|
 | `/` | `LoginPage.razor` | Landing, magic-link login, guest continue |
@@ -88,14 +88,14 @@ ChatfishApp/
 | `/settings` | `SettingsPage.razor` | Profile, system prompt, preferences |
 | `/tools` | `ToolsPage.razor` | MCP servers and tokens |
 
-**Shared services (in `ChatfishApp.Shared/Services/`):**
+**Shared services (in `App.Shared/Services/`):**
 - `ChatCompletionService.cs` — core AI completion loop + ME.AI function calling
 - `ChatModelCatalogService.cs` — available model catalog across providers
 - `Mcp/McpToolSource.cs` — MCP tool discovery and caching
 - `Tools/AppTools.cs` — built-in tools (`search_web`, `summarize_url`, `get_time`)
 - `QuillInterop.cs` — Quill rich text editor JS interop
 
-**Core interfaces (in `ChatfishApp.Core/`):**
+**Core interfaces (in `App.Core/`):**
 - `Storage/IConversationStore.cs` — chat history persistence contract
 - `Storage/INoteStore.cs` — notes persistence contract
 - `Storage/ICryptoService.cs` — AES-GCM encryption/decryption contract
@@ -104,7 +104,7 @@ ChatfishApp/
 - `Auth/IAuthService.cs` — auth session contract
 
 **Data layer:**
-- `Data/ChatfishDbContext.cs` — EF Core context (Users, UserProviderKeys, DataProtectionKeys)
+- `Data/AppDbContext.cs` — EF Core context (Users, UserProviderKeys, DataProtectionKeys)
 - `Migrations/` — 12 migrations tracking the database evolution
 
 ## Architecture Principles & Conventions
@@ -146,7 +146,7 @@ Models call tools via Microsoft.Extensions.AI `UseFunctionInvocation`. Tools com
 ### EF Core Migrations
 The database stores only: Users (email, magic-link token, local encryption key), UserProviderKeys (optional server-stored API keys), and DataProtectionKeys. Chat history does NOT go here for WASM/MAUI targets. Always add a migration after model changes:
 ```bash
-dotnet ef migrations add <Name> --project ChatfishApp.csproj
+dotnet ef migrations add <Name> --project App.csproj
 ```
 
 ## Common Workflows by Task Type

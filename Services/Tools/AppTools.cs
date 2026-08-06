@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 
-namespace ChatfishApp.Services.Tools;
+namespace App.Services.Tools;
 
 /// <summary>
 /// App-level tools exposed to models via Microsoft.Extensions.AI function calling.

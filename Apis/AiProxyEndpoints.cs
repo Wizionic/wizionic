@@ -1,7 +1,7 @@
-using ChatfishApp.Contracts;
-using ChatfishApp.Services;
+using App.Contracts;
+using App.Services;
 
-namespace ChatfishApp.Apis;
+namespace App.Apis;
 
 /// <summary>
 /// Public AI provider proxy for WASM clients.

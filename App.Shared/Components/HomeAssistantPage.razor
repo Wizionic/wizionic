@@ -1,0 +1,308 @@
+@inject App.Core.Storage.IKeyStore KeyStore
+@inject App.Core.SmartHome.ISmartHomeService SmartHome
+@inject NavigationManager Nav
+@using App.Core.SmartHome
+@using App.Shared.Services
+
+<div class="embed-split-page">
+    <div class="embed-split-header">
+        <div>
+            <h4 class="embed-split-title">Home Assistant</h4>
+            <p class="embed-split-lead">
+                Connect Wizionic to your Home Assistant instance. Control devices by addressing your assistant by name in chat.
+            </p>
+        </div>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="@(() => Nav.NavigateTo("/chat"))">
+            Back to Chat
+        </button>
+    </div>
+
+    <div class="embed-split-body">
+        <!-- Left: configuration -->
+        <div class="embed-split-config">
+            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Assistant name</label>
+            <input type="text"
+                   class="form-control form-control-sm"
+                   style="margin-bottom: 0.25rem;"
+                   autocomplete="off"
+                   spellcheck="false"
+                   placeholder="Home"
+                   value="@assistantNameDraft"
+                   @oninput="OnAssistantNameChanged"
+                   @onchange="OnAssistantNameChanged" />
+            <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 1rem;">
+                Say this name to control devices. Examples:
+                <code>@(string.IsNullOrWhiteSpace(assistantNameDraft) ? "Home" : assistantNameDraft), turn off the kitchen light</code>
+                or
+                <code>@(string.IsNullOrWhiteSpace(assistantNameDraft) ? "Home" : assistantNameDraft), play music on the living room receiver</code>.
+                Follow-ups like <em>make it blue</em> work for 15 minutes after a successful command in the same chat.
+            </p>
+
+            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Base URL</label>
+            <input type="url"
+                   class="form-control form-control-sm"
+                   style="margin-bottom: 0.25rem;"
+                   autocomplete="off"
+                   spellcheck="false"
+                   placeholder="http://192.168.4.23:8123"
+                   value="@haBaseUrlDraft"
+                   @oninput="OnHaBaseUrlChanged"
+                   @onchange="OnHaBaseUrlChanged" />
+            <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 0.75rem;">
+                Example: <code>http://192.168.4.23:8123</code> — the right pane embeds this URL.
+            </p>
+
+            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Long-lived access token</label>
+            <input type="password"
+                   class="form-control form-control-sm"
+                   style="margin-bottom: 0.75rem;"
+                   autocomplete="off"
+                   value="@haTokenDraft"
+                   @oninput="OnHaTokenChanged"
+                   @onchange="OnHaTokenChanged" />
+
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="SaveHomeAssistant" disabled="@haBusy">Save</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="TestHomeAssistant" disabled="@haBusy">
+                    @(haBusy ? "Testing..." : "Test connection")
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(haFeedback))
+            {
+                <div style="margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
+                            background: @(haFeedbackIsError ? "#fff0f0" : "#e6f2ff");
+                            border: 1px solid @(haFeedbackIsError ? "#f5c2c7" : "#b3d9ff");
+                            color: @(haFeedbackIsError ? "#c00" : "inherit");">
+                    @haFeedback
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(deviceSummary))
+            {
+                <div style="margin-top: 1.25rem;">
+                    <h5 style="margin: 0 0 0.5rem;">Known devices</h5>
+                    <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 0.5rem;">
+                        Controllable entities grouped by domain (lights, media players, switches, climate, etc.).
+                        @if (deviceSummaryUpdatedAt.HasValue)
+                        {
+                            <span> Last refreshed @deviceSummaryUpdatedAt.Value.ToLocalTime().ToString("MMM d, HH:mm").</span>
+                        }
+                    </p>
+                    <pre class="device-summary-pre">@deviceSummary</pre>
+                </div>
+            }
+        </div>
+
+        <!-- Right: Home Assistant UI embed -->
+        <div class="embed-split-pane">
+            @if (string.IsNullOrWhiteSpace(embedUrl))
+            {
+                <div class="embed-split-fallback">
+                    <p>Enter a Home Assistant <strong>Base URL</strong> on the left to load the dashboard here.</p>
+                </div>
+            }
+            else if (CanEmbed)
+            {
+                <div class="embed-split-frame-wrap">
+                    <SimpleUrlEmbed @key="embedKey" Url="@embedUrl" Title="Home Assistant" />
+                </div>
+            }
+            else
+            {
+                <div class="embed-split-fallback">
+                    <p>
+                        The dashboard cannot be embedded here because of browser security
+                        (HTTPS page + HTTP HA, or Home Assistant’s default
+                        <code>X-Frame-Options: SAMEORIGIN</code>).
+                    </p>
+                    <p>
+                        Use the <strong>desktop app</strong> (native WebView, no iframe),
+                        or open Home Assistant in a browser:
+                    </p>
+                    <a class="btn btn-primary"
+                       href="@embedUrl"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       data-enhance-nav="false">Open @embedUrl</a>
+                    <p style="font-size: 0.85em; margin-top: 0.75rem;">
+                        Optional: allow iframe embedding in HA’s <code>configuration.yaml</code>:
+                    </p>
+                    <pre style="font-size: 0.8em; background: #f5f5f5; padding: 0.5rem; border-radius: 4px;">http:
+  use_x_frame_options: false</pre>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string assistantNameDraft = "Home";
+    private string haBaseUrlDraft = "";
+    private string haTokenDraft = "";
+    private string? haFeedback;
+    private bool haFeedbackIsError;
+    private bool haBusy;
+    private string deviceSummary = "";
+    private DateTime? deviceSummaryUpdatedAt;
+
+    private int embedKey;
+    private string embedUrl = "";
+
+    /// <summary>
+    /// MAUI can always try the embed. WASM/host only when not mixed content (HTTPS page + HTTP HA).
+    /// Relative / non-absolute URLs must not be embedded — they resolve against wizionic.com and 404.
+    /// </summary>
+    private bool CanEmbed
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(embedUrl))
+                return false;
+            if (AppEnvironment.IsMaui)
+                return true;
+            if (!Uri.TryCreate(embedUrl, UriKind.Absolute, out var target)
+                || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
+            {
+                return false;
+            }
+
+            var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
+            if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
+                return false;
+
+            return true;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await KeyStore.LoadAsync();
+        assistantNameDraft = KeyStore.HomeAssistantAssistantName;
+        haBaseUrlDraft = KeyStore.HomeAssistantBaseUrl;
+        haTokenDraft = KeyStore.HomeAssistantToken;
+        deviceSummary = KeyStore.HomeAssistantDeviceSummary;
+        deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
+        SyncEmbedUrl(reload: true);
+    }
+
+    private void OnAssistantNameChanged(ChangeEventArgs e) =>
+        assistantNameDraft = e.Value?.ToString() ?? "";
+
+    private void OnHaBaseUrlChanged(ChangeEventArgs e)
+    {
+        haBaseUrlDraft = e.Value?.ToString() ?? "";
+        SyncEmbedUrl(reload: true);
+    }
+
+    private void OnHaTokenChanged(ChangeEventArgs e) =>
+        haTokenDraft = e.Value?.ToString() ?? "";
+
+    private void SyncEmbedUrl(bool reload)
+    {
+        var url = (haBaseUrlDraft ?? "").Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            embedUrl = "";
+            return;
+        }
+
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            url = "http://" + url;
+
+        if (!string.Equals(embedUrl, url, StringComparison.OrdinalIgnoreCase))
+        {
+            embedUrl = url;
+            if (reload)
+                embedKey++;
+        }
+        else if (reload)
+        {
+            embedKey++;
+        }
+    }
+
+    private async Task SaveHomeAssistant()
+    {
+        haBusy = true;
+        haFeedback = null;
+        StateHasChanged();
+        try
+        {
+            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
+            SyncEmbedUrl(reload: true);
+            await RefreshDeviceSummaryAsync();
+            haFeedback = "Home Assistant settings saved.";
+            haFeedbackIsError = false;
+        }
+        catch (Exception ex)
+        {
+            haFeedback = $"Could not save: {ex.Message}";
+            haFeedbackIsError = true;
+        }
+        finally
+        {
+            haBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestHomeAssistant()
+    {
+        haBusy = true;
+        haFeedback = null;
+        StateHasChanged();
+        try
+        {
+            if (!HomeAssistantCredentials.TryNormalize(haBaseUrlDraft, haTokenDraft, out _, out _))
+            {
+                haFeedback = string.IsNullOrWhiteSpace(haBaseUrlDraft)
+                    ? "Base URL is empty. Type your Home Assistant URL (the gray example text is not pre-filled)."
+                    : "Enter both base URL and access token.";
+                haFeedbackIsError = true;
+                return;
+            }
+
+            var result = await SmartHome.TestConnectionAsync(haBaseUrlDraft, haTokenDraft);
+            if (result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) ||
+                result.StartsWith("Enter both", StringComparison.OrdinalIgnoreCase) ||
+                result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase))
+            {
+                haFeedback = result;
+                haFeedbackIsError = true;
+                return;
+            }
+
+            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
+            SyncEmbedUrl(reload: true);
+            await RefreshDeviceSummaryAsync();
+            haFeedback = "Connected to Home Assistant successfully.";
+            haFeedbackIsError = false;
+        }
+        catch (Exception ex)
+        {
+            haFeedback = $"Connection failed: {ex.Message}";
+            haFeedbackIsError = true;
+        }
+        finally
+        {
+            haBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshDeviceSummaryAsync()
+    {
+        var summary = await SmartHome.BuildDeviceCatalogAsync();
+        if (!summary.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) &&
+            !summary.StartsWith("Connection", StringComparison.OrdinalIgnoreCase) &&
+            !summary.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase) &&
+            !summary.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase))
+        {
+            await KeyStore.UpdateHomeAssistantDeviceSummaryAsync(summary);
+            deviceSummary = summary;
+            deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
+        }
+    }
+}
