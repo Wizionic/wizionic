@@ -34,7 +34,8 @@ public class DevicePresenceService
         bool IsOnline,
         bool CanRelayAi = false,
         int AiModelCount = 0,
-        bool SupportsBrowserSync = false);
+        bool SupportsBrowserSync = false,
+        bool IsNativeApp = false);
 
     private class DeviceEntry
     {
@@ -43,6 +44,7 @@ public class DevicePresenceService
         public bool CanRelayAi { get; set; }
         public int AiModelCount { get; set; }
         public bool SupportsBrowserSync { get; set; }
+        public bool IsNativeApp { get; set; }
         public HashSet<string> ConnectionIds { get; } = new(StringComparer.Ordinal);
     }
 
@@ -94,15 +96,23 @@ public class DevicePresenceService
     }
 
     /// <summary>
-    /// MAUI clients report browser bookmark/PWA sync support so peers can target them only.
+    /// Clients report client kind and browser bookmark/PWA sync support.
+    /// <paramref name="supportsBrowserSync"/> is true for MAUI (native browser features).
+    /// <paramref name="isNativeApp"/> is true for MAUI/native, false for WASM browsers.
     /// </summary>
-    public IReadOnlyList<DeviceInfo> UpdateBrowserCapabilities(string? userId, string? email, string deviceId, bool supportsBrowserSync)
+    public IReadOnlyList<DeviceInfo> UpdateBrowserCapabilities(
+        string? userId,
+        string? email,
+        string deviceId,
+        bool supportsBrowserSync,
+        bool isNativeApp = false)
     {
         var userKey = GetUserKey(userId, email);
         if (_users.TryGetValue(userKey, out var bucket) &&
             bucket.TryGetValue(deviceId, out var entry))
         {
             entry.SupportsBrowserSync = supportsBrowserSync;
+            entry.IsNativeApp = isNativeApp;
             entry.LastActiveUtc = DateTime.UtcNow;
         }
         return GetDevicesSnapshot(userKey);
@@ -204,7 +214,8 @@ public class DevicePresenceService
                 IsOnline: isOnline,
                 CanRelayAi: entry.CanRelayAi,
                 AiModelCount: entry.AiModelCount,
-                SupportsBrowserSync: entry.SupportsBrowserSync
+                SupportsBrowserSync: entry.SupportsBrowserSync,
+                IsNativeApp: entry.IsNativeApp
             ));
         }
 

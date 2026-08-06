@@ -4866,21 +4866,158 @@ body .message-bot,
 /* Sync page: capability badge + debug log */
 .sync-cap-badge {
     display: inline-block;
-    margin-left: 0.35rem;
-    padding: 0.05rem 0.4rem;
+    margin-left: 0.4rem;
+    margin-right: 0.55rem;
+    padding: 0.1rem 0.45rem;
     border-radius: 999px;
     font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.02em;
     vertical-align: middle;
+    white-space: nowrap;
     color: var(--primary-dark, #1F7FCC);
     background: color-mix(in srgb, var(--primary-blue, #3BA7FF) 22%, transparent);
     border: 1px solid color-mix(in srgb, var(--primary-blue, #3BA7FF) 45%, transparent);
 }
 
-.sync-debug-panel {
-    border-top: 1px solid var(--color-border, #ddd);
-    padding-top: 0.75rem;
+.sync-self-label,
+.online-text {
+    margin-left: 0.35rem;
+    margin-right: 0.15rem;
+    white-space: nowrap;
+}
+
+.online-text {
+    font-size: 0.78em;
+    color: #22c55e;
+}
+
+.sync-device-name-cell {
+    padding-right: 0.85rem !important;
+}
+
+.sync-last-active-cell {
+    padding-left: 0.65rem !important;
+    padding-right: 0.85rem !important;
+    white-space: nowrap;
+}
+
+/* --- Panel cards (Devices / Targets / What to sync / Debug) --- */
+.sync-panel {
+    margin: 0 0 1.15rem 0;
+    padding: 1rem 1.15rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border, #d8dee6);
+    background: var(--cf-bg-subtle, color-mix(in srgb, var(--color-bg, #fff) 92%, var(--color-border, #ccc) 8%));
+    box-shadow: 0 1px 2px color-mix(in srgb, #000 4%, transparent);
+}
+
+.sync-panel-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.65rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
+}
+
+.sync-panel-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 650;
+    color: var(--color-text, inherit);
+}
+
+.sync-connection-status {
+    font-size: 0.85em;
+}
+
+.sync-panel-lead {
+    margin: 0 0 0.85rem 0;
+    line-height: 1.4;
+}
+
+.sync-subsection-title {
+    font-weight: 600;
+    margin: 0.35rem 0 0.45rem;
+    font-size: 0.95rem;
+}
+
+.sync-to-all-label {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0 0 0.4rem;
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.sync-target-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.sync-target-label {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.92em;
+    cursor: pointer;
+    padding: 0.2rem 0.15rem;
+    border-radius: 4px;
+}
+
+.sync-target-label.sync-target-muted {
+    opacity: 0.75;
+}
+
+.sync-target-label.sync-target-locked {
+    cursor: default;
+}
+
+.sync-last-seen,
+.online-now {
+    font-size: 0.85em;
+    color: var(--color-text-muted);
+}
+
+.sync-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.sync-category-row {
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--color-border, #e8edf3);
+}
+
+.sync-category-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.sync-category-row:first-child {
+    padding-top: 0.15rem;
+}
+
+.sync-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.sync-category-title {
+    margin: 0;
+    font-size: 0.98rem;
+    font-weight: 600;
+}
+
+.sync-panel--debug {
+    background: color-mix(in srgb, var(--cf-bg-subtle, #f6f8fa) 70%, transparent);
 }
 
 .sync-debug-log {
@@ -4899,8 +5036,60 @@ body .message-bot,
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.sync-ai-route-banner {
+    margin: 0 0 0.85rem;
+}
+
+/* Rename row: keep label + input + Save on one line */
+.sync-device-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+    margin-top: 0.35rem;
+}
+
+.sync-device-name-row .sync-form-label {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-size: 0.9em;
+    color: var(--color-text-muted);
+    margin: 0;
+}
+
+.sync-device-name-row .sync-input-field {
+    flex: 1 1 auto;
+    min-width: 10rem;
+    max-width: none;
+    width: auto;
+}
+
+.sync-device-name-row .sync-rename-save {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
 /* --- Table wrapper --- */
-.cf-sync-table-wrapper { border-radius:6px; overflow:hidden; margin-bottom:1rem; }
+.cf-sync-table-wrapper { border-radius:6px; overflow:hidden; margin-bottom:0.85rem; border:1px solid var(--color-border, #e2e8f0); }
+
+.cf-sync-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.cf-sync-table th.cf-sync-cell,
+.cf-sync-table td.cf-sync-cell {
+    padding: 0.45rem 0.65rem;
+    vertical-align: middle;
+}
+
+.cf-sync-table th.cf-sync-cell {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.85em;
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
+    white-space: nowrap;
+}
 
 /* --- Self row highlight --- */
 .sync-table-row-self { background:var(--cf-bg-subtle); }
@@ -4925,10 +5114,10 @@ body .message-bot,
 /* --- AI info box --- */
 .sync-ai-info-box { margin-bottom:0.75rem; padding:0.5rem 0.75rem; }
 
-/* --- Rename row --- */
-.sync-rename-row   { display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap; }
+/* --- Rename row (legacy class kept; prefer .sync-device-name-row) --- */
+.sync-rename-row   { display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem; flex-wrap:nowrap; }
 .sync-page-label   { font-size:0.9em; color:var(--color-text-muted); }
-.sync-input-field  { flex:1; min-width:220px; max-width:320px; background:white; }
+.sync-input-field  { flex:1 1 auto; min-width:10rem; background:var(--color-bg, white); }
 
 /* --- Sync target checkboxes --- */
 .sync-these-devices-section    { margin:1rem 0 0.5rem; }

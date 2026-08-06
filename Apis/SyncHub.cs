@@ -140,14 +140,16 @@ public class SyncHub : Hub
     }
 
     /// <summary>
-    /// MAUI clients report that they can sync browser bookmarks / installed PWAs over WebRTC.
+    /// Clients report client kind and bookmark/PWA sync capability.
+    /// MAUI: supportsBrowserSync=true, isNativeApp=true.
+    /// WASM: supportsBrowserSync=false, isNativeApp=false.
     /// </summary>
-    public async Task UpdateBrowserCapabilities(string deviceId, bool supportsBrowserSync)
+    public async Task UpdateBrowserCapabilities(string deviceId, bool supportsBrowserSync, bool isNativeApp = false)
     {
         var userId = GetUserId();
         var email = GetEmail();
 
-        var list = _presence.UpdateBrowserCapabilities(userId, email, deviceId, supportsBrowserSync);
+        var list = _presence.UpdateBrowserCapabilities(userId, email, deviceId, supportsBrowserSync, isNativeApp);
         await Clients.Group(GetUserGroup()).SendAsync("DevicesUpdated", list);
     }
 

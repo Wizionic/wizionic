@@ -172,6 +172,8 @@ builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthSer
 builder.Services.AddScoped<NullSyncService>();
 builder.Services.AddScoped<ISyncService>(sp => sp.GetRequiredService<NullSyncService>());
 builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
+builder.Services.AddSingleton<App.Core.Storage.ISettingsSyncStore>(
+    _ => App.Shared.Services.NullSettingsSyncStore.Instance);
 
 // Data Protection persists the ASP.NET cookie auth ticket encryption key ring in SQLite.
 // Users.LocalEncryptionKey (WASM/MAUI IndexedDB crypto) is stored as plaintext base64 and is

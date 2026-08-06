@@ -1,5 +1,7 @@
 
 @inject App.Core.Storage.IKeyStore KeyStore
+@inject App.Core.Storage.ISettingsSyncStore SettingsSync
+@inject App.Core.Sync.ISyncService SyncService
 @inject App.Core.Update.IUpdateService UpdateService
 @inject App.Core.Homeserver.IHomeserverInstallService Homeserver
 @inject App.Core.Configuration.IAppServerEndpoint ServerEndpoint
@@ -11,6 +13,7 @@
 @inject NavigationManager Nav
 @using App.Core.Update
 @using App.Core.Homeserver
+@using App.Core.Sync
 @using App.Shared.Services
 @implements IDisposable
 
@@ -571,6 +574,7 @@
         var theme = e.Value?.ToString() ?? ThemeService.DefaultThemeId;
         await UiStorageNamespace.ApplyAsync(JS, Auth);
         await Theme.SetThemeAsync(theme, JS);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Appearance);
     }
 
     private async Task OnNavLayoutChanged(ChangeEventArgs e)
@@ -580,6 +584,7 @@
             ? NavLayoutMode.Left
             : NavLayoutMode.Top;
         await NavLayout.SetModeAsync(mode, JS);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Appearance);
     }
 
     public void Dispose()
@@ -596,6 +601,7 @@
         try
         {
             await KeyStore.SetUserProfileAsync( profileDraft);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Profile);
             await ShowSaveFeedbackAsync("About-you settings saved.", isError: false);
         }
         catch (Exception ex)
@@ -629,6 +635,7 @@
         try
         {
             await KeyStore.AddMemoryAsync( text);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Memories);
             ReloadMemories();
             showAddMemory = false;
             newMemoryText = "";
@@ -658,6 +665,7 @@
         try
         {
             await KeyStore.UpdateMemoryAsync( id, editingMemoryText);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Memories);
             ReloadMemories();
             CancelMemoryEdit();
             await ShowSaveFeedbackAsync("Memory updated.", isError: false);
@@ -673,6 +681,7 @@
         try
         {
             await KeyStore.RemoveMemoryAsync( id);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Memories);
             ReloadMemories();
             if (editingMemoryId == id)
                 CancelMemoryEdit();
@@ -692,6 +701,7 @@
         try
         {
             await KeyStore.ClearMemoriesAsync();
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Memories);
             ReloadMemories();
             CancelMemoryEdit();
             CancelAddMemory();
@@ -724,6 +734,7 @@
         try
         {
             await KeyStore.SetSystemPromptAsync( systemPromptDraft);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.SystemPrompt);
             await ShowSaveFeedbackAsync("System prompt saved to your browser.", isError: false);
         }
         catch (Exception ex)
@@ -737,6 +748,7 @@
         try
         {
             await KeyStore.ResetSystemPromptAsync();
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.SystemPrompt);
             systemPromptDraft = KeyStoreDefaults.GetDefaultSystemPrompt();
             await ShowSaveFeedbackAsync("System prompt reset to default.", isError: false);
         }

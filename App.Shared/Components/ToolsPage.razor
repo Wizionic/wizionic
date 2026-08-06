@@ -1,7 +1,11 @@
 @inject App.Core.Storage.IKeyStore KeyStore
+@inject App.Core.Storage.ISettingsSyncStore SettingsSync
+@inject App.Core.Sync.ISyncService SyncService
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject App.Core.Storage.IMcpToolRefresher? McpToolRefresher
+@using App.Core.Sync
+@using App.Shared.Services
 
 <div class="settings-content cf-tools" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
     <h4 style="margin:0;">MCP Tools</h4>
@@ -327,6 +331,7 @@
         tool.IsEnabled = newValue;
 
         await KeyStore.SetMcpServerEnabledAsync( tool.Name, newValue);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
 
         // Rebuild the MCP AITool list for the chat loop
         await RefreshMcpToolsAsync();
@@ -338,6 +343,7 @@
     {
         tool.Token = newToken ?? "";
         await KeyStore.SetMcpTokenAsync( tool.Name, tool.Token);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
 
         // If this server is enabled, refresh the callable tools so the new token is used on next chat turn
         if (tool.IsEnabled)

@@ -49,6 +49,8 @@ builder.Services.AddScoped<App.Core.Lemonade.ILemonadeImageService, App.Shared.S
 builder.Services.AddScoped<App.Core.Lemonade.ILemonadeSpeechService, App.Shared.Services.Lemonade.LemonadeSpeechService>();
 builder.Services.AddSingleton<JsSyncPreferencesStore>();
 builder.Services.AddSingleton<ISyncPreferencesStore>(sp => sp.GetRequiredService<JsSyncPreferencesStore>());
+builder.Services.AddSingleton<SettingsSyncStore>();
+builder.Services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
 builder.Services.AddScoped<JsWebRtcTransport>();
 builder.Services.AddScoped<IWebRtcTransport>(sp => sp.GetRequiredService<JsWebRtcTransport>());
 builder.Services.AddScoped<WasmSyncService>();
