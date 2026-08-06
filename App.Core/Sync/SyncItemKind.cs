@@ -7,5 +7,7 @@ public enum SyncItemKind
     Note = 1,
     Bookmark = 2,
     BookmarkFolder = 3,
-    SidebarApp = 4
+    SidebarApp = 4,
+    /// <summary>Settings bundle; <see cref="SyncQueueItem.ItemId"/> is the category id.</summary>
+    Settings = 5
 }

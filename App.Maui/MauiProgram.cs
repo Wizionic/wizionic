@@ -239,6 +239,8 @@ public static class MauiProgram
 		services.AddScoped<SqliteNoteStore>();
 		services.AddScoped<INoteStore>(sp => sp.GetRequiredService<SqliteNoteStore>());
 		services.AddSingleton<ISyncPreferencesStore, SqliteSyncPreferencesStore>();
+		services.AddSingleton<SettingsSyncStore>();
+		services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
 		services.AddSingleton<SipsorceryWebRtcTransport>();
 		services.AddSingleton<IWebRtcTransport>(sp => sp.GetRequiredService<SipsorceryWebRtcTransport>());
 		services.AddSingleton<MauiSyncService>();

@@ -10,4 +10,6 @@ public record SyncDeviceInfo(
     bool IsOnline,
     bool CanRelayAi = false,
     int AiModelCount = 0,
-    bool SupportsBrowserSync = false);
+    bool SupportsBrowserSync = false,
+    /// <summary>True for MAUI/native desktop-mobile clients; false for WASM browser clients.</summary>
+    bool IsNativeApp = false);

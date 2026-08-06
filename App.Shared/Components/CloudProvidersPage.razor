@@ -1,7 +1,11 @@
 @inject App.Core.Storage.IKeyStore KeyStore
+@inject App.Core.Storage.ISettingsSyncStore SettingsSync
+@inject App.Core.Sync.ISyncService SyncService
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IAuthService AuthService
+@using App.Shared.Services
+@using App.Core.Sync
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
 
@@ -49,5 +53,6 @@
     async Task SaveKeys()
     {
         await KeyStore.SaveAllKeysAsync( groqKey, geminiKey, openrouterKey);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.CloudProviders);
     }
 }

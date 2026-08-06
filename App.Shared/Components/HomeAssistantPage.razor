@@ -1,7 +1,10 @@
 @inject App.Core.Storage.IKeyStore KeyStore
+@inject App.Core.Storage.ISettingsSyncStore SettingsSync
+@inject App.Core.Sync.ISyncService SyncService
 @inject App.Core.SmartHome.ISmartHomeService SmartHome
 @inject NavigationManager Nav
 @using App.Core.SmartHome
+@using App.Core.Sync
 @using App.Shared.Services
 
 <div class="embed-split-page">
@@ -231,6 +234,7 @@
         try
         {
             await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.HomeAssistant);
             SyncEmbedUrl(reload: true);
             await RefreshDeviceSummaryAsync();
             haFeedback = "Home Assistant settings saved.";

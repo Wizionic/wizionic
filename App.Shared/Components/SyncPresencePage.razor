@@ -38,346 +38,421 @@
     }
     else
     {
-        @if (devices.Any())
-        {
-            <div class="sync-title-row">
-                <div class="d-flex align-items-center gap-2 mb-2">
-                    <h3 style="margin:0">Devices</h3>
-                    <button @onclick="RefreshDevices" class="btn btn-outline-primary btn-sm" disabled="@isRefreshing">
-                        @(isRefreshing ? "Refreshing..." : "Refresh")
-                    </button>
-                    <span class="sync-connection-status ms-auto @(SyncService.IsConnected ? "cf-status-online" : "cf-status-offline")" style="font-size:0.85em">
-                        @(SyncService.IsConnected ? "Connected for live updates" : "Connecting…")
-                    </span>
-                </div>
+        @* ── Panel 1: Devices ─────────────────────────────────────────── *@
+        <section class="sync-panel">
+            <div class="sync-panel-header">
+                <h3 class="sync-panel-title">Devices</h3>
+                <button @onclick="RefreshDevices" class="btn btn-outline-primary btn-sm" disabled="@isRefreshing">
+                    @(isRefreshing ? "Refreshing..." : "Refresh")
+                </button>
+                <span class="sync-connection-status ms-auto @(SyncService.IsConnected ? "cf-status-online" : "cf-status-offline")">
+                    @(SyncService.IsConnected ? "Connected for live updates" : "Connecting…")
+                </span>
             </div>
 
-            <div class="cf-sync-table-wrapper">
-                <table class="cf-sync-table">
-                    <thead>
-                        <tr>
-                            <th class="cf-sync-cell">Device Name</th>
-                            <th class="cf-sync-cell">Last Active</th>
-                            @if (ShowAiServerOptions)
+            @if (devices.Any())
+            {
+                <div class="cf-sync-table-wrapper">
+                    <table class="cf-sync-table">
+                        <thead>
+                            <tr>
+                                <th class="cf-sync-cell">Device Name</th>
+                                <th class="cf-sync-cell">Last Active</th>
+                                @if (ShowAiServerOptions)
+                                {
+                                    <th class="cf-sync-cell">AI Server</th>
+                                }
+                                else
+                                {
+                                    <th class="cf-sync-cell">Status</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var d in devices.OrderByDescending(x => x.IsOnline).ThenByDescending(x => x.LastActiveUtc))
                             {
-                                <th class="cf-sync-cell">AI Server</th>
-                            }
-                            else
-                            {
-                                <th class="cf-sync-cell">Status</th>
-                            }
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var d in devices.OrderByDescending(x => x.IsOnline).ThenByDescending(x => x.LastActiveUtc))
-                        {
-                            var isSelf = SyncService.IsSelf(d.DeviceId);
-                            <tr class="@(isSelf ? "sync-self-row" : "")">
-                                <td class="cf-sync-cell">
-                                    <span class="@(d.IsOnline ? "cf-status-online" : "cf-status-offline")" title="@(d.IsOnline ? "Online" : "Offline")">&#9679;</span>
-                                    <strong>@d.Name</strong>
-                                    @if (isSelf)
-                                    {
-                                        <span class="sync-self-label">(this device)</span>
-                                    }
-                                    @if (d.IsOnline)
-                                    {
-                                        <span class="online-text">online</span>
-                                    }
-                                    @if (d.SupportsBrowserSync)
-                                    {
-                                        <span class="sync-cap-badge" title="Can sync bookmarks &amp; installed apps">browser</span>
-                                    }
-                                </td>
-                                <td class="cf-sync-cell">
-                                    @FormatLastActive(d.LastActiveUtc, d.IsOnline)
-                                </td>
-                                <td class="cf-sync-cell">
-                                    @if (ShowAiServerOptions && !isSelf)
-                                    {
-                                        var isAiServerLabel = string.Equals(SyncService.AiServerDeviceId, d.DeviceId, StringComparison.OrdinalIgnoreCase);
-                                        // Always allow unchecking the currently selected AI server (e.g. device went offline).
-                                        // Only require online when enabling a new AI server.
-                                        var canToggle = d.IsOnline || isAiServerLabel;
-                                        var aiHint = isAiServerLabel && !d.IsOnline
-                                            ? "Uncheck to stop routing chats through this offline device and use local AI again"
-                                            : d.CanRelayAi && d.AiModelCount > 0
-                                                ? $"{d.AiModelCount} model(s) advertised"
-                                                : "Models discovered after connecting";
-                                        if (canToggle)
+                                var isSelf = SyncService.IsSelf(d.DeviceId);
+                                <tr class="@(isSelf ? "sync-self-row" : "")">
+                                    <td class="cf-sync-cell sync-device-name-cell">
+                                        <span class="@(d.IsOnline ? "cf-status-online" : "cf-status-offline")" title="@(d.IsOnline ? "Online" : "Offline")">&#9679;</span>
+                                        <strong>@d.Name</strong>
+                                        @if (isSelf)
                                         {
-                                            <label class="ai-server-label" title="@($"Route chat completions through this device ({aiHint})")">
-                                                <input type="checkbox" checked="@isAiServerLabel" @onchange="(e) => ToggleAiServer(d.DeviceId, e)" />
-                                                <span>Use this device for my chats</span>
-                                            </label>
+                                            <span class="sync-self-label">(this device)</span>
+                                        }
+                                        @if (d.IsOnline)
+                                        {
+                                            <span class="online-text">online</span>
+                                        }
+                                        @if (d.IsNativeApp)
+                                        {
+                                            <span class="sync-cap-badge" title="Native desktop/mobile app">app</span>
                                         }
                                         else
                                         {
-                                            <label class="ai-server-label-disabled" title="Device must be online to use it as an AI server">
-                                                <input type="checkbox" checked="false" disabled />
-                                                <span>Use this device for my chats</span>
-                                            </label>
+                                            <span class="sync-cap-badge" title="Web browser client">browser</span>
                                         }
-                                        if (d.IsOnline && !isAiServerLabel && d.CanRelayAi && d.AiModelCount > 0)
+                                    </td>
+                                    <td class="cf-sync-cell sync-last-active-cell">
+                                        @FormatLastActive(d.LastActiveUtc, d.IsOnline)
+                                    </td>
+                                    <td class="cf-sync-cell">
+                                        @if (ShowAiServerOptions && !isSelf)
                                         {
-                                            @:<div class="ai-hint-text">@d.AiModelCount model(s) available</div>
-                                        }
-                                        if (isAiServerLabel)
-                                        {
-                                            if (SyncService.IsAiProxyConnected)
+                                            var isAiServerLabel = string.Equals(SyncService.AiServerDeviceId, d.DeviceId, StringComparison.OrdinalIgnoreCase);
+                                            var showCheckbox = d.IsOnline || isAiServerLabel;
+                                            var aiHint = isAiServerLabel && !d.IsOnline
+                                                ? "Uncheck to stop routing chats through this offline device and use local AI again"
+                                                : d.CanRelayAi && d.AiModelCount > 0
+                                                    ? $"{d.AiModelCount} model(s) advertised"
+                                                    : "Models discovered after connecting";
+                                            if (showCheckbox)
                                             {
-                                                <span>Connected</span>
+                                                <label class="ai-server-label" title="@($"Route chat completions through this device ({aiHint})")">
+                                                    <input type="checkbox" checked="@isAiServerLabel" @onchange="(e) => ToggleAiServer(d.DeviceId, e)" />
+                                                    <span>Use this device for my chats</span>
+                                                </label>
                                             }
-                                            else if (!d.IsOnline)
+                                            if (d.IsOnline && !isAiServerLabel && d.CanRelayAi && d.AiModelCount > 0)
                                             {
-                                                <span class="sync-warning-text">Offline — uncheck to use local AI</span>
+                                                @:<div class="ai-hint-text">@d.AiModelCount model(s) available</div>
+                                            }
+                                            if (isAiServerLabel)
+                                            {
+                                                if (SyncService.IsAiProxyConnected)
+                                                {
+                                                    <span>Connected</span>
+                                                }
+                                                else if (!d.IsOnline)
+                                                {
+                                                    <span class="sync-warning-text">Offline — uncheck to use local AI</span>
+                                                }
+                                                else
+                                                {
+                                                    <span>Connecting</span>
+                                                }
+                                                @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
+                                                {
+                                                    @:<span class="sync-warning-text"> &#8212; @SyncService.AiProxyError</span>
+                                                }
+                                            }
+                                        }
+                                        else if (!ShowAiServerOptions)
+                                        {
+                                            if (d.IsOnline)
+                                            {
+                                                @:<span class="cf-status-online">Online</span>
                                             }
                                             else
                                             {
-                                                <span>Connecting</span>
+                                                @:<span class="cf-status-offline">Offline</span>
                                             }
-                                            @if (!string.IsNullOrEmpty(SyncService.AiProxyError))
+                                            if (d.CanRelayAi && d.AiModelCount > 0)
                                             {
-                                                @:<span class="sync-warning-text"> &#8212; @SyncService.AiProxyError</span>
+                                                @:<span class="ai-hint-text">&#183; @d.AiModelCount AI model(s)</span>
                                             }
                                         }
-                                    }
-                                    else if (!ShowAiServerOptions)
-                                    {
-                                        if (d.IsOnline)
-                                        {
-                                            @:<span class="cf-status-online">Online</span>
-                                        }
-                                        else
-                                        {
-                                            @:<span class="cf-status-offline">Offline</span>
-                                        }
-                                        if (d.CanRelayAi && d.AiModelCount > 0)
-                                        {
-                                            @:<span class="ai-hint-text">&#183; @d.AiModelCount AI model(s)</span>
-                                        }
-                                    }
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
 
-            @if (ShowAiServerOptions && !string.IsNullOrEmpty(SyncService.AiServerDeviceId))
-            {
-                var aiServer = devices.FirstOrDefault(d => string.Equals(d.DeviceId, SyncService.AiServerDeviceId, StringComparison.OrdinalIgnoreCase));
-                var aiLabel = aiServer?.Name ?? "selected device";
-                var aiOffline = aiServer is null || !aiServer.IsOnline;
-                <div class="@(aiOffline ? "cf-sync-warning" : "cf-sync-success")">
-                    Chat AI is routed through <strong>@aiLabel</strong>
-                    @if (aiOffline)
-                    {
-                        <span> (offline — uncheck below or clear routing to use local AI)</span>
-                    }
-                    else if (SyncService.RemoteModels.Any())
-                    {
-                        <span> @SyncService.RemoteModels.Count model(s) available on Chat.</span>
-                    }
+                @if (ShowAiServerOptions && !string.IsNullOrEmpty(SyncService.AiServerDeviceId))
+                {
+                    var aiServer = devices.FirstOrDefault(d => string.Equals(d.DeviceId, SyncService.AiServerDeviceId, StringComparison.OrdinalIgnoreCase));
+                    var aiLabel = aiServer?.Name ?? "selected device";
+                    var aiOffline = aiServer is null || !aiServer.IsOnline;
+                    <div class="@(aiOffline ? "cf-sync-warning" : "cf-sync-success") sync-ai-route-banner">
+                        Chat AI is routed through <strong>@aiLabel</strong>
+                        @if (aiOffline)
+                        {
+                            <span> (offline — uncheck below or clear routing to use local AI)</span>
+                        }
+                        else if (SyncService.RemoteModels.Any())
+                        {
+                            <span> @SyncService.RemoteModels.Count model(s) available on Chat.</span>
+                        }
+                    </div>
+                }
+
+                <div class="sync-device-name-row">
+                    <label class="form-label mb-0 sync-form-label">Rename this device:</label>
+                    <input type="text"
+                           @bind="newDeviceName"
+                           placeholder="@SyncService.MyDeviceName"
+                           class="form-control form-control-sm sync-input-field" />
+                    <button type="button" @onclick="SaveDeviceName" class="btn btn-outline-secondary btn-sm sync-rename-save">Save</button>
                 </div>
             }
+            else
+            {
+                <div class="sync-muted-text py-2">Loading device list…</div>
+            }
+        </section>
 
-            <div class="sync-device-name-row">
-                <label class="form-label mb-0 sync-form-label">Rename this device:</label>
-                <input type="text" @bind="newDeviceName" placeholder="@SyncService.MyDeviceName" class="form-control form-control-sm sync-input-field mx-2" style="flex:1; min-width:220px; max-width:320px;" />
-                <button @onclick="SaveDeviceName" class="btn btn-outline-secondary btn-sm">Save</button>
-            </div>
+        @* ── Panel 2: Sync targets ────────────────────────────────────── *@
+        @if (devices.Any())
+        {
+            <section class="sync-panel">
+                <div class="sync-panel-header">
+                    <h3 class="sync-panel-title">Sync targets</h3>
+                </div>
 
-            <div class="sync-target-section mt-3">
-                <div class="fw-semibold mb-1">Sync to these devices</div>
+                <label class="sync-to-all-label">
+                    <input type="checkbox" checked="@SyncService.SyncToAllDevices" @onchange="ToggleSyncToAll" />
+                    <strong>Sync to all devices</strong>
+                </label>
+                <p class="sync-desc-text sync-panel-lead">
+                    @if (SyncService.SyncToAllDevices)
+                    {
+                        <span>New devices are included automatically. Individual selection is locked while this is on.</span>
+                    }
+                    else
+                    {
+                        <span>Choose which devices receive sync. Turn on “Sync to all devices” to include every peer automatically.</span>
+                    }
+                </p>
+
+                <div class="sync-subsection-title">Sync to these devices</div>
                 @{
                     var others = SyncService.GetOtherDevices().ToList();
                 }
                 @if (others.Any())
                 {
-                    foreach (var d in others)
-                    {
-                        var selected = selectedTargetDeviceIds.Contains(d.DeviceId);
-                        <label class="sync-target-label @(d.IsOnline ? "" : "sync-target-muted")">
-                            <input type="checkbox" checked="@selected" @onchange="async (e) => await ToggleTarget(d.DeviceId, e)" />
-                            <span class="@(d.IsOnline ? "cf-status-online" : "cf-status-offline")">&#9679;</span>
-                            <span>@d.Name</span>
-                            @if (d.IsOnline) { <span class="online-now">(online now)</span> }
-                            else { <span>(last seen @FormatLastActive(d.LastActiveUtc, false))</span> }
-                        </label>
-                    }
+                    <div class="sync-target-list">
+                        @foreach (var d in others)
+                        {
+                            var selected = SyncService.SyncToAllDevices || selectedTargetDeviceIds.Contains(d.DeviceId);
+                            <label class="sync-target-label @(d.IsOnline ? "" : "sync-target-muted") @(SyncService.SyncToAllDevices ? "sync-target-locked" : "")">
+                                <input type="checkbox"
+                                       checked="@selected"
+                                       disabled="@SyncService.SyncToAllDevices"
+                                       @onchange="async (e) => await ToggleTarget(d.DeviceId, e)" />
+                                <span class="@(d.IsOnline ? "cf-status-online" : "cf-status-offline")">&#9679;</span>
+                                <span>@d.Name</span>
+                                @if (d.IsOnline) { <span class="online-now">(online now)</span> }
+                                else { <span class="sync-last-seen">(last seen @FormatLastActive(d.LastActiveUtc, false))</span> }
+                            </label>
+                        }
+                    </div>
                 }
                 else
                 {
                     <div class="sync-muted-text">No other devices are known for this account yet. Open Wizionic on another browser or device and log in with the same email.</div>
                 }
+            </section>
+        }
+
+        @* ── Panel 3: What to sync ────────────────────────────────────── *@
+        <section class="sync-panel">
+            <div class="sync-panel-header">
+                <h3 class="sync-panel-title">What to sync</h3>
             </div>
-        }
-        else
-        {
-            <div class="sync-muted-text py-2">Loading device list…</div>
-        }
+            <p class="sync-desc-text sync-panel-lead">
+                When <strong>Auto sync</strong> is on, changes push over encrypted WebRTC to the devices above (never through the server).
+                Uncheck Auto sync on a row to show manual Sync controls.
+            </p>
 
-        @* Chat history section *@
-        <div class="d-flex align-items-center gap-2 mt-3 mb-1 flex-wrap sync-section-header">
-            <h3 style="margin:0">Chat history</h3>
-            <button @onclick="SyncAllConversations"
-                    class="btn btn-outline-primary btn-sm"
-                    disabled="@(!selectedTargetDeviceIds.Any() || !localConvos.Any() || isBulkSyncing)">
-                @(isBulkSyncing ? "Syncing…" : "Sync All")
-            </button>
-            <label class="sync-auto-sync-label ms-auto">
-                <input type="checkbox" checked="@SyncService.AutoSyncChatHistory" @onchange="ToggleAutoSyncChat" />
-                Auto sync
-            </label>
-        </div>
-        <p class="sync-desc-text mb-2">Select one or more target devices above, then click Sync or Sync All.</p>
-
-        @if (localConvos.Any())
-        {
-            <div class="sync-items-list">
-                @foreach (var c in localConvos.OrderByDescending(x => x.LastUpdated))
-                {
-                    <div class="cf-sync-card sync-item-row">
-                        <div class="sync-item-info">
-                            <div class="sync-item-title">@c.Title</div>
-                            <div class="sync-item-date">@c.LastUpdated.ToLocalTime().ToString("MMM d, HH:mm")</div>
-                        </div>
-                        <button @onclick="() => SyncConversation(c)"
-                                class="btn btn-outline-primary btn-sm"
-                                disabled="@(!selectedTargetDeviceIds.Any())">Sync</button>
-                    </div>
-                }
-            </div>
-        }
-        else
-        {
-            <div class="sync-muted-text">No conversations yet on this device.</div>
-        }
-
-        @* Notes section *@
-        <div class="d-flex align-items-center gap-2 mt-3 mb-1 flex-wrap sync-section-header">
-            <h3 style="margin:0">Notes</h3>
-            <button @onclick="SyncAllNotes"
-                    class="btn btn-outline-primary btn-sm"
-                    disabled="@(!selectedTargetDeviceIds.Any() || !localNotes.Any() || isBulkSyncing)">
-                @(isBulkSyncing ? "Syncing…" : "Sync All")
-            </button>
-            <label class="sync-auto-sync-label ms-auto">
-                <input type="checkbox" checked="@SyncService.AutoSyncNotes" @onchange="ToggleAutoSyncNotes" />
-                Auto sync
-            </label>
-        </div>
-        <p class="sync-desc-text mb-2">Select one or more target devices above, then click Sync or Sync All.</p>
-
-        @if (localNotes.Any())
-        {
-            <div class="sync-items-list">
-                @foreach (var n in localNotes.OrderByDescending(x => x.LastUpdated))
-                {
-                    <div class="cf-sync-card sync-item-row">
-                        <div class="sync-item-info">
-                            <div class="sync-item-title">@n.Title</div>
-                            <div class="sync-item-date">@n.LastUpdated.ToLocalTime().ToString("MMM d, HH:mm")</div>
-                        </div>
-                        <button @onclick="() => SyncNote(n)"
-                                class="btn btn-outline-primary btn-sm"
-                                disabled="@(!selectedTargetDeviceIds.Any())">Sync</button>
-                    </div>
-                }
-            </div>
-        }
-        else
-        {
-            <div class="sync-muted-text">No notes yet on this device.</div>
-        }
-
-        @if (AppEnvironment.IsMaui)
-        {
-            @* Bookmarks section (MAUI only) *@
-            <div class="d-flex align-items-center gap-2 mt-3 mb-1 flex-wrap sync-section-header">
-                <h3 style="margin:0">Bookmarks</h3>
-                <button @onclick="SyncAllBookmarks"
-                        class="btn btn-outline-primary btn-sm"
-                        disabled="@(!selectedTargetDeviceIds.Any() || !localBookmarks.Any() || isBulkSyncing)">
-                    @(isBulkSyncing ? "Syncing…" : "Sync All")
-                </button>
-                <label class="sync-auto-sync-label ms-auto">
-                    <input type="checkbox" checked="@SyncService.AutoSyncBookmarks" @onchange="ToggleAutoSyncBookmarks" />
-                    Auto sync
-                </label>
-            </div>
-            <p class="sync-desc-text mb-2">Sync bookmarks and folders to other Wizionic desktop apps only.</p>
-
-            @if (localBookmarks.Any())
-            {
-                <div class="sync-items-list">
-                    @foreach (var bm in localBookmarks.OrderBy(x => x.Title, StringComparer.OrdinalIgnoreCase))
-                    {
-                        <div class="cf-sync-card sync-item-row">
-                            <div class="sync-item-info">
-                                <div class="sync-item-title">@(string.IsNullOrWhiteSpace(bm.Title) ? bm.Url : bm.Title)</div>
-                                <div class="sync-item-date">@bm.Url</div>
-                            </div>
-                            <button @onclick="() => SyncBookmark(bm)"
+            <div class="sync-categories">
+                @* Chat history *@
+                <div class="sync-category-row">
+                    <div class="sync-section-header">
+                        <h4 class="sync-category-title">Chat history</h4>
+                        @if (!SyncService.AutoSyncChatHistory)
+                        {
+                            <button @onclick="SyncAllConversations"
                                     class="btn btn-outline-primary btn-sm"
-                                    disabled="@(!selectedTargetDeviceIds.Any())">Sync</button>
-                        </div>
+                                    disabled="@(!HasSyncTargets || !localConvos.Any() || isBulkSyncing)">
+                                @(isBulkSyncing ? "Syncing…" : "Sync All")
+                            </button>
+                        }
+                        <label class="sync-auto-sync-label ms-auto">
+                            <input type="checkbox" checked="@SyncService.AutoSyncChatHistory" @onchange="ToggleAutoSyncChat" />
+                            Auto sync
+                        </label>
+                    </div>
+                    @if (!SyncService.AutoSyncChatHistory)
+                    {
+                        @if (localConvos.Any())
+                        {
+                            <div class="sync-items-list">
+                                @foreach (var c in localConvos.OrderByDescending(x => x.LastUpdated))
+                                {
+                                    <div class="cf-sync-card sync-item-row">
+                                        <div class="sync-item-info">
+                                            <div class="sync-item-title">@c.Title</div>
+                                            <div class="sync-item-date">@c.LastUpdated.ToLocalTime().ToString("MMM d, HH:mm")</div>
+                                        </div>
+                                        <button @onclick="() => SyncConversation(c)"
+                                                class="btn btn-outline-primary btn-sm"
+                                                disabled="@(!HasSyncTargets)">Sync</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="sync-muted-text">No conversations yet on this device.</div>
+                        }
                     }
                 </div>
-            }
-            else
-            {
-                <div class="sync-muted-text">No bookmarks yet on this device.</div>
-            }
 
-            @* Installed apps / PWAs section (MAUI only) *@
-            <div class="d-flex align-items-center gap-2 mt-3 mb-1 flex-wrap sync-section-header">
-                <h3 style="margin:0">Installed apps</h3>
-                <button @onclick="SyncAllInstalledApps"
-                        class="btn btn-outline-primary btn-sm"
-                        disabled="@(!selectedTargetDeviceIds.Any() || !localApps.Any() || isBulkSyncing)">
-                    @(isBulkSyncing ? "Syncing…" : "Sync All")
-                </button>
-                <label class="sync-auto-sync-label ms-auto">
-                    <input type="checkbox" checked="@SyncService.AutoSyncInstalledApps" @onchange="ToggleAutoSyncApps" />
-                    Auto sync
-                </label>
-            </div>
-            <p class="sync-desc-text mb-2">Sync pinned and installed PWAs to other Wizionic desktop apps only.</p>
-
-            @if (localApps.Any())
-            {
-                <div class="sync-items-list">
-                    @foreach (var app in localApps.OrderBy(x => x.SortOrder).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
-                    {
-                        <div class="cf-sync-card sync-item-row">
-                            <div class="sync-item-info">
-                                <div class="sync-item-title">@app.Name @(app.IsPwa ? "(PWA)" : "")</div>
-                                <div class="sync-item-date">@app.StartUrl</div>
-                            </div>
-                            <button @onclick="() => SyncInstalledApp(app)"
+                @* Notes *@
+                <div class="sync-category-row">
+                    <div class="sync-section-header">
+                        <h4 class="sync-category-title">Notes</h4>
+                        @if (!SyncService.AutoSyncNotes)
+                        {
+                            <button @onclick="SyncAllNotes"
                                     class="btn btn-outline-primary btn-sm"
-                                    disabled="@(!selectedTargetDeviceIds.Any())">Sync</button>
-                        </div>
+                                    disabled="@(!HasSyncTargets || !localNotes.Any() || isBulkSyncing)">
+                                @(isBulkSyncing ? "Syncing…" : "Sync All")
+                            </button>
+                        }
+                        <label class="sync-auto-sync-label ms-auto">
+                            <input type="checkbox" checked="@SyncService.AutoSyncNotes" @onchange="ToggleAutoSyncNotes" />
+                            Auto sync
+                        </label>
+                    </div>
+                    @if (!SyncService.AutoSyncNotes)
+                    {
+                        @if (localNotes.Any())
+                        {
+                            <div class="sync-items-list">
+                                @foreach (var n in localNotes.OrderByDescending(x => x.LastUpdated))
+                                {
+                                    <div class="cf-sync-card sync-item-row">
+                                        <div class="sync-item-info">
+                                            <div class="sync-item-title">@n.Title</div>
+                                            <div class="sync-item-date">@n.LastUpdated.ToLocalTime().ToString("MMM d, HH:mm")</div>
+                                        </div>
+                                        <button @onclick="() => SyncNote(n)"
+                                                class="btn btn-outline-primary btn-sm"
+                                                disabled="@(!HasSyncTargets)">Sync</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="sync-muted-text">No notes yet on this device.</div>
+                        }
                     }
                 </div>
-            }
-            else
+
+                @if (AppEnvironment.IsMaui)
+                {
+                    <div class="sync-category-row">
+                        <div class="sync-section-header">
+                            <h4 class="sync-category-title">Bookmarks</h4>
+                            @if (!SyncService.AutoSyncBookmarks)
+                            {
+                                <button @onclick="SyncAllBookmarks"
+                                        class="btn btn-outline-primary btn-sm"
+                                        disabled="@(!HasSyncTargets || !localBookmarks.Any() || isBulkSyncing)">
+                                    @(isBulkSyncing ? "Syncing…" : "Sync All")
+                                </button>
+                            }
+                            <label class="sync-auto-sync-label ms-auto">
+                                <input type="checkbox" checked="@SyncService.AutoSyncBookmarks" @onchange="ToggleAutoSyncBookmarks" />
+                                Auto sync
+                            </label>
+                        </div>
+                        @if (!SyncService.AutoSyncBookmarks)
+                        {
+                            @if (localBookmarks.Any())
+                            {
+                                <div class="sync-items-list">
+                                    @foreach (var bm in localBookmarks.OrderBy(x => x.Title, StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        <div class="cf-sync-card sync-item-row">
+                                            <div class="sync-item-info">
+                                                <div class="sync-item-title">@(string.IsNullOrWhiteSpace(bm.Title) ? bm.Url : bm.Title)</div>
+                                                <div class="sync-item-date">@bm.Url</div>
+                                            </div>
+                                            <button @onclick="() => SyncBookmark(bm)"
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    disabled="@(!HasSyncTargets)">Sync</button>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="sync-muted-text">No bookmarks yet on this device.</div>
+                            }
+                        }
+                    </div>
+
+                    <div class="sync-category-row">
+                        <div class="sync-section-header">
+                            <h4 class="sync-category-title">Installed apps</h4>
+                            @if (!SyncService.AutoSyncInstalledApps)
+                            {
+                                <button @onclick="SyncAllInstalledApps"
+                                        class="btn btn-outline-primary btn-sm"
+                                        disabled="@(!HasSyncTargets || !localApps.Any() || isBulkSyncing)">
+                                    @(isBulkSyncing ? "Syncing…" : "Sync All")
+                                </button>
+                            }
+                            <label class="sync-auto-sync-label ms-auto">
+                                <input type="checkbox" checked="@SyncService.AutoSyncInstalledApps" @onchange="ToggleAutoSyncApps" />
+                                Auto sync
+                            </label>
+                        </div>
+                        @if (!SyncService.AutoSyncInstalledApps)
+                        {
+                            @if (localApps.Any())
+                            {
+                                <div class="sync-items-list">
+                                    @foreach (var app in localApps.OrderBy(x => x.SortOrder).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        <div class="cf-sync-card sync-item-row">
+                                            <div class="sync-item-info">
+                                                <div class="sync-item-title">@app.Name @(app.IsPwa ? "(PWA)" : "")</div>
+                                                <div class="sync-item-date">@app.StartUrl</div>
+                                            </div>
+                                            <button @onclick="() => SyncInstalledApp(app)"
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    disabled="@(!HasSyncTargets)">Sync</button>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="sync-muted-text">No pinned apps yet on this device.</div>
+                            }
+                        }
+                    </div>
+                }
+
+                @SettingsSection("Local AI", SettingsSyncCategory.LocalAi, SyncService.AutoSyncLocalAi, ToggleAutoSyncLocalAi)
+                @SettingsSection("Lemonade", SettingsSyncCategory.Lemonade, SyncService.AutoSyncLemonade, ToggleAutoSyncLemonade)
+                @SettingsSection("Cloud Providers", SettingsSyncCategory.CloudProviders, SyncService.AutoSyncCloudProviders, ToggleAutoSyncCloudProviders)
+                @if (AppEnvironment.IsMaui)
+                {
+                    @SettingsSection("Home Assistant", SettingsSyncCategory.HomeAssistant, SyncService.AutoSyncHomeAssistant, ToggleAutoSyncHomeAssistant)
+                }
+                @SettingsSection("Tools (MCP)", SettingsSyncCategory.Tools, SyncService.AutoSyncTools, ToggleAutoSyncTools)
+                @SettingsSection("System prompt", SettingsSyncCategory.SystemPrompt, SyncService.AutoSyncSystemPrompt, ToggleAutoSyncSystemPrompt)
+                @SettingsSection("About you", SettingsSyncCategory.Profile, SyncService.AutoSyncProfile, ToggleAutoSyncProfile)
+                @SettingsSection("Memories", SettingsSyncCategory.Memories, SyncService.AutoSyncMemories, ToggleAutoSyncMemories)
+                @SettingsSection("Appearance", SettingsSyncCategory.Appearance, SyncService.AutoSyncAppearance, ToggleAutoSyncAppearance)
+            </div>
+
+            @if (!string.IsNullOrEmpty(statusMessage))
             {
-                <div class="sync-muted-text">No pinned apps yet on this device.</div>
+                <div class="cf-sync-info-card mt-3">@statusMessage</div>
             }
-        }
+        </section>
 
-        @if (!string.IsNullOrEmpty(statusMessage))
-        {
-            <div class="cf-sync-info-card mt-3">@statusMessage</div>
-        }
-
-        @* Sync debug log (MAUI + WASM) *@
-        <div class="sync-debug-panel mt-4">
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-                <h3 style="margin:0;font-size:1.05rem;">Sync debug log</h3>
+        @* ── Panel 4: Debug log ───────────────────────────────────────── *@
+        <section class="sync-panel sync-panel--debug">
+            <div class="sync-panel-header">
+                <h3 class="sync-panel-title">Sync debug log</h3>
                 <label class="sync-auto-sync-label">
                     <input type="checkbox" checked="@_syncDebugEnabled" @onchange="ToggleSyncDebug" />
                     Write log file
@@ -388,7 +463,7 @@
                     @(_syncDebugCopied ? "Copied" : "Copy")
                 </button>
             </div>
-            <p class="sync-desc-text mb-1 mt-1">
+            <p class="sync-desc-text sync-panel-lead">
                 Live ring buffer of hub / WebRTC / browser sync events.
                 @if (!string.IsNullOrEmpty(_syncLogFilePath))
                 {
@@ -400,11 +475,11 @@
                 }
             </p>
             <pre class="sync-debug-log">@(_syncDebugText.Length == 0 ? "(no events yet — enable targets, then Sync All on bookmarks)" : _syncDebugText)</pre>
-        </div>
+        </section>
 
         @if (ShowBackToChat)
         {
-            <div class="mt-3 d-flex gap-2 align-items-center">
+            <div class="sync-back-to-chat-row">
                 <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
             </div>
         }
@@ -426,6 +501,33 @@
     private string? statusMessage;
     private bool isRefreshing;
     private bool isBulkSyncing;
+
+    private bool HasSyncTargets => SyncService.GetEffectiveSyncTargetDeviceIds().Any();
+
+    private RenderFragment SettingsSection(
+        string title,
+        string category,
+        bool autoSync,
+        Func<ChangeEventArgs, Task> onToggle) => __builder =>
+    {
+        <div class="sync-category-row">
+            <div class="sync-section-header">
+                <h4 class="sync-category-title">@title</h4>
+                @if (!autoSync)
+                {
+                    <button @onclick="() => SyncSettingsCategory(category)"
+                            class="btn btn-outline-primary btn-sm"
+                            disabled="@(!HasSyncTargets || isBulkSyncing)">
+                        @(isBulkSyncing ? "Syncing…" : "Sync")
+                    </button>
+                }
+                <label class="sync-auto-sync-label ms-auto">
+                    <input type="checkbox" checked="@autoSync" @onchange="onToggle" />
+                    Auto sync
+                </label>
+            </div>
+        </div>
+    };
 
     private Action? _syncChangedHandler, _authChangedHandler, _conversationsChangedHandler, _notesChangedHandler;
     private Action? _bookmarksChangedHandler, _appsChangedHandler, _syncDebugHandler;
@@ -476,7 +578,7 @@
         {
             await SyncService.EnsureConnectedAndRegisteredAsync();
             devices = SyncService.Devices.ToList();
-            selectedTargetDeviceIds = SyncService.SyncTargetDeviceIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            selectedTargetDeviceIds = SyncService.GetEffectiveSyncTargetDeviceIds().ToHashSet(StringComparer.OrdinalIgnoreCase);
             newDeviceName = SyncService.MyDeviceName;
         }
     }
@@ -521,25 +623,61 @@
 
     private async Task ToggleTarget(string deviceId, ChangeEventArgs e)
     {
+        if (SyncService.SyncToAllDevices) return;
         if (e.Value is bool b && b) selectedTargetDeviceIds.Add(deviceId); else selectedTargetDeviceIds.Remove(deviceId);
         await SyncService.SetSyncTargetDevicesAsync(selectedTargetDeviceIds); StateHasChanged();
+    }
+
+    private async Task ToggleSyncToAll(ChangeEventArgs e)
+    {
+        var enabled = e.Value is bool b && b;
+        await SyncService.SetSyncToAllDevicesAsync(enabled);
+        selectedTargetDeviceIds = SyncService.GetEffectiveSyncTargetDeviceIds().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        StateHasChanged();
     }
 
     private async Task ToggleAutoSyncChat(ChangeEventArgs e) { var enabled = e.Value is bool b2 && b2; await SyncService.SetAutoSyncChatHistoryAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncNotes(ChangeEventArgs e) { var enabled = e.Value is bool b3 && b3; await SyncService.SetAutoSyncNotesAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncBookmarks(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncBookmarksAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncApps(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncInstalledAppsAsync(enabled); StateHasChanged(); }
+    private async Task ToggleAutoSyncLocalAi(ChangeEventArgs e) { await SyncService.SetAutoSyncLocalAiAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncLemonade(ChangeEventArgs e) { await SyncService.SetAutoSyncLemonadeAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncCloudProviders(ChangeEventArgs e) { await SyncService.SetAutoSyncCloudProvidersAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncHomeAssistant(ChangeEventArgs e) { await SyncService.SetAutoSyncHomeAssistantAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncTools(ChangeEventArgs e) { await SyncService.SetAutoSyncToolsAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncSystemPrompt(ChangeEventArgs e) { await SyncService.SetAutoSyncSystemPromptAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncProfile(ChangeEventArgs e) { await SyncService.SetAutoSyncProfileAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncMemories(ChangeEventArgs e) { await SyncService.SetAutoSyncMemoriesAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncAppearance(ChangeEventArgs e) { await SyncService.SetAutoSyncAppearanceAsync(e.Value is bool b && b); StateHasChanged(); }
 
-    private async Task SyncAllConversations()
+    private IReadOnlyCollection<string> CurrentTargets() => SyncService.GetEffectiveSyncTargetDeviceIds();
+
+    private async Task SyncSettingsCategory(string category)
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         isBulkSyncing = true; StateHasChanged();
         try
         {
             await SyncService.EnsureConnectedAndRegisteredAsync();
             if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
-            var queued = await SyncService.SyncAllConversationsToDevicesAsync(selectedTargetDeviceIds);
-            var targetNames = devices.Where(d => selectedTargetDeviceIds.Contains(d.DeviceId)).Select(d => d.Name).ToList();
+            var queued = await SyncService.SyncSettingsCategoryToDevicesAsync(category, targets);
+            statusMessage = $"Queued {SettingsSyncCategory.DisplayName(category)} settings sync to {queued} device(s).";
+        }
+        finally { isBulkSyncing = false; StateHasChanged(); }
+    }
+
+    private async Task SyncAllConversations()
+    {
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        isBulkSyncing = true; StateHasChanged();
+        try
+        {
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+            if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
+            var queued = await SyncService.SyncAllConversationsToDevicesAsync(targets);
+            var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
             statusMessage = $"Checking {queued} device(s) for conversations that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
         }
         finally { isBulkSyncing = false; StateHasChanged(); }
@@ -547,14 +685,15 @@
 
     private async Task SyncAllNotes()
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         isBulkSyncing = true; StateHasChanged();
         try
         {
             await SyncService.EnsureConnectedAndRegisteredAsync();
             if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
-            var queued = await SyncService.SyncAllNotesToDevicesAsync(selectedTargetDeviceIds);
-            var targetNames = devices.Where(d => selectedTargetDeviceIds.Contains(d.DeviceId)).Select(d => d.Name).ToList();
+            var queued = await SyncService.SyncAllNotesToDevicesAsync(targets);
+            var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
             statusMessage = $"Checking {queued} device(s) for notes that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
         }
         finally { isBulkSyncing = false; StateHasChanged(); }
@@ -566,7 +705,7 @@
     /// </summary>
     private List<string> ResolveBrowserSyncTargets()
     {
-        var selected = selectedTargetDeviceIds.ToList();
+        var selected = CurrentTargets().ToList();
         var capable = selected
             .Where(id => devices.Any(d =>
                 string.Equals(d.DeviceId, id, StringComparison.OrdinalIgnoreCase) && d.SupportsBrowserSync))
@@ -576,7 +715,7 @@
 
     private async Task SyncAllBookmarks()
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        if (!HasSyncTargets) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         isBulkSyncing = true; StateHasChanged();
         try
         {
@@ -598,7 +737,7 @@
 
     private async Task SyncAllInstalledApps()
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        if (!HasSyncTargets) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         isBulkSyncing = true; StateHasChanged();
         try
         {
@@ -620,7 +759,7 @@
 
     private async Task SyncBookmark(BrowserBookmark bm)
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        if (!HasSyncTargets) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         await SyncService.EnsureConnectedAndRegisteredAsync();
         var folder = BrowserStore.GetFolders().FirstOrDefault(f => f.Id == bm.FolderId);
         var targets = ResolveBrowserSyncTargets();
@@ -636,7 +775,7 @@
 
     private async Task SyncInstalledApp(SidebarApp app)
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        if (!HasSyncTargets) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
         await SyncService.EnsureConnectedAndRegisteredAsync();
         foreach (var targetId in ResolveBrowserSyncTargets())
             await SyncService.StartWebRtcSidebarAppSyncAsync(targetId, app);
@@ -663,12 +802,13 @@
 
     private async Task SyncNote(LocalNote note)
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
-        var tds = devices.Where(d => selectedTargetDeviceIds.Contains(d.DeviceId)).ToList();
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        var tds = devices.Where(d => targets.Contains(d.DeviceId)).ToList();
         await SyncService.EnsureConnectedAndRegisteredAsync();
         if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; StateHasChanged(); return; }
         var entries = await NoteStore.LoadNoteAsync(note.Id);
-        foreach (var tid in selectedTargetDeviceIds) await SyncService.StartWebRtcNoteSyncAsync(tid, note.Id, note.Title, entries);
+        foreach (var tid in targets) await SyncService.StartWebRtcNoteSyncAsync(tid, note.Id, note.Title, entries);
         var tNames = tds.Select(d => d.Name).ToList();
         var serialized = System.Text.Json.JsonSerializer.Serialize(entries);
         statusMessage = $"Initiated WebRTC DataChannel sync for note \"{note.Title}\" ({entries.Count} entries, {System.Text.Encoding.UTF8.GetByteCount(serialized)} bytes) to: {string.Join(", ", tNames)}. Waiting for peer acknowledgement...";
@@ -677,12 +817,13 @@
 
     private async Task SyncConversation(LocalConvo convo)
     {
-        if (!selectedTargetDeviceIds.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
-        var tds = devices.Where(d => selectedTargetDeviceIds.Contains(d.DeviceId)).ToList();
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        var tds = devices.Where(d => targets.Contains(d.DeviceId)).ToList();
         await SyncService.EnsureConnectedAndRegisteredAsync();
         if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; StateHasChanged(); return; }
         var msgs = await ConversationStore.LoadConversationAsync(convo.Id);
-        foreach (var tid in selectedTargetDeviceIds) await SyncService.StartWebRtcSyncAsync(tid, convo.Id, msgs);
+        foreach (var tid in targets) await SyncService.StartWebRtcSyncAsync(tid, convo.Id, msgs);
         var tNames = tds.Select(d => d.Name).ToList();
         var serialized = System.Text.Json.JsonSerializer.Serialize(msgs);
         statusMessage = $"Initiated WebRTC DataChannel sync for \"{convo.Title}\" ({msgs.Count} messages, {System.Text.Encoding.UTF8.GetByteCount(serialized)} bytes) to: {string.Join(", ", tNames)}. Waiting for peer acknowledgement...";

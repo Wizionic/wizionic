@@ -12,6 +12,7 @@ public sealed class KnownDeviceRecord
     public bool CanRelayAi { get; set; }
     public int AiModelCount { get; set; }
     public bool SupportsBrowserSync { get; set; }
+    public bool IsNativeApp { get; set; }
 }
 
 /// <summary>
@@ -51,7 +52,8 @@ public static class DeviceListMerger
                     IsOnline: false,
                     k.CanRelayAi,
                     k.AiModelCount,
-                    k.SupportsBrowserSync);
+                    k.SupportsBrowserSync,
+                    k.IsNativeApp);
             }
         }
 
@@ -110,7 +112,10 @@ public static class DeviceListMerger
                             : Math.Max(d.AiModelCount, prev.AiModelCount),
                         SupportsBrowserSync = d.IsOnline
                             ? d.SupportsBrowserSync
-                            : (d.SupportsBrowserSync || prev.SupportsBrowserSync)
+                            : (d.SupportsBrowserSync || prev.SupportsBrowserSync),
+                        IsNativeApp = d.IsOnline
+                            ? d.IsNativeApp
+                            : (d.IsNativeApp || prev.IsNativeApp)
                     };
                 }
                 else
@@ -122,7 +127,8 @@ public static class DeviceListMerger
                         LastActiveUtc = d.LastActiveUtc,
                         CanRelayAi = d.CanRelayAi,
                         AiModelCount = d.AiModelCount,
-                        SupportsBrowserSync = d.SupportsBrowserSync
+                        SupportsBrowserSync = d.SupportsBrowserSync,
+                        IsNativeApp = d.IsNativeApp
                     };
                 }
             }

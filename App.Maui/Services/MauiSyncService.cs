@@ -28,6 +28,16 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string AutoSyncNotesKey = "app-auto-sync-notes";
     private const string AutoSyncBookmarksKey = "app-auto-sync-bookmarks";
     private const string AutoSyncAppsKey = "app-auto-sync-apps";
+    private const string SyncToAllDevicesKey = "app-sync-to-all-devices";
+    private const string AutoSyncLocalAiKey = "app-auto-sync-local-ai";
+    private const string AutoSyncLemonadeKey = "app-auto-sync-lemonade";
+    private const string AutoSyncCloudProvidersKey = "app-auto-sync-cloud-providers";
+    private const string AutoSyncHomeAssistantKey = "app-auto-sync-home-assistant";
+    private const string AutoSyncToolsKey = "app-auto-sync-tools";
+    private const string AutoSyncSystemPromptKey = "app-auto-sync-system-prompt";
+    private const string AutoSyncProfileKey = "app-auto-sync-profile";
+    private const string AutoSyncMemoriesKey = "app-auto-sync-memories";
+    private const string AutoSyncAppearanceKey = "app-auto-sync-appearance";
 
     private readonly MauiAuthCookieStore _cookieStore;
     private readonly SqliteSettingsDatabase _settings;
@@ -39,6 +49,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private readonly IKeyStore _keyStore;
     private readonly IBrowserStore _browserStore;
     private readonly IBrowserSidebarStore _sidebarStore;
+    private readonly ISettingsSyncStore _settingsSync;
     private readonly ChatModelCatalogService _modelCatalog;
     private readonly ChatCompletionService _chatCompletion;
     private readonly AiProxyRelay _aiProxy;
@@ -64,10 +75,20 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public bool IsAiProxyConnected => _aiProxy.IsConnected;
     public string? AiProxyError => _aiProxy.Error;
 
-    public bool AutoSyncChatHistory { get; private set; }
-    public bool AutoSyncNotes { get; private set; }
-    public bool AutoSyncBookmarks { get; private set; }
-    public bool AutoSyncInstalledApps { get; private set; }
+    public bool SyncToAllDevices { get; private set; } = true;
+    public bool AutoSyncChatHistory { get; private set; } = true;
+    public bool AutoSyncNotes { get; private set; } = true;
+    public bool AutoSyncBookmarks { get; private set; } = true;
+    public bool AutoSyncInstalledApps { get; private set; } = true;
+    public bool AutoSyncLocalAi { get; private set; } = true;
+    public bool AutoSyncLemonade { get; private set; } = true;
+    public bool AutoSyncCloudProviders { get; private set; } = true;
+    public bool AutoSyncHomeAssistant { get; private set; } = true;
+    public bool AutoSyncTools { get; private set; } = true;
+    public bool AutoSyncSystemPrompt { get; private set; } = true;
+    public bool AutoSyncProfile { get; private set; } = true;
+    public bool AutoSyncMemories { get; private set; } = true;
+    public bool AutoSyncAppearance { get; private set; } = true;
     public IReadOnlyCollection<string> SyncTargetDeviceIds => _syncTargetDeviceIds;
 
     public event Action? OnChanged;
@@ -75,6 +96,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public event Action? OnNotesChanged;
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
+    public event Action? OnSettingsChanged;
     public event Action<string, string, string>? OnSyncPayloadReceived;
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;
@@ -91,6 +113,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         IKeyStore keyStore,
         IBrowserStore browserStore,
         IBrowserSidebarStore sidebarStore,
+        ISettingsSyncStore settingsSync,
         ChatModelCatalogService modelCatalog,
         ChatCompletionService chatCompletion)
     {
@@ -104,6 +127,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _keyStore = keyStore;
         _browserStore = browserStore;
         _sidebarStore = sidebarStore;
+        _settingsSync = settingsSync;
         _modelCatalog = modelCatalog;
         _chatCompletion = chatCompletion;
 
@@ -365,6 +389,49 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinatorWired();
     }
 
+    public async Task SetSyncToAllDevicesAsync(bool enabled)
+    {
+        SyncToAllDevices = enabled;
+        await SetUserSettingAsync(SyncToAllDevicesKey, enabled ? "true" : "false");
+        if (enabled)
+        {
+            foreach (var d in GetOtherDevices())
+                _syncTargetDeviceIds.Add(d.DeviceId);
+            await SetUserSettingAsync(
+                SyncTargetDevicesKey,
+                System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
+        }
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    private async Task SetAutoSyncFlagAsync(string key, Action<bool> assign, bool enabled)
+    {
+        assign(enabled);
+        await SetUserSettingAsync(key, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    public Task SetAutoSyncLocalAiAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncLocalAiKey, v => AutoSyncLocalAi = v, enabled);
+    public Task SetAutoSyncLemonadeAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncLemonadeKey, v => AutoSyncLemonade = v, enabled);
+    public Task SetAutoSyncCloudProvidersAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncCloudProvidersKey, v => AutoSyncCloudProviders = v, enabled);
+    public Task SetAutoSyncHomeAssistantAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncHomeAssistantKey, v => AutoSyncHomeAssistant = v, enabled);
+    public Task SetAutoSyncToolsAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncToolsKey, v => AutoSyncTools = v, enabled);
+    public Task SetAutoSyncSystemPromptAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncSystemPromptKey, v => AutoSyncSystemPrompt = v, enabled);
+    public Task SetAutoSyncProfileAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncProfileKey, v => AutoSyncProfile = v, enabled);
+    public Task SetAutoSyncMemoriesAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncMemoriesKey, v => AutoSyncMemories = v, enabled);
+    public Task SetAutoSyncAppearanceAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncAppearanceKey, v => AutoSyncAppearance = v, enabled);
+
     public Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages) =>
         Task.CompletedTask;
 
@@ -482,6 +549,24 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         Coordinator.ScheduleAutoSyncSidebarAppDeleteAfterLocalDelete(appId, deletedAtUtc);
     }
 
+    public void ScheduleAutoSyncSettingsAfterLocalSave(string category)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncSettingsAfterLocalSave(category);
+    }
+
+    public async Task StartWebRtcSettingsSyncAsync(string targetDeviceId, string category)
+    {
+        EnsureCoordinatorWired();
+        await Coordinator.StartWebRtcSettingsSyncAsync(targetDeviceId, category);
+    }
+
+    public async Task<int> SyncSettingsCategoryToDevicesAsync(string category, IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return await Coordinator.SyncSettingsCategoryToDevicesAsync(category, targetDeviceIds);
+    }
+
     public string? GetAiServerDeviceName()
     {
         if (string.IsNullOrEmpty(_aiProxy.AiServerDeviceId)) return null;
@@ -543,6 +628,13 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
     public IEnumerable<SyncDeviceInfo> GetOtherDevices() =>
         Devices.Where(d => !IsSelf(d.DeviceId));
+
+    public IReadOnlyCollection<string> GetEffectiveSyncTargetDeviceIds()
+    {
+        if (SyncToAllDevices)
+            return GetOtherDevices().Select(d => d.DeviceId).ToList();
+        return _syncTargetDeviceIds.ToList();
+    }
 
     public Task OnIceCandidateAsync(string peerId, string candidateJson, CancellationToken ct = default)
     {
@@ -626,12 +718,14 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             () => _hub?.State == HubConnectionState.Connected,
             transportCallbacks: this,
             browserStore: _browserStore,
-            sidebarStore: _sidebarStore);
+            sidebarStore: _sidebarStore,
+            settingsStore: _settingsSync);
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
         _coordinator.OnBookmarksChanged += () => OnBookmarksChanged?.Invoke();
         _coordinator.OnInstalledAppsChanged += () => OnInstalledAppsChanged?.Invoke();
+        _coordinator.OnSettingsChanged += () => OnSettingsChanged?.Invoke();
         _coordinator.OnSyncPayloadReceived += (c, j, f) => OnSyncPayloadReceived?.Invoke(c, j, f);
         _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
         _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => OnNoteSyncPayloadReceived?.Invoke(n, j, f);
@@ -645,7 +739,16 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.AutoSyncNotes = AutoSyncNotes;
         _coordinator.AutoSyncBookmarks = AutoSyncBookmarks;
         _coordinator.AutoSyncInstalledApps = AutoSyncInstalledApps;
-        _coordinator.SyncTargetDeviceIds = _syncTargetDeviceIds;
+        _coordinator.AutoSyncLocalAi = AutoSyncLocalAi;
+        _coordinator.AutoSyncLemonade = AutoSyncLemonade;
+        _coordinator.AutoSyncCloudProviders = AutoSyncCloudProviders;
+        _coordinator.AutoSyncHomeAssistant = AutoSyncHomeAssistant;
+        _coordinator.AutoSyncTools = AutoSyncTools;
+        _coordinator.AutoSyncSystemPrompt = AutoSyncSystemPrompt;
+        _coordinator.AutoSyncProfile = AutoSyncProfile;
+        _coordinator.AutoSyncMemories = AutoSyncMemories;
+        _coordinator.AutoSyncAppearance = AutoSyncAppearance;
+        _coordinator.SyncTargetDeviceIds = GetEffectiveSyncTargetDeviceIds();
         _coordinator.IsSelf = IsSelf;
         _coordinator.IsAuthenticated = () => _auth.IsAuthenticated;
         _coordinator.EnsureConnectedAsync = EnsureConnectedAndRegisteredAsync;
@@ -763,8 +866,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
         try
         {
-            await _hub.InvokeAsync("UpdateBrowserCapabilities", MyDeviceId, true);
-            SyncDebugLog.Hub($"Published SupportsBrowserSync=true for {MyDeviceId}");
+            await _hub.InvokeAsync("UpdateBrowserCapabilities", MyDeviceId, true, true);
+            SyncDebugLog.Hub($"Published SupportsBrowserSync=true IsNativeApp=true for {MyDeviceId}");
         }
         catch (Exception ex)
         {
@@ -802,27 +905,38 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                 }
             }
 
-            AutoSyncChatHistory = string.Equals(
-                await GetUserSettingAsync(AutoSyncChatKey),
-                "true",
-                StringComparison.Ordinal);
-            AutoSyncNotes = string.Equals(
-                await GetUserSettingAsync(AutoSyncNotesKey),
-                "true",
-                StringComparison.Ordinal);
-            AutoSyncBookmarks = string.Equals(
-                await GetUserSettingAsync(AutoSyncBookmarksKey),
-                "true",
-                StringComparison.Ordinal);
-            AutoSyncInstalledApps = string.Equals(
-                await GetUserSettingAsync(AutoSyncAppsKey),
-                "true",
-                StringComparison.Ordinal);
+            SyncToAllDevices = await LoadBoolPrefAsync(SyncToAllDevicesKey, defaultValue: true);
+            AutoSyncChatHistory = await LoadBoolPrefAsync(AutoSyncChatKey, defaultValue: true);
+            AutoSyncNotes = await LoadBoolPrefAsync(AutoSyncNotesKey, defaultValue: true);
+            AutoSyncBookmarks = await LoadBoolPrefAsync(AutoSyncBookmarksKey, defaultValue: true);
+            AutoSyncInstalledApps = await LoadBoolPrefAsync(AutoSyncAppsKey, defaultValue: true);
+            AutoSyncLocalAi = await LoadBoolPrefAsync(AutoSyncLocalAiKey, defaultValue: true);
+            AutoSyncLemonade = await LoadBoolPrefAsync(AutoSyncLemonadeKey, defaultValue: true);
+            AutoSyncCloudProviders = await LoadBoolPrefAsync(AutoSyncCloudProvidersKey, defaultValue: true);
+            AutoSyncHomeAssistant = await LoadBoolPrefAsync(AutoSyncHomeAssistantKey, defaultValue: true);
+            AutoSyncTools = await LoadBoolPrefAsync(AutoSyncToolsKey, defaultValue: true);
+            AutoSyncSystemPrompt = await LoadBoolPrefAsync(AutoSyncSystemPromptKey, defaultValue: true);
+            AutoSyncProfile = await LoadBoolPrefAsync(AutoSyncProfileKey, defaultValue: true);
+            AutoSyncMemories = await LoadBoolPrefAsync(AutoSyncMemoriesKey, defaultValue: true);
+            AutoSyncAppearance = await LoadBoolPrefAsync(AutoSyncAppearanceKey, defaultValue: true);
         }
         catch
         {
             // Ignore preference load errors.
         }
+    }
+
+    /// <summary>Opt-out prefs: missing key defaults to true; only explicit "false" turns off.</summary>
+    private async Task<bool> LoadBoolPrefAsync(string key, bool defaultValue)
+    {
+        var raw = await GetUserSettingAsync(key);
+        if (raw is null)
+            return defaultValue;
+        if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return defaultValue;
     }
 
     private string UserPrefixed(string baseKey) => StorageNamespace.PrefixedKey(_auth, baseKey);
@@ -897,6 +1011,23 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private async Task ApplyDevicesFromServerAsync(IReadOnlyList<SyncDeviceInfo>? serverList)
     {
         _knownDevices = DeviceListMerger.UpsertFromServer(_knownDevices, serverList);
+        if (SyncToAllDevices && serverList != null)
+        {
+            var changed = false;
+            foreach (var d in serverList)
+            {
+                if (IsSelf(d.DeviceId) || string.IsNullOrWhiteSpace(d.DeviceId))
+                    continue;
+                if (_syncTargetDeviceIds.Add(d.DeviceId))
+                    changed = true;
+            }
+            if (changed)
+            {
+                await SetUserSettingAsync(
+                    SyncTargetDevicesKey,
+                    System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
+            }
+        }
         await SaveKnownDevicesAsync();
 
         if (!string.IsNullOrEmpty(AiServerDeviceId) && serverList != null)
