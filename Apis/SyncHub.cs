@@ -1,15 +1,15 @@
-using ChatfishApp.Services;
+using App.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 
-namespace ChatfishApp.Apis;
+namespace App.Apis;
 
 /// <summary>
 /// SignalR hub for WASM client device presence (Phase 1) and future live sync signaling (Phase 2).
 ///
 /// Auth:
-/// - Uses the same "ChatfishAuth" cookie that the WASM client already sends for /api/* calls.
+/// - Uses the same "AppAuth" cookie that the WASM client already sends for /api/* calls.
 /// - Therefore Context.User is populated for connected clients (same as the HTTP endpoints).
 ///
 /// Groups:
@@ -33,7 +33,7 @@ namespace ChatfishApp.Apis;
 ///
 /// The server never stores or sees conversation content for the WASM path.
 /// </summary>
-[Authorize(AuthenticationSchemes = "ChatfishAuth")]
+[Authorize(AuthenticationSchemes = "AppAuth")]
 public class SyncHub : Hub
 {
     private readonly DevicePresenceService _presence;

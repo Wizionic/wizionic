@@ -1,14 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using ChatfishApp.Data;
-using ChatfishApp.Components;
-using ChatfishApp.Services;
+using App.Data;
+using App.Components;
+using App.Services;
 
-using ChatfishApp.Apis;
-using ChatfishApp.Core.Auth;
-using ChatfishApp.Core.Homeserver;
-using ChatfishApp.Core.Storage;
-using ChatfishApp.Core.Sync;
+using App.Apis;
+using App.Core.Auth;
+using App.Core.Homeserver;
+using App.Core.Storage;
+using App.Core.Sync;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -16,7 +16,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
-using ChatfishApp.Shared.Services;
+using App.Shared.Services;
 
 // Windows Service / homeserver: content root must be the published app directory (not System32).
 // For `dotnet run` / `dotnet watch` from the repo, keep the project directory so relative
@@ -33,7 +33,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 // never wipe connection strings or other durable settings.
 // IMPORTANT: only load them when THIS process is the installed Home Server host.
 // If we load them during `dotnet run`/`dotnet watch`, the connection string points at
-// %ProgramData%\Chatfish\Homeserver\data\chatfish.db — which is owned by the Windows
+// %ProgramData%\Wizionic\Homeserver\data\homeserver.db — which is owned by the Windows
 // Service (Administrators) and is often read-only for the interactive user, producing
 // "attempt to write a readonly database" during Migrate(). Production Docker never has
 // this file, so it always uses appsettings + the mounted /app/data volume.
@@ -64,13 +64,13 @@ builder.Services.AddRazorComponents()
 
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-// Ensure SQLite parent directory exists (e.g. "data/chatfish.db" for local/dev).
+// Ensure SQLite parent directory exists (e.g. "data/homeserver.db" for local/dev).
 EnsureSqliteDirectory(connectionString);
 
 // Homeserver / HTTP-only: cookie Secure=Always breaks login on plain http://localhost.
 var homeserverHttpCookies = builder.Configuration.GetValue("Homeserver:AllowHttpCookies", false)
     || homeserverConfigLoaded;
-builder.Services.AddDbContext<ChatfishDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>(options =>
 {
     options.UseSqlite(connectionString);
     // Ignore this in dev so that model changes during active development (e.g. after removing legacy tables)
@@ -139,25 +139,25 @@ builder.Services.AddSingleton<AiProviderProxyService>();
 // Shared state for WASM sidebar toggle (used by WasmTopBar in WasmLayout for /chat etc.)
 // Must be registered here (main app DI) so that server-side rendering of WASM pages (layout + topbar)
 // can provide the service. The Client's DI also registers it for the interactive WASM runtime.
-builder.Services.AddSingleton<ChatfishApp.Client.Services.SidebarState>();
-builder.Services.AddSingleton<ChatfishApp.Core.UI.ISidebarState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.SidebarState>());
-builder.Services.AddSingleton<ChatfishApp.Client.Services.BrowserPanelState>();
-builder.Services.AddSingleton<ChatfishApp.Core.UI.IBrowserPanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.BrowserPanelState>());
-builder.Services.AddSingleton<ChatfishApp.Client.Services.ChatPanelState>();
-builder.Services.AddSingleton<ChatfishApp.Core.UI.IChatPanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.ChatPanelState>());
-builder.Services.AddSingleton<ChatfishApp.Client.Services.NotesPanelState>();
-builder.Services.AddSingleton<ChatfishApp.Core.UI.INotesPanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.NotesPanelState>());
-builder.Services.AddSingleton<ChatfishApp.Shared.Services.NavLayoutService>();
-builder.Services.AddSingleton<ChatfishApp.Core.UI.INavLayoutState>(sp => sp.GetRequiredService<ChatfishApp.Shared.Services.NavLayoutService>());
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserAgentService, ChatfishApp.Client.Services.NullBrowserAgentService>();
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserTabManager, ChatfishApp.Client.Services.NullBrowserTabManager>();
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserOverlaySync, ChatfishApp.Client.Services.NullBrowserOverlaySync>();
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserStore, ChatfishApp.Client.Services.NullBrowserStore>();
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserSidebarStore, ChatfishApp.Client.Services.NullBrowserSidebarStore>();
-builder.Services.AddSingleton<ChatfishApp.Client.Services.BrowserSidePanelState>();
-builder.Services.AddSingleton<ChatfishApp.Core.UI.IBrowserSidePanelState>(sp => sp.GetRequiredService<ChatfishApp.Client.Services.BrowserSidePanelState>());
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IBrowserSideAgentService, ChatfishApp.Client.Services.NullBrowserSideAgentService>();
-builder.Services.AddSingleton<ChatfishApp.Core.Browser.IPwaDetector, ChatfishApp.Client.Services.NullPwaDetector>();
+builder.Services.AddSingleton<App.Client.Services.SidebarState>();
+builder.Services.AddSingleton<App.Core.UI.ISidebarState>(sp => sp.GetRequiredService<App.Client.Services.SidebarState>());
+builder.Services.AddSingleton<App.Client.Services.BrowserPanelState>();
+builder.Services.AddSingleton<App.Core.UI.IBrowserPanelState>(sp => sp.GetRequiredService<App.Client.Services.BrowserPanelState>());
+builder.Services.AddSingleton<App.Client.Services.ChatPanelState>();
+builder.Services.AddSingleton<App.Core.UI.IChatPanelState>(sp => sp.GetRequiredService<App.Client.Services.ChatPanelState>());
+builder.Services.AddSingleton<App.Client.Services.NotesPanelState>();
+builder.Services.AddSingleton<App.Core.UI.INotesPanelState>(sp => sp.GetRequiredService<App.Client.Services.NotesPanelState>());
+builder.Services.AddSingleton<App.Shared.Services.NavLayoutService>();
+builder.Services.AddSingleton<App.Core.UI.INavLayoutState>(sp => sp.GetRequiredService<App.Shared.Services.NavLayoutService>());
+builder.Services.AddSingleton<App.Core.Browser.IBrowserAgentService, App.Client.Services.NullBrowserAgentService>();
+builder.Services.AddSingleton<App.Core.Browser.IBrowserTabManager, App.Client.Services.NullBrowserTabManager>();
+builder.Services.AddSingleton<App.Core.Browser.IBrowserOverlaySync, App.Client.Services.NullBrowserOverlaySync>();
+builder.Services.AddSingleton<App.Core.Browser.IBrowserStore, App.Client.Services.NullBrowserStore>();
+builder.Services.AddSingleton<App.Core.Browser.IBrowserSidebarStore, App.Client.Services.NullBrowserSidebarStore>();
+builder.Services.AddSingleton<App.Client.Services.BrowserSidePanelState>();
+builder.Services.AddSingleton<App.Core.UI.IBrowserSidePanelState>(sp => sp.GetRequiredService<App.Client.Services.BrowserSidePanelState>());
+builder.Services.AddSingleton<App.Core.Browser.IBrowserSideAgentService, App.Client.Services.NullBrowserSideAgentService>();
+builder.Services.AddSingleton<App.Core.Browser.IPwaDetector, App.Client.Services.NullPwaDetector>();
 
 // HttpClient + shared auth/sync stubs for server-side rendering of WASM layout/components (AppLayout, SyncConnectionBootstrap, etc.).
 // The interactive WASM runtime (Client/Program.cs) provides its own scoped services when the page becomes interactive.
@@ -178,7 +178,7 @@ builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyn
 // NOT wrapped with Data Protection — see LocalEncryptionKeyService.
 // Forwarded headers so that when deployed behind a TLS-terminating reverse proxy / load balancer
 // (Railway, Render, Cloudflare, nginx, etc.) we correctly see Scheme=https, the real Host, and client IP.
-// This fixes mixed-content redirect URLs (http://chatfish.me?ReturnUrl=...) for auth challenges on /api/*
+// This fixes mixed-content redirect URLs (http://wizionic.com?ReturnUrl=...) for auth challenges on /api/*
 // and ensures magic links and cookies are generated with the proper https scheme.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -188,34 +188,34 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-// Persist DataProtection keys *in the SQLite database* (via the existing ChatfishDbContext).
+// Persist DataProtection keys *in the SQLite database* (via the existing AppDbContext).
 // This is the user's explicit preference: avoid any filesystem/volume concerns for keys at the hosting provider.
 // Auth cookies (and the per-user LocalEncryptionKey protector) will survive restarts, deploys, and sleep/wake
-// as long as chatfish.db itself persists. The DP keys table is small.
+// as long as homeserver.db itself persists. The DP keys table is small.
 builder.Services.AddDataProtection()
-    .PersistKeysToDbContext<ChatfishDbContext>()
-    .SetApplicationName("Chatfish");
+    .PersistKeysToDbContext<AppDbContext>()
+    .SetApplicationName("Wizionic");
 builder.Services.AddSingleton<KeyProtectionService>();
-builder.Services.AddSingleton<ChatfishApp.Core.Update.IUpdateService>(_ => ChatfishApp.Shared.Services.NullUpdateService.Instance);
-builder.Services.AddSingleton<ChatfishApp.Core.Homeserver.IHomeserverInstallService>(
-    _ => ChatfishApp.Shared.Services.NullHomeserverInstallService.Instance);
-builder.Services.AddSingleton<ChatfishApp.Core.Configuration.IChatfishServerEndpoint>(
-    _ => ChatfishApp.Shared.Services.NullChatfishServerEndpoint.Instance);
-builder.Services.AddSingleton<ChatfishApp.Core.Setup.ISetupWizardHost>(
-    _ => ChatfishApp.Shared.Services.NullSetupWizardHost.Instance);
-builder.Services.AddSingleton<ChatfishApp.Core.Lemonade.ILemonadeInstallService>(
-    _ => ChatfishApp.Shared.Services.NullLemonadeInstallService.Instance);
-builder.Services.AddSingleton<ChatfishApp.Core.Ollama.IOllamaInstallService>(
-    _ => ChatfishApp.Shared.Services.NullOllamaInstallService.Instance);
-builder.Services.AddSingleton<ChatfishApp.Core.UI.IUrlEmbedOverlay>(
-    _ => ChatfishApp.Shared.Services.NullUrlEmbedOverlay.Instance);
+builder.Services.AddSingleton<App.Core.Update.IUpdateService>(_ => App.Shared.Services.NullUpdateService.Instance);
+builder.Services.AddSingleton<App.Core.Homeserver.IHomeserverInstallService>(
+    _ => App.Shared.Services.NullHomeserverInstallService.Instance);
+builder.Services.AddSingleton<App.Core.Configuration.IAppServerEndpoint>(
+    _ => App.Shared.Services.NullAppServerEndpoint.Instance);
+builder.Services.AddSingleton<App.Core.Setup.ISetupWizardHost>(
+    _ => App.Shared.Services.NullSetupWizardHost.Instance);
+builder.Services.AddSingleton<App.Core.Lemonade.ILemonadeInstallService>(
+    _ => App.Shared.Services.NullLemonadeInstallService.Instance);
+builder.Services.AddSingleton<App.Core.Ollama.IOllamaInstallService>(
+    _ => App.Shared.Services.NullOllamaInstallService.Instance);
+builder.Services.AddSingleton<App.Core.UI.IUrlEmbedOverlay>(
+    _ => App.Shared.Services.NullUrlEmbedOverlay.Instance);
 // Shared layout (SetupWizard in AppLayout) injects IKeyStore. Real settings live in
 // WASM/MAUI; the host only needs a no-op so SSR DI can construct those components.
-builder.Services.AddSingleton<ChatfishApp.Core.Storage.IKeyStore>(
-    _ => ChatfishApp.Shared.Services.NullKeyStore.Instance);
+builder.Services.AddSingleton<App.Core.Storage.IKeyStore>(
+    _ => App.Shared.Services.NullKeyStore.Instance);
 
-builder.Services.AddAuthentication("ChatfishAuth")
-    .AddCookie("ChatfishAuth", options =>
+builder.Services.AddAuthentication("AppAuth")
+    .AddCookie("AppAuth", options =>
     {
         // Root (/) is now the WASM landing page that handles both "login with email" and
         // "continue without login" (guest/local mode). The cookie middleware therefore
@@ -321,7 +321,7 @@ app.UseForwardedHeaders();
 
     var brevoSection = builder.Configuration.GetSection("Brevo");
     string from = brevoSection["From"] ?? builder.Configuration["Email:From"] ?? "(default)";
-    string senderName = brevoSection["SenderName"] ?? "Chatfish";
+    string senderName = brevoSection["SenderName"] ?? "Wizionic";
 
     bool keyPresent = !string.IsNullOrWhiteSpace(brevoKey);
     int keyLen = brevoKey?.Length ?? 0;
@@ -345,8 +345,8 @@ app.UseAuthorization();
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<ChatfishDbContext>();
-    var dbPath = ResolveSqlitePath(connectionString) ?? Path.GetFullPath("chatfish.db");
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var dbPath = ResolveSqlitePath(connectionString) ?? Path.GetFullPath("homeserver.db");
     try
     {
         db.Database.Migrate();
@@ -357,14 +357,14 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine(
             $"[DB] FATAL: SQLite cannot write to '{dbPath}'. " +
             "If this is a local Home Server DB under ProgramData, it is likely owned by the Windows Service " +
-            "and not writable from `dotnet run`. Dev builds should use appsettings (data/chatfish.db), not the service DB. " +
-            "Do not delete production/homeserver chatfish.db — it holds user login + DataProtection keys.");
+            "and not writable from `dotnet run`. Dev builds should use appsettings (data/homeserver.db), not the service DB. " +
+            "Do not delete production/homeserver homeserver.db — it holds user login + DataProtection keys.");
         throw;
     }
 
     long dbSizeBytes = File.Exists(dbPath) ? new FileInfo(dbPath).Length : -1;
     int dpKeyCount = db.DataProtectionKeys.Count();
-    Console.WriteLine($"[Auth] Persistence: chatfish.db path={dbPath} sizeBytes={dbSizeBytes} dataProtectionKeyCount={dpKeyCount}");
+    Console.WriteLine($"[Auth] Persistence: homeserver.db path={dbPath} sizeBytes={dbSizeBytes} dataProtectionKeyCount={dpKeyCount}");
     if (dpKeyCount == 0)
     {
         Console.WriteLine("[Auth] WARNING: No DataProtection keys in DB. Auth cookies will not survive server restarts until keys are generated.");
@@ -483,7 +483,7 @@ app.MapMethods("/releases/{**path}", new[] { "GET", "HEAD" }, (string path, Http
     return Results.File(safePath, contentType);
 });
 
-// curl -fsSL https://chatfish.me/install.sh | bash
+// curl -fsSL https://wizionic.com/install.sh | bash
 app.MapMethods("/install.sh", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
 {
     var safePath = ResolveReleaseFile(Path.Combine("linux", "install.sh"));
@@ -541,7 +541,7 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
 
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
-    await ctx.SignOutAsync("ChatfishAuth");
+    await ctx.SignOutAsync("AppAuth");
     // Return to the WASM root so the user sees the (now guest) landing page with
     // the option to log in again or continue without an account.
     ctx.Response.Redirect("/");
@@ -553,27 +553,27 @@ app.MapWasmApis();
 app.MapAiProxyApis();
 
 // Live device presence + future WebRTC signaling hub for authenticated WASM clients.
-// The hub itself is marked [Authorize] and relies on the ChatfishAuth cookie
+// The hub itself is marked [Authorize] and relies on the AppAuth cookie
 // (same cookie the WASM client already sends for /api/auth/me etc.).
 // Clients connect from the same origin, so cookies are sent automatically.
-app.MapHub<ChatfishApp.Apis.SyncHub>("/sync-hub");
+app.MapHub<App.Apis.SyncHub>("/sync-hub");
 
-app.MapRazorComponents<App>()
+app.MapRazorComponents<AppRoot>()
     .AddInteractiveServerRenderMode()
     .AddInteractiveWebAssemblyRenderMode()
-    .AddAdditionalAssemblies(typeof(ChatfishApp.Client.WasmMarker).Assembly);
+    .AddAdditionalAssemblies(typeof(App.Client.WasmMarker).Assembly);
 
 
 app.Run();
 
 /// <summary>
 /// True when this process is the installed Home Server host (published under
-/// HomeserverPaths.AppDirectory, or CHATFISH_HOMESERVER=1/true is set).
+/// HomeserverPaths.AppDirectory, or APP_HOMESERVER=1/true is set).
 /// False for normal Docker production and for `dotnet run` / `dotnet watch` from source.
 /// </summary>
 static bool IsRunningAsHomeserverHost()
 {
-    var flag = Environment.GetEnvironmentVariable("CHATFISH_HOMESERVER");
+    var flag = Environment.GetEnvironmentVariable("APP_HOMESERVER");
     if (string.Equals(flag, "1", StringComparison.OrdinalIgnoreCase)
         || string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase)
         || string.Equals(flag, "yes", StringComparison.OrdinalIgnoreCase))
@@ -612,7 +612,7 @@ static string ResolveContentRoot(bool homeserverHost)
     try
     {
         var cwd = Directory.GetCurrentDirectory();
-        if (File.Exists(Path.Combine(cwd, "ChatfishApp.csproj"))
+        if (File.Exists(Path.Combine(cwd, "App.csproj"))
             || Directory.Exists(Path.Combine(cwd, "wwwroot")))
         {
             return cwd;
@@ -660,7 +660,7 @@ static string? ResolveSqlitePath(string? connectionString)
     if (string.IsNullOrWhiteSpace(connectionString))
         return null;
 
-    // "Data Source=data/chatfish.db" or "Data Source=./data/chatfish.db"
+    // "Data Source=data/homeserver.db" or "Data Source=./data/homeserver.db"
     const string prefix = "Data Source=";
     var idx = connectionString.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
     if (idx < 0)

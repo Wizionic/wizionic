@@ -1,4 +1,4 @@
-namespace ChatfishApp.Data;
+namespace App.Data;
 
 public class UserProviderKey
 {

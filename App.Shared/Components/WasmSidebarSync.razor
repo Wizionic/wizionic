@@ -1,0 +1,99 @@
+@implements IAsyncDisposable
+@using App.Core.Auth
+@using App.Core.UI
+@using App.Shared.Services
+@using Microsoft.JSInterop
+@inject ISidebarState SidebarState
+@inject IAuthService Auth
+@inject IJSRuntime JS
+
+@code {
+    private DotNetObjectReference<WasmSidebarSync>? _dotNetRef;
+    private bool _initialized;
+    private Action? _authChangedHandler;
+
+    protected override void OnInitialized()
+    {
+        _authChangedHandler = () => _ = OnAuthChangedAsync();
+        Auth.OnChanged += _authChangedHandler;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || AppEnvironment.IsMaui || _initialized)
+            return;
+
+        _initialized = true;
+
+        try
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("appSidebar.registerListener", _dotNetRef, GetType().Name);
+            await ReloadSidebarPreferenceAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSidebarSync] init failed: {ex.Message}");
+        }
+    }
+
+    private async Task OnAuthChangedAsync()
+    {
+        if (AppEnvironment.IsMaui)
+            return;
+
+        try
+        {
+            await ReloadSidebarPreferenceAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmSidebarSync] auth reload failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReloadSidebarPreferenceAsync()
+    {
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+
+        var collapsedForMobile = await JS.InvokeAsync<bool>("appSidebar.initForViewport");
+        var collapsed = collapsedForMobile
+            ? true
+            : await JS.InvokeAsync<bool>("appSidebar.getCollapsed");
+
+        SidebarState.SetCollapsedSilently(collapsed);
+        await JS.InvokeVoidAsync("appSidebar.setCollapsed", collapsed, new { source = "WasmSidebarSync.reload", skipNotify = true });
+    }
+
+    [JSInvokable]
+    public void OnSidebarCollapsedChanged(bool collapsed)
+    {
+        if (SidebarState.IsCollapsed == collapsed)
+            return;
+
+        SidebarState.SetCollapsedSilently(collapsed);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_authChangedHandler is not null)
+            Auth.OnChanged -= _authChangedHandler;
+
+        if (_dotNetRef is null)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("appSidebar.unregisterListener", _dotNetRef, GetType().Name);
+        }
+        catch
+        {
+            // Circuit may already be torn down.
+        }
+
+        _dotNetRef.Dispose();
+        _dotNetRef = null;
+    }
+}

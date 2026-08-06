@@ -1,0 +1,561 @@
+@using App.Core.Homeserver
+@using App.Core.Lemonade
+@using App.Core.Ollama
+@using App.Core.Setup
+@using App.Core.Storage
+@using App.Shared.Services
+@inject ISetupWizardHost Wizard
+@inject IHomeserverInstallService Homeserver
+@inject ILemonadeInstallService Lemonade
+@inject IOllamaInstallService Ollama
+@inject IKeyStore KeyStore
+@inject HttpClient Http
+@implements IDisposable
+
+@if (Wizard.IsVisible && AppEnvironment.IsMaui)
+{
+    <div class="setup-wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="setup-wizard-title">
+        <div class="setup-wizard-panel">
+            <div class="setup-wizard-header">
+                <h2 id="setup-wizard-title">Wizionic setup</h2>
+                <p class="setup-wizard-sub">Optional: turn this PC into a Home Server and/or local AI. You can run this wizard again anytime from Settings.</p>
+                <div class="setup-wizard-steps">
+                    @for (var i = 0; i < StepLabels.Length; i++)
+                    {
+                        <span class="setup-step-dot @(i == step ? "is-active" : "") @(i < step ? "is-done" : "")">@(i + 1). @StepLabels[i]</span>
+                    }
+                </div>
+            </div>
+
+            <div class="setup-wizard-body">
+                @if (step == 0)
+                {
+                    <h3>Welcome</h3>
+                    <p>
+                        The Wizionic desktop app is ready. You can optionally install:
+                    </p>
+                    <ul>
+                        <li><strong>Home Server</strong> — login website and auth server on this PC (port 5150)</li>
+                        <li><strong>Lemonade</strong> (recommended) — local AI with multimodal / advanced features (port 13305)</li>
+                        <li><strong>Ollama</strong> — popular local model runner (port 11434)</li>
+                    </ul>
+                    <p style="color: var(--color-text-muted); font-size: 0.9em;">
+                        You can install one or both AI backends. Admin account setup is not part of this wizard yet.
+                    </p>
+                }
+                else if (step == 1)
+                {
+                    <h3>Home Server (login + website)</h3>
+                    @if (!Homeserver.IsSupported)
+                    {
+                        <p>Home Server install is only available on Windows and Linux desktop right now.</p>
+                    }
+                    else
+                    {
+                        var hs = Homeserver.GetState();
+                        @if (hs.IsInstalled)
+                        {
+                            <p class="setup-ok">Already installed: <strong>@Homeserver.GetServiceStatusText()</strong></p>
+                            <p>Login server will use <code>http://localhost:5150</code> if you continue with a reinstall/update from Settings.</p>
+                        }
+                        else
+                        {
+                            <p>
+                                Install the Wizionic Home Server on this computer? It runs as a
+                                system service when possible (Windows Service / systemd) and keeps logins in a
+                                separate SQLite database (not overwritten by updates).
+                            </p>
+                            <label class="setup-check">
+                                <input type="checkbox" @bind="wantHomeserver" disabled="@busy" />
+                                Yes, install Home Server and set login server to localhost:5150
+                            </label>
+                        }
+                    }
+                    @if (!string.IsNullOrEmpty(homeserverMessage))
+                    {
+                        <div class="setup-msg @(homeserverOk ? "is-ok" : "is-err")">@homeserverMessage</div>
+                    }
+                }
+                else if (step == 2)
+                {
+                    <h3>Local AI</h3>
+                    <p style="font-size: 0.9em; color: var(--color-text-muted); margin-top: 0;">
+                        Install one or both. You can change settings later on the 🍋 Lemonade and 🦙 Ollama pages.
+                    </p>
+
+                    <!-- Lemonade -->
+                    <div class="setup-ai-block">
+                        <div class="setup-ai-heading">
+                            <strong>🍋 Lemonade</strong>
+                            <span class="setup-recommended">Recommended</span>
+                        </div>
+                        <p class="setup-ai-note">
+                            Best for advanced features (vision, image, speech, multimodal tools). Default port <code>13305</code>.
+                        </p>
+                        @if (!Lemonade.IsSupported)
+                        {
+                            <p>Lemonade install is only available on Windows and Linux desktop right now.</p>
+                        }
+                        else
+                        {
+                            @if (Lemonade.IsInstalled)
+                            {
+                                <p class="setup-ok">
+                                    Already installed — the installer will <strong>not</strong> reinstall Lemonade.
+                                </p>
+                                <p style="font-size: 0.85em; color: var(--color-text-muted);">@Lemonade.GetInstalledStatusDescription()</p>
+                            }
+                            <label class="setup-check">
+                                <input type="checkbox" @bind="wantLemonade" disabled="@busy" />
+                                @(Lemonade.IsInstalled
+                                    ? "Configure Wizionic to use the existing Lemonade server"
+                                    : "Install Lemonade and configure Wizionic to use it")
+                            </label>
+                            @if (wantLemonade)
+                            {
+                                <p style="margin-top: 0.5rem; font-size: 0.9em;">Pull models (optional; each has a timeout):</p>
+                                <div class="setup-model-list">
+                                    @foreach (var m in Lemonade.AvailableInstallModels)
+                                    {
+                                        <label class="setup-check">
+                                            <input type="checkbox"
+                                                   checked="@selectedLemonadeModels.Contains(m.Id)"
+                                                   @onchange="e => ToggleLemonadeModel(m.Id, e)"
+                                                   disabled="@busy" />
+                                            <span>
+                                                <strong>@m.DisplayName</strong>
+                                                <span class="setup-model-desc">@m.Description</span>
+                                            </span>
+                                        </label>
+                                    }
+                                </div>
+                            }
+                        }
+                        @if (!string.IsNullOrEmpty(lemonadeMessage))
+                        {
+                            <div class="setup-msg @(lemonadeOk ? "is-ok" : "is-err")">@lemonadeMessage</div>
+                        }
+                    </div>
+
+                    <!-- Ollama -->
+                    <div class="setup-ai-block">
+                        <div class="setup-ai-heading">
+                            <strong>🦙 Ollama</strong>
+                        </div>
+                        <p class="setup-ai-note">
+                            Simple local model runner (chat-focused). Default port <code>11434</code>.
+                            No in-app web UI embed (Ollama’s UI port is not fixed).
+                        </p>
+                        @if (!Ollama.IsSupported)
+                        {
+                            <p>Ollama install is only available on Windows and Linux desktop right now.</p>
+                        }
+                        else
+                        {
+                            @if (Ollama.IsInstalled)
+                            {
+                                <p class="setup-ok">
+                                    Already installed — installer will <strong>not</strong> re-run.
+                                </p>
+                                <p style="font-size: 0.85em; color: var(--color-text-muted);">@Ollama.GetInstalledStatusDescription()</p>
+                            }
+                            <label class="setup-check">
+                                <input type="checkbox" @bind="wantOllama" disabled="@busy" />
+                                @(Ollama.IsInstalled
+                                    ? "Configure Wizionic to use the existing Ollama server"
+                                    : "Install Ollama and configure Wizionic to use it")
+                            </label>
+                            @if (wantOllama)
+                            {
+                                <p style="margin-top: 0.5rem; font-size: 0.9em;">Pull models (optional; each has a timeout):</p>
+                                <div class="setup-model-list">
+                                    @foreach (var m in Ollama.AvailableInstallModels)
+                                    {
+                                        <label class="setup-check">
+                                            <input type="checkbox"
+                                                   checked="@selectedOllamaModels.Contains(m.Id)"
+                                                   @onchange="e => ToggleOllamaModel(m.Id, e)"
+                                                   disabled="@busy" />
+                                            <span>
+                                                <strong>@m.DisplayName</strong>
+                                                <span class="setup-model-desc">@m.Description</span>
+                                            </span>
+                                        </label>
+                                    }
+                                </div>
+                            }
+                        }
+                        @if (!string.IsNullOrEmpty(ollamaMessage))
+                        {
+                            <div class="setup-msg @(ollamaOk ? "is-ok" : "is-err")">@ollamaMessage</div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <h3>You're set</h3>
+                    <ul>
+                        <li>Login server: use <strong>Settings</strong> to change anytime</li>
+                        <li>Home Server: @(homeserverDoneLabel)</li>
+                        <li>Lemonade: @(lemonadeDoneLabel)</li>
+                        <li>Ollama: @(ollamaDoneLabel)</li>
+                    </ul>
+                    <p>
+                        <a href="/settings">Settings</a> ·
+                        <a href="/lemonade">Lemonade</a> ·
+                        <a href="/local-ai">Ollama</a> ·
+                        <a href="/chat">Chat</a>
+                    </p>
+                }
+
+                @if (!string.IsNullOrEmpty(progressLine))
+                {
+                    <div class="setup-progress" aria-live="polite">@progressLine</div>
+                }
+            </div>
+
+            <div class="setup-wizard-footer">
+                @if (step > 0 && step < 3)
+                {
+                    <button type="button" class="btn btn-outline-secondary" @onclick="Back" disabled="@busy">Back</button>
+                }
+                else
+                {
+                    <span></span>
+                }
+
+                <div style="display:flex; gap:0.5rem;">
+                    @if (step < 3)
+                    {
+                        <button type="button" class="btn btn-outline-secondary" @onclick="SkipAll" disabled="@busy">Skip setup</button>
+                        <button type="button" class="btn btn-primary" @onclick="Next" disabled="@busy">
+                            @(busy ? "Working…" : (step == 2 ? "Finish" : "Continue"))
+                        </button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn btn-primary" @onclick="Close" disabled="@busy">Done</button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .setup-wizard-overlay {
+        position: fixed; inset: 0; z-index: 20000;
+        background: rgba(10, 16, 28, 0.72);
+        display: flex; align-items: center; justify-content: center;
+        padding: 1rem;
+    }
+    .setup-wizard-panel {
+        width: min(680px, 100%);
+        max-height: min(90vh, 920px);
+        overflow: auto;
+        background: var(--color-surface, #fff);
+        color: var(--color-text, #111);
+        border-radius: 12px;
+        box-shadow: 0 16px 48px rgba(0,0,0,0.35);
+        display: flex; flex-direction: column;
+    }
+    .setup-wizard-header { padding: 1.25rem 1.5rem 0.75rem; border-bottom: 1px solid var(--cf-border, #e5e5e5); }
+    .setup-wizard-header h2 { margin: 0 0 0.35rem; font-size: 1.35rem; }
+    .setup-wizard-sub { margin: 0 0 0.75rem; color: var(--color-text-muted, #666); font-size: 0.9em; }
+    .setup-wizard-steps { display: flex; flex-wrap: wrap; gap: 0.4rem 0.75rem; font-size: 0.8em; color: #888; }
+    .setup-step-dot.is-active { color: var(--color-accent, #0d6efd); font-weight: 600; }
+    .setup-step-dot.is-done { color: #2a7; }
+    .setup-wizard-body { padding: 1.25rem 1.5rem; flex: 1; }
+    .setup-wizard-footer {
+        padding: 0.9rem 1.5rem 1.25rem; border-top: 1px solid var(--cf-border, #e5e5e5);
+        display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+    }
+    .setup-check { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0.5rem 0; cursor: pointer; }
+    .setup-model-list { margin-left: 0.25rem; }
+    .setup-model-desc { display: block; font-size: 0.85em; color: var(--color-text-muted, #666); }
+    .setup-msg { margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: 6px; font-size: 0.9em; }
+    .setup-msg.is-ok { background: #e8f8ee; border: 1px solid #9dd; }
+    .setup-msg.is-err { background: #fff0f0; border: 1px solid #f5c2c7; }
+    .setup-ok { color: #1a7a3c; }
+    .setup-progress {
+        margin-top: 1rem; padding: 0.6rem 0.75rem; border-radius: 6px;
+        background: #f4f7fb; border: 1px solid #d0dbe8; font-size: 0.9em; white-space: pre-wrap;
+    }
+    .setup-ai-block {
+        margin: 1rem 0;
+        padding: 0.85rem 1rem;
+        border: 1px solid var(--cf-border, #e5e5e5);
+        border-radius: 10px;
+        background: var(--color-bg-muted, #fafbfc);
+    }
+    .setup-ai-heading {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .setup-recommended {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #0a5;
+        background: #e6f7ee;
+        border: 1px solid #9dd;
+        border-radius: 999px;
+        padding: 0.1rem 0.5rem;
+    }
+    .setup-ai-note {
+        margin: 0.35rem 0 0.5rem;
+        font-size: 0.88em;
+        color: var(--color-text-muted, #555);
+    }
+</style>
+
+@code {
+    private static readonly string[] StepLabels = ["Welcome", "Home Server", "Local AI", "Done"];
+
+    private int step;
+    private bool busy;
+    private bool wantHomeserver = true;
+    private bool wantLemonade;
+    private bool wantOllama;
+    private readonly HashSet<string> selectedLemonadeModels = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> selectedOllamaModels = new(StringComparer.OrdinalIgnoreCase);
+    private string? progressLine;
+    private string? homeserverMessage;
+    private bool homeserverOk;
+    private string? lemonadeMessage;
+    private bool lemonadeOk;
+    private string? ollamaMessage;
+    private bool ollamaOk;
+    private string homeserverDoneLabel = "skipped";
+    private string lemonadeDoneLabel = "skipped";
+    private string ollamaDoneLabel = "skipped";
+
+    protected override void OnInitialized()
+    {
+        Wizard.OnChanged += OnWizardChanged;
+        foreach (var m in Lemonade.AvailableInstallModels.Where(x => x.DefaultSelected))
+            selectedLemonadeModels.Add(m.Id);
+        foreach (var m in Ollama.AvailableInstallModels.Where(x => x.DefaultSelected))
+            selectedOllamaModels.Add(m.Id);
+        if (Homeserver.IsSupported && Homeserver.GetState().IsInstalled)
+            wantHomeserver = false;
+        if (Lemonade.IsSupported && Lemonade.IsInstalled)
+            wantLemonade = true;
+        if (Ollama.IsSupported && Ollama.IsInstalled)
+            wantOllama = true;
+    }
+
+    private void OnWizardChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Wizard.OnChanged -= OnWizardChanged;
+
+    private void ToggleLemonadeModel(string id, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b || string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        if (on) selectedLemonadeModels.Add(id);
+        else selectedLemonadeModels.Remove(id);
+    }
+
+    private void ToggleOllamaModel(string id, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b || string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        if (on) selectedOllamaModels.Add(id);
+        else selectedOllamaModels.Remove(id);
+    }
+
+    private void Back()
+    {
+        if (step > 0) step--;
+    }
+
+    private async Task Next()
+    {
+        if (step == 0)
+        {
+            step = 1;
+            return;
+        }
+
+        if (step == 1)
+        {
+            await RunHomeserverStepAsync();
+            step = 2;
+            return;
+        }
+
+        if (step == 2)
+        {
+            await RunLocalAiStepAsync();
+            step = 3;
+            var state = HomeserverState.Load();
+            state.OnboardingCompletedAt = DateTimeOffset.UtcNow;
+            state.Save();
+        }
+    }
+
+    private async Task RunHomeserverStepAsync()
+    {
+        homeserverMessage = null;
+        if (!Homeserver.IsSupported)
+        {
+            homeserverDoneLabel = "not available";
+            return;
+        }
+
+        var state = Homeserver.GetState();
+        if (state.IsInstalled)
+        {
+            homeserverDoneLabel = "already installed";
+            homeserverOk = true;
+            homeserverMessage = Homeserver.GetServiceStatusText();
+            return;
+        }
+
+        if (!wantHomeserver)
+        {
+            Homeserver.Decline();
+            homeserverDoneLabel = "skipped";
+            return;
+        }
+
+        busy = true;
+        progressLine = "Installing Home Server…";
+        StateHasChanged();
+        try
+        {
+            var progress = new Progress<string>(m =>
+            {
+                progressLine = m;
+                _ = InvokeAsync(StateHasChanged);
+            });
+            var result = await Homeserver.InstallAsync(progress);
+            homeserverOk = result.Success;
+            homeserverMessage = result.Message;
+            homeserverDoneLabel = result.Success ? $"installed ({result.BaseUrl})" : "failed";
+        }
+        finally
+        {
+            busy = false;
+            progressLine = null;
+        }
+    }
+
+    private async Task RunLocalAiStepAsync()
+    {
+        busy = true;
+        StateHasChanged();
+        try
+        {
+            var progress = new Progress<string>(m =>
+            {
+                progressLine = m;
+                _ = InvokeAsync(StateHasChanged);
+            });
+            IProgress<string> progressIface = progress;
+
+            await RunLemonadePartAsync(progressIface);
+            await RunOllamaPartAsync(progressIface);
+        }
+        finally
+        {
+            busy = false;
+            progressLine = null;
+        }
+    }
+
+    private async Task RunLemonadePartAsync(IProgress<string> progress)
+    {
+        lemonadeMessage = null;
+        if (!Lemonade.IsSupported || !wantLemonade)
+        {
+            lemonadeDoneLabel = wantLemonade ? "not available" : "skipped";
+            return;
+        }
+
+        progress.Report("Setting up Lemonade…");
+        var install = await Lemonade.InstallServerAsync(progress);
+        if (!install.Success && !Lemonade.IsInstalled)
+        {
+            lemonadeOk = false;
+            lemonadeMessage = install.Message;
+            lemonadeDoneLabel = "install failed";
+            return;
+        }
+
+        if (selectedLemonadeModels.Count > 0)
+        {
+            progress.Report("Pulling Lemonade models…");
+            var pull = await Lemonade.PullModelsAsync(selectedLemonadeModels, progress);
+            lemonadeMessage = pull.Message;
+            lemonadeOk = pull.Success || install.Success;
+        }
+        else
+        {
+            lemonadeOk = install.Success || Lemonade.IsInstalled;
+        }
+
+        await KeyStore.LoadAsync();
+        var cfg = await Lemonade.ConfigureAppAsync(Http, KeyStore);
+        lemonadeMessage = string.Join(" ", new[] { install.Message, lemonadeMessage, cfg.Message }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        lemonadeOk = cfg.Success || install.Success || Lemonade.IsInstalled;
+        lemonadeDoneLabel = lemonadeOk
+            ? (Lemonade.IsInstalled ? "configured (existing install)" : "configured")
+            : "partial";
+    }
+
+    private async Task RunOllamaPartAsync(IProgress<string> progress)
+    {
+        ollamaMessage = null;
+        if (!Ollama.IsSupported || !wantOllama)
+        {
+            ollamaDoneLabel = wantOllama ? "not available" : "skipped";
+            return;
+        }
+
+        progress.Report("Setting up Ollama…");
+        var install = await Ollama.InstallServerAsync(progress);
+        if (!install.Success && !Ollama.IsInstalled)
+        {
+            ollamaOk = false;
+            ollamaMessage = install.Message;
+            ollamaDoneLabel = "install failed";
+            return;
+        }
+
+        if (selectedOllamaModels.Count > 0)
+        {
+            progress.Report("Pulling Ollama models…");
+            var pull = await Ollama.PullModelsAsync(selectedOllamaModels, progress);
+            ollamaMessage = pull.Message;
+            ollamaOk = pull.Success || install.Success;
+        }
+        else
+        {
+            ollamaOk = install.Success || Ollama.IsInstalled;
+        }
+
+        await KeyStore.LoadAsync();
+        var cfg = await Ollama.ConfigureAppAsync(Http, KeyStore);
+        ollamaMessage = string.Join(" ", new[] { install.Message, ollamaMessage, cfg.Message }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        ollamaOk = cfg.Success || install.Success || Ollama.IsInstalled;
+        ollamaDoneLabel = ollamaOk
+            ? (Ollama.IsInstalled ? "configured (existing install)" : "configured")
+            : "partial";
+    }
+
+    private void SkipAll()
+    {
+        if (Homeserver.IsSupported && !Homeserver.GetState().HasDecided)
+            Homeserver.Decline();
+        Wizard.MarkCompleted();
+    }
+
+    private void Close()
+    {
+        Wizard.MarkCompleted();
+        Wizard.Hide();
+    }
+}

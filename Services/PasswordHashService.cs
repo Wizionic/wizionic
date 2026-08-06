@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// PBKDF2-SHA256 password hashing with a per-password random salt.

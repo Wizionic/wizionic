@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 using System.Net.Http.Json;
 using System.Text.Json;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Brevo (Sendinblue) HTTP API configuration for sending transactional emails.
@@ -12,8 +12,8 @@ namespace ChatfishApp.Services;
 /// 
 /// Example appsettings (non-secret parts only):
 /// "Brevo": {
-///   "From": "no-reply@chatfish.me",
-///   "SenderName": "Chatfish"
+///   "From": "no-reply@wizionic.com",
+///   "SenderName": "Wizionic"
 /// }
 /// 
 /// Set the secret via environment variable:
@@ -21,8 +21,8 @@ namespace ChatfishApp.Services;
 /// </summary>
 public class BrevoEmailOptions
 {
-    public string From { get; set; } = "no-reply@chatfish.local";
-    public string SenderName { get; set; } = "Chatfish";
+    public string From { get; set; } = "no-reply@app.local";
+    public string SenderName { get; set; } = "Wizionic";
 }
 
 /// <summary>

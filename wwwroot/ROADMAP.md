@@ -1,10 +1,10 @@
-﻿# Chatfish.me Project Roadmap
+# Wizionic.me Project Roadmap
 
 **Product Manager / Software Architect :** Daniel Goodwin — Senior Web Application Developer (25+ years experience)  
 
 ## Project Vision & Goals
 
-Chatfish.me is a **privacy-first, local-first AI chat hub** that lets you chat with multiple AI models while keeping conversations in the browser.  
+Wizionic.me is a **privacy-first, local-first AI chat hub** that lets you chat with multiple AI models while keeping conversations in the browser.  
 
 Core Goals
 1) Privacy : Keep chat history encrypted and private 
@@ -137,14 +137,14 @@ Primary goals:
 
 ## 1. Pure Blazor Interactive Server App (Current / Hosted Target)
 
-**Current State:** The active, working implementation (the code you run with `dotnet run` today). Single-project .NET 10 Blazor Web app (ChatfishApp.csproj) using primarily `InteractiveServerRenderMode` everywhere (with `AddInteractiveWebAssemblyComponents` registered and `UseWebAssemblyDebugging` present for future, but client render mode not mapped and Routes.razor forces server). Full server-side SQLite via EF Core (`chatfish.db`) for Users, Conversations, Messages, and UserProviderKeys. Magic-link only auth (cookie based). Modern pluggable AI via `Microsoft.Extensions.AI` + OpenAI SDK compat (catalog-driven for Groq/Gemini/OpenRouter). Server-executed app-level tools (web_search via DDG, summarize_url via Jina, time) wired with `UseFunctionInvocation`. Limited JS interop (only for textarea/scroll UX). No client storage yet. Roadmap.razor renders this md.
+**Current State:** The active, working implementation (the code you run with `dotnet run` today). Single-project .NET 10 Blazor Web app (App.csproj) using primarily `InteractiveServerRenderMode` everywhere (with `AddInteractiveWebAssemblyComponents` registered and `UseWebAssemblyDebugging` present for future, but client render mode not mapped and Routes.razor forces server). Full server-side SQLite via EF Core (`homeserver.db`) for Users, Conversations, Messages, and UserProviderKeys. Magic-link only auth (cookie based). Modern pluggable AI via `Microsoft.Extensions.AI` + OpenAI SDK compat (catalog-driven for Groq/Gemini/OpenRouter). Server-executed app-level tools (web_search via DDG, summarize_url via Jina, time) wired with `UseFunctionInvocation`. Limited JS interop (only for textarea/scroll UX). No client storage yet. Roadmap.razor renders this md.
 
 **Goal:** Continue to provide a convenient, always-on hosted / web experience (easy magic-link access for family etc.). For this target, server-side chat history tied to user accounts (via the existing SQLite + EF) provides useful cross-device access through login, while the stronger local-only storage (never on server) is delivered in the WASM and MAUI targets.
 
 **Guiding Rule for this target:** The hosted server experience can use server-persisted chats (current model: Conversations and Messages in DB per user) for convenience and multi-browser access via the magic-link login. True local-only chat history (browser/device storage only, never saved on the central server) is a primary goal of the WASM phase (target 2) and MAUI (target 3). Server DB remains for Users and ProviderKeys (and optionally chats for this hosted mode).
 
 **Key Tasks (new + adapted from prior work)**
-- Introduce storage and context abstractions to remove tight coupling for *keys and user identity* (current services rely on `IHttpContextAccessor` + direct EF `ChatfishDbContext`): `IUserContext`, `IKeyStore`. (Full `IChatHistoryStore` with local impls will be introduced in the WASM phase.) Refactor `ProviderKeyService` and related flows as needed. Keep chat history using the existing server-side `ConversationService` + DB for this target (for hosted convenience).
+- Introduce storage and context abstractions to remove tight coupling for *keys and user identity* (current services rely on `IHttpContextAccessor` + direct EF `AppDbContext`): `IUserContext`, `IKeyStore`. (Full `IChatHistoryStore` with local impls will be introduced in the WASM phase.) Refactor `ProviderKeyService` and related flows as needed. Keep chat history using the existing server-side `ConversationService` + DB for this target (for hosted convenience).
 - Keep and enhance what already works well for hosted: magic-link login flow + logout endpoints, per-user keys + enable/disable in Settings (with good provider guidance), clean grouped model selector, "tools enabled" hints, full agentic tool execution on the server (powerful, no browser sandbox/CORS limits), context management UI (when built), vision upload (when built). Server-side chat persistence (current Conversations/Messages) remains for account-linked access.
 - Maintain minimal server resource usage and cheap-hosting friendliness.
 
@@ -152,7 +152,7 @@ Primary goals:
 
 **Dependencies:** Core shared capabilities (multi-provider, tools, context, vision) + key/user context abstraction work. **Estimated effort:** 2–4 days (lighter scope since full local chat history moves to WASM phase).
 
-**Reuse (strong here):** All current code is the starting point and "donor" for sharing: `ProviderCatalog.cs`, `AiProviderService.cs` (and `CreateOpenAICompatibleClient`), `ConversationService.cs` + `StreamMessageAsync` (ME.AI + tools loop, using server history), `DefaultToolProvider`/`AppTools.cs`, `ProviderKeyService`, `UserProviderKey`, `ChatfishDbContext`, Razor components (`Chat.razor`, `Settings.razor`, `MainLayout.razor`, `NavMenu.razor`), JS interop patterns, Markdig usage, CSS, `Roadmap.razor` md loader. The server target proves the core flows (with server chats).
+**Reuse (strong here):** All current code is the starting point and "donor" for sharing: `ProviderCatalog.cs`, `AiProviderService.cs` (and `CreateOpenAICompatibleClient`), `ConversationService.cs` + `StreamMessageAsync` (ME.AI + tools loop, using server history), `DefaultToolProvider`/`AppTools.cs`, `ProviderKeyService`, `UserProviderKey`, `AppDbContext`, Razor components (`Chat.razor`, `Settings.razor`, `MainLayout.razor`, `NavMenu.razor`), JS interop patterns, Markdig usage, CSS, `Roadmap.razor` md loader. The server target proves the core flows (with server chats).
 
 **Challenges:** Current services and pages assume server DB + HttpContext for *everything* (biggest gap vs. documented local-first vision for *other* targets); "cross-device sync" story here relies on login + server storage (the richer local-only sync lives in targets 2/3); keeping the existing hosted UX unbroken. Full local chat history (the privacy win) is not the focus of this target.
 
@@ -162,7 +162,7 @@ Primary goals:
 
 **Current State:** Preparation and intent only (visible in the roadmap and some csproj/Program.cs wiring). The `Microsoft.AspNetCore.Components.WebAssembly.Server` package + `AddInteractiveWebAssemblyComponents` + debug support exist, but `Routes.razor` globally forces `@rendermode InteractiveServer`, only server render mode is mapped in `Program.cs`, there is no Client/WASM project or shared RCL yet, and there is zero client-side persistence (no LocalStorage usage for chats/keys at all — everything goes through server SQLite via services). AI is always server-proxied. JS interop exists only for UX helpers (resize/scroll in MainLayout + Chat). This is the gap between the "privacy-first, LocalStorage by default" vision and today's server-centric reality.
 
-**Note (July 2026):** A safe parallel WASM implementation was started in a separate ChatfishApp.Client project (modeled after initial template in bak). Core chat functionality (UI, local multi-convo history in browser storage, model selector, Ollama direct AI calls with streaming) is being built in new files (e.g. WasmChat.razor) **without modifying the server Chat.razor**. This allows testing local-first while keeping the server path deployable as fallback. See worktree for the Client project.
+**Note (July 2026):** A safe parallel WASM implementation was started in a separate App.Client project (modeled after initial template in bak). Core chat functionality (UI, local multi-convo history in browser storage, model selector, Ollama direct AI calls with streaming) is being built in new files (e.g. WasmChat.razor) **without modifying the server Chat.razor**. This allows testing local-first while keeping the server path deployable as fallback. See worktree for the Client project.
 
 **Goal:** Move toward (and deliver) the true local-first architecture in a pure browser client. Conversations live encrypted in the browser only. Sync only among the user's local clients/browsers/profiles — the central server never sees or stores chat history. Local models (Ollama) are direct and first-class. Reuse as much of the existing Blazor investment as possible. Minimal (or optional thin-proxy) server involvement for the chat experience itself.
 
@@ -175,12 +175,12 @@ Primary goals:
   - AI / tool calling from the client: Direct `IChatClient` calls where possible. Ollama: trivial direct fetch to `http://localhost:11434/v1` (user may need `--disable-web-security` or a tiny local helper for CORS during dev; production users run Ollama with proper CORS or the app on the same origin). Cloud providers: direct when CORS allows, or thin proxy for key/attribution header injection. Fully reuse the catalog, ME.AI abstractions, `UseFunctionInvocation`, and the existing free tools (web_search / Jina still work from browser).
   - Real streaming: Use the already-referenced `Microsoft.AspNetCore.SignalR.Client` package (or provider streaming + client handling) instead of the current fake chunked yields.
   - Offline + PWA: Make the WASM app installable, work offline for local models + existing history, cache static assets.
-  - Sync chat history *only to local clients* (never on server): Concrete user-controlled mechanisms that do not involve the central chatfish server storing content:
+  - Sync chat history *only to local clients* (never on server): Concrete user-controlled mechanisms that do not involve the central wizionic server storing content:
     - Easy export/import of (optionally encrypted) JSON history bundles (per-convo or full).
     - "Sync folder" support: point the app at a user-owned location (local folder synced by Syncthing / Dropbox / Google Drive / NAS / WebDAV that *the user* controls) and read/write history files there.
     - Local network sync: when two instances are on the same LAN/WiFi, discover and offer peer-to-peer merge (user approves).
     - Future: file-based or CRDT-based merge for seamless multi-client.
-    - Hard rule: the chatfish server (if used at all for auth or a thin proxy) receives *zero* conversation history or message content.
+    - Hard rule: the wizionic server (if used at all for auth or a thin proxy) receives *zero* conversation history or message content.
   - **Live authenticated sync (server as signaling/auth only — Brave model, real-time only when both devices open)**: In addition to the user-controlled local mechanisms above, support *live* cross-browser/device history sync for users who have logged in with the same email (magic link). This is real-time only (both WASM instances must be open and online at the same time) — no store-and-forward or persistent central copy of history. The server acts purely as authentication + signaling (like a WebRTC signaling server). It never stores or sees the chat content blobs.
     - How it works (high level): Both devices authenticate (cookie or thin token from the login flow). Server confirms both are online for that user and facilitates handshake. Devices then transfer the (encrypted) history snapshot or deltas. Server is "blind" to the payload.
     - Transfer options (key decision):
@@ -265,12 +265,12 @@ Primary goals:
 **Key Tasks (new + mapped from prior roadmap)**
 
 - Solution and project evolution (maps to old Phase 4/5 structure needs but for native):
-  - Create shared projects for maximum reuse: e.g. a Razor Class Library (`ChatfishApp.Shared` or similar) containing the Blazor components, `Contracts/ProviderCatalog`, abstracted services, CSS, etc. The existing `ChatfishApp` becomes (or stays) the server host for target 1. Add a WASM host for target 2. Add one or more new .NET MAUI Blazor Hybrid project(s) for target 3 (start with Windows desktop focus for quick value). Update `ChatfishApp.sln` and solution folders. Use multi-targeting or source sharing where helpful.
+  - Create shared projects for maximum reuse: e.g. a Razor Class Library (`App.Shared` or similar) containing the Blazor components, `Contracts/ProviderCatalog`, abstracted services, CSS, etc. The existing `App` becomes (or stays) the server host for target 1. Add a WASM host for target 2. Add one or more new .NET MAUI Blazor Hybrid project(s) for target 3 (start with Windows desktop focus for quick value). Update `App.sln` and solution folders. Use multi-targeting or source sharing where helpful.
   - In the MAUI project: Standard MAUI + Blazor Hybrid setup (Microsoft.Maui.Controls + BlazorWebView). Main page hosts `<BlazorWebView HostPage="wwwroot/index.html" ...>` and loads the shared root component. Handle MAUI lifecycle, navigation, deep links if useful.
 
 - Platform-native storage & strict privacy:
   - Implement the shared `IChatHistoryStore` / `IKeyStore` using MAUI `SecureStorage` (keys), `Preferences`, and/or device-local SQLite (via Microsoft.Data.Sqlite or EF Core with proper path). Richer history can live in a local DB file the user can back up.
-  - **Hard rule:** All chat history, messages, and titles stay on the user's device(s). The central chatfish server (if the app even contacts it for auth or optional thin proxy) receives and stores *zero* conversation content. This is the realization of "syncing of chat history only to local clients (not saved on the server)".
+  - **Hard rule:** All chat history, messages, and titles stay on the user's device(s). The central wizionic server (if the app even contacts it for auth or optional thin proxy) receives and stores *zero* conversation content. This is the realization of "syncing of chat history only to local clients (not saved on the server)".
 
 - Local AI integration (Ollama) as the default, delightful experience:
   - Direct HTTP from the MAUI process to `http://localhost:11434` (or user-configured LAN address). No CORS headaches. Auto-detect models (`/api/tags`).
@@ -281,7 +281,7 @@ Primary goals:
 - Openshell Integration
   - https://github.com/NVIDIA/OpenShell
   - installer to optionally detect and use OpenShell if present — similar to how apps optionally use Windows Hello if available
-  - openshell-policy.yaml bundled with chatfish installer
+  - openshell-policy.yaml bundled with wizionic installer
     - inference:
       - local:
       - provider: ollama
@@ -311,7 +311,7 @@ Primary goals:
     - "Sync location": let the user point the app at a folder on their NAS, personal cloud drive (Dropbox etc. that they own), WebDAV, or Syncthing-synced dir; the app reads/writes history files there and merges on change.
     - Local network peer sync: discover other running instances of the MAUI app on the same LAN and offer secure merge (user confirms).
     - Future: conflict-free file-based or CRDT sync.
-  - Explicit in docs and UI: "Your chats are only on your devices. The chatfish server (if used) never receives or stores them."
+  - Explicit in docs and UI: "Your chats are only on your devices. The wizionic server (if used) never receives or stores them."
 
 - Reuse strategy + shared code:
   - The goal is 80-90%+ code reuse. Shared RCL for all the Blazor UI (Chat, Settings, NavMenu, Roadmap, etc.), catalog, core services (after abstraction), markdown, CSS, tool definitions.
@@ -338,23 +338,23 @@ Primary goals:
 
 ### Phase 1 — Foundation & Core Parity *(Start Here)*
 
-  **Goal:** Working MAUI app that feels like Chatfish,shares the same login, and participates in sync.
+  **Goal:** Working MAUI app that feels like Wizionic,shares the same login, and participates in sync.
 
   #### Project Setup
-  - Scaffold `ChatfishApp.Maui` in existing solution
-  - Extract `ChatfishApp.Core` shared library:models, interfaces, AI pipeline, tool definitions
+  - Scaffold `App.Maui` in existing solution
+  - Extract `App.Core` shared library:models, interfaces, AI pipeline, tool definitions
   - Wire shared Blazor components via RCL:`Chat.razor`, Notes, Settings, NavMenu, MainLayout
   - SQLite via EF Core for local chat history and notes
   - Implement `INoteStore` and `IChatHistoryStore`backed by SQLite
 
   #### Authentication
-  - Login via existing chatfish.me magic link (same email = same identity across web and native)
-  - There should be a setting in Appsettings.json so that production can use Chatfish.me for login, SignalR hub while local development can use localhost
+  - Login via existing wizionic.com magic link (same email = same identity across web and native)
+  - There should be a setting in Appsettings.json so that production can use Wizionic.me for login, SignalR hub while local development can use localhost
   - The same login email will be used so that the Maui device just shows another device on the sync page
   - Add password login option later
 
   #### Sync — MAUI as Full Peer *(Priority 1)*
-  - Connect to chatfish.me SignalR hub(same as browsers — requires internet for sync only)
+  - Connect to wizionic.com SignalR hub(same as browsers — requires internet for sync only)
   - Implement WebRTC DataChannel sync protocol, writing to SQLite instead of IndexedDB
   - MAUI device appears in sync device listalongside browsers
   - Notes and chat history sync bidirectionally with browser clients
@@ -400,12 +400,12 @@ Primary goals:
 
   MAUI becomes the local network anchor.
   - Embedded ASP.NET Core + SignalR hub running inside MAUI app
-  - mDNS announcement via `_chatfish._tcp.local`
-  - Browsers resolve `chatfish.local:5000` via mDNS (browsers can resolve `.local` even though they cannot broadcast it)
+  - mDNS announcement via `_app._tcp.local`
+  - Browsers resolve `app.local:5100` via mDNS (browsers can resolve `.local` even though they cannot broadcast it)
   - WASM settings: manual local hub IP entry (v1), auto-discovery via mDNS hostname (v2)
-  - Self-signed cert on first run to satisfy HTTPS mixed content from chatfish.me
-  - Device list shows connection type: local hub ⚡ vs chatfish.me ☁️
-  - Graceful fallback to chatfish.me hub when MAUI not on network
+  - Self-signed cert on first run to satisfy HTTPS mixed content from wizionic.com
+  - Device list shows connection type: local hub ⚡ vs wizionic.com ☁️
+  - Graceful fallback to wizionic.com hub when MAUI not on network
   ---
 
 ### Phase 4 — Advanced Local Features
@@ -431,7 +431,7 @@ Primary goals:
   #### Full Local Mesh (No Internet Sync)
 
   - Complete mDNS peer discovery — no internet needed even for initial handshake
-  - MAUI as mesh coordinator for all local Chatfish clients
+  - MAUI as mesh coordinator for all local Wizionic clients
   - Fully offline sync when all devices on same network
 ---
 

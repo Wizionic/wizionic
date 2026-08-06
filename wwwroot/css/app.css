@@ -1,0 +1,2200 @@
+/* ========================================
+   Wizionic — Unified Custom Styles (single source of truth for client + server)
+   Merged from previous app.css (design tokens + common) + wasm-chat.css (chat + WASM UI)
+   All hard-coded colors standardized to CSS vars where possible. Duplicated layout/component
+   rules from old files have been deduped into this global file.
+   ======================================== */
+
+/* -------------------------------------------------------
+   Wizionic Design System — Global Styles & Tokens
+   (from server wwwroot/app.css)
+   ------------------------------------------------------- */
+
+/* ------------------------------
+   1. CSS RESET (lightweight)
+   ------------------------------ */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    background: var(--grey-50);
+    color: var(--text-dark);
+    font-family: "Segoe UI", sans-serif;
+    line-height: var(--line-normal);
+}
+
+/* Remove default link styling */
+a {
+    color: var(--primary-dark);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+/* ------------------------------
+   2. DESIGN TOKENS
+   ------------------------------ */
+:root {
+    /* Primary Blues */
+    --primary-blue: #3BA7FF;
+    --primary-dark: #1F7FCC;
+    --primary-light: #7CCBFF;
+    --bubble-blue: #D1E7FF;
+
+    /* Extra Light Blues */
+    --light-blue-1: #E6F2FF;
+    --light-blue-2: #F0F7FF;
+    --light-blue-3: #F7FBFF;
+
+    /* Greys */
+    --grey-50:  #F7F9FC;
+    --grey-100: #EEF2F6;
+    --grey-200: #D9E0E7;
+    --grey-300: #C3CCD6;
+    --grey-400: #A5AFBA;
+    --grey-500: #7E8894;
+    --grey-600: #5A6470;
+
+    /* Accents */
+    --success: #D1FFD2;
+    --warning: #FFD66B;
+    --error:   #FF6B6B;
+
+    /* Text */
+    --text-dark: #1F2A37;
+    --text-light: #FFFFFF;
+
+    /* Spacing Scale (8pt system) */
+    --space-0: 0px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 32px;
+    --space-8: 40px;
+    --space-9: 48px;
+    --space-10: 64px;
+    --space-11: 124px;
+
+    /* Typography Scale */
+    --font-xs: 12px;
+    --font-sm: 14px;
+    --font-md: 16px;
+    --font-lg: 20px;
+    --font-xl: 24px;
+    --font-2xl: 32px;
+
+    --font-weight-light: 300;
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    --line-tight: 1.2;
+    --line-normal: 1.5;
+    --line-relaxed: 1.7;
+
+    --topbar-height: 56px;
+
+    /* Component Tokens — Sidebar */
+    --sidebar-bg: var(--light-blue-2);
+    --sidebar-border: var(--grey-200);
+    --sidebar-hover: var(--grey-200);
+    --sidebar-active: var(--grey-300);
+    --sidebar-text: var(--text-dark);
+
+    /* Component Tokens — Chat Window */
+    --chat-bg: var(--grey-50);
+    --chat-border: var(--grey-200);
+
+    /* Component Tokens — Chat Bubbles */
+    --bubble-user-bg: var(--bubble-blue);
+    --bubble-user-text: var(--text-dark);
+
+    --bubble-ai-bg: #FFFFFF;
+    --bubble-ai-border: var(--grey-200);
+    --bubble-ai-text: var(--text-dark);
+
+    /* Buttons */
+    --btn-primary-bg: var(--primary-blue);
+    --btn-primary-text: var(--text-light);
+    --btn-primary-hover: var(--primary-dark);
+
+    --btn-danger-bg: var(--error);
+    --btn-danger-text: var(--text-light);
+
+    /* Borders & Radii */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    --border-light: 1px solid var(--grey-200);
+    --border-medium: 1px solid var(--grey-300);
+
+    /* === SEMANTIC THEME TOKENS (components should use these) === */
+
+    /* Backgrounds */
+    --color-bg:            var(--grey-50);
+    --color-bg-surface:    #ffffff;
+    --color-bg-subtle:     var(--light-blue-2);
+    --color-bg-muted:      var(--grey-100);
+
+    /* Borders */
+    --color-border:        var(--grey-200);
+    --color-border-strong: var(--grey-300);
+
+    /* Text */
+    --color-text:          var(--text-dark);
+    --color-text-muted:    var(--grey-500);
+    --color-text-inverse:  var(--text-light);
+
+    /* Sidebar */
+    --color-sidebar-bg:    var(--light-blue-2);
+    --color-sidebar-border: var(--grey-200);
+
+    /* Chat */
+    --color-chat-bg:       var(--light-blue-3);
+    --color-bubble-user:   var(--bubble-blue);
+    --color-bubble-ai:     #ffffff;
+
+    /* Topbar */
+    --color-topbar-bg:     var(--light-blue-2);
+
+    /* Accents (shared across themes) */
+    --color-accent:        var(--primary-blue);
+    --color-accent-dark:   var(--primary-dark);
+
+}
+
+/* ------------------------------
+   3. GLOBAL UTILITIES
+   ------------------------------ */
+
+/* Spacing utilities */
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mb-1 { margin-bottom: var(--space-1); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-3 { margin-bottom: var(--space-3); }
+.p-2  { padding: var(--space-2); }
+.p-3  { padding: var(--space-3); }
+
+/* Text utilities */
+.text-light { color: var(--text-light); }
+.text-dark  { color: var(--text-dark); }
+.text-sm    { font-size: var(--font-sm); }
+.text-md    { font-size: var(--font-md); }
+.text-lg    { font-size: var(--font-lg); }
+
+/* Buttons */
+.btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-text);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+}
+.btn-primary:hover {
+    background: var(--btn-primary-hover);
+}
+
+.btn-danger {
+    background: var(--btn-danger-bg);
+    color: var(--btn-danger-text);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+}
+
+
+.ollama-instructions {
+  font-size: 0.9rem;
+  color: #444;
+  max-width: 580px;
+  margin: 0 auto;
+}
+
+.ollama-instructions a {
+  color: #3BA7FF;
+  text-decoration: none;
+}
+
+.ollama-instructions a:hover {
+  text-decoration: underline;
+}
+
+.model-commands {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.model-command {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.model-desc {
+  display: block;
+  font-size: 0.82rem;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.model-command pre {
+  margin: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
+.model-command code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* ========================================
+   Chat / WASM specific (from wasm-chat.css, deduped + var-ified)
+   ======================================== */
+
+.chat-layout { display: flex; height: calc(100vh - 80px); }
+
+/* Sidebar legacy styles (kept for safety) */
+.chat-sidebar, .chat-sidebar-section-title, .chat-sidebar-new, .chat-sidebar-item { /* unused but harmless */ }
+
+/* ====================== CHAT STRUCTURE ====================== */
+.chat-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 3.5rem);
+    width: 100%;               /* fills the parent <main> perfectly */
+    background: var(--light-blue-3);   /* uniform background so sides match the area around chat bubbles */
+}
+
+.chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem 1rem 195px;  /* reserve space for taller 3-line input bar */
+    background: var(--light-blue-3);
+    max-width: 1080px;
+    margin: 0 auto;
+    width: 100%;
+    scroll-behavior: smooth;
+}
+
+.message-row { display: flex; margin-bottom: 0.75rem; }
+
+.message-me {
+    margin-left: auto;
+    background: var(--bubble-blue);
+    padding: 0.6rem 1rem;
+    border-radius: 12px;
+    max-width: 70%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.message-bot {
+    position: relative;
+    margin-right: auto;
+    background: var(--bubble-ai-bg, #ffffff);
+    padding: 0.6rem 1rem;
+    padding-top: 1.75rem;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    max-width: 100%;
+    width: fit-content;
+}
+
+.message-bot-menu {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+    z-index: 2;
+}
+
+.message-bot:hover .message-bot-menu,
+.message-bot-menu:focus-within {
+    opacity: 1;
+}
+
+.bot-message-menu-popup {
+    min-width: 160px;
+    white-space: nowrap;
+}
+
+.chat-markdown { max-width: 100%; overflow-x: auto; }
+.chat-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.chat-markdown th, .chat-markdown td { white-space: nowrap; padding: 6px 10px; border: 1px solid #ccc; }
+.chat-markdown table::-webkit-scrollbar { height: 8px; }
+.chat-markdown table::-webkit-scrollbar-thumb { background: #bbb; border-radius: 4px; }
+
+.typing { font-style: italic; color: #666; margin-left: 0.5rem; }
+
+/* ====================== COMPACT SEAMLESS INPUT (full-width of chat content) ====================== */
+.input-area {
+    background: var(--light-blue-3);   /* exact match to .chat-container for seamless look */
+    border-top: none;
+    box-shadow: none;
+    padding: 10px 24px 14px;  /* side padding controls distance from edges of the chat pane */
+    width: 100%;
+}
+
+.input-container {
+    display: flex;
+    align-items: flex-end;   /* buttons stay at bottom when textarea grows */
+    gap: 6px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    padding: 6px 12px;
+    max-width: none;         /* let it fill the full available width of the chat area */
+    width: 100%;
+    margin: 0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.action-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.action-btn:hover { background: #f1f5f9; color: #0ea5e9; }
+
+.model-selector {
+    /* Much smaller + compact dropdown */
+    font-size: 0.7rem;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 500;
+    max-width: 128px;
+    min-width: 0;
+    height: 28px;
+    line-height: 1.1;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.model-selector:focus {
+    outline: 1px solid #3b82f6;
+    outline-offset: -1px;
+}
+
+.message-wrapper {
+    flex: 1 1 auto;
+    min-width: 0;            /* allows the wrapper (and textarea) to shrink/grow properly in flex row */
+    align-self: flex-start;  /* ensure textarea starts at top of input bar (buttons can stay at bottom via container) so text doesn't appear in the middle */
+}
+
+.message-input {
+    flex: 1 1 auto;
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 1rem;
+    padding: 4px 8px 4px 8px;  /* reduced top padding so text starts higher; left aligned */
+    resize: none;
+    min-height: 86px;        /* ~3 lines visible by default */
+    max-height: 110px;       /* scrollbar appears after ~3 lines */
+    overflow-y: auto;
+    line-height: 1.4;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+    text-align: left;
+    vertical-align: top;
+}
+
+/* Subtle scrollbar for when it does appear after 3 lines */
+.message-input::-webkit-scrollbar {
+    width: 5px;
+}
+.message-input::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+.message-input::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+}
+
+.message-input:focus { outline: none; }
+
+.message-input::placeholder {
+    color: #94a3b8;
+}
+
+.send-btn {
+    width: 36px; height: 36px;
+    border: none;
+    background: var(--primary-blue);
+    color: white;
+    font-size: 1.35rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+.send-btn:hover:not(:disabled) { background: var(--primary-dark); transform: scale(1.05); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.attach-btn-wrap {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+}
+
+.capability-icon {
+    font-size: 0.9em;
+    color: #888;
+    cursor: default;
+    flex-shrink: 0;
+}
+
+/* Desktop: toolbar children participate in the main input row (plus | textarea | model | icons | send) */
+@media (min-width: 641px) {
+    .input-toolbar {
+        display: contents;
+    }
+
+    .message-wrapper {
+        order: 2;
+    }
+
+    .attach-btn-wrap { order: 1; }
+    .model-selector { order: 3; }
+    .capability-icon { order: 4; }
+    .send-btn { order: 5; }
+}
+
+/* ====================== SIDEBAR ALIGNMENT (NO DOUBLE MARGIN!) ====================== */
+/* We rely 100% on MainLayout's existing main { margin-left: 250px } */
+@media (min-width: 641px) {
+    .chat-wrapper,
+    .input-area {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+}
+
+/* Mobile */
+@media (max-width: 640.98px) {
+    .chat-wrapper,
+    .input-area {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    /* Sidebar overlays content; main is never pushed sideways on small screens */
+    main,
+    body main {
+        margin-left: 0 !important;
+    }
+
+    .sidebar,
+    body .sidebar {
+        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.12);
+    }
+
+    .chat-container { padding-bottom: 185px; }
+
+    /* Stack textarea above a single no-wrap toolbar row */
+    .input-area {
+        padding: 8px 12px 12px !important;
+    }
+
+    .input-container,
+    body .input-container {
+        flex-direction: column !important;
+        flex-wrap: nowrap !important;
+        align-items: stretch !important;
+        padding: 8px 10px !important;
+        gap: 6px !important;
+    }
+
+    .message-wrapper,
+    body .message-wrapper {
+        order: 0 !important;
+        flex: 0 0 auto !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .message-input,
+    body .message-input {
+        min-height: 44px !important;
+        max-height: 120px !important;
+    }
+
+    .input-toolbar,
+    body .input-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 4px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        flex-shrink: 0 !important;
+    }
+
+    .attach-btn-wrap,
+    body .attach-btn-wrap,
+    .action-btn,
+    body .action-btn,
+    .capability-icon,
+    body .capability-icon,
+    .input-toolbar .send-btn,
+    body .input-toolbar .send-btn {
+        flex-shrink: 0 !important;
+    }
+
+    .action-btn,
+    body .action-btn {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 1.1rem !important;
+    }
+
+    .input-toolbar .send-btn,
+    body .input-toolbar .send-btn {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 1.2rem !important;
+        margin-left: auto !important;
+    }
+
+    .model-selector,
+    body .model-selector {
+        flex: 1 1 0 !important;
+        width: 0 !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        font-size: 0.62rem !important;
+        padding: 1px 4px 1px 6px !important;
+        height: 26px !important;
+    }
+}
+
+/* Tiny cleanup - base for conversation items, detailed below */
+.conversation-item {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+/* The detailed conversation item styles are in the sidebar block below to match main */
+
+@media (min-width: 641px) {
+    main { padding-bottom: 0 !important; }   /* prevents any extra push */
+}
+
+/* WASM full sidebar layout (for /chat) */
+.wasm-page {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+}
+.wasm-sidebar {
+    width: 240px;
+    background: #f8f9fa;
+    border-right: 1px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.wasm-sidebar-header {
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 0.9em;
+    background: white;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.wasm-convo-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-size: 0.82em;
+}
+.wasm-convo-item {
+    padding: 6px 10px;
+    margin: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.wasm-convo-item.active {
+    background: #d1e7ff;
+    font-weight: 500;
+}
+.wasm-convo-item:hover {
+    background: #f0f0f0;
+}
+
+/* Ensure conversation items keep menu on same line like main */
+.conversation-item .row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.15rem;
+}
+
+.conversation-item .title {
+    font-size: 0.9rem;
+    margin-bottom: 0.1rem;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conversation-item .menu {
+    position: relative;
+    flex-shrink: 0;
+}
+
+/* Make chat take full width of the right pane in WASM layout (no auto margin) */
+.page .chat-container,
+.wasm-page .chat-container {
+    max-width: none !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+
+/* cf-brand from main */
+.cf-brand {
+    color: var(--text-dark);
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Settings page polish for WASM to match main app look */
+.settings-content h2 {
+    font-size: 2rem;
+    color: var(--text-dark);
+    margin-bottom: 0.25rem;
+}
+
+.settings-content h3 {
+    font-size: 1.25rem;
+    color: var(--text-dark);
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.settings-content label {
+    font-size: 0.85rem;
+    color: #555;
+    margin-bottom: 0.25rem;
+    display: block;
+}
+
+.settings-content .form-control {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--grey-300);
+    border-radius: 6px;
+    font-size: 0.95rem;
+    background: white;
+    color: var(--text-dark);
+}
+
+.settings-content .form-control:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.settings-content .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border: 1px solid var(--grey-300);
+    text-decoration: none;
+    display: inline-block;
+}
+
+.settings-content .btn-primary {
+    background: var(--primary-blue);
+    color: white;
+    border-color: var(--primary-blue);
+}
+
+.settings-content .btn-primary:hover {
+    background: var(--primary-dark);
+}
+
+.settings-content .btn-outline-primary {
+    background: transparent;
+    color: var(--primary-blue);
+    border-color: var(--primary-blue);
+}
+
+.settings-content .btn-outline-primary:hover {
+    background: var(--light-blue-1);
+}
+
+.settings-content .btn-outline-secondary {
+    background: transparent;
+    color: var(--text-dark);
+    border-color: var(--grey-300);
+}
+
+.settings-content .btn-outline-secondary:hover {
+    background: var(--grey-100);
+}
+
+.settings-content .model-chip {
+    display: inline-flex;
+    align-items: center;
+    background: var(--light-blue-1);
+    color: var(--text-dark);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    margin: 0.25rem 0.25rem 0.25rem 0;
+    border: 1px solid var(--grey-200);
+    cursor: pointer;
+}
+
+.settings-content .model-chip:hover {
+    background: var(--light-blue-2);
+}
+
+.settings-content .model-list {
+    margin-top: 0.5rem;
+}
+
+.settings-content .ollama-model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    overflow: hidden;
+    background: white;
+}
+
+.settings-content .ollama-model-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--grey-200);
+}
+
+.settings-content .ollama-model-row:last-child {
+    border-bottom: none;
+}
+
+.settings-content .ollama-model-row.is-active {
+    background: var(--light-blue-1);
+}
+
+.settings-content .ollama-model-row-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+.settings-content .ollama-model-row-subtitle {
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 0.1rem;
+}
+
+.settings-content .ollama-model-row-meta {
+    font-size: 0.8rem;
+    color: #888;
+    white-space: nowrap;
+}
+
+.settings-content .ollama-model-edit-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.25rem 0.35rem;
+    border-radius: 4px;
+    line-height: 1;
+}
+
+.settings-content .ollama-model-edit-btn:hover {
+    background: var(--grey-100);
+}
+
+.settings-content .ollama-model-editor {
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.settings-content .ollama-model-editor h4 {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+    color: var(--text-dark);
+}
+
+.settings-content .ollama-model-editor label {
+    margin-top: 0.65rem;
+}
+
+.settings-content .ollama-field-hint {
+    font-size: 0.75rem;
+    color: #888;
+    margin: 0.15rem 0 0.35rem;
+}
+
+.settings-content .ollama-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.85rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--grey-200);
+}
+
+.settings-content .ollama-toggle-label {
+    margin: 0;
+    font-weight: 600;
+}
+
+.settings-content .ollama-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.settings-content .ollama-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.settings-content .ollama-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: #ccc;
+    border-radius: 24px;
+    transition: background 0.2s ease;
+}
+
+.settings-content .ollama-toggle-slider::before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+
+.settings-content .ollama-toggle input:checked + .ollama-toggle-slider {
+    background: var(--primary-blue);
+}
+
+.settings-content .ollama-toggle input:checked + .ollama-toggle-slider::before {
+    transform: translateX(20px);
+}
+
+.settings-content .ollama-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.settings-content .btn-link-style {
+    border: none;
+    background: transparent;
+    color: var(--primary-blue);
+    padding: 0.5rem 0.25rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.settings-content .btn-link-style:hover {
+    text-decoration: underline;
+}
+
+.settings-content .ollama-remove-btn {
+    margin-left: auto;
+}
+
+.settings-content .ollama-vision-proxy-badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.settings-content .settings-card {
+    border: 1px solid var(--grey-200);
+    border-radius: 10px;
+    background: white;
+    padding: 1.25rem 1.5rem;
+    margin-top: 1.25rem;
+}
+
+.settings-content .memory-search-wrap {
+    position: relative;
+    margin-bottom: 0.75rem;
+}
+
+.settings-content .memory-search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #888;
+    font-size: 0.9rem;
+    pointer-events: none;
+}
+
+.settings-content .memory-search-input {
+    padding-left: 2.25rem;
+}
+
+.settings-content .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.settings-content .memory-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    padding: 0.65rem 0.75rem;
+    background: #fafafa;
+}
+
+.settings-content .memory-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.92rem;
+    color: var(--text-dark);
+    line-height: 1.4;
+}
+
+.settings-content .memory-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.settings-content .memory-icon-btn {
+    border: none;
+    background: transparent;
+    color: #666;
+    padding: 0.25rem 0.35rem;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.settings-content .memory-icon-btn:hover {
+    background: var(--grey-100);
+    color: var(--text-dark);
+}
+
+.settings-content .memory-icon-btn-danger:hover {
+    background: #fff0f0;
+    color: #c00;
+}
+
+.settings-content .memory-footer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.settings-content .btn-outline-danger {
+    background: transparent;
+    color: #dc3545;
+    border-color: #dc3545;
+}
+
+.settings-content .btn-outline-danger:hover {
+    background: #fff0f0;
+}
+
+.settings-content .btn-outline-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.settings-content .ollama-toggle-row.is-disabled {
+    opacity: 0.65;
+}
+
+.settings-content .ollama-save-feedback {
+    margin-top: 0.85rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+
+.settings-content .ollama-save-feedback.is-success {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #047857;
+}
+
+.settings-content .ollama-save-feedback.is-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+}
+
+/* Top bar / page / sidebar structure (previously copied; now in unified global so WASM + any server pages share) */
+.top-row {
+    background: var(--light-blue-2);
+    border-bottom: var(--border-light);
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space-4);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+}
+
+.top-row a,
+.top-row .btn-link {
+    color: var(--primary-dark);
+    text-decoration: none;
+    white-space: nowrap;
+    margin-left: var(--space-0);
+}
+
+.top-row a:hover,
+.top-row .btn-link:hover {
+    text-decoration: underline;
+}
+
+.top-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-left: 40px;
+}
+
+/* Right side icon group in WasmTopBar (and shell for WASM routes) - now class-based so CSS is single source */
+.top-row-right,
+.top-row > div:last-child {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    color: var(--primary-dark);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    border-radius: var(--radius-md);
+    transition: background 0.2s ease;
+}
+
+.top-row-right a:hover,
+.top-row > div:last-child a:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+
+.top-left a,
+.top-row > div:last-child a {
+    color: var(--primary-dark);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+}
+
+.top-left a,
+.top-row > div:last-child a {
+    border-radius: var(--radius-md);
+    transition: background 0.2s ease;
+}
+
+
+
+.top-left a:hover,
+.top-row > div:last-child a:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.top-row-right a i,
+.top-row-right a .bi,
+.top-row > div:last-child a i,
+.top-row > div:last-child a .bi {
+    font-size: 1.35rem;
+}
+
+.sidebar-toggle {
+    background: none;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    color: black;
+    /* Absolute placement... (comments preserved for the WasmChat absolute toggle) */
+    position: absolute;
+    top: 8px;
+    left: 0px;
+    z-index: 1100;
+}
+
+/* Basic page and sidebar for WASM layout to mimic main */
+.page {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.sidebar {
+    width: 250px;
+    flex-shrink: 0;
+    background: var(--light-blue-2);
+    border-right: 1px solid var(--grey-200);
+    overflow-y: auto;
+    position: fixed;
+    top: 3.5rem;
+    height: calc(100vh - 3.5rem);
+    z-index: 900;
+    box-sizing: border-box;
+}
+
+main {
+    flex: 1;
+    margin-top: 0;
+    margin-left: 250px;
+    min-width: 0;
+    background: var(--grey-50);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 3.5rem);
+    box-sizing: border-box;
+}
+
+/* Chat area flex to keep input at bottom */
+.chat-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+    z-index: 1;
+    position: relative;
+}
+
+/* Sidebar collapsed state (via page class, controlled by SidebarState service) */
+.page.sidebar-collapsed .sidebar {
+    display: none !important;
+}
+
+.page.sidebar-collapsed main {
+    margin-left: 0 !important;
+}
+
+.wasm-sidebar .menu {
+    position: relative;
+}
+
+/* ========================================
+   WASM Sidebar to match main server site (adapted from NavMenu.razor.css)
+   Using .sidebar to match current page structure
+   ======================================== */
+
+.sidebar .cf-nav,
+.cf-nav {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 0;
+    color: #1F2A37;
+}
+
+.sidebar .cf-item,
+.cf-item {
+    padding: 4px 12px;
+}
+
+.sidebar .cf-link,
+.cf-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #1F2A37;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.sidebar .conversation-item,
+.conversation-item {
+    padding: 6px 12px;
+    margin: 0;
+    line-height: 1.2;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar .conversation-item:hover,
+.conversation-item:hover {
+    background: #E6F2FF;
+}
+
+.sidebar .conversation-item.active,
+.conversation-item.active {
+    background: #E6F2FF;
+    border-left: 3px solid #3BA7FF;
+}
+
+.sidebar .conversation-item .row-top,
+.conversation-item .row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2px;
+}
+
+.sidebar .conversation-item .title,
+.conversation-item .title {
+    font-size: 14px;
+    font-weight: 500;
+    color: #1F2A37;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sidebar .conversation-item .date,
+.conversation-item .date {
+    font-size: 12px;
+    opacity: 0.7;
+    color: #1F2A37;
+}
+
+.sidebar .menu-button,
+.menu-button {
+    background: none;
+    border: none;
+    color: #1F2A37;
+    cursor: pointer;
+    padding: 4px;
+    opacity: 0.6;
+    font-size: 14px;
+}
+
+.sidebar .menu-button:hover,
+.menu-button:hover {
+    opacity: 1;
+    background: #C3CCD6;
+    border-radius: 4px;
+}
+
+.sidebar .menu-popup,
+.menu-popup {
+    position: fixed;  /* use fixed to escape overflow clipping and stacking contexts */
+    background: white;
+    border: 1px solid #D9E0E7;
+    border-radius: 6px;
+    padding: 4px 8px;
+    margin-top: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    z-index: 10000;
+    font-size: 13px;
+}
+
+.sidebar .menu-popup div,
+.menu-popup div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.sidebar .menu-popup div:hover,
+.menu-popup div:hover {
+    background: #EEF2F6;
+}
+
+.sidebar .menu-overlay,
+.menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+    z-index: 9999;
+}
+
+/* ========================================
+   WASM / Chat page layout forces (to ensure topbar blue, spacing, sidebar, chat area
+   render correctly when using the unified CSS in InteractiveWebAssembly mode.
+   These !important rules guarantee the visual from the original wasm-chat.css even
+   if order or other styles interfere. They target the structure in WasmLayout + WasmChat.
+   ======================================== */
+
+/* Force the topbar (WasmTopBar) to have blue shading and proper flex layout */
+body .top-row,
+.top-row {
+    background: var(--light-blue-2) !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    height: 3.5rem !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 1000 !important;
+    padding: 0 1rem !important;
+    box-sizing: border-box !important;
+}
+
+/* Left side (logo area) */
+body .top-left,
+.top-left {
+    display: flex !important;
+    align-items: center !important;
+    gap: 1.5rem !important;
+}
+
+/* Right side icons container (the div with gear/person) gets pushed right. Supports both legacy inline div and new .top-row-right class. */
+.top-row > div:last-child,
+.top-row-right {
+    margin-left: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.6rem !important;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    color: var(--primary-dark) !important;
+    text-decoration: none !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.top-row-right a,
+.top-row > div:last-child a {
+    border-radius: var(--radius-md) !important;
+    transition: background 0.2s ease !important;
+}
+
+.top-row-right a:hover,
+.top-row > div:last-child a:hover {
+    background: rgba(0, 0, 0, 0.05) !important;
+}
+
+.top-row-right a i,
+.top-row-right a .bi,
+.top-row > div:last-child a i,
+.top-row > div:last-child a .bi {
+    font-size: 1.35rem !important;
+}
+
+/* Sidebar for WASM chat page */
+body .sidebar,
+.sidebar {
+    width: 250px !important;
+    background: var(--light-blue-2) !important;
+    border-right: 1px solid var(--grey-200) !important;
+    position: fixed !important;
+    top: 3.5rem !important;
+    height: calc(100vh - 3.5rem) !important;
+    z-index: 900 !important;
+    overflow-y: auto !important;
+    box-sizing: border-box !important;
+}
+
+/* Main content area pushed by sidebar */
+body main,
+main {
+    margin-left: 250px !important;
+    background: var(--grey-50) !important;
+    min-width: 0 !important;
+}
+
+/* When sidebar collapsed via .page.sidebar-collapsed (used in WasmChat) */
+body .page.sidebar-collapsed .sidebar,
+.page.sidebar-collapsed .sidebar {
+    display: none !important;
+}
+
+body .page.sidebar-collapsed main,
+.page.sidebar-collapsed main {
+    margin-left: 0 !important;
+}
+
+/* Mobile: sidebar overlays content at full width (never pushes main sideways) */
+@media (max-width: 640.98px) {
+    body main,
+    main {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+
+    .page:not(.sidebar-collapsed) .sidebar,
+    body .page:not(.sidebar-collapsed) .sidebar {
+        display: block !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        z-index: 1200 !important;
+        box-shadow: none !important;
+    }
+
+    body .sidebar-toggle,
+    .sidebar-toggle {
+        z-index: 1300 !important;
+    }
+
+    .notes-fab {
+        z-index: 800;
+    }
+}
+
+/* Chat area */
+body .chat-wrapper,
+.chat-wrapper {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    height: 100% !important;
+    z-index: 1 !important;
+    position: relative !important;
+    background: var(--light-blue-3) !important;
+}
+
+body .chat-container,
+.chat-container {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 1.5rem 1rem 195px !important;
+    background: var(--light-blue-3) !important;
+    max-width: 1080px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    scroll-behavior: smooth !important;
+}
+
+/* Input bar at bottom */
+body .input-area,
+.input-area {
+    background: var(--light-blue-3) !important;
+    border-top: none !important;
+    box-shadow: none !important;
+    padding: 10px 24px 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+body .input-container,
+.input-container {
+    display: flex !important;
+    align-items: flex-end !important;
+    gap: 6px !important;
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 18px !important;
+    padding: 6px 12px !important;
+    width: 100% !important;
+    margin: 0 !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Message input textarea */
+body .message-input,
+.message-input {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    border: none !important;
+    outline: none !important;
+    background: transparent !important;
+    font-size: 1rem !important;
+    padding: 4px 8px 4px 8px !important;
+    resize: none !important;
+    min-height: 86px !important;
+    max-height: 110px !important;
+    overflow-y: auto !important;
+    line-height: 1.4 !important;
+}
+
+/* Send button */
+body .send-btn,
+.send-btn {
+    width: 36px !important;
+    height: 36px !important;
+    border: none !important;
+    background: var(--primary-blue) !important;
+    color: white !important;
+    font-size: 1.35rem !important;
+    border-radius: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+}
+
+/* Sidebar toggle (absolute over topbar) */
+body .sidebar-toggle,
+.sidebar-toggle {
+    background: none !important;
+    border: none !important;
+    padding: 6px !important;
+    cursor: pointer !important;
+    color: black !important;
+    position: absolute !important;
+    top: 8px !important;
+    left: 0cap !important;
+    z-index: 1100 !important;
+}
+
+/* Basic convo and nav items for sidebar in chat */
+body .cf-nav,
+.cf-nav {
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 4px 0 !important;
+}
+
+body .cf-item,
+.cf-item {
+    padding: 4px 12px !important;
+}
+
+body .conversation-item,
+.conversation-item {
+    padding: 6px 12px !important;
+    margin: 2px 4px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+body .conversation-item.active,
+.conversation-item.active {
+    background: #E6F2FF !important;
+    border-left: 3px solid var(--primary-blue) !important;
+}
+
+/* Message bubbles already have some, but reinforce for WASM (and ensure base rules from earlier in file also apply now that CSS is balanced) */
+body .message-row,
+.message-row {
+    display: flex !important;
+    margin-bottom: 0.75rem !important;
+}
+
+body .message-me,
+.message-me {
+    margin-left: auto !important;
+    background: var(--bubble-blue) !important;
+    color: var(--text-dark) !important;
+    padding: 0.6rem 1rem !important;
+    border-radius: 12px !important;
+    max-width: 70% !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    display: block !important; /* ensure it acts as a block container for its timestamp etc */
+}
+
+body .message-bot,
+.message-bot {
+    margin-right: auto !important;
+    background: var(--bubble-ai-bg, #ffffff) !important;
+    color: var(--text-dark) !important;
+    padding: 0.6rem 1rem !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    max-width: 100% !important;
+    width: fit-content !important;
+}
+
+/* Mobile input toolbar — placed after WASM !important rules so narrow phones keep one toolbar row */
+@media (max-width: 640.98px) {
+    body .input-container,
+    .input-container {
+        flex-direction: column !important;
+        flex-wrap: nowrap !important;
+        align-items: stretch !important;
+    }
+
+    body .input-toolbar,
+    .input-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 4px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    body .attach-btn-wrap,
+    .attach-btn-wrap,
+    body .action-btn,
+    .action-btn,
+    body .capability-icon,
+    .capability-icon,
+    body .input-toolbar .send-btn,
+    .input-toolbar .send-btn {
+        flex-shrink: 0 !important;
+    }
+
+    body .model-selector,
+    .model-selector {
+        flex: 1 1 0 !important;
+        width: 0 !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    body .input-toolbar .send-btn,
+    .input-toolbar .send-btn {
+        margin-left: auto !important;
+    }
+}
+
+/* ========================================
+    Notes / NewNote styles
+    ======================================== */
+
+.newnote-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20000;
+}
+
+.newnote-modal {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    min-width: 380px;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.newnote-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--grey-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: white;
+    color: var(--text-dark);
+}
+
+.newnote-select:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    background: var(--grey-100);
+}
+
+.newnote-select:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.newnote-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--grey-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: white;
+    color: var(--text-dark);
+}
+
+.newnote-input:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.newnote-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    border: 1px solid var(--grey-300);
+    background: white;
+    color: var(--text-dark);
+    transition: background 0.2s ease;
+}
+
+.newnote-btn:hover:not(:disabled) {
+    background: var(--grey-100);
+}
+
+.newnote-btn-primary {
+    background: var(--primary-blue) !important;
+    color: white !important;
+    border-color: var(--primary-blue) !important;
+}
+
+.newnote-btn-primary:hover:not(:disabled) {
+    background: var(--primary-dark) !important;
+}
+
+.newnote-btn-secondary {
+    background: var(--grey-100) !important;
+    color: var(--text-dark) !important;
+    border-color: var(--grey-300) !important;
+}
+
+.newnote-btn-danger {
+    background: #dc2626 !important;
+    color: white !important;
+    border-color: #dc2626 !important;
+}
+
+.newnote-btn-danger:hover:not(:disabled) {
+    background: #b91c1c !important;
+    border-color: #b91c1c !important;
+}
+
+.newnote-btn-ghost {
+    background: transparent !important;
+    border-color: transparent !important;
+    color: #64748b !important;
+}
+
+.newnote-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ====================== NOTES QUILL EDITOR ====================== */
+.note-response-actions {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    gap: 2px;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+    z-index: 2;
+}
+
+.message-bot:hover .note-response-actions,
+.message-bot.note-editing .note-response-actions,
+.note-response-actions:focus-within {
+    opacity: 1;
+}
+
+.note-action-btn {
+    padding: 2px 6px;
+}
+
+.notes-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 900;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--bubble-blue, #e8f4fd);
+    border: 1px solid var(--primary-dark, #3BA7FF);
+    box-shadow: 0 4px 12px rgba(31, 42, 55, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.notes-fab:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(31, 42, 55, 0.2);
+}
+
+.notes-fab .cf-icon {
+    font-size: 30px;
+    color: var(--primary-dark, #3BA7FF);
+}
+
+.message-bot.note-editing {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+}
+
+.message-bot.note-editing .quill-editor-host {
+    overflow: visible;
+}
+
+.message-bot.note-editing #editor-resizer {
+    z-index: 5;
+}
+
+.quill-editor-host {
+    width: 100%;
+    min-width: 280px;
+}
+
+.quill-editor-host .ql-toolbar.ql-snow {
+    border: 1px solid #d0d7de;
+    border-radius: 8px 8px 0 0;
+    background: var(--bubble-ai-bg, #ffffff);
+    font-family: inherit;
+}
+
+.quill-editor-host .ql-container.ql-snow {
+    border: 1px solid #d0d7de;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    background: var(--bubble-ai-bg, #ffffff);
+    color: var(--text-dark);
+    font-family: inherit;
+    font-size: 0.95rem;
+    min-height: 120px;
+}
+
+.quill-editor-host .ql-editor {
+    min-height: 120px;
+    line-height: 1.5;
+}
+
+.quill-editor-host .ql-editor.ql-blank::before {
+    color: #94a3b8;
+    font-style: normal;
+}
+
+/* Read-only saved HTML notes: match Quill editor typography, not .chat-markdown / Bootstrap p margins */
+.note-quill-display {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.note-quill-display.ql-snow {
+    border: none;
+}
+
+.note-quill-display .ql-editor {
+    padding: 0;
+    min-height: 0;
+    overflow: visible;
+    line-height: 1.5;
+    font-size: 0.95rem;
+    color: var(--text-dark);
+    font-family: inherit;
+}
+
+/* Roadmap + Architecture markdown pages */
+.roadmap-content h1,
+.architecture-content h1 {
+    font-size: 1.75rem;
+    margin: 1.5rem 0 1rem;
+    color: var(--text-dark);
+}
+
+.roadmap-content h2,
+.architecture-content h2 {
+    font-size: 1.35rem;
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--grey-200);
+    color: var(--text-dark);
+}
+
+.roadmap-content h3,
+.architecture-content h3 {
+    font-size: 1.1rem;
+    margin: 1.25rem 0 0.5rem;
+    color: var(--text-dark);
+}
+
+.roadmap-content table,
+.architecture-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.9rem;
+}
+
+.roadmap-content th,
+.architecture-content th,
+.roadmap-content td,
+.architecture-content td {
+    border: 1px solid var(--grey-200);
+    padding: 0.5rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+.roadmap-content th,
+.architecture-content th {
+    background: var(--light-blue-2);
+    font-weight: 600;
+}
+
+.roadmap-content tr:nth-child(even) td,
+.architecture-content tr:nth-child(even) td {
+    background: #fafbfc;
+}
+
+.roadmap-content img,
+.architecture-content img {
+    max-width: 100%;
+    height: auto;
+    margin: 1rem 0;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.roadmap-content code,
+.architecture-content code {
+    background: #f1f5f9;
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.88em;
+}
+
+.roadmap-content pre,
+.architecture-content pre {
+    background: #f8fafc;
+    border: 1px solid var(--grey-200);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+}
+
+.roadmap-content pre code,
+.architecture-content pre code {
+    background: none;
+    padding: 0;
+}
+
+.roadmap-content hr,
+.architecture-content hr {
+    border: none;
+    border-top: 1px solid var(--grey-200);
+    margin: 2rem 0;
+}
+
+.roadmap-content ul,
+.architecture-content ul {
+    margin: 0.5rem 0 1rem;
+    padding-left: 1.5rem;
+}
+
+.roadmap-content li,
+.architecture-content li {
+    margin: 0.35rem 0;
+}
+
+
+/* ========================================
+   THEMES
+   ======================================== */
+
+/* --- Dark --- */
+[data-theme="dark"] {
+    --color-bg:            #1a1a2e;
+    --color-bg-surface:    #16213e;
+    --color-bg-subtle:     #0f3460;
+    --color-bg-muted:      #1e2a45;
+
+    --color-border:        #2d3748;
+    --color-border-strong: #4a5568;
+
+    --color-text:          #e2e8f0;
+    --color-text-muted:    #94a3b8;
+    --color-text-inverse:  #1a1a2e;
+
+    --color-sidebar-bg:    #16213e;
+    --color-sidebar-border: #2d3748;
+
+    --color-chat-bg:       #1a1a2e;
+    --color-bubble-user:   #1e3a5f;
+    --color-bubble-ai:     #16213e;
+
+    --color-topbar-bg:     #16213e;
+}
+
+/* --- Dracula --- */
+[data-theme="dracula"] {
+    --color-bg:            #282a36;
+    --color-bg-surface:    #1e1f29;
+    --color-bg-subtle:     #44475a;
+    --color-bg-muted:      #383a4a;
+
+    --color-border:        #44475a;
+    --color-border-strong: #6272a4;
+
+    --color-text:          #f8f8f2;
+    --color-text-muted:    #6272a4;
+
+    --color-sidebar-bg:    #1e1f29;
+    --color-sidebar-border: #44475a;
+
+    --color-chat-bg:       #282a36;
+    --color-bubble-user:   #44475a;
+    --color-bubble-ai:     #1e1f29;
+
+    --color-topbar-bg:     #1e1f29;
+
+    --color-accent:        #bd93f9;
+    --color-accent-dark:   #9d73d9;
+}
+
+/* --- Nord --- */
+[data-theme="nord"] {
+    --color-bg:            #2e3440;
+    --color-bg-surface:    #3b4252;
+    --color-bg-subtle:     #434c5e;
+    --color-bg-muted:      #3b4252;
+
+    --color-border:        #4c566a;
+    --color-border-strong: #616e88;
+
+    --color-text:          #eceff4;
+    --color-text-muted:    #9099aa;
+
+    --color-sidebar-bg:    #3b4252;
+    --color-sidebar-border: #4c566a;
+
+    --color-chat-bg:       #2e3440;
+    --color-bubble-user:   #4c566a;
+    --color-bubble-ai:     #3b4252;
+
+    --color-topbar-bg:     #3b4252;
+
+    --color-accent:        #88c0d0;
+    --color-accent-dark:   #5e9db0;
+}
+
+/* --- Solarized Light --- */
+[data-theme="solarized-light"] {
+    --color-bg:            #fdf6e3;
+    --color-bg-surface:    #eee8d5;
+    --color-bg-subtle:     #e8e2cf;
+    --color-bg-muted:      #ede8d5;
+
+    --color-border:        #ccc4a8;
+    --color-border-strong: #b5ae95;
+
+    --color-text:          #657b83;
+    --color-text-muted:    #93a1a1;
+
+    --color-sidebar-bg:    #eee8d5;
+    --color-chat-bg:       #fdf6e3;
+    --color-bubble-user:   #d4cdb5;
+    --color-bubble-ai:     #eee8d5;
+
+    --color-topbar-bg:     #eee8d5;
+
+    --color-accent:        #268bd2;
+    --color-accent-dark:   #1a6ea8;
+}
+/* Notes sidebar drag-reorder (pointer-based; works in MAUI WebView) */
+.conversation-item[data-note-id] {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.conversation-item.note-dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+.conversation-item.note-drag-over {
+  outline: 2px dashed var(--primary-dark, #5b5fc7);
+  outline-offset: -2px;
+}
+body.note-list-reordering {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+

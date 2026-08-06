@@ -1,0 +1,184 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+    <PropertyGroup>
+        <!--
+          Multi-target layout:
+          - Mobile TFMs when the host can build them
+          - Windows only on Windows hosts
+          - net10.0 (GirCore Linux desktop) only on Linux hosts
+        -->
+        <TargetFrameworks Condition="'$(AndroidSdkDirectory)' != ''">net10.0-android</TargetFrameworks>
+        <TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('linux'))">$(TargetFrameworks);net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- Linux desktop: plain net10.0 (GirCore + WebKit.BlazorWebView.GirCore). Keep mobile TFMs when Android SDK is present. -->
+        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('linux')) AND '$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
+        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('linux')) AND '$(TargetFrameworks)' != ''">$(TargetFrameworks);net10.0</TargetFrameworks>
+
+        <!-- Note for MacCatalyst:
+            The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
+            When specifying both architectures, use the plural <RuntimeIdentifiers> instead of the singular <RuntimeIdentifier>.
+            The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
+            either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
+        <!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
+
+        <MauiVersion Condition="'$(MauiVersion)' == ''">10.0.80</MauiVersion>
+
+        <OutputType>Exe</OutputType>
+        <RootNamespace>App.Maui</RootNamespace>
+        <AssemblyName>Wizionic</AssemblyName>
+        <!-- UseMaui requires the MAUI workload (not available for plain net10.0 on Linux).
+             Linux uses GirCore Adwaita + WebKit.BlazorWebView.GirCore instead of the MAUI window stack. -->
+        <UseMaui Condition="'$(TargetFramework)' != 'net10.0'">true</UseMaui>
+        <SingleProject Condition="'$(TargetFramework)' != 'net10.0'">true</SingleProject>
+        <EnableDefaultXamlItems Condition="'$(TargetFramework)' == 'net10.0'">true</EnableDefaultXamlItems>
+        <DefineConstants Condition="'$(TargetFramework)' == 'net10.0'">$(DefineConstants);LINUX_DESKTOP</DefineConstants>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <EnableDefaultCssItems>false</EnableDefaultCssItems>
+        <Nullable>enable</Nullable>
+
+        <!-- Enable XAML source generation for faster build times and improved performance.
+             This generates C# code from XAML at compile time instead of runtime inflation.
+             To disable, remove this line.
+             For individual files, you can override by setting Inflator metadata:
+               <MauiXaml Update="MyPage.xaml" Inflator="Default" /> (reverts to defaults: Runtime for Debug, XamlC for Release)
+               <MauiXaml Update="MyPage.xaml" Inflator="Runtime" /> (force runtime inflation) -->
+        <MauiXamlInflator>SourceGen</MauiXamlInflator>
+
+        <!-- Display name -->
+        <ApplicationTitle>Wizionic</ApplicationTitle>
+
+        <!-- App Identifier -->
+        <ApplicationId>com.wizionic.app</ApplicationId>
+
+        <!-- Versions -->
+        <ApplicationDisplayVersion>1.0.4</ApplicationDisplayVersion>
+        <ApplicationVersion>1</ApplicationVersion>
+
+        <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
+        <WindowsPackageType>None</WindowsPackageType>
+
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+        <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+        <SelfContained>true</SelfContained>
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- App Icon (Wizionic mascot — used for taskbar/dock/launcher) -->
+        <MauiIcon Include="Resources\AppIcon\app.png" />
+
+        <!-- Splash Screen -->
+        <MauiSplashScreen Include="Resources\AppIcon\app.png" Color="#E8F4FC" BaseSize="128,128" />
+
+        <!-- Images -->
+        <MauiImage Include="Resources\Images\*" />
+        <MauiImage Update="Resources\Images\dotnet_bot.svg" BaseSize="168,208" />
+
+        <!-- Custom Fonts -->
+        <MauiFont Include="Resources\Fonts\*" />
+
+        <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+        <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\App.Core\App.Core.csproj" />
+        <ProjectReference Include="..\App.Shared\App.Shared.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+        <!-- MAUI Blazor Hybrid (Windows / mobile). Linux uses WebKit.BlazorWebView.GirCore. -->
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" Condition="'$(TargetFramework)' != 'net10.0'" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" Condition="'$(TargetFramework)' == 'net10.0'" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.8" />
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+        <!-- Override transitive SQLitePCLRaw 2.1.11 (GHSA-2m69-gcr7-jv3q / CVE-2025-6965). -->
+        <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+        <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.8" />
+        <PackageReference Include="SIPSorcery" Version="10.0.10" />
+        <PackageReference Include="Velopack" Version="1.2.0" />
+    </ItemGroup>
+
+    <!-- Windows Home Server service control (optional install path). -->
+    <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+        <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.8" />
+    </ItemGroup>
+
+    <!-- Install services: Windows desktop + Linux desktop (net10.0). Exclude mobile TFMs. -->
+    <ItemGroup Condition="'$(TargetFramework)' != 'net10.0' AND $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'windows'">
+        <Compile Remove="Services\HomeserverInstallService.cs" />
+        <Compile Remove="Services\LemonadeInstallService.cs" />
+        <Compile Remove="Services\OllamaInstallService.cs" />
+    </ItemGroup>
+
+    <!-- Linux desktop: WebKit.BlazorWebView.GirCore (GirCore 0.7.x). -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+        <PackageReference Include="WebKit.BlazorWebView.GirCore" Version="10.0.0-rc.1" />
+        <PackageReference Include="GirCore.WebKit-6.0" Version="0.7.0-preview.2" />
+        <PackageReference Include="GirCore.Adw-1" Version="0.7.0-preview.2" />
+        <PackageReference Include="GirCore.Gtk-4.0" Version="0.7.0-preview.2" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView" Version="10.0.0" />
+        <!-- Dock/taskbar icon: full-res mascot (MauiIcon's appicon.png is a tiny generated stub). -->
+        <None Include="Resources\AppIcon\app.png" CopyToOutputDirectory="PreserveNewest" TargetPath="app-appicon.png" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="appsettings.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="appsettings.Development.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <!-- GirCore BlazorWebView serves wwwroot from disk next to the executable. -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+        <Content Update="wwwroot\**">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+    <!--
+      Linux (net10.0) is not a MAUI SingleProject target:
+      - Only Platforms/Linux is compiled
+      - MAUI shell XAML (MainPage/App) is unused; GirCore hosts Blazor directly
+    -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+        <Compile Remove="Platforms\Android\**" />
+        <Compile Remove="Platforms\iOS\**" />
+        <Compile Remove="Platforms\MacCatalyst\**" />
+        <Compile Remove="Platforms\Windows\**" />
+        <None Remove="Platforms\Android\**" />
+        <None Remove="Platforms\iOS\**" />
+        <None Remove="Platforms\MacCatalyst\**" />
+        <None Remove="Platforms\Windows\**" />
+        <MauiXaml Remove="Platforms\**" />
+        <EmbeddedResource Remove="Platforms\Android\**" />
+        <EmbeddedResource Remove="Platforms\iOS\**" />
+        <EmbeddedResource Remove="Platforms\MacCatalyst\**" />
+        <EmbeddedResource Remove="Platforms\Windows\**" />
+
+        <!-- MAUI Hybrid shell not used on Linux; GirCore hosts Components/Routes.razor -->
+        <MauiXaml Remove="MainPage.xaml" />
+        <Compile Remove="MainPage.xaml.cs" />
+        <MauiXaml Remove="App.xaml" />
+        <Compile Remove="App.xaml.cs" />
+    </ItemGroup>
+
+    <!-- On non-Linux hosts, exclude the Linux entry point -->
+    <ItemGroup Condition="'$(TargetFramework)' != 'net10.0'">
+        <Compile Remove="Platforms\Linux\**" />
+        <None Remove="Platforms\Linux\**" />
+    </ItemGroup>
+
+</Project>

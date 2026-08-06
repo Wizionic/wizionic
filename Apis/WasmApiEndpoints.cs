@@ -1,12 +1,12 @@
-using ChatfishApp.Data;
-using ChatfishApp.Services;
+using App.Data;
+using App.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 
 
-namespace ChatfishApp.Apis;
+namespace App.Apis;
 
 /// <summary>
 /// Minimal API endpoints exposed specifically for the WASM client.
@@ -94,7 +94,7 @@ public static class WasmApiEndpoints
 
         // Password login. Always returns the same generic error so callers cannot tell
         // whether the email exists or whether a password has been set.
-        publicAuth.MapPost("/login-password", async (HttpContext ctx, MagicLinkService magic, ChatfishDbContext db, LoginWithPassword req) =>
+        publicAuth.MapPost("/login-password", async (HttpContext ctx, MagicLinkService magic, AppDbContext db, LoginWithPassword req) =>
         {
             const string genericFail = "Invalid email or password.";
 
@@ -137,7 +137,7 @@ public static class WasmApiEndpoints
         // The main /api/* (auth/me, keys, encryption-key) remain protected.
         var toolsGroup = endpoints.MapGroup("/api/tools");
 
-        group.MapGet("/auth/me", async (ClaimsPrincipal user, KeyProtectionService protector, ChatfishDbContext db) =>
+        group.MapGet("/auth/me", async (ClaimsPrincipal user, KeyProtectionService protector, AppDbContext db) =>
         {
             var email = user.Identity?.Name;
             if (string.IsNullOrEmpty(email))
@@ -164,7 +164,7 @@ public static class WasmApiEndpoints
 
         // Set or change password for the currently signed-in user.
         // Easy requirements: minimum length only (see PasswordHashService.MinLength).
-        group.MapPost("/auth/set-password", async (ClaimsPrincipal principal, ChatfishDbContext db, SetPasswordRequest req) =>
+        group.MapPost("/auth/set-password", async (ClaimsPrincipal principal, AppDbContext db, SetPasswordRequest req) =>
         {
             var email = principal.Identity?.Name;
             if (string.IsNullOrEmpty(email))
@@ -195,7 +195,7 @@ public static class WasmApiEndpoints
 
         // Verify the account password (used to unlock password-protected notebooks).
         // Always the same failure message; does not reveal whether a password is set beyond 401/400.
-        group.MapPost("/auth/verify-password", async (ClaimsPrincipal principal, ChatfishDbContext db, VerifyPasswordRequest req) =>
+        group.MapPost("/auth/verify-password", async (ClaimsPrincipal principal, AppDbContext db, VerifyPasswordRequest req) =>
         {
             const string genericFail = "Incorrect password.";
 
@@ -222,7 +222,7 @@ public static class WasmApiEndpoints
             return Results.Ok(new { success = true });
         });
 
-        group.MapGet("/user/encryption-key", async (ClaimsPrincipal user, KeyProtectionService protector, ChatfishDbContext db) =>
+        group.MapGet("/user/encryption-key", async (ClaimsPrincipal user, KeyProtectionService protector, AppDbContext db) =>
         {
             var email = user.Identity?.Name;
             if (string.IsNullOrEmpty(email))
@@ -246,7 +246,7 @@ public static class WasmApiEndpoints
                 Console.WriteLine($"[Auth] LocalEncryptionKey for {email} is missing or corrupted; refusing to rotate.");
                 return Results.Problem(
                     title: "Encryption key unavailable",
-                    detail: "Your account encryption key could not be read. Data was not rotated. Contact support or restore chatfish.db from backup.",
+                    detail: "Your account encryption key could not be read. Data was not rotated. Contact support or restore homeserver.db from backup.",
                     statusCode: StatusCodes.Status500InternalServerError);
             }
             else if (migrateLegacy)
@@ -286,17 +286,17 @@ public static class WasmApiEndpoints
         // even local/unauthenticated WASM users (pure Ollama etc.) can use agentic tools.
         toolsGroup.MapPost("/web-search", async (WebSearchRequest req) =>
         {
-            return await ChatfishApp.Services.Tools.AppTools.SearchWeb(req.Query, req.MaxResults ?? 5);
+            return await App.Services.Tools.AppTools.SearchWeb(req.Query, req.MaxResults ?? 5);
         });
 
         toolsGroup.MapPost("/summarize-url", async (SummarizeUrlRequest req) =>
         {
-            return await ChatfishApp.Services.Tools.AppTools.SummarizeUrl(req.Url);
+            return await App.Services.Tools.AppTools.SummarizeUrl(req.Url);
         });
 
         toolsGroup.MapPost("/get-current-weather", async (WeatherRequest req) =>
         {
-            return await ChatfishApp.Services.Tools.AppTools.GetCurrentWeather(req.Latitude, req.Longitude, req.Units ?? "celsius", req.ForecastDays ?? 0);
+            return await App.Services.Tools.AppTools.GetCurrentWeather(req.Latitude, req.Longitude, req.Units ?? "celsius", req.ForecastDays ?? 0);
         });
 
         // Public MCP registry proxy + filter.

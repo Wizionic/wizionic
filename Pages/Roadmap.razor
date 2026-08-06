@@ -1,10 +1,10 @@
-﻿@page "/roadmap"
+@page "/roadmap"
 @using Markdig
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Web
 @using System.IO
 
-<PageTitle>Roadmap - Chatfish.me</PageTitle>
+<PageTitle>Roadmap - Wizionic.me</PageTitle>
 
 <div class="roadmap-page" style="height: calc(100vh - 4rem); overflow-y: auto; max-height: 1000px; padding: 0 1rem;">
 
@@ -29,9 +29,9 @@
         // and loading via HttpClient, or embedding as a resource. These fallbacks cover dev scenarios.
         var candidates = new[]
         {
-            // Common dev: run from repo root or one level above the ChatfishApp dir
+            // Common dev: run from repo root or one level above the App dir
             Path.Combine(Directory.GetCurrentDirectory(), "..", "ROADMAP.md"),
-            // Run directly from the ChatfishApp folder
+            // Run directly from the App folder
             Path.Combine(Directory.GetCurrentDirectory(), "ROADMAP.md"),
             // WASM / published wwwroot case (if ROADMAP.md is copied there at build/publish time)
             Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "ROADMAP.md"),

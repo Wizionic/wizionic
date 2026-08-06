@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MimeKit;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// SMTP configuration for sending transactional emails (e.g. magic links).
@@ -25,7 +25,7 @@ public class EmailOptions
     public int SmtpPort { get; set; } = 587;
     public string SmtpUser { get; set; } = string.Empty;
     public string SmtpPass { get; set; } = string.Empty;
-    public string From { get; set; } = "no-reply@chatfish.local";
+    public string From { get; set; } = "no-reply@app.local";
     public bool UseStartTls { get; set; } = true;
 }
 

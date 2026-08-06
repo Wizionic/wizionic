@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# CHATFISH LINUX DEPLOYMENT (Velopack AppImage + .deb + install.sh + homeserver)
+# WIZIONIC LINUX DEPLOYMENT (Velopack AppImage + .deb + install.sh + homeserver)
 # ==============================================================================
 # Mirrors deploy.ps1 Part 1 + Part 1b (Windows Velopack + homeserver package),
 # for Linux desktop. Does NOT deploy production Docker website (see deploy.ps1 Part 2).
@@ -12,15 +12,15 @@
 #   ./deploy-linux.sh --skip-download  # do not fetch previous releases (no deltas)
 #   ./deploy-linux.sh --skip-homeserver  # skip homeserver package build
 #
-# Artifacts (uploaded to https://chatfish.me/releases/linux/):
-#   Chatfish.AppImage
-#   chatfish_${VERSION}_amd64.deb
-#   install.sh          → also served at https://chatfish.me/install.sh
+# Artifacts (uploaded to https://wizionic.com/releases/linux/):
+#   Wizionic.AppImage
+#   wizionic_${VERSION}_amd64.deb
+#   install.sh          → also served at https://wizionic.com/install.sh
 #                         default: user AppImage (~/Applications) for Velopack self-update
 #                         --system: .deb under /opt (upgrade via reinstall)
 #   releases.linux.json (Velopack feed)
 #
-# Homeserver artifacts (https://chatfish.me/releases/homeserver/linux/):
+# Homeserver artifacts (https://wizionic.com/releases/homeserver/linux/):
 #   homeserver-linux-x64-${VERSION}.zip  — self-contained Blazor host + WASM
 #   latest.json                          — version, fileName, sha256, url
 #
@@ -41,18 +41,18 @@ DEB_BUILD_DIR="${DEB_BUILD_DIR:-./linux_deb_build}"
 HOMESERVER_OUTPUT="${HOMESERVER_OUTPUT:-./homeserver_publish_linux}"
 HOMESERVER_RELEASES="${HOMESERVER_RELEASES:-./homeserver_releases_linux}"
 VERSION="${VERSION:-0.1.4}"
-UPDATE_FEED="${UPDATE_FEED:-https://chatfish.me/releases/linux}"
-HOMESERVER_FEED="${HOMESERVER_FEED:-https://chatfish.me/releases/homeserver/linux}"
-REMOTE_RELEASES="${REMOTE_RELEASES:-/var/www/chatfish/releases/linux}"
-REMOTE_HOMESERVER="${REMOTE_HOMESERVER:-/var/www/chatfish/releases/homeserver/linux}"
-REMOTE_WWWROOT="${REMOTE_WWWROOT:-/var/www/chatfish}"
-PACK_ID="Chatfish"
-PACK_TITLE="Chatfish"
-MAIN_EXE="Chatfish"
-ICON_PATH="ChatfishApp.Maui/Resources/AppIcon/chatfish.png"
+UPDATE_FEED="${UPDATE_FEED:-https://wizionic.com/releases/linux}"
+HOMESERVER_FEED="${HOMESERVER_FEED:-https://wizionic.com/releases/homeserver/linux}"
+REMOTE_RELEASES="${REMOTE_RELEASES:-/var/www/wizionic/releases/linux}"
+REMOTE_HOMESERVER="${REMOTE_HOMESERVER:-/var/www/wizionic/releases/homeserver/linux}"
+REMOTE_WWWROOT="${REMOTE_WWWROOT:-/var/www/wizionic}"
+PACK_ID="Wizionic"
+PACK_TITLE="Wizionic"
+MAIN_EXE="Wizionic"
+ICON_PATH="App.Maui/Resources/AppIcon/app.png"
 ICON_FALLBACKS=(
   "wwwroot/images/icon512.png"
-  "wwwroot/images/chatfish.png"
+  "wwwroot/images/app.png"
 )
 
 SKIP_UPLOAD=false
@@ -101,7 +101,7 @@ require_cmd() {
 }
 
 echo "================================================================"
-echo " CHATFISH LINUX DEPLOY — AppImage + .deb + install.sh"
+echo " WIZIONIC LINUX DEPLOY — AppImage + .deb + install.sh"
 echo " Version:  $VERSION"
 echo " Feed:     $UPDATE_FEED"
 echo "================================================================"
@@ -139,8 +139,8 @@ fi
 
 # Publish self-contained Linux build
 echo ""
-echo "Publishing ChatfishApp.Maui (net10.0 / linux-x64 self-contained) ..."
-dotnet publish "ChatfishApp.Maui/ChatfishApp.Maui.csproj" \
+echo "Publishing App.Maui (net10.0 / linux-x64 self-contained) ..."
+dotnet publish "App.Maui/App.Maui.csproj" \
   -c Release \
   -f net10.0 \
   -r linux-x64 \
@@ -166,7 +166,7 @@ vpk pack \
   --packVersion "$VERSION" \
   --packDir "$OUTPUT_DIR" \
   --packTitle "$PACK_TITLE" \
-  --packAuthors "Chatfish" \
+  --packAuthors "Wizionic" \
   --mainExe "$MAIN_EXE" \
   --icon "$ICON" \
   --outputDir "$RELEASES_DIR" \
@@ -180,60 +180,60 @@ if [[ -z "$APPIMAGE" ]]; then
   exit 1
 fi
 APPIMAGE_NAME="$(basename "$APPIMAGE")"
-# Normalize to Chatfish.AppImage for stable install URLs
-if [[ "$APPIMAGE_NAME" != "Chatfish.AppImage" ]]; then
-  cp -f "$APPIMAGE" "$RELEASES_DIR/Chatfish.AppImage"
-  chmod +x "$RELEASES_DIR/Chatfish.AppImage"
-  APPIMAGE_NAME="Chatfish.AppImage"
-  APPIMAGE="$RELEASES_DIR/Chatfish.AppImage"
+# Normalize to Wizionic.AppImage for stable install URLs
+if [[ "$APPIMAGE_NAME" != "Wizionic.AppImage" ]]; then
+  cp -f "$APPIMAGE" "$RELEASES_DIR/Wizionic.AppImage"
+  chmod +x "$RELEASES_DIR/Wizionic.AppImage"
+  APPIMAGE_NAME="Wizionic.AppImage"
+  APPIMAGE="$RELEASES_DIR/Wizionic.AppImage"
 fi
 echo "AppImage: $APPIMAGE"
 
 # ------------------------------------------------------------------------------
-# .deb package (wraps AppImage under /opt/chatfish)
+# .deb package (wraps AppImage under /opt/wizionic)
 # ------------------------------------------------------------------------------
-DEB_NAME="chatfish_${VERSION}_amd64.deb"
+DEB_NAME="wizionic_${VERSION}_amd64.deb"
 echo ""
 echo "Building .deb installer ($DEB_NAME) ..."
 rm -rf "$DEB_BUILD_DIR"
 mkdir -p \
   "$DEB_BUILD_DIR/DEBIAN" \
-  "$DEB_BUILD_DIR/opt/chatfish" \
+  "$DEB_BUILD_DIR/opt/wizionic" \
   "$DEB_BUILD_DIR/usr/bin" \
   "$DEB_BUILD_DIR/usr/share/applications" \
   "$DEB_BUILD_DIR/usr/share/icons/hicolor/256x256/apps" \
   "$DEB_BUILD_DIR/usr/share/icons/hicolor/512x512/apps"
 
-cp "$APPIMAGE" "$DEB_BUILD_DIR/opt/chatfish/Chatfish.AppImage"
-chmod 755 "$DEB_BUILD_DIR/opt/chatfish/Chatfish.AppImage"
+cp "$APPIMAGE" "$DEB_BUILD_DIR/opt/wizionic/Wizionic.AppImage"
+chmod 755 "$DEB_BUILD_DIR/opt/wizionic/Wizionic.AppImage"
 
 # PATH helper
-cat > "$DEB_BUILD_DIR/usr/bin/chatfish" << 'WRAPPER'
+cat > "$DEB_BUILD_DIR/usr/bin/wizionic" << 'WRAPPER'
 #!/bin/sh
-exec /opt/chatfish/Chatfish.AppImage "$@"
+exec /opt/wizionic/Wizionic.AppImage "$@"
 WRAPPER
-chmod 755 "$DEB_BUILD_DIR/usr/bin/chatfish"
+chmod 755 "$DEB_BUILD_DIR/usr/bin/wizionic"
 
 INSTALLED_SIZE_KB="$(du -sk "$DEB_BUILD_DIR/opt" | awk '{print $1}')"
 
 cat > "$DEB_BUILD_DIR/DEBIAN/control" << EOF
-Package: chatfish
+Package: wizionic
 Version: $VERSION
 Section: net
 Priority: optional
 Architecture: amd64
 Installed-Size: $INSTALLED_SIZE_KB
 Maintainer: Daniel Goodwin <daniellgoodwin@protonmail.com>
-Homepage: https://chatfish.me
+Homepage: https://wizionic.com
 Description: Privacy-first local AI chat application
- Chatfish is a privacy-first AI chat hub with local-first storage,
+ Wizionic is a privacy-first AI chat hub with local-first storage,
  Ollama support, and optional multi-device sync.
 EOF
 
 cat > "$DEB_BUILD_DIR/DEBIAN/postinst" << 'EOF'
 #!/bin/sh
 set -e
-chmod 755 /opt/chatfish/Chatfish.AppImage /usr/bin/chatfish 2>/dev/null || true
+chmod 755 /opt/wizionic/Wizionic.AppImage /usr/bin/wizionic 2>/dev/null || true
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q /usr/share/applications 2>/dev/null || true
 fi
@@ -244,23 +244,23 @@ exit 0
 EOF
 chmod 755 "$DEB_BUILD_DIR/DEBIAN/postinst"
 
-cat > "$DEB_BUILD_DIR/usr/share/applications/chatfish.desktop" << EOF
+cat > "$DEB_BUILD_DIR/usr/share/applications/wizionic.desktop" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Chatfish
+Name=Wizionic
 Comment=Privacy-first AI chat hub
-Exec=/opt/chatfish/Chatfish.AppImage
-Icon=chatfish
+Exec=/opt/wizionic/Wizionic.AppImage
+Icon=wizionic
 Terminal=false
 Categories=Network;Office;Chat;Utility;
-StartupWMClass=com.chatfish.app
+StartupWMClass=com.wizionic.app
 StartupNotify=true
 EOF
 
 # Icon (512 source → 256 and 512 hicolor slots; desktops scale as needed)
-cp "$ICON" "$DEB_BUILD_DIR/usr/share/icons/hicolor/512x512/apps/chatfish.png"
-cp "$ICON" "$DEB_BUILD_DIR/usr/share/icons/hicolor/256x256/apps/chatfish.png"
+cp "$ICON" "$DEB_BUILD_DIR/usr/share/icons/hicolor/512x512/apps/app.png"
+cp "$ICON" "$DEB_BUILD_DIR/usr/share/icons/hicolor/256x256/apps/app.png"
 
 dpkg-deb --root-owner-group --build "$DEB_BUILD_DIR" "$RELEASES_DIR/$DEB_NAME"
 echo "Deb: $RELEASES_DIR/$DEB_NAME"
@@ -276,29 +276,29 @@ echo ""
 echo "Writing install.sh ..."
 cat > "$RELEASES_DIR/install.sh" << EOF
 #!/usr/bin/env bash
-# Chatfish Linux installer
-#   curl -fsSL https://chatfish.me/install.sh | bash              # AppImage (recommended)
-#   curl -fsSL https://chatfish.me/install.sh | bash -s -- --system  # .deb under /opt
+# Wizionic Linux installer
+#   curl -fsSL https://wizionic.com/install.sh | bash              # AppImage (recommended)
+#   curl -fsSL https://wizionic.com/install.sh | bash -s -- --system  # .deb under /opt
 set -euo pipefail
 
 VERSION="${VERSION}"
 BASE_URL="${UPDATE_FEED}"
-INSTALL_DIR="\${CHATFISH_INSTALL_DIR:-\${HOME}/Applications}"
-APPIMAGE="Chatfish.AppImage"
-DEB="chatfish_\${VERSION}_amd64.deb"
+INSTALL_DIR="\${WIZIONIC_INSTALL_DIR:-\${HOME}/Applications}"
+APPIMAGE="Wizionic.AppImage"
+DEB="wizionic_\${VERSION}_amd64.deb"
 MODE="appimage"
 
 usage() {
   cat <<USAGE
-Chatfish Linux installer
+Wizionic Linux installer
 
 Usage:
-  curl -fsSL https://chatfish.me/install.sh | bash
-  curl -fsSL https://chatfish.me/install.sh | bash -s -- [options]
+  curl -fsSL https://wizionic.com/install.sh | bash
+  curl -fsSL https://wizionic.com/install.sh | bash -s -- [options]
 
 Options:
   --appimage, --user   Install AppImage to ~/Applications (default; supports in-app updates)
-  --system, --deb      Install system-wide .deb to /opt/chatfish (updates via reinstall)
+  --system, --deb      Install system-wide .deb to /opt/wizionic (updates via reinstall)
   -h, --help           Show this help
 USAGE
 }
@@ -316,7 +316,7 @@ while [[ \$# -gt 0 ]]; do
   esac
 done
 
-echo "Installing Chatfish \${VERSION} (mode: \$MODE)..."
+echo "Installing Wizionic \${VERSION} (mode: \$MODE)..."
 
 TMP="\$(mktemp -d)"
 cleanup() { rm -rf "\$TMP"; }
@@ -336,14 +336,14 @@ install_deb_file() {
     dpkg -i "./\$DEB" || apt-get install -f -y
   fi
   echo ""
-  echo "Chatfish installed system-wide under /opt/chatfish."
-  echo "  Launch from your app menu, or run: chatfish"
+  echo "Wizionic installed system-wide under /opt/wizionic."
+  echo "  Launch from your app menu, or run: wizionic"
   echo ""
   echo "NOTE: System installs are root-owned. In-app updates usually cannot replace"
-  echo "      /opt/chatfish/Chatfish.AppImage. To upgrade later either:"
-  echo "        curl -fsSL https://chatfish.me/install.sh | bash -s -- --system"
+  echo "      /opt/wizionic/Wizionic.AppImage. To upgrade later either:"
+  echo "        curl -fsSL https://wizionic.com/install.sh | bash -s -- --system"
   echo "      or use the user AppImage install (recommended for auto-update):"
-  echo "        curl -fsSL https://chatfish.me/install.sh | bash"
+  echo "        curl -fsSL https://wizionic.com/install.sh | bash"
 }
 
 install_appimage() {
@@ -357,25 +357,25 @@ install_appimage() {
   chmod +x "\$INSTALL_DIR/\$APPIMAGE"
 
   mkdir -p "\${HOME}/.local/share/applications"
-  cat > "\${HOME}/.local/share/applications/chatfish.desktop" << DESKTOP
+  cat > "\${HOME}/.local/share/applications/wizionic.desktop" << DESKTOP
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Chatfish
+Name=Wizionic
 Comment=Privacy-first AI chat hub
 Exec=\$INSTALL_DIR/\$APPIMAGE
-Icon=chatfish
+Icon=wizionic
 Terminal=false
 Categories=Network;Office;Chat;Utility;
 StartupNotify=true
-StartupWMClass=com.chatfish.app
+StartupWMClass=com.wizionic.app
 DESKTOP
 
   if command -v curl >/dev/null 2>&1; then
     ICON_DIR="\${HOME}/.local/share/icons/hicolor/256x256/apps"
     mkdir -p "\$ICON_DIR"
-    curl -fsSL -o "\$ICON_DIR/chatfish.png" "https://chatfish.me/images/icon512.png" 2>/dev/null \\
-      || curl -fsSL -o "\$ICON_DIR/chatfish.png" "https://chatfish.me/images/chatfish.png" 2>/dev/null \\
+    curl -fsSL -o "\$ICON_DIR/app.png" "https://wizionic.com/images/icon512.png" 2>/dev/null \\
+      || curl -fsSL -o "\$ICON_DIR/app.png" "https://wizionic.com/images/app.png" 2>/dev/null \\
       || true
   fi
 
@@ -384,16 +384,16 @@ DESKTOP
   fi
 
   # Prefer user desktop entry over a leftover system .deb entry in menus.
-  if [[ -f /usr/share/applications/chatfish.desktop ]]; then
+  if [[ -f /usr/share/applications/wizionic.desktop ]]; then
     echo ""
-    echo "NOTE: A system install was also detected (/usr/share/applications/chatfish.desktop)."
+    echo "NOTE: A system install was also detected (/usr/share/applications/wizionic.desktop)."
     echo "      Prefer launching: \$INSTALL_DIR/\$APPIMAGE"
     echo "      or remove the .deb if you only want the user AppImage:"
-    echo "        sudo apt remove chatfish   # or: sudo dpkg -r chatfish"
+    echo "        sudo apt remove wizionic   # or: sudo dpkg -r wizionic"
   fi
 
   echo ""
-  echo "Chatfish AppImage installed (user-local — supports in-app updates)."
+  echo "Wizionic AppImage installed (user-local — supports in-app updates)."
   echo "  Path:   \$INSTALL_DIR/\$APPIMAGE"
   echo "  Launch: from your app menu, or: \$INSTALL_DIR/\$APPIMAGE"
 }
@@ -436,8 +436,8 @@ else
   echo "================================================================"
   mkdir -p "$HOMESERVER_RELEASES"
 
-  echo "Publishing ChatfishApp (linux-x64 self-contained) ..."
-  dotnet publish "ChatfishApp.csproj" \
+  echo "Publishing App (linux-x64 self-contained) ..."
+  dotnet publish "App.csproj" \
     -c Release \
     -r linux-x64 \
     --self-contained true \
@@ -450,14 +450,14 @@ else
     -p:Version="$VERSION" \
     -p:ApplicationDisplayVersion="$VERSION"
 
-  if [[ ! -f "$HOMESERVER_OUTPUT/ChatfishApp" && ! -f "$HOMESERVER_OUTPUT/ChatfishApp.dll" ]]; then
-    echo "ERROR: homeserver publish missing ChatfishApp entrypoint in $HOMESERVER_OUTPUT" >&2
+  if [[ ! -f "$HOMESERVER_OUTPUT/App" && ! -f "$HOMESERVER_OUTPUT/App.dll" ]]; then
+    echo "ERROR: homeserver publish missing App entrypoint in $HOMESERVER_OUTPUT" >&2
     ls -la "$HOMESERVER_OUTPUT" | head -40 >&2
     exit 1
   fi
   # Ensure native entrypoint is executable when present
-  if [[ -f "$HOMESERVER_OUTPUT/ChatfishApp" ]]; then
-    chmod +x "$HOMESERVER_OUTPUT/ChatfishApp" || true
+  if [[ -f "$HOMESERVER_OUTPUT/App" ]]; then
+    chmod +x "$HOMESERVER_OUTPUT/App" || true
   fi
 
   HOMESERVER_ZIP_NAME="homeserver-linux-x64-${VERSION}.zip"
@@ -497,7 +497,7 @@ if [[ "$SKIP_UPLOAD" == "true" ]]; then
     echo "  Homeserver: $HOMESERVER_RELEASES/$HOMESERVER_ZIP_NAME"
   fi
   echo "  curl -fsSL file://$SCRIPT_DIR/$RELEASES_DIR/install.sh | bash   # not for remote"
-  echo "  Install command (after upload): curl -fsSL https://chatfish.me/install.sh | bash"
+  echo "  Install command (after upload): curl -fsSL https://wizionic.com/install.sh | bash"
   exit 0
 fi
 
@@ -505,8 +505,10 @@ require_cmd scp
 require_cmd ssh
 
 echo ""
-echo "Ensuring remote directory $REMOTE_RELEASES ..."
-ssh "${SSH_USER}@${SERVER_IP}" "mkdir -p '${REMOTE_RELEASES}'"
+echo "Ensuring remote deploy root $REMOTE_WWWROOT (sudo may prompt)..."
+# Bootstrap parallel install tree (does not touch /var/www/chatfish). Single line for reliable ssh.
+ssh -t "${SSH_USER}@${SERVER_IP}" \
+  "sudo mkdir -p '${REMOTE_WWWROOT}/data' '${REMOTE_RELEASES}' '${REMOTE_HOMESERVER}' '${REMOTE_WWWROOT}/releases/windows' '${REMOTE_WWWROOT}/releases/homeserver/windows' && sudo chown -R '${SSH_USER}:${SSH_USER}' '${REMOTE_WWWROOT}'"
 
 echo "Uploading release artifacts to ${SSH_USER}@${SERVER_IP}:${REMOTE_RELEASES}/ ..."
 scp -r "${RELEASES_DIR}/"* "${SSH_USER}@${SERVER_IP}:${REMOTE_RELEASES}/"
@@ -518,16 +520,14 @@ scp "$RELEASES_DIR/install.sh" "${SSH_USER}@${SERVER_IP}:${REMOTE_WWWROOT}/insta
   || echo "WARNING: could not copy install.sh to site root — use $UPDATE_FEED/install.sh"
 
 if [[ -n "$HOMESERVER_ZIP_NAME" && -d "$HOMESERVER_RELEASES" ]]; then
-  echo "Ensuring remote homeserver directory $REMOTE_HOMESERVER ..."
-  ssh "${SSH_USER}@${SERVER_IP}" "mkdir -p '${REMOTE_HOMESERVER}'"
   echo "Uploading Home Server package to ${SSH_USER}@${SERVER_IP}:${REMOTE_HOMESERVER}/ ..."
   scp -r "${HOMESERVER_RELEASES}/"* "${SSH_USER}@${SERVER_IP}:${REMOTE_HOMESERVER}/"
 fi
 
 echo ""
 echo "Linux deployment complete."
-echo "  Install (AppImage, in-app updates): curl -fsSL https://chatfish.me/install.sh | bash"
-echo "  Install (system .deb):              curl -fsSL https://chatfish.me/install.sh | bash -s -- --system"
+echo "  Install (AppImage, in-app updates): curl -fsSL https://wizionic.com/install.sh | bash"
+echo "  Install (system .deb):              curl -fsSL https://wizionic.com/install.sh | bash -s -- --system"
 echo "  (alt)       curl -fsSL $UPDATE_FEED/install.sh | bash"
 echo "  AppImage:   $UPDATE_FEED/$APPIMAGE_NAME"
 echo "  Deb:        $UPDATE_FEED/$DEB_NAME"

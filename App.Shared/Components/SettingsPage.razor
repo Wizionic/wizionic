@@ -1,0 +1,800 @@
+
+@inject App.Core.Storage.IKeyStore KeyStore
+@inject App.Core.Update.IUpdateService UpdateService
+@inject App.Core.Homeserver.IHomeserverInstallService Homeserver
+@inject App.Core.Configuration.IAppServerEndpoint ServerEndpoint
+@inject App.Core.Setup.ISetupWizardHost SetupWizard
+@inject App.Shared.Services.ThemeService Theme
+@inject INavLayoutState NavLayout
+@inject App.Core.Auth.IAuthService Auth
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@using App.Core.Update
+@using App.Core.Homeserver
+@using App.Shared.Services
+@implements IDisposable
+
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
+    <h4 style="margin: 0;">Settings</h4>
+    <p style="color: var(--color-text-muted); font-size: 0.9em;">
+        These preferences are stored only on this device only.
+    </p>
+
+    <!-- Login server (MAUI only — WASM always uses the page origin) -->
+    @if (AppEnvironment.IsMaui)
+    {
+        <div class="settings-card" style="margin-top: 1rem;">
+            <h3 style="margin: 0 0 0.25rem;">Login server</h3>
+            <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+                Where this app authenticates and syncs device presence. Installing a Home Server sets this to
+                <code>http://localhost:5150</code>. </p>
+            <label>Server URL</label>
+            <input type="text" class="form-control" @bind="loginServerDraft" placeholder="https://wizionic.com" />
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="SaveLoginServer" disabled="@loginServerBusy">
+                    @(loginServerBusy ? "Saving…" : "Save login server")
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => loginServerDraft = "https://wizionic.com"' disabled="@loginServerBusy">
+                    Public (wizionic.com)
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => loginServerDraft = "http://localhost:5150"' disabled="@loginServerBusy">
+                    Local homeserver
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(loginServerMessage))
+            {
+                <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(loginServerIsError ? "#c00" : "#1a7a3c");">
+                    @loginServerMessage
+                </div>
+            }
+            @if (Homeserver.IsSupported)
+            {
+                <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--cf-border, #eee);">
+                    <button type="button" class="btn btn-outline-primary btn-sm" @onclick="OpenSetupWizard">
+                        Run setup wizard
+                    </button>
+                    <span style="font-size: 0.85em; color: var(--color-text-muted); margin-left: 0.5rem;">
+                        To install the Home Login Server, Lemonade AI server, and Ollama AI server
+                    </span>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- Appearance -->
+    <div class="settings-card">
+        <h3 style="margin: 0 0 0.25rem;">Appearance</h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
+            Customize how Wizionic looks on this device.
+        </p>
+
+        <div class="theme-setting-row">
+            <div class="theme-setting-info">
+                <p class="theme-setting-label">Theme</p>
+                <p class="theme-setting-desc">
+                    Pick a color palette. "System default" follows your OS light/dark preference.
+                </p>
+            </div>
+            <select class="form-select form-select-sm theme-setting-select"
+                    @onchange="OnThemeChanged">
+                @foreach (var theme in Theme.AvailableThemes)
+                {
+                    <option value="@theme.Id" selected="@(theme.Id == Theme.Theme)">
+                        @theme.DisplayName
+                    </option>
+                }
+            </select>
+        </div>
+
+        @if (AppEnvironment.IsMaui)
+        {
+            <div class="theme-setting-row">
+                <div class="theme-setting-info">
+                    <p class="theme-setting-label">Navigation bar position</p>
+                    <p class="theme-setting-desc">
+                        Show the main navigation across the top, or as a vertical icon rail on the left.
+                    </p>
+                </div>
+                <select class="form-select form-select-sm theme-setting-select"
+                        value="@NavLayoutModeValue"
+                        @onchange="OnNavLayoutChanged">
+                    <option value="top">Top (default)</option>
+                    <option value="left">Left (vertical)</option>
+                </select>
+            </div>
+        }
+    </div>
+
+    <!-- About you -->
+    <div class="settings-card">
+        <h3 style="margin: 0 0 0.25rem;">About you</h3>
+        <p style="color: #666; font-size: 0.85em; margin: 0 0 1rem;">
+            Tell Wizionic about yourself to get more personalized answers.
+        </p>
+
+        <div class="ollama-toggle-row" style="border-top: none; margin-top: 0; padding-top: 0;">
+            <div>
+                <label class="ollama-toggle-label">Enable Wizionic Customization about you</label>
+            </div>
+            <label class="ollama-toggle">
+                <input type="checkbox" @bind="profileDraft.CustomizationEnabled" />
+                <span class="ollama-toggle-slider"></span>
+            </label>
+        </div>
+
+        @if (profileDraft.CustomizationEnabled)
+        {
+            <div style="margin-top: 1rem;">
+                <label>What should Wizionic call you?</label>
+                <input type="text"
+                       @bind="profileDraft.PreferredName"
+                       class="form-control"
+                       />
+
+                <label style="margin-top: 0.75rem;">What do you do?</label>
+                <input type="text"
+                       @bind="profileDraft.Occupation"
+                       class="form-control"
+                        />
+            </div>
+        }
+
+        <div style="margin-top: 1rem;">
+            <button @onclick="SaveProfile" class="btn btn-outline-secondary btn-sm">Save changes</button>
+        </div>
+    </div>
+
+    <!-- Memories -->
+    <div class="settings-card">
+        <h3 style="margin: 0 0 0.25rem;">Memories</h3>
+        <p style="color: #666; font-size: 0.85em; margin: 0 0 1rem;">
+            Facts Wizionic should remember across conversations. Each memory is sent with your system prompt.
+        </p>
+
+        <div class="memory-search-wrap">
+            <i class="bi bi-search memory-search-icon"></i>
+            <input type="text"
+                   @bind="memorySearch"
+                   @bind:event="oninput"
+                   class="form-control memory-search-input"
+                   placeholder="Search for a memory" />
+        </div>
+
+        @if (FilteredMemories.Any())
+        {
+            <div class="memory-list">
+                @foreach (var memory in FilteredMemories)
+                {
+                    <div class="memory-row">
+                        @if (editingMemoryId == memory.Id)
+                        {
+                            <input type="text"
+                                   @bind="editingMemoryText"
+                                   class="form-control"
+                                   @onkeydown="(e) => HandleMemoryEditKey(e, memory.Id)" />
+                            <div class="memory-row-actions">
+                                <button type="button" class="memory-icon-btn" title="Save" @onclick="() => SaveMemoryEdit(memory.Id)">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button type="button" class="memory-icon-btn" title="Cancel" @onclick="CancelMemoryEdit">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="memory-text">@memory.Text</span>
+                            <div class="memory-row-actions">
+                                <button type="button" class="memory-icon-btn" title="Edit" @onclick="() => StartMemoryEdit(memory)">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button" class="memory-icon-btn memory-icon-btn-danger" title="Delete" @onclick="() => DeleteMemory(memory.Id)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else if (!string.IsNullOrWhiteSpace(memorySearch))
+        {
+            <div style="color: #888; font-size: 0.9em; padding: 0.75rem 0;">No memories match your search.</div>
+        }
+        else
+        {
+            <div style="color: #888; font-size: 0.9em; padding: 0.75rem 0;">No memories yet. Add one below.</div>
+        }
+
+        @if (showAddMemory)
+        {
+            <div style="margin-top: 0.75rem;">
+                <input type="text"
+                       @bind="newMemoryText"
+                       class="form-control"
+                      
+                       @onkeydown="HandleNewMemoryKey" />
+                <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+                    <button @onclick="AddMemory" class="btn btn-primary btn-sm">Save memory</button>
+                    <button @onclick="CancelAddMemory" class="btn btn-outline-secondary btn-sm">Cancel</button>
+                </div>
+            </div>
+        }
+
+        <div class="memory-footer-actions">
+            <button @onclick="ShowAddMemoryForm" class="btn btn-outline-primary btn-sm" disabled="@showAddMemory">Add new memory</button>
+            <button @onclick="ConfirmDeleteAllMemories"
+                    class="btn btn-outline-danger btn-sm"
+                    disabled="@(!memories.Any())">
+                Delete all memories
+            </button>
+        </div>
+    </div>
+
+    <!-- System prompt -->
+    <h3 style="margin: 1.25rem 0 0.5rem;">System prompt</h3>
+    <p style="color: #666; font-size: 0.85em; margin-bottom: 0.5rem;">
+        Sent as a system message at the start of each chat request. It is not saved in conversation history or synced to other devices.
+        Use <code>{{datetime}}</code> to insert the current local date and time when a message is sent.
+    </p>
+
+    <textarea @bind="systemPromptDraft"
+              rows="18"
+              class="form-control"
+              style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em; line-height: 1.45;"
+              placeholder="Enter a system prompt for the model..."></textarea>
+
+    <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+        <button @onclick="SavePrompt" class="btn btn-primary btn-sm">Save</button>
+        <button @onclick="ResetPrompt" class="btn btn-outline-secondary btn-sm">Reset to default</button>
+        <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary btn-sm">Back to Chat</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(saveFeedback))
+    {
+        <div style="margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
+                    background: @(saveFeedbackIsError ? "#fff0f0" : "#e6f2ff");
+                    border: 1px solid @(saveFeedbackIsError ? "#f5c2c7" : "#b3d9ff");
+                    color: @(saveFeedbackIsError ? "#c00" : "inherit");">
+            @saveFeedback
+        </div>
+    }
+
+    <!-- Home Server status (Windows / Linux MAUI) -->
+    @if (AppEnvironment.IsMaui && Homeserver.IsSupported)
+    {
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+            <h4>Home Server</h4>
+            <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
+                Optional local login server and website. Updates replace program files only —
+                your SQLite login database (stable app data path) is never overwritten.
+            </p>
+            <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+                Status: <strong>@(homeserverStatusText ?? "…")</strong>
+            </div>
+            @if (!string.IsNullOrEmpty(homeserverActionMessage))
+            {
+                <div style="margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
+                            background: @(homeserverActionIsError ? "#fff0f0" : "#e6f2ff");
+                            border: 1px solid @(homeserverActionIsError ? "#f5c2c7" : "#b3d9ff");">
+                    @homeserverActionMessage
+                </div>
+            }
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                @if (homeserverState is { IsInstalled: false, InstallMode: not HomeserverInstallMode.Declined })
+                {
+                    <button class="btn btn-outline-primary btn-sm" @onclick="InstallHomeserver" disabled="@homeserverBusy">
+                        @(homeserverBusy ? "Installing…" : "Install Home Server")
+                    </button>
+                }
+                @if (homeserverState is { InstallMode: HomeserverInstallMode.Declined })
+                {
+                    <button class="btn btn-outline-primary btn-sm" @onclick="InstallHomeserver" disabled="@homeserverBusy">
+                        @(homeserverBusy ? "Installing…" : "Install Home Server")
+                    </button>
+                }
+                @if (homeserverState is { IsInstalled: true })
+                {
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="UpdateHomeserver" disabled="@homeserverBusy">
+                        @(homeserverBusy ? "Working…" : "Check Home Server update")
+                    </button>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- App Updates (MAUI only) -->
+    @if (AppEnvironment.IsMaui)
+    {
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+            <h4>App Updates</h4>
+
+            <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+                Installed version:
+                <strong>@(installedVersion ?? "unknown")</strong>
+                @if (!string.IsNullOrEmpty(latestFeedVersion))
+                {
+                    <span> · Latest on server: <strong>@latestFeedVersion</strong></span>
+                }
+            </div>
+
+            @if (updateCheckResult?.Status == UpdateCheckStatus.UpdateAvailable && updateCheckResult.Update != null)
+            {
+                <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--success, #d4edda); border: 1px solid #0a0; border-radius: 6px;">
+                    @if (!string.IsNullOrEmpty(updateCheckResult.Message))
+                    {
+                        <div>@updateCheckResult.Message</div>
+                    }
+                    else
+                    {
+                        <div>Version @updateCheckResult.Update.Version is available!</div>
+                    }
+                </div>
+
+                @if (updateCheckResult.RequiresManualInstall)
+                {
+                    <a class="btn btn-primary" href="@installerDownloadUrl" target="_blank" style="display: inline-block; margin-top: 0.25rem;">
+                        Download Installer
+                    </a>
+                }
+                else
+                {
+                    <button class="btn btn-primary" @onclick="InstallUpdate" disabled="@busy">
+                        @(busy ? "Installing..." : "Install and Restart")
+                    </button>
+                }
+            }
+            else if (hasChecked && updateCheckResult != null)
+            {
+                <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; border-radius: 6px;
+                            background: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "#fff8e6" : "transparent");
+                            border: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "1px solid #e6c200" : "none");
+                            color: #555;">
+                    @updateStatusMessage
+                </div>
+            }
+
+            @if (!busy)
+            {
+                <button class="btn btn-outline-secondary" style="margin-top: 0.5rem;"
+                        @onclick="CheckForUpdate" disabled="@busy">
+                    @(busy ? "Checking..." : "Check for Updates")
+                </button>
+            }
+        </div>
+    }
+</div>
+
+<ConfirmDialog IsVisible="@showDeleteAllConfirm"
+               Title="Delete all memories?"
+               Message="This permanently removes every saved memory from this browser. This cannot be undone."
+               ConfirmText="Delete all"
+               OnConfirm="DeleteAllMemories"
+               OnCancel="() => showDeleteAllConfirm = false" />
+
+@code {
+    private string systemPromptDraft = "";
+    private App.Core.Storage.UserProfileSettings profileDraft = new();
+    private List<App.Core.Storage.UserMemory> memories = new();
+    private string memorySearch = "";
+    private string? editingMemoryId;
+    private string editingMemoryText = "";
+    private bool showAddMemory;
+    private string newMemoryText = "";
+    private bool showDeleteAllConfirm;
+
+    private string? saveFeedback;
+    private bool saveFeedbackIsError;
+    private CancellationTokenSource? _saveFeedbackCts;
+
+    // Update check state (used when IsMaui is true)
+    private UpdateCheckResult? updateCheckResult;
+    private bool hasChecked;
+    private bool busy;
+    private string? installedVersion;
+    private string? latestFeedVersion;
+    // Default download link for manual install; refined in LoadInstalledVersion on MAUI.
+    // Avoid OperatingSystem.* here — that type can fail to resolve in trimmed WASM builds.
+    private string installerDownloadUrl = "/releases/windows/Wizionic-win-Setup.exe";
+
+    private HomeserverState? homeserverState;
+    private string? homeserverStatusText;
+    private string? homeserverActionMessage;
+    private bool homeserverActionIsError;
+    private bool homeserverBusy;
+
+    private string loginServerDraft = "";
+    private string? loginServerMessage;
+    private bool loginServerIsError;
+    private bool loginServerBusy;
+
+    private string updateStatusMessage => updateCheckResult?.Status switch
+    {
+        UpdateCheckStatus.UpToDate => updateCheckResult.Message ?? "You're on the latest version.",
+        UpdateCheckStatus.NotInstalled => updateCheckResult.Message ?? "In-app updates require the installed desktop app.",
+        UpdateCheckStatus.CheckFailed => updateCheckResult.Message ?? "Could not check for updates.",
+        _ => updateCheckResult?.Message ?? "Update check complete."
+    };
+
+    private IEnumerable<App.Core.Storage.UserMemory> FilteredMemories =>
+        string.IsNullOrWhiteSpace(memorySearch)
+            ? memories
+            : memories.Where(m => m.Text.Contains(memorySearch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private string NavLayoutModeValue =>
+        NavLayout.Mode == NavLayoutMode.Left ? "left" : "top";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Theme.OnChanged += OnThemeChangedFromService;
+        if (AppEnvironment.IsMaui)
+            NavLayout.OnChanged += OnNavLayoutChangedFromService;
+        await KeyStore.LoadAsync();
+        systemPromptDraft = KeyStore.GetSystemPrompt();
+        profileDraft = KeyStore.GetUserProfile();
+        ReloadMemories();
+
+        if (AppEnvironment.IsMaui)
+        {
+            loginServerDraft = ServerEndpoint.BaseUrl;
+            if (string.IsNullOrWhiteSpace(loginServerDraft))
+                loginServerDraft = "https://wizionic.com";
+            LoadInstalledVersion();
+            RefreshHomeserverStatus();
+        }
+    }
+
+    private async Task SaveLoginServer()
+    {
+        loginServerBusy = true;
+        loginServerMessage = null;
+        StateHasChanged();
+        try
+        {
+            await ServerEndpoint.SetBaseUrlAsync(loginServerDraft);
+            loginServerDraft = ServerEndpoint.BaseUrl;
+            loginServerMessage = $"Login server set to {ServerEndpoint.BaseUrl}";
+            loginServerIsError = false;
+        }
+        catch (Exception ex)
+        {
+            loginServerMessage = ex.Message;
+            loginServerIsError = true;
+        }
+        finally
+        {
+            loginServerBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenSetupWizard()
+    {
+        SetupWizard.Show();
+    }
+
+    private void LoadInstalledVersion()
+    {
+        installedVersion = UpdateService.GetInstalledVersion();
+        // Prefer the platform-specific feed URL from MauiUpdateService (already linux vs windows).
+        // Infer package name from the feed path so we never call OperatingSystem APIs in Shared UI.
+        var feed = UpdateService.UpdateFeedUrl?.TrimEnd('/');
+        if (string.IsNullOrEmpty(feed))
+            feed = "https://wizionic.com/releases/windows";
+
+        // Treat unknown/empty as Windows only when the feed path is not clearly Linux.
+        var isLinuxFeed = feed.Contains("/linux", StringComparison.OrdinalIgnoreCase)
+            || feed.Contains("releases.linux", StringComparison.OrdinalIgnoreCase);
+        // Linux: install.sh defaults to user AppImage (in-app updates). Windows: Setup.exe.
+        installerDownloadUrl = isLinuxFeed
+            ? "https://wizionic.com/install.sh"
+            : feed.TrimEnd('/') + "/Wizionic-win-Setup.exe";
+    }
+
+    private void RefreshHomeserverStatus()
+    {
+        if (!Homeserver.IsSupported)
+            return;
+        homeserverState = Homeserver.GetState();
+        homeserverStatusText = Homeserver.GetServiceStatusText()
+            ?? (homeserverState.InstallMode == HomeserverInstallMode.Declined
+                ? "Declined"
+                : "Not installed");
+    }
+
+    private async Task InstallHomeserver()
+    {
+        homeserverBusy = true;
+        homeserverActionMessage = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Homeserver.InstallAsync();
+            homeserverActionMessage = result.Message;
+            homeserverActionIsError = !result.Success;
+            RefreshHomeserverStatus();
+        }
+        catch (Exception ex)
+        {
+            homeserverActionMessage = ex.Message;
+            homeserverActionIsError = true;
+        }
+        finally
+        {
+            homeserverBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task UpdateHomeserver()
+    {
+        homeserverBusy = true;
+        homeserverActionMessage = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Homeserver.UpdateIfNeededAsync();
+            homeserverActionMessage = result.Message;
+            homeserverActionIsError = !result.Success;
+            RefreshHomeserverStatus();
+        }
+        catch (Exception ex)
+        {
+            homeserverActionMessage = ex.Message;
+            homeserverActionIsError = true;
+        }
+        finally
+        {
+            homeserverBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await Theme.SyncFromStorageAndApplyAsync(JS);
+        if (AppEnvironment.IsMaui)
+            await NavLayout.SyncFromStorageAndApplyAsync(JS);
+    }
+
+    private void OnThemeChangedFromService() => InvokeAsync(StateHasChanged);
+    private void OnNavLayoutChangedFromService() => InvokeAsync(StateHasChanged);
+
+
+
+    private async Task OnThemeChanged(ChangeEventArgs e)
+    {
+        var theme = e.Value?.ToString() ?? ThemeService.DefaultThemeId;
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await Theme.SetThemeAsync(theme, JS);
+    }
+
+    private async Task OnNavLayoutChanged(ChangeEventArgs e)
+    {
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        var mode = string.Equals(e.Value?.ToString(), "left", StringComparison.OrdinalIgnoreCase)
+            ? NavLayoutMode.Left
+            : NavLayoutMode.Top;
+        await NavLayout.SetModeAsync(mode, JS);
+    }
+
+    public void Dispose()
+    {
+        Theme.OnChanged -= OnThemeChangedFromService;
+        if (AppEnvironment.IsMaui)
+            NavLayout.OnChanged -= OnNavLayoutChangedFromService;
+    }
+
+    private void ReloadMemories() => memories = KeyStore.GetMemories().ToList();
+
+    private async Task SaveProfile()
+    {
+        try
+        {
+            await KeyStore.SetUserProfileAsync( profileDraft);
+            await ShowSaveFeedbackAsync("About-you settings saved.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not save profile: {ex.Message}", isError: true);
+        }
+    }
+
+    private void ShowAddMemoryForm()
+    {
+        showAddMemory = true;
+        newMemoryText = "";
+        editingMemoryId = null;
+    }
+
+    private void CancelAddMemory()
+    {
+        showAddMemory = false;
+        newMemoryText = "";
+    }
+
+    private async Task AddMemory()
+    {
+        var text = newMemoryText.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            await ShowSaveFeedbackAsync("Enter some text for the memory.", isError: true);
+            return;
+        }
+
+        try
+        {
+            await KeyStore.AddMemoryAsync( text);
+            ReloadMemories();
+            showAddMemory = false;
+            newMemoryText = "";
+            await ShowSaveFeedbackAsync("Memory added.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not add memory: {ex.Message}", isError: true);
+        }
+    }
+
+    private void StartMemoryEdit(App.Core.Storage.UserMemory memory)
+    {
+        editingMemoryId = memory.Id;
+        editingMemoryText = memory.Text;
+        showAddMemory = false;
+    }
+
+    private void CancelMemoryEdit()
+    {
+        editingMemoryId = null;
+        editingMemoryText = "";
+    }
+
+    private async Task SaveMemoryEdit(string id)
+    {
+        try
+        {
+            await KeyStore.UpdateMemoryAsync( id, editingMemoryText);
+            ReloadMemories();
+            CancelMemoryEdit();
+            await ShowSaveFeedbackAsync("Memory updated.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not update memory: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task DeleteMemory(string id)
+    {
+        try
+        {
+            await KeyStore.RemoveMemoryAsync( id);
+            ReloadMemories();
+            if (editingMemoryId == id)
+                CancelMemoryEdit();
+            await ShowSaveFeedbackAsync("Memory deleted.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not delete memory: {ex.Message}", isError: true);
+        }
+    }
+
+    private void ConfirmDeleteAllMemories() => showDeleteAllConfirm = true;
+
+    private async Task DeleteAllMemories()
+    {
+        showDeleteAllConfirm = false;
+        try
+        {
+            await KeyStore.ClearMemoriesAsync();
+            ReloadMemories();
+            CancelMemoryEdit();
+            CancelAddMemory();
+            await ShowSaveFeedbackAsync("All memories deleted.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not delete memories: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task HandleNewMemoryKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await AddMemory();
+        else if (e.Key == "Escape")
+            CancelAddMemory();
+    }
+
+    private async Task HandleMemoryEditKey(KeyboardEventArgs e, string id)
+    {
+        if (e.Key == "Enter")
+            await SaveMemoryEdit(id);
+        else if (e.Key == "Escape")
+            CancelMemoryEdit();
+    }
+
+    private async Task SavePrompt()
+    {
+        try
+        {
+            await KeyStore.SetSystemPromptAsync( systemPromptDraft);
+            await ShowSaveFeedbackAsync("System prompt saved to your browser.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not save system prompt: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task ResetPrompt()
+    {
+        try
+        {
+            await KeyStore.ResetSystemPromptAsync();
+            systemPromptDraft = KeyStoreDefaults.GetDefaultSystemPrompt();
+            await ShowSaveFeedbackAsync("System prompt reset to default.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not reset system prompt: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task ShowSaveFeedbackAsync(string message, bool isError)
+    {
+        _saveFeedbackCts?.Cancel();
+        _saveFeedbackCts?.Dispose();
+        _saveFeedbackCts = new CancellationTokenSource();
+        var token = _saveFeedbackCts.Token;
+
+        saveFeedback = message;
+        saveFeedbackIsError = isError;
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(4000, token);
+            saveFeedback = null;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task CheckForUpdate()
+    {
+        if (UpdateService == null) return;
+        busy = true;
+        hasChecked = false;
+        updateCheckResult = null;
+        StateHasChanged();
+        try
+        {
+            updateCheckResult = await UpdateService.CheckForUpdateAsync();
+            hasChecked = true;
+            installedVersion = updateCheckResult.CurrentVersion ?? UpdateService.GetInstalledVersion();
+            latestFeedVersion = updateCheckResult.LatestFeedVersion;
+        }
+        finally
+        {
+            busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task InstallUpdate()
+    {
+        if (updateCheckResult?.Update == null || UpdateService == null) return;
+        busy = true;
+        StateHasChanged();
+        await UpdateService.DownloadAndInstallAsync(updateCheckResult.Update);
+        // ApplyUpdatesAndRestart won't return — app restarts with new version
+    }
+}

@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.DataProtection;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Centralized helper for protecting (encrypting at rest) and unprotecting
@@ -14,7 +14,7 @@ public class KeyProtectionService
     public KeyProtectionService(IDataProtectionProvider provider)
     {
         // Purpose string isolates these values from other uses of DataProtection in the app.
-        _protector = provider.CreateProtector("Chatfish.UserData");
+        _protector = provider.CreateProtector("Wizionic.UserData");
     }
 
     public string Protect(string plaintext)

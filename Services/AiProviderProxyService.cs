@@ -3,10 +3,10 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using ChatfishApp.Contracts;
+using App.Contracts;
 using Microsoft.Extensions.Options;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Server-side proxy for OpenAI-compatible providers that block browser-direct CORS.
