@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Wizionic</title>
+    <base href="/" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="_content/App.Shared/css/app.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="App.Maui.styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet" />
+    <link rel="icon" href="data:,">
+    <script src="_content/App.Shared/js/themeInterop.js"></script>
+    <script src="_content/App.Shared/js/navLayoutInterop.js"></script>
+    <script src="_content/App.Shared/js/notesReorderInterop.js"></script>
+    <script>window.appTheme.applyEarly(); window.appNavLayout && window.appNavLayout.applyEarly(); window.appTheme.initPersistentHooks();</script>
+</head>
+
+<body>
+
+    <div class="status-bar-safe-area"></div>
+
+    <div id="app">Loading...</div>
+
+    <div id="blazor-error-ui" data-nosnippet>
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+
+    <script src="_content/App.Shared/js/chatInterop.js"></script>
+    <script src="_content/App.Shared/js/browserInterop.js"></script>
+    <script src="_content/App.Shared/js/urlEmbedInterop.js"></script>
+    <script src="_framework/blazor.webview.js" ></script>
+    <script>window.appTheme && window.appTheme.initPersistentHooks();</script>
+    <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quill-resize-image@1.0.11/dist/quill-resize-image.min.js"></script>
+    <script src="_content/App.Shared/js/quillInterop.js"></script>
+    <script src="_content/App.Shared/js/cfExport.js"></script>
+
+</body>
+
+</html>

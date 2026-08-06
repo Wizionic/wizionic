@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Per-user AES key for WASM/MAUI IndexedDB encryption and live sync.

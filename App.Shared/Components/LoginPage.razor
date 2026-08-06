@@ -1,0 +1,515 @@
+@inject IAuthService Auth
+@inject IGuestDataMigrationService? GuestMigration
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
+    <h2>Wizionic</h2>
+    <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--bubble-blue); border: 1px solid var(--primary-dark); border-radius: 6px;">
+        Connect to local AI and keep all your data local and private!  Download the Wizionic app for easy connection to local AI, integration with Home Assistant for your smart home, and an agentically controlled web browser. 
+    </div>
+    @if (!AppEnvironment.IsMaui)
+    {
+    <div class="login-download-stack">
+        <div class="login-download-card @(_detectedOs == "windows" ? "login-download-card--active" : _detectedOs == "linux" ? "login-download-card--muted" : null)">
+            @if (_detectedOs == "windows")
+            {
+                <div class="login-download-badge">Recommended for this device</div>
+            }
+            <div class="login-download-title">
+                <a href="/releases/windows/Wizionic-win-Setup.exe" download>
+                    Download Wizionic App for Windows
+                </a>
+            </div>
+            <p class="login-download-desc">Windows installer (.exe) — works on Windows 10 and 11.</p>
+            <a class="btn btn-primary btn-sm login-download-btn" href="/releases/windows/Wizionic-win-Setup.exe" download>
+                Download for Windows
+            </a>
+        </div>
+
+        <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : _detectedOs == "windows" ? "login-download-card--muted" : null)">
+            @if (_detectedOs == "linux")
+            {
+                <div class="login-download-badge">Recommended for this device</div>
+            }
+            <div class="login-download-title">Download Wizionic App for Linux</div>
+            <p class="login-download-desc">Debian/Ubuntu .deb, with AppImage fallback. Run in a terminal:</p>
+            <div class="login-install-cmd-row">
+                <pre class="login-install-cmd" id="linux-install-cmd"><code>@LinuxInstallCommand</code></pre>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyLinuxInstallCommand">
+                    @(_linuxInstallCopied ? "Copied" : "Copy")
+                </button>
+            </div>
+            <div class="login-download-links">
+                <a href="/releases/linux/Wizionic.AppImage" download>AppImage only</a>
+                <span class="login-download-sep">·</span>
+                <a href="/releases/linux/install.sh">install.sh</a>
+            </div>
+        </div>
+    </div>
+    }
+    <p style="color: var(--color-text-muted);">Chat history and settings are stored entirely in your browser / or on device in the Wizionic app. Log in with an email <em>only</em> if you want:
+        <ul style="margin:0.5rem 0 0.5rem 1.25rem; color: var(--color-text-muted);">
+            <li>to sync your encrypted chat history and settings across browsers or devices</li>
+            <li>one of your devices (connected to your local AI) to act as a chat server for your other devices</li>
+        </ul>
+    </p>
+
+    @if (Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email))
+    {
+        <div style="margin: 1rem 0; padding: 0.75rem 1rem; background:var(--success); border: 1px solid var(--color-success-border); border-radius: 6px;">
+            Logged in as <strong>@Auth.Email</strong>.<br />
+            <span style="font-size:0.9em;">You can now sync your encrypted chat history across browsers or devices with the Wizionic app.</span>
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/chat")'>Continue to Chat</button>
+            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/settings")'>Settings</button>
+            <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
+        </div>
+
+        <div style="margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+            <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">
+                @(Auth.HasPassword ? "Change password" : "Add a password")
+            </h3>
+            <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                Optional. Use a password to sign in without waiting for an email code, and to unlock protected notebooks.
+                Minimum @MinPasswordLength characters.
+            </p>
+
+            @if (!string.IsNullOrEmpty(passwordMessage))
+            {
+                <div style="color: var(--color-success-fg, var(--success)); margin: 0 0 0.5rem; font-size:0.9em;">@passwordMessage</div>
+            }
+            @if (!string.IsNullOrEmpty(passwordError))
+            {
+                <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@passwordError</div>
+            }
+
+            @if (Auth.HasPassword)
+            {
+                <div style="margin-bottom:0.5rem;">
+                    <input type="password"
+                           @bind-value="currentPassword"
+                           @bind-value:event="oninput"
+                           placeholder="Current password"
+                           class="form-control"
+                           autocomplete="current-password" />
+                </div>
+            }
+            <div style="margin-bottom:0.5rem;">
+                <input type="password"
+                       @bind-value="newPassword"
+                       @bind-value:event="oninput"
+                       placeholder="New password (min @MinPasswordLength characters)"
+                       class="form-control"
+                       autocomplete="new-password" />
+            </div>
+            <div style="margin-bottom:0.75rem;">
+                <input type="password"
+                       @bind-value="confirmPassword"
+                       @bind-value:event="oninput"
+                       placeholder="Confirm new password"
+                       class="form-control"
+                       autocomplete="new-password" />
+            </div>
+            <button class="btn btn-primary"
+                    @onclick="SavePassword"
+                    disabled="@(busy || string.IsNullOrWhiteSpace(newPassword) || string.IsNullOrWhiteSpace(confirmPassword) || (Auth.HasPassword && string.IsNullOrWhiteSpace(currentPassword)))">
+                @(Auth.HasPassword ? "Update password" : "Save password")
+            </button>
+        </div>
+    }
+    else
+    {
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div style="color: var(--cf-error-fg); margin: 0.25rem 0 0.5rem; font-size:0.9em;">@error</div>
+        }
+
+        <div style="display:flex; gap:0.5rem; margin: 0.75rem 0 1rem; flex-wrap:wrap;">
+            <button type="button"
+                    class="btn @(loginMode == LoginMode.Code ? "btn-primary" : "btn-outline-secondary") btn-sm"
+                    @onclick="() => SwitchLoginMode(LoginMode.Code)"
+                    disabled="@busy">
+                Login code (email)
+            </button>
+            <button type="button"
+                    class="btn @(loginMode == LoginMode.Password ? "btn-primary" : "btn-outline-secondary") btn-sm"
+                    @onclick="() => SwitchLoginMode(LoginMode.Password)"
+                    disabled="@busy">
+                Password
+            </button>
+        </div>
+
+        @if (loginMode == LoginMode.Password)
+        {
+            <div style="display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+                <input type="email"
+                       @bind-value="email"
+                       @bind-value:event="oninput"
+                       placeholder="email address"
+                       class="form-control"
+                       autocomplete="username" />
+                <input type="password"
+                       @bind-value="passwordLogin"
+                       @bind-value:event="oninput"
+                       placeholder="password"
+                       class="form-control"
+                       autocomplete="current-password"
+                       @onkeydown="PasswordLoginKeyHandler" />
+                <div>
+                    <button class="btn btn-primary"
+                            @onclick="LoginWithPassword"
+                            disabled="@(busy || !IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))">
+                        Sign in with password
+                    </button>
+                </div>
+            </div>
+        }
+        else if (loginSent)
+        {
+            <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--color-info-bg); border: 1px solid var(--color-info-border); border-radius: 6px;">
+                <p style="margin:0 0 0.25rem 0;"><strong>Login code sent!</strong></p>
+                <p style="margin:0; font-size:0.95em;">
+                    We've emailed a login code to <strong>@email</strong>. Open your inbox (and check spam).
+                    Enter the code below, or click the web login link in the email.
+                </p>
+            </div>
+
+            <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap; margin-top:0.75rem;">
+                <div style="flex:1; min-width:160px;">
+                    <input type="text"
+                           @bind-value="loginCode"
+                           @bind-value:event="oninput"
+                           placeholder="Login code"
+                           class="form-control"
+                           style="letter-spacing:0.15em; text-transform:uppercase;" />
+                </div>
+                <button class="btn btn-primary"
+                        @onclick="VerifyCode"
+                        disabled="@(busy || string.IsNullOrWhiteSpace(loginCode))">
+                    Verify code
+                </button>
+            </div>
+
+            <button class="btn btn-outline-secondary" style="margin-top:0.75rem;" @onclick="Reset" disabled="@busy">Use a different email</button>
+        }
+        else
+        {
+            <div style="display:flex; gap:0.5rem; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:1; min-width:220px;">
+                    <input type="email"
+                           @bind-value="email"
+                           @bind-value:event="oninput"
+                           placeholder="email address"
+                           class="form-control" />
+                </div>
+                <button class="btn btn-primary"
+                        @onclick="SendLoginCode"
+                        disabled="@(busy || !IsValidEmail(email))">
+                    Send login code
+                </button>
+            </div>
+        }
+
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border); font-size:0.95em;">
+            You can also continue without logging in but all your chat history and settings will only be stored locally and encrypted on this device.
+            <div style="margin-top:0.35rem;">
+                <a href="/chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Chat Now</a>
+                &nbsp;•&nbsp;
+                <a href="/local-ai" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Setup your local AI</a>
+            </div>
+        </div>
+
+        <p style="margin-top:1rem; font-size:0.8em; color: var(--color-text-muted);">
+            All chat history is only stored locally on your device(s) and is never sent through a server.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter] public bool RedirectAuthenticatedToChat { get; set; } = true;
+    [Parameter] public string RedirectAfterLogin { get; set; } = "/chat";
+    [Parameter] public string AccountPath { get; set; } = "/account";
+    /// <summary>
+    /// WASM: /account redirects unauthenticated users to / (same login landing).
+    /// MAUI: set false so /account shows the login form (Home is not the login page).
+    /// </summary>
+    [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
+
+    private const string LinuxInstallCommand = "curl -fsSL https://wizionic.com/install.sh | bash";
+    private const int MinPasswordLength = 6;
+    private bool _linuxInstallCopied;
+    /// <summary>"windows", "linux", "mac", or null until detected.</summary>
+    private string? _detectedOs;
+
+    private enum LoginMode { Code, Password }
+
+    string email = "";
+    string loginCode = "";
+    string passwordLogin = "";
+    string newPassword = "";
+    string confirmPassword = "";
+    string currentPassword = "";
+    bool loginSent;
+    bool busy;
+    string? error;
+    string? passwordError;
+    string? passwordMessage;
+    LoginMode loginMode = LoginMode.Code;
+
+    private async Task CopyLinuxInstallCommand()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", LinuxInstallCommand);
+            _linuxInstallCopied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _linuxInstallCopied = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Clipboard may be blocked; user can still select the code block.
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || AppEnvironment.IsMaui || _detectedOs is not null)
+            return;
+
+        try
+        {
+            // Prefer modern platform hint, fall back to userAgent.
+            var platform = await JS.InvokeAsync<string>(
+                "eval",
+                "(navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || ''");
+            _detectedOs = DetectOsFromUserAgent(platform);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            _detectedOs = "unknown";
+        }
+    }
+
+    private static string DetectOsFromUserAgent(string? ua)
+    {
+        if (string.IsNullOrWhiteSpace(ua))
+            return "unknown";
+
+        var s = ua.ToLowerInvariant();
+        if (s.Contains("win"))
+            return "windows";
+        // Android UAs often include "Linux" — treat as non-desktop.
+        if (s.Contains("android") || s.Contains("iphone") || s.Contains("ipad"))
+            return "unknown";
+        if (s.Contains("linux") || s.Contains("x11") || s.Contains("cros"))
+            return "linux";
+        if (s.Contains("mac"))
+            return "mac";
+        return "unknown";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.LoadAsync();
+        if (Auth.IsAuthenticated && GuestMigration is not null)
+            await GuestMigration.MigrateIfNeededAsync();
+
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        string path = uri.AbsolutePath.TrimEnd('/');
+        bool isExplicitAccountView = path.Equals(AccountPath.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+
+        if (!Auth.IsAuthenticated && isExplicitAccountView && RedirectUnauthenticatedAccountToRoot)
+        {
+            Nav.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (Auth.IsAuthenticated && RedirectAuthenticatedToChat && !isExplicitAccountView)
+        {
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+    }
+
+    async Task SendLoginCode()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (!IsValidEmail(email)) return;
+
+            var (success, err) = await Auth.RequestLoginCodeAsync(email);
+            if (success)
+                loginSent = true;
+            else
+                error = err;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task VerifyCode()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(loginCode))
+                return;
+
+            var (success, err) = await Auth.VerifyLoginCodeAsync(email, loginCode);
+            if (!success)
+            {
+                error = err;
+                return;
+            }
+
+            if (GuestMigration is not null)
+                await GuestMigration.MigrateIfNeededAsync();
+
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task DoLogout()
+    {
+        await Auth.SignOutAsync();
+        passwordLogin = "";
+        newPassword = "";
+        confirmPassword = "";
+        currentPassword = "";
+        passwordError = null;
+        passwordMessage = null;
+        loginMode = LoginMode.Code;
+    }
+
+    void Reset()
+    {
+        loginSent = false;
+        loginCode = "";
+        error = null;
+    }
+
+    void SwitchLoginMode(LoginMode mode)
+    {
+        loginMode = mode;
+        error = null;
+        if (mode == LoginMode.Code)
+            passwordLogin = "";
+        else
+        {
+            loginSent = false;
+            loginCode = "";
+        }
+    }
+
+    async Task LoginWithPassword()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))
+                return;
+
+            var (success, err) = await Auth.LoginWithPasswordAsync(email, passwordLogin);
+            if (!success)
+            {
+                error = err ?? "Invalid email or password.";
+                return;
+            }
+
+            passwordLogin = "";
+            if (GuestMigration is not null)
+                await GuestMigration.MigrateIfNeededAsync();
+
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task PasswordLoginKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !busy && IsValidEmail(email) && !string.IsNullOrWhiteSpace(passwordLogin))
+            await LoginWithPassword();
+    }
+
+    async Task SavePassword()
+    {
+        passwordError = null;
+        passwordMessage = null;
+        busy = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < MinPasswordLength)
+            {
+                passwordError = $"Password must be at least {MinPasswordLength} characters.";
+                return;
+            }
+
+            if (!string.Equals(newPassword, confirmPassword, StringComparison.Ordinal))
+            {
+                passwordError = "Passwords do not match.";
+                return;
+            }
+
+            var changingExisting = Auth.HasPassword;
+            var (success, err) = await Auth.SetPasswordAsync(
+                newPassword,
+                confirmPassword,
+                changingExisting ? currentPassword : null);
+
+            if (!success)
+            {
+                passwordError = err ?? "Could not save password.";
+                return;
+            }
+
+            passwordMessage = changingExisting
+                ? "Password updated."
+                : "Password saved. You can now sign in with it next time.";
+            newPassword = "";
+            confirmPassword = "";
+            currentPassword = "";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static bool IsValidEmail(string? e)
+    {
+        if (string.IsNullOrWhiteSpace(e))
+            return false;
+
+        var value = e.Trim();
+        int atIndex = value.IndexOf('@');
+        if (atIndex <= 0 || atIndex == value.Length - 1)
+            return false;
+
+        int dotIndex = value.LastIndexOf('.');
+        if (dotIndex <= atIndex + 1 || dotIndex == value.Length - 1)
+            return false;
+
+        if (value.Contains(' ') || value.Length < 5 || value.Length > 254)
+            return false;
+
+        return true;
+    }
+}

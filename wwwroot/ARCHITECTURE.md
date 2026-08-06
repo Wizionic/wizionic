@@ -1,4 +1,4 @@
-# Chatfish Architecture
+# Wizionic Architecture
 
 **Purpose:** Quick reference for humans and AI agents working on this codebase. Describes what exists today (not the future roadmap). For planned work see [ROADMAP.md](/roadmap).
 
@@ -20,15 +20,15 @@
 ## Solution Layout
  
  ```
- ChatfishApp/
- ├── ChatfishApp.csproj          # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite, auth
- ├── ChatfishApp.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
- ├── ChatfishApp.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)
- ├── ChatfishApp.Client/         # WASM Implementation: Browser-specific implementations (IndexedDB, JS Crypto)
- ├── ChatfishApp.Maui/           # Desktop/mobile clients: MAUI (Win/iOS/Android) + Linux desktop (net10.0)
+ App/
+ ├── App.csproj          # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite, auth
+ ├── App.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
+ ├── App.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)
+ ├── App.Client/         # WASM Implementation: Browser-specific implementations (IndexedDB, JS Crypto)
+ ├── App.Maui/           # Desktop/mobile clients: MAUI (Win/iOS/Android) + Linux desktop (net10.0)
  ├── Components/                 # Server shell for Blazor Web App (App.razor, Routes.razor)
  ├── Apis/                       # Host API endpoints (WasmApiEndpoints, SyncHub, etc.)
- ├── Data/                       # Server-side EF Core entities + ChatfishDbContext
+ ├── Data/                       # Server-side EF Core entities + AppDbContext
  ├── Services/                   # Server-only services: email, key protection, AI proxy
  ├── Pages/                      # Server-rendered pages (Roadmap, Architecture)
  └── wwwroot/                    # Static assets and documentation
@@ -38,10 +38,10 @@
  
  | Layer | Shared? | Role |
  |-------|---------|------|
- | **`ChatfishApp.Core`** | ✅ Yes | Defines the "what": Interfaces (`IConversationStore`, `ISyncService`) and DTOs. No platform-specific code. |
- | **`ChatfishApp.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to WASM & desktop. |
- | **`ChatfishApp.Client`** | ❌ No | WASM-specific: Implements Core interfaces using browser APIs (IndexedDB, WebCrypto). |
- | **`ChatfishApp.Maui`** | ❌ No | Native desktop/mobile: SQLite storage, SIPSorcery WebRTC, platform browser hosts. **Windows/mobile** = MAUI Blazor Hybrid + WebView2; **Linux** = GirCore Adwaita + WebKit (not full MAUI). |
+ | **`App.Core`** | ✅ Yes | Defines the "what": Interfaces (`IConversationStore`, `ISyncService`) and DTOs. No platform-specific code. |
+ | **`App.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to WASM & desktop. |
+ | **`App.Client`** | ❌ No | WASM-specific: Implements Core interfaces using browser APIs (IndexedDB, WebCrypto). |
+ | **`App.Maui`** | ❌ No | Native desktop/mobile: SQLite storage, SIPSorcery WebRTC, platform browser hosts. **Windows/mobile** = MAUI Blazor Hybrid + WebView2; **Linux** = GirCore Adwaita + WebKit (not full MAUI). |
 
 
 ---
@@ -53,7 +53,7 @@
 - Data namespace: `wasmchat-` (conversations and notes).
 
 ### Logged-in mode
-- User requests magic link → email via Brevo → `/magic-login?token=...` sets a **persistent** `ChatfishAuth` cookie (survives browser restarts; renewed on activity via sliding expiration; cleared only on explicit sign-out).
+- User requests magic link → email via Brevo → `/magic-login?token=...` sets a **persistent** `AppAuth` cookie (survives browser restarts; renewed on activity via sliding expiration; cleared only on explicit sign-out).
 - WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie sent automatically, same origin).
 - Per-user **server encryption key** (random, protected at rest in SQLite via ASP.NET Data Protection).
 - Data namespace: `u-{userId}-`.
@@ -100,7 +100,7 @@ Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore save
 
 ## Local AI: Ollama + AMD Lemonade Server
 
-Chatfish treats **two local OpenAI-compatible servers** as first-class peers. Both are configured on **Local AI** (`LocalAiPage.razor`); settings stay on-device (`IKeyStore`).
+Wizionic treats **two local OpenAI-compatible servers** as first-class peers. Both are configured on **Local AI** (`LocalAiPage.razor`); settings stay on-device (`IKeyStore`).
 
 | Backend | Default base URL | Model id prefix | Catalog / metadata |
 |---------|------------------|-----------------|-------------------|
@@ -153,12 +153,12 @@ Results are stored as **attachments** on assistant messages (PNG base64). Copy /
 
 - Same speech service → Lemonade **TTS** model (e.g. Kokoro).
 - Toolbar: auto-speak replies toggle + “read last reply”; per-message **Speak** / bot or user ⋮ **Read aloud**.
-- Playback via JS (`chatfishPlayAudioBase64`); Omni may already attach audio — prefer Omni audio over client TTS when present.
+- Playback via JS (`appPlayAudioBase64`); Omni may already attach audio — prefer Omni audio over client TTS when present.
 
 ### Omni collections
 
 - Models labeled as **collections / Omni** plan multimodal steps **on the Lemonade server** (image, edit, speech).
-- Chatfish runs a normal streaming completion but **disables client function-invocation** for that turn so client tools do not compete with the collection planner.
+- Wizionic runs a normal streaming completion but **disables client function-invocation** for that turn so client tools do not compete with the collection planner.
 - Embedded data-URI images/audio in the reply are extracted by `OmniMediaExtractor` into `Attachment`s for the chat UI.
 
 ### Lemonade client tools (`LemonadeToolModule`)
@@ -204,7 +204,7 @@ Dumping every tool schema into a small local model inflates prefill and can degr
 | **Context button** | Toolbar pill `used/limit` (e.g. `1.2k/32.8k`); **orange ≥80%**, **red ≥90%**; click runs **compact** |
 | **Compact** | Isolated summarize call over older turns → one summary assistant message; keeps last ~6 messages; frees window without full clear |
 
-**Key files:** `IChatCompletionService.cs` / `ChatCompletionStats`, `ChatCompletionService.cs` (`TrimHistoryToContext`, streaming), `ChatPage.razor` (ctx button, compact), `chatfish.css` (`.ctx-btn`)
+**Key files:** `IChatCompletionService.cs` / `ChatCompletionStats`, `ChatCompletionService.cs` (`TrimHistoryToContext`, streaming), `ChatPage.razor` (ctx button, compact), `app.css` (`.ctx-btn`)
 
 ---
 
@@ -281,7 +281,7 @@ Tool execution traces are shown in the chat UI (`ToolExecutionTrace`). Models th
 
 ## Home Assistant (MAUI)
 
-Chatfish can agentically control a local Home Assistant instance from the MAUI desktop app. Configuration lives at `/home-assistant` (`HomeAssistantPage.razor`); the chat window drives devices once a long-lived access token and base URL are saved.
+Wizionic can agentically control a local Home Assistant instance from the MAUI desktop app. Configuration lives at `/home-assistant` (`HomeAssistantPage.razor`); the chat window drives devices once a long-lived access token and base URL are saved.
 
 ### Configuration & storage
 
@@ -298,13 +298,13 @@ Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in
 
 | Interface / type | Location | Role |
 |------------------|----------|------|
-| `ISmartHomeService` | `ChatfishApp.Core/SmartHome/` | `TestConnectionAsync`, `CallServiceAsync`, `GetEntityStateAsync`, `ListEntitiesAsync`, `BuildDeviceCatalogAsync`, `ListServicesAsync`, `ProcessConversationAsync`, `ListLightEntitiesAsync` |
-| `HomeAssistantCredentials` | `ChatfishApp.Core/SmartHome/` | URL/token normalization |
-| `HomeAssistantConfig` | `ChatfishApp.Core/Storage/` | DTO for key store persistence |
+| `ISmartHomeService` | `App.Core/SmartHome/` | `TestConnectionAsync`, `CallServiceAsync`, `GetEntityStateAsync`, `ListEntitiesAsync`, `BuildDeviceCatalogAsync`, `ListServicesAsync`, `ProcessConversationAsync`, `ListLightEntitiesAsync` |
+| `HomeAssistantCredentials` | `App.Core/SmartHome/` | URL/token normalization |
+| `HomeAssistantConfig` | `App.Core/Storage/` | DTO for key store persistence |
 
 ### MAUI implementation
 
-`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Chatfish server or browser DevTools. It hits standard HA REST endpoints with `Authorization: Bearer {token}`:
+`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Wizionic server or browser DevTools. It hits standard HA REST endpoints with `Authorization: Bearer {token}`:
 
 | Endpoint | Use |
 |----------|-----|
@@ -317,7 +317,7 @@ Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in
 
 Proxy is disabled (`UseProxy = false`) to avoid LAN hangs.
 
-**Control strategy:** Chatfish’s selected model (Ollama or cloud) is the agent. REST tools (`ListEntities` → `CallService` / `ControlLight` / `ControlMediaPlayer`) are the primary path so any controllable domain works for any user’s HA install.
+**Control strategy:** Wizionic’s selected model (Ollama or cloud) is the agent. REST tools (`ListEntities` → `CallService` / `ControlLight` / `ControlMediaPlayer`) are the primary path so any controllable domain works for any user’s HA install.
 
 **Hybrid enforcement when the model skips tools** (common with small VL models):
 
@@ -378,7 +378,7 @@ The chat page can show a split view: chat on the left, embedded browser on the r
 
 ### WebView architecture (hybrid shell + native overlay)
 
-Chatfish uses a **two-layer** pattern on every desktop host:
+Wizionic uses a **two-layer** pattern on every desktop host:
 
 1. **Blazor shell** — renders all Razor UI (chat, toolbar, browser chrome).
 2. **Native WebView overlays** — two platform WebViews sit on top of placeholder `<div>` hosts in the Blazor DOM, positioned from JS bounds.
@@ -415,15 +415,15 @@ Native WebView visible at correct position under Blazor toolbar
 
 | Interface | Location | Role |
 |-----------|----------|------|
-| `IBrowserAgentService` | `ChatfishApp.Core/Browser/` | Navigation, history, `EvaluateScriptAsync`, page text/HTML |
-| `IBrowserContext` | `ChatfishApp.Core/Browser/` | Agent tool bridge (`NavigateAsync`, `GetPageContentAsync`, `ClickElementAsync`, `FillFieldAsync`) |
-| `IBrowserStore` | `ChatfishApp.Core/Browser/` | Bookmarks, history, settings (SQLite on MAUI) |
-| `IBrowserSidebarStore` | `ChatfishApp.Core/Browser/` | Pinned apps / vertical toolbar entries |
-| `IBrowserPanelState` | `ChatfishApp.Core/UI/` | Browser panel open/closed, chat column width |
-| `IBrowserSidePanelState` | `ChatfishApp.Core/UI/` | Side panel content (bookmarks, settings, web app) |
-| `IBrowserOverlaySync` | `ChatfishApp.Core/Browser/` | Native overlay bounds + visibility |
-| `IBrowserSideAgentService` | `ChatfishApp.Core/Browser/` | Side-panel WebView navigation |
-| `IPwaDetector` | `ChatfishApp.Core/Browser/` | PWA manifest detection for install/pin |
+| `IBrowserAgentService` | `App.Core/Browser/` | Navigation, history, `EvaluateScriptAsync`, page text/HTML |
+| `IBrowserContext` | `App.Core/Browser/` | Agent tool bridge (`NavigateAsync`, `GetPageContentAsync`, `ClickElementAsync`, `FillFieldAsync`) |
+| `IBrowserStore` | `App.Core/Browser/` | Bookmarks, history, settings (SQLite on MAUI) |
+| `IBrowserSidebarStore` | `App.Core/Browser/` | Pinned apps / vertical toolbar entries |
+| `IBrowserPanelState` | `App.Core/UI/` | Browser panel open/closed, chat column width |
+| `IBrowserSidePanelState` | `App.Core/UI/` | Side panel content (bookmarks, settings, web app) |
+| `IBrowserOverlaySync` | `App.Core/Browser/` | Native overlay bounds + visibility |
+| `IBrowserSideAgentService` | `App.Core/Browser/` | Side-panel WebView navigation |
+| `IPwaDetector` | `App.Core/Browser/` | PWA manifest detection for install/pin |
 
 ### Platform implementations
 
@@ -448,12 +448,12 @@ JS is used for **layout and drag UX**, not for loading web pages:
 
 | JS function | Called from | Purpose |
 |-------------|-------------|---------|
-| `chatfishBrowser.startBoundsObserver` | `EmbeddedBrowser.razor` | `ResizeObserver` → `[JSInvokable] OnBrowserMainOverlayBounds` / `OnBrowserSideOverlayBounds` |
-| `chatfishBrowser.reportBoundsNow` | Overlay refresh | Force bounds recalc after dialogs close |
-| `chatfishBrowser.startSplitterDrag` | Chat/browser split | Resize chat column |
-| `chatfishBrowser.startSidePanelSplitterDrag` | Side panel split | Resize bookmarks/web side column |
-| `chatfishBrowser.startBookmarkBarDrag` / `startSidebarDrag` / `startVtoolbarDrag` | Bookmark & PWA toolbar | Reorder via drag-drop |
-| `chatfishBrowser.getWrapperWidth` / `getPanelAnchor` | Layout helpers | Split width, context menu positioning |
+| `appBrowser.startBoundsObserver` | `EmbeddedBrowser.razor` | `ResizeObserver` → `[JSInvokable] OnBrowserMainOverlayBounds` / `OnBrowserSideOverlayBounds` |
+| `appBrowser.reportBoundsNow` | Overlay refresh | Force bounds recalc after dialogs close |
+| `appBrowser.startSplitterDrag` | Chat/browser split | Resize chat column |
+| `appBrowser.startSidePanelSplitterDrag` | Side panel split | Resize bookmarks/web side column |
+| `appBrowser.startBookmarkBarDrag` / `startSidebarDrag` / `startVtoolbarDrag` | Bookmark & PWA toolbar | Reorder via drag-drop |
+| `appBrowser.getWrapperWidth` / `getPanelAnchor` | Layout helpers | Split width, context menu positioning |
 
 Agentic page interaction uses native JS eval in C#: Windows `WebView.EvaluateJavaScriptAsync` (`MauiBrowserAgentService`); Linux `WebView.EvaluateJavascriptAsync` (`LinuxBrowserAgentService`).
 
@@ -488,7 +488,7 @@ The model chooses CSS selectors; complex multi-step flows combine `get_page_cont
 
 ### PWA vertical toolbar
 
-The right-hand `browser-vtoolbar` lists pinned apps from `SidebarStore`. `MauiPwaDetector` watches navigation and detects `<link rel="manifest">` via in-page JS + HTML parse + HTTP guesses. When a manifest is found, the **+** button offers **Install app** (PWA metadata: name, icons, `start_url`, `display`, theme colors) or **Pin page only**. PWAs open in the side panel or main browser per `OpenTarget` (configurable via context menu). Drag-reorder uses `chatfishBrowser.startVtoolbarDrag`.
+The right-hand `browser-vtoolbar` lists pinned apps from `SidebarStore`. `MauiPwaDetector` watches navigation and detects `<link rel="manifest">` via in-page JS + HTML parse + HTTP guesses. When a manifest is found, the **+** button offers **Install app** (PWA metadata: name, icons, `start_url`, `display`, theme colors) or **Pin page only**. PWAs open in the side panel or main browser per `OpenTarget` (configurable via context menu). Drag-reorder uses `appBrowser.startVtoolbarDrag`.
 
 **URL resolution:** Manifest members (`start_url`, icon `src`) resolve via `PwaManifestHelper.ResolveUrl`. On Linux/.NET, root-relative paths like `"/"` must **not** be passed to `Uri.TryCreate(..., UriKind.Absolute)` alone — that yields `file:///` and the browser normalizer turns them into a Brave search. Resolution always uses the manifest/page base URL; non-http(s) start URLs are refused at pin/open time. Broken pins from earlier builds are healed on load when a valid icon origin exists (`HealPinnedApp`).
 
@@ -496,9 +496,9 @@ The right-hand `browser-vtoolbar` lists pinned apps from `SidebarStore`. `MauiPw
 
 ---
 
-## Linux Desktop (`ChatfishApp.Maui` / `net10.0`)
+## Linux Desktop (`App.Maui` / `net10.0`)
 
-Linux is a **first-class desktop target** in the same `ChatfishApp.Maui` project, but it does **not** use the MAUI window stack (`UseMaui` is off for `net10.0`). The shell is a native **GTK4 / libadwaita** app hosting Blazor and browser overlays via **GirCore** bindings and **WebKitGTK**.
+Linux is a **first-class desktop target** in the same `App.Maui` project, but it does **not** use the MAUI window stack (`UseMaui` is off for `net10.0`). The shell is a native **GTK4 / libadwaita** app hosting Blazor and browser overlays via **GirCore** bindings and **WebKitGTK**.
 
 ### Why not full MAUI on Linux?
 
@@ -508,11 +508,11 @@ Linux is a **first-class desktop target** in the same `ChatfishApp.Maui` project
 | `UseMaui` / SingleProject / `MainPage.xaml` are disabled for that TFM | No MAUI `Application` / `BlazorWebView` (Maui package) |
 | Embedded browser still needs a real WebView | Host **WebKitGTK 6** directly; Blazor UI via `WebKit.BlazorWebView.GirCore` |
 
-Shared UI (`ChatfishApp.Shared`), Core contracts, SQLite stores, SIPSorcery sync, Home Assistant, and BrowserAgent tools are the same as Windows; only the **window host** and **WebView implementation** differ.
+Shared UI (`App.Shared`), Core contracts, SQLite stores, SIPSorcery sync, Home Assistant, and BrowserAgent tools are the same as Windows; only the **window host** and **WebView implementation** differ.
 
 ### Target frameworks (host OS)
 
-Defined in `ChatfishApp.Maui.csproj`:
+Defined in `App.Maui.csproj`:
 
 | Host OS | Typical TFMs |
 |---------|----------------|
@@ -544,11 +544,11 @@ Linux-only sources: `Platforms/Linux/**`, `Services/Linux/**`. Windows/mobile pl
 Platforms/Linux/Program.cs  (Main)
         │
         ├── Adw.Module / Gtk.Module / WebKit.Module.Initialize()
-        ├── Adw.Application.New("com.chatfish.app")
+        ├── Adw.Application.New("com.wizionic.app")
         │       └── RunWithSynchronizationContext(args)   ← GLib main loop + SyncContext
         │
         └── OnActivate
-                ├── Adw.ApplicationWindow (title "Chatfish", min/max/close)
+                ├── Adw.ApplicationWindow (title "Wizionic", min/max/close)
                 │     └── Adw.ToolbarView
                 │           ├── Adw.HeaderBar  (decoration layout :minimize,maximize,close)
                 │           └── LinuxBrowserHost.BuildRoot(BlazorWebView)
@@ -564,7 +564,7 @@ Platforms/Linux/Program.cs  (Main)
 
 ### DI (`MauiProgram.CreateLinuxServiceProvider`)
 
-Registers the same Chatfish services as Windows (SQLite stores, sync, HA, tools, themes), then:
+Registers the same Wizionic services as Windows (SQLite stores, sync, HA, tools, themes), then:
 
 1. `services.AddBlazorWebView(new BlazorWebViewOptions { RootComponent = typeof(Routes), HostPath = "wwwroot/index.html" })`
 2. Linux browser stack: `LinuxBrowserHost`, `LinuxBrowserAgentService`, `LinuxSideBrowserService`, `LinuxBrowserOverlayService` as the `IBrowser*` implementations
@@ -581,20 +581,20 @@ Registers the same Chatfish services as Windows (SQLite stores, sync, HA, tools,
 
 `MauiIcon` does not apply without the MAUI window stack. `LinuxDesktopIcon` on startup:
 
-1. Copies the full-res mascot (`chatfish-appicon.png` from `Resources/AppIcon/chatfish.png`) into `~/.local/share/icons/hicolor/*/apps/com.chatfish.app.png`
-2. Writes `~/.local/share/applications/com.chatfish.app.desktop` (`Name=Chatfish`, `Icon=com.chatfish.app`, `Exec=` apphost path)
+1. Copies the full-res mascot (`app-appicon.png` from `Resources/AppIcon/app.png`) into `~/.local/share/icons/hicolor/*/apps/com.wizionic.app.png`
+2. Writes `~/.local/share/applications/com.wizionic.app.desktop` (`Name=Wizionic`, `Icon=com.wizionic.app`, `Exec=` apphost path)
 3. Sets `Gtk.Window.SetDefaultIconName` / `SetIconName` and optionally `Gdk.Toplevel.SetIconList`
 
-GApplication id: **`com.chatfish.app`** (D-Bus / GTK require reverse-DNS). Velopack **packId** is **`Chatfish`** so artifacts are `Chatfish.AppImage` / `Chatfish-*.nupkg` (display name **Chatfish**). Local data: typically `~/.local/share/Chatfish/`.
+GApplication id: **`com.wizionic.app`** (D-Bus / GTK require reverse-DNS). Velopack **packId** is **`Wizionic`** so artifacts are `Wizionic.AppImage` / `Wizionic-*.nupkg` (display name **Wizionic**). Local data: typically `~/.local/share/Wizionic/`.
 
 ### Build & run
 
 ```bash
 # From repo root (Linux host)
-dotnet build ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0
-dotnet run --project ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0
+dotnet build App.Maui/App.Maui.csproj -f net10.0
+dotnet run --project App.Maui/App.Maui.csproj -f net10.0
 # Or run the apphost:
-./ChatfishApp.Maui/bin/Debug/net10.0/Chatfish
+./App.Maui/bin/Debug/net10.0/Wizionic
 ```
 
 ### Key Linux files
@@ -608,7 +608,7 @@ dotnet run --project ChatfishApp.Maui/ChatfishApp.Maui.csproj -f net10.0
 | `Services/Linux/LinuxSideBrowserService.cs` | Side-panel WebView |
 | `Services/Linux/LinuxBrowserOverlayService.cs` | Bounds / visibility from Blazor JS |
 | `Services/Linux/LinuxDesktopIcon.cs` | Icon theme + .desktop + window icon |
-| `ChatfishApp.Maui.csproj` | Multi-target, GirCore packages, Linux compile filters |
+| `App.Maui.csproj` | Multi-target, GirCore packages, Linux compile filters |
 
 ---
 
@@ -618,13 +618,13 @@ Color themes are shared across WASM and MAUI via `ThemeService` + `ThemeBootstra
 
 | Piece | Location | Role |
 |-------|----------|------|
-| `ThemeService` | `ChatfishApp.Shared/Services/ThemeService.cs` | Catalog: system, light, dark, bella-purple, catppuccin-latte, dracula, github-light, nord, solarized-light |
+| `ThemeService` | `App.Shared/Services/ThemeService.cs` | Catalog: system, light, dark, bella-purple, catppuccin-latte, dracula, github-light, nord, solarized-light |
 | `ThemeInterop` | `ThemeInterop.cs` → `themeInterop.js` | `localStorage` persistence, `data-theme` on `<html>`, OS scheme listener |
 | Settings UI | `SettingsPage.razor` | Theme dropdown |
 
 **MAUI-only:** Settings also exposes **navigation bar position** (`INavLayoutState` / `NavLayoutService`) — top bar vs left vertical icon rail.
 
-CSS variables live in `ChatfishApp.Shared/wwwroot/css/chatfish.css` (theme blocks keyed by `data-theme`).
+CSS variables live in `App.Shared/wwwroot/css/app.css` (theme blocks keyed by `data-theme`).
 
 ---
 
@@ -658,7 +658,7 @@ Notes are notebooks of entries (`ItemId`, `ModifiedAt`, HTML body). Incoming not
 Same-entry concurrent HTML edits can still lose one body (LWW by time). Full 3-way HTML merge / conflict clones are future work.
 
 ### AI relay (WebRTC)
-A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`chatfish-ai-proxy`) to the peer running local models (`WasmChatCompletionService` on the server device).
+A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`app-ai-proxy`) to the peer running local models (`WasmChatCompletionService` on the server device).
 
 ### Architecture diagram
 
@@ -699,7 +699,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Apis/WasmApiEndpoints.cs` | `/api/auth/*`, `/api/user/encryption-key`, `/api/keys`, `/api/tools/*` |
  | `Apis/AiProxyEndpoints.cs` | `/api/proxy/providers`, `/api/proxy/chat` for CORS-restricted models |
  | `Services/MagicLinkService.cs` | Create/validate magic-link tokens |
- | `Data/ChatfishDbContext.cs` | EF Core context for server DB |
+ | `Data/AppDbContext.cs` | EF Core context for server DB |
  
  ### Sync & presence
  
@@ -708,7 +708,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Apis/SyncHub.cs` | SignalR hub: device registration, WebRTC signaling relay |
  | `Services/DevicePresenceService.cs` | In-memory online device registry per user |
  
- ### Shared UI (`ChatfishApp.Shared`)
+ ### Shared UI (`App.Shared`)
  
  | File | Route (approx) | Description |
  |------|---------------|-------------|
@@ -726,7 +726,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Layout/AppLayout.razor` | - | Main cohesive layout for both WASM & MAUI |
  | `Layout/AppTopBar.razor` | - | Browser toggle, HA nav link (MAUI) |
  
- ### Shared Logic (`ChatfishApp.Shared`)
+ ### Shared Logic (`App.Shared`)
  
  | File | Description |
  |------|-------------|
@@ -741,7 +741,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  | `Services/Tools/CompositeToolProvider.cs` | Composes `IToolModule` + MCP tools |
  | `Services/Tools/ContextualRequestRouter.cs` | Wake-word / session / browser-panel / utility-tool heuristics |
  
- ### Business Contracts (`ChatfishApp.Core`)
+ ### Business Contracts (`App.Core`)
  
  | File | Description |
  |------|-------------|
@@ -761,7 +761,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  
  ### Client Implementations (WASM vs MAUI)
  
- | Feature | WASM Implementation (`ChatfishApp.Client`) | MAUI Implementation (`ChatfishApp.Maui`) |
+ | Feature | WASM Implementation (`App.Client`) | MAUI Implementation (`App.Maui`) |
  |---------|-------------------------------------------|------------------------------------------|
  | **Conversations** | `Services/WasmConversationStore.cs` (IndexedDB) | `Services/SqliteConversationStore.cs` (SQLite) |
  | **Notes** | `Services/WasmNoteStore.cs` (IndexedDB) | `Services/SqliteNoteStore.cs` (SQLite) |
@@ -780,7 +780,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
  2. For **chat/AI** changes → `ChatPage.razor`, `ChatCompletionService` (Shared), `ChatModelCatalogService`.
  3. For **Lemonade (image / STT / TTS / Omni)** → `LocalAiPage.razor`, `LemonadeImageService`, `LemonadeSpeechService`, `OmniMediaExtractor`, `LemonadeToolModule`, `LemonadeModelCatalogResolver`.
  4. For **streaming / stats / context compact** → `ChatCompletionService`, `ChatCompletionStats`, `ChatPage.razor` context button.
- 5. For **storage/privacy** → `IConversationStore`/`INoteStore` (Core) and the respective implementations in `ChatfishApp.Client` or `ChatfishApp.Maui` (incl. password-protect flags + sync null-safe payloads).
+ 5. For **storage/privacy** → `IConversationStore`/`INoteStore` (Core) and the respective implementations in `App.Client` or `App.Maui` (incl. password-protect flags + sync null-safe payloads).
  6. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
  7. For **sync** → `ISyncService` (Core), `SyncPresencePage.razor`, and platform implementations of `ISyncService`.
  8. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.

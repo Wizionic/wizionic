@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace ChatfishApp.Migrations
+namespace App.Migrations
 {
     /// <inheritdoc />
     public partial class GuidKeys : Migration

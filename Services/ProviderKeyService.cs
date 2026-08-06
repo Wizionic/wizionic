@@ -1,8 +1,8 @@
-using ChatfishApp.Contracts;
-using ChatfishApp.Data;
+using App.Contracts;
+using App.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// Manages per-user API keys for providers defined in ProviderCatalog.
@@ -10,10 +10,10 @@ namespace ChatfishApp.Services;
 /// </summary>
 public class ProviderKeyService
 {
-    private readonly ChatfishDbContext _db;
+    private readonly AppDbContext _db;
     private readonly IHttpContextAccessor _http;
 
-    public ProviderKeyService(ChatfishDbContext db, IHttpContextAccessor http)
+    public ProviderKeyService(AppDbContext db, IHttpContextAccessor http)
     {
         _db = db;
         _http = http;

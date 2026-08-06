@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace ChatfishApp.Services;
+namespace App.Services;
 
 /// <summary>
 /// In-memory presence tracking for WASM clients (authenticated users only).

@@ -2,22 +2,22 @@
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 <!-- 
-  Styleguide is now DRIVEN BY THE LIVE UNIFIED CSS (css/chatfish.css).
+  Styleguide is now DRIVEN BY THE LIVE UNIFIED CSS (css/app.css).
   - No more self-contained <style> duplicating the palette.
   - Swatches use var(--xxx) so they stay in sync with the real design tokens.
   - Added "Live UI Components" section using the actual classes from the app
     (conversation items, messages, buttons, forms, etc.).
-  - Single source of truth: edit css/chatfish.css and both the real UI + this guide update.
+  - Single source of truth: edit css/app.css and both the real UI + this guide update.
 -->
 
-<h1 style="margin-bottom: 20px; font-size: 32px; font-weight: 600;">Chatfish Style Guide</h1>
+<h1 style="margin-bottom: 20px; font-size: 32px; font-weight: 600;">Wizionic Style Guide</h1>
 
 <p style="color: #666; max-width: 640px;">
-  All styles come from the single unified <code>css/chatfish.css</code> (loaded globally by the host shell for server pages and WASM).
+  All styles come from the single unified <code>css/app.css</code> (loaded globally by the host shell for server pages and WASM).
   Design tokens live in <code>:root</code> and are used everywhere via <code>var(--name)</code>.
 </p>
 
-<h2>Color Palette (from css/chatfish.css :root)</h2>
+<h2>Color Palette (from css/app.css :root)</h2>
 
 <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; margin-top: 20px;">
 
@@ -146,7 +146,7 @@
 
 </div>
 
-<h2>Typography (using global scale from chatfish.css)</h2>
+<h2>Typography (using global scale from app.css)</h2>
 
 <div style="margin-top: 40px;">
 
@@ -215,11 +215,11 @@
 <div style="margin: 2rem 0; padding: 1rem; background: #fff; border: 1px solid var(--grey-200); border-radius: 8px;">
     <h3 style="margin-top:0;">Brand + Icons</h3>
     <a class="cf-brand" href="#" style="display:inline-flex; align-items:center; gap:.5rem; font-weight:600; color:var(--text-dark); text-decoration:none;">
-        <img width="32" src="/images/chatfish.png" alt="Chatfish" /> Chatfish
+        <img width="32" src="/images/app.png" alt="Wizionic" /> Wizionic
     </a>
     <span style="margin-left:1rem; color:var(--primary-dark);"><i class="bi bi-gear" style="font-size:1.2rem;"></i></span>
 </div>
 
 <p style="margin-top: 2rem; font-size: .9em; color: #666;">
-  Tip: change a token in <code>css/chatfish.css</code> (e.g. --primary-blue) and reload — both this guide and the live /chat + /settings will update.
+  Tip: change a token in <code>css/app.css</code> (e.g. --primary-blue) and reload — both this guide and the live /chat + /settings will update.
 </p>

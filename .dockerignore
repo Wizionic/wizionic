@@ -15,5 +15,5 @@
 **/.dockerignore
 
 # Native MAUI app — not buildable/deployable on Linux Railway host
-ChatfishApp.Maui/
+App.Maui/
 terminals/

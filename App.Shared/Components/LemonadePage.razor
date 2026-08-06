@@ -1,0 +1,573 @@
+@using App.Core.Lemonade
+@using App.Core.Storage
+@using App.Shared.Services
+@inject IKeyStore KeyStore
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject IAuthService AuthService
+
+<div class="lemonade-page">
+    <div class="lemonade-page-header">
+        <div>
+            <h4 class="lemonade-page-title">🍋 Lemonade</h4>
+            <p class="lemonade-page-lead">
+                <a href="https://lemonade-server.ai/" target="_blank" rel="noopener">Lemonade Server</a>
+                is a local OpenAI-compatible AI server with some advanced features from AMD. 
+            </p>
+        </div>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="@(() => Nav.NavigateTo("/chat"))">
+            Back to Chat
+        </button>
+    </div>
+
+    <div class="lemonade-page-split">
+        <!-- Left: configuration -->
+        <div class="lemonade-config-pane">
+            <div class="ollama-instructions">
+                <p>
+                    Install Lemonade from <a href="https://lemonade-server.ai/docs/guide/install/" target="_blank" rel="noopener">the official website</a> or
+                    or run the setup wizard from the Settings Page  <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="@(() => Nav.NavigateTo("/settings"))">Settings</button>
+                </p>
+
+                @if (!AppEnvironment.IsMaui)
+                {
+                    <div class="cf-info-box" style="margin: 0.75rem 0; border-color: var(--color-accent);">
+                        <strong>On https://wizionic.com:</strong> allow this origin on Lemonade (CORS). Mixed content may block
+                        <code>http://localhost</code> embeds and API calls from HTTPS pages.
+                        <div class="model-command" style="margin-top: 0.5rem;">
+                            <span class="model-desc">Windows PowerShell</span>
+                            <pre><code>[System.Environment]::SetEnvironmentVariable("LEMONADE_ALLOWED_ORIGINS","https://wizionic.com","User")</code></pre>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <label>Base URL</label>
+            <input type="text"
+                   @bind="lemonadeBaseUrl"
+                   @bind:event="oninput"
+                   @bind:after="OnBaseUrlEdited"
+                   placeholder="http://localhost:13305"
+                   class="form-control" />
+            <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">
+                Default: http://localhost:13305
+            </div>
+
+            <label style="margin-top: 0.5rem;">API key (optional)</label>
+            <input type="password" @bind="lemonadeApiKey" placeholder="Only if LEMONADE_API_KEY is set" class="form-control" autocomplete="off" />
+            <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">
+                Sent as <code>Authorization: Bearer …</code> when set.
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                <button type="button" @onclick="TestLemonadeConnection" class="btn btn-outline-secondary">Test connection</button>
+                <button type="button" @onclick="RefreshLemonadeModels" class="btn btn-outline-primary">Refresh Models from Lemonade</button>
+            </div>
+            @if (!string.IsNullOrEmpty(lemonadeHealthSummary))
+            {
+                <div style="font-size: 0.8em; margin-top: 0.4rem; color: var(--cf-text-muted);">@lemonadeHealthSummary</div>
+            }
+
+            <div class="model-list lemonade-model-list-wrap" style="margin-top: 1rem;">
+                <label>Available Lemonade Models</label>
+                @if (lemonadeModelSettings.Any())
+                {
+                    <div class="ollama-model-list">
+                        @foreach (var model in lemonadeModelSettings)
+                        {
+                            <div class="ollama-model-row @(editingLemonadeName == model.Name ? "is-active" : "")">
+                                <div class="ollama-model-row-main">
+                                    <div class="ollama-model-row-title">@DisplayLemonadeLabel(model)</div>
+                                    @if (ShowModelSubtitle(model))
+                                    {
+                                        <div class="ollama-model-row-subtitle">@model.Name</div>
+                                    }
+                                </div>
+                                <div class="ollama-model-row-meta">
+                                    @foreach (var badge in LemonadeBadges(model))
+                                    {
+                                        <span class="ollama-vision-proxy-badge">@badge</span>
+                                    }
+                                </div>
+                                <button type="button"
+                                        class="ollama-model-edit-btn"
+                                        title="Edit model settings"
+                                        @onclick="() => OpenLemonadeEditor(model.Name)">
+                                    ✏️
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div style="font-size: 0.8em; color: var(--cf-text-muted);">
+                        No models loaded. Start Lemonade and click refresh, or add a model name manually.
+                    </div>
+                }
+            </div>
+
+            @if (editingLemonadeName != null && lemonadeEditDraft != null)
+            {
+                <div class="ollama-model-editor">
+                    <h4>Edit Lemonade model</h4>
+
+                    <label>Label</label>
+                    <input type="text" @bind="lemonadeEditDraft.Label" class="form-control" />
+
+                    <label>Model request name</label>
+                    <input type="text" value="@lemonadeEditDraft.Name" class="form-control" readonly />
+
+                    <label>Server endpoint</label>
+                    <input type="text" value="@KeyStore.LemonadeChatEndpoint" class="form-control" readonly />
+                    <div class="ollama-field-hint">
+                        Recipe: @(lemonadeEditDraft.Recipe ?? "—")
+                        @if (lemonadeEditDraft.Labels.Count > 0)
+                        {
+                            <span> · Labels: @string.Join(", ", lemonadeEditDraft.Labels)</span>
+                        }
+                    </div>
+
+                    @if (lemonadeEditDraft.IsChatEligible)
+                    {
+                        <label>Context size</label>
+                        <input type="number" min="0" step="1" @bind="lemonadeEditDraft.ContextSize" class="form-control" />
+
+                        <div class="ollama-toggle-row">
+                            <div>
+                                <label class="ollama-toggle-label">Vision Support</label>
+                                <div class="ollama-field-hint">Allow image attachments in chat for this model.</div>
+                            </div>
+                            <label class="ollama-toggle">
+                                <input type="checkbox" @bind="lemonadeEditDraft.SupportsVision" />
+                                <span class="ollama-toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="ollama-toggle-row">
+                            <div>
+                                <label class="ollama-toggle-label">Tool Support</label>
+                                <div class="ollama-field-hint">Enable agentic tools for this chat model.</div>
+                            </div>
+                            <label class="ollama-toggle">
+                                <input type="checkbox" @bind="lemonadeEditDraft.SupportsTools" />
+                                <span class="ollama-toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="ollama-toggle-row @(lemonadeEditDraft.SupportsVision ? "" : "is-disabled")">
+                            <div>
+                                <label class="ollama-toggle-label">Vision proxy</label>
+                                <div class="ollama-field-hint">One vision proxy globally (Ollama or Lemonade).</div>
+                            </div>
+                            <label class="ollama-toggle">
+                                <input type="checkbox"
+                                       @bind="lemonadeEditDraft.IsVisionProxy"
+                                       disabled="@(!lemonadeEditDraft.SupportsVision)" />
+                                <span class="ollama-toggle-slider"></span>
+                            </label>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ollama-field-hint" style="margin: 0.5rem 0;">
+                            This is a modality model (not shown in the chat picker).
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(saveFeedback))
+                    {
+                        <div class="ollama-save-feedback @(saveFeedbackIsError ? "is-error" : "is-success")" role="status">
+                            @saveFeedback
+                        </div>
+                    }
+
+                    <div class="ollama-editor-actions">
+                        <button type="button" @onclick="SaveLemonadeEditor" class="btn btn-primary">Save model</button>
+                        <button type="button" @onclick="CloseLemonadeEditor" class="btn btn-link-style">Close</button>
+                        <button type="button" @onclick="RemoveLemonadeEditingModel" class="btn btn-outline-secondary ollama-remove-btn">Remove model</button>
+                    </div>
+                </div>
+            }
+
+            <div style="margin-top: 0.5rem;">
+                <label>Add model by name</label>
+                <div style="display: flex; gap: 4px;">
+                    <input type="text" @bind="newLemonadeModel" placeholder="e.g. Qwen3-0.6B-GGUF" class="form-control" style="flex:1;" />
+                    <button type="button" @onclick="AddCustomLemonadeModel" class="btn btn-outline-secondary">Add</button>
+                </div>
+                <div style="font-size:0.72em; color:var(--cf-text-muted); margin-top:2px;">
+                    Manual adds last until the next Refresh (refresh replaces the list from the server).
+                </div>
+            </div>
+
+            <div style="margin-top: 1.25rem; padding-bottom: 1.5rem;">
+                <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">Modality defaults</h4>
+                <p style="font-size: 0.8em; color: var(--cf-text-muted); margin-top: 0;">
+                    Used by image generation, speech-to-text, and text-to-speech features in chat.
+                </p>
+
+                <label>Image generation model</label>
+                <select class="form-control" @bind="defaultImageModel">
+                    <option value="">— none —</option>
+                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsImage))
+                    {
+                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
+                    }
+                </select>
+
+                <label style="margin-top: 0.4rem;">Image edit model</label>
+                <select class="form-control" @bind="defaultEditModel">
+                    <option value="">— none —</option>
+                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsEdit))
+                    {
+                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
+                    }
+                </select>
+
+                <label style="margin-top: 0.4rem;">Text-to-speech model</label>
+                <select class="form-control" @bind="defaultTtsModel">
+                    <option value="">— none —</option>
+                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsTts))
+                    {
+                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
+                    }
+                </select>
+
+                <label style="margin-top: 0.4rem;">Speech-to-text model</label>
+                <select class="form-control" @bind="defaultSttModel">
+                    <option value="">— none —</option>
+                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsTranscription))
+                    {
+                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
+                    }
+                </select>
+
+                <label style="margin-top: 0.4rem;">Default voice (TTS)</label>
+                <input type="text" @bind="defaultVoice" placeholder="shimmer" class="form-control" />
+
+                <button type="button" @onclick="SaveModalityDefaults" class="btn btn-outline-primary" style="margin-top: 0.5rem;">
+                    Save modality defaults
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(pageFeedback))
+            {
+                <div class="ollama-save-feedback @(pageFeedbackIsError ? "is-error" : "is-success")" role="status" style="margin-top: 0.75rem; white-space: pre-wrap;">
+                    @pageFeedback
+                </div>
+            }
+        </div>
+
+        <!-- Right: Lemonade UI embed -->
+        <div class="lemonade-embed-pane">
+            @if (CanEmbedLocalServer)
+            {
+                <div class="lemonade-embed-frame-wrap">
+                    <SimpleUrlEmbed @key="embedKey" Url="@embedUrl" Title="Lemonade Server UI" />
+                </div>
+            }
+            else
+            {
+                <div class="lemonade-embed-fallback">
+                    <p>
+                        This page is served over HTTPS, so the browser blocks embedding
+                        <code>http://localhost</code> (mixed content).
+                    </p>
+                    <p>
+                        Use the <strong>desktop app</strong>, or open Lemonade directly:
+                    </p>
+                    @* data-enhance-nav=false: never let Blazor treat the local URL as an in-app route *@
+                    <a class="btn btn-primary"
+                       href="@embedUrl"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       data-enhance-nav="false">Open @embedUrl</a>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    string lemonadeBaseUrl = "http://localhost:13305";
+    string lemonadeApiKey = "";
+    List<LemonadeModelSettings> lemonadeModelSettings = new();
+    string newLemonadeModel = "";
+    string? editingLemonadeName;
+    LemonadeModelSettings? lemonadeEditDraft;
+    string? lemonadeHealthSummary;
+
+    string defaultImageModel = "";
+    string defaultEditModel = "";
+    string defaultTtsModel = "";
+    string defaultSttModel = "";
+    string defaultVoice = "shimmer";
+
+    string? saveFeedback;
+    bool saveFeedbackIsError;
+    string? pageFeedback;
+    bool pageFeedbackIsError;
+    CancellationTokenSource? _saveFeedbackCts;
+    CancellationTokenSource? _pageFeedbackCts;
+
+    /// <summary>Bump to force iframe reload.</summary>
+    int embedKey;
+    string embedUrl = "http://localhost:13305";
+
+    /// <summary>
+    /// MAUI can always try the embed. WASM/host only when the page itself is not HTTPS
+    /// (or Base URL is HTTPS) to avoid mixed-content blocks. Never embed when the target
+    /// is not a valid absolute http(s) URL — relative values would hit wizionic.com routes
+    /// and surface the app NotFound page.
+    /// </summary>
+    bool CanEmbedLocalServer
+    {
+        get
+        {
+            if (AppEnvironment.IsMaui)
+                return true;
+            if (!Uri.TryCreate(embedUrl, UriKind.Absolute, out var target)
+                || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
+            {
+                return false;
+            }
+
+            var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
+            // HTTPS page + HTTP target = mixed content (blank iframe / browser block). Stay on-page with fallback UI.
+            if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
+                return false;
+
+            return true;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await KeyStore.LoadAsync();
+        await AuthService.LoadAsync();
+        lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
+        lemonadeApiKey = KeyStore.LemonadeApiKey ?? "";
+        SyncEmbedUrl();
+        ReloadAll();
+    }
+
+    void OnBaseUrlEdited() => SyncEmbedUrl();
+
+    void SyncEmbedUrl()
+    {
+        embedUrl = LemonadeModelCatalogResolver.NormalizeBaseUrl(lemonadeBaseUrl);
+    }
+
+    void ReloadEmbed()
+    {
+        SyncEmbedUrl();
+        embedKey++;
+    }
+
+    void ReloadAll()
+    {
+        lemonadeModelSettings = KeyStore.LemonadeModelSettingsList.ToList();
+        defaultImageModel = KeyStore.LemonadeDefaultImageModel ?? "";
+        defaultEditModel = KeyStore.LemonadeDefaultEditModel ?? "";
+        defaultTtsModel = KeyStore.LemonadeDefaultTtsModel ?? "";
+        defaultSttModel = KeyStore.LemonadeDefaultSttModel ?? "";
+        defaultVoice = KeyStore.LemonadeDefaultVoice ?? "shimmer";
+    }
+
+    static string DisplayLemonadeLabel(LemonadeModelSettings model) =>
+        string.IsNullOrWhiteSpace(model.Label) ? model.Name : model.Label;
+
+    /// <summary>Avoid duplicate title/subtitle when Label is the same as Name (default after refresh).</summary>
+    static bool ShowModelSubtitle(LemonadeModelSettings model) =>
+        !string.IsNullOrWhiteSpace(model.Label)
+        && !string.Equals(model.Label.Trim(), model.Name.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    static IEnumerable<string> LemonadeBadges(LemonadeModelSettings m)
+    {
+        if (m.IsOmniCollection) yield return "Omni";
+        else if (m.IsChatEligible) yield return "Chat";
+        if (m.SupportsVision) yield return "Vision";
+        if (m.IsImage) yield return "Image";
+        if (m.IsEdit) yield return "Edit";
+        if (m.IsTts) yield return "TTS";
+        if (m.IsTranscription) yield return "STT";
+        if (m.IsEmbeddings) yield return "Embed";
+        if (m.IsReranking) yield return "Rerank";
+        if (m.IsVisionProxy) yield return "Vision proxy";
+    }
+
+    async Task TestLemonadeConnection()
+    {
+        try
+        {
+            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
+            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
+            lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
+            SyncEmbedUrl();
+            ReloadEmbed();
+            var health = await LemonadeModelCatalogResolver.FetchHealthAsync(
+                Http, KeyStore.LemonadeBaseUrl, KeyStore.LemonadeApiKey);
+            lemonadeHealthSummary = health == null
+                ? "No health payload."
+                : $"OK · version {health.Version ?? "?"} · loaded: {health.ModelLoaded ?? "(none)"}";
+            await ShowPageFeedbackAsync("Lemonade connection OK.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            lemonadeHealthSummary = null;
+            var msg = ex.Message;
+            if (IsNetworkError(msg))
+            {
+                msg += "\n\nTip: Ensure Lemonade is running. On https://wizionic.com set LEMONADE_ALLOWED_ORIGINS; browsers block http://localhost from HTTPS pages.";
+            }
+            await ShowPageFeedbackAsync(msg, isError: true);
+        }
+    }
+
+    async Task RefreshLemonadeModels()
+    {
+        try
+        {
+            await KeyStore.RefreshLemonadeModelsFromServerAsync(Http, lemonadeBaseUrl, lemonadeApiKey);
+            lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
+            lemonadeApiKey = KeyStore.LemonadeApiKey ?? "";
+            SyncEmbedUrl();
+            ReloadEmbed();
+            ReloadAll();
+            // Close editor if the model was removed by replace-on-refresh.
+            if (editingLemonadeName != null &&
+                lemonadeModelSettings.All(m => !string.Equals(m.Name, editingLemonadeName, StringComparison.OrdinalIgnoreCase)))
+            {
+                CloseLemonadeEditor();
+            }
+            else if (editingLemonadeName != null)
+            {
+                OpenLemonadeEditor(editingLemonadeName);
+            }
+
+            await ShowPageFeedbackAsync(
+                $"Model list replaced from server ({lemonadeModelSettings.Count} total, {lemonadeModelSettings.Count(m => m.IsChatEligible)} chat).",
+                isError: false);
+        }
+        catch (Exception ex)
+        {
+            var msg = ex.Message;
+            if (IsNetworkError(msg))
+                msg += "\n\nTip: On https://wizionic.com this often fails for http Lemonade (CORS / mixed content).";
+            await ShowPageFeedbackAsync(msg, isError: true);
+        }
+    }
+
+    async Task AddCustomLemonadeModel()
+    {
+        try
+        {
+            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
+            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
+            await KeyStore.AddLemonadeModelAsync(newLemonadeModel);
+            ReloadAll();
+            newLemonadeModel = "";
+        }
+        catch (Exception ex)
+        {
+            await ShowPageFeedbackAsync($"Failed to add Lemonade model: {ex.Message}", isError: true);
+        }
+    }
+
+    void OpenLemonadeEditor(string modelName)
+    {
+        var settings = KeyStore.GetLemonadeModelSettings(modelName);
+        if (settings == null) return;
+        editingLemonadeName = modelName;
+        lemonadeEditDraft = settings.Clone();
+    }
+
+    void CloseLemonadeEditor()
+    {
+        editingLemonadeName = null;
+        lemonadeEditDraft = null;
+    }
+
+    async Task SaveLemonadeEditor()
+    {
+        if (lemonadeEditDraft == null) return;
+        try
+        {
+            if (!lemonadeEditDraft.SupportsVision)
+                lemonadeEditDraft.IsVisionProxy = false;
+
+            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
+            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
+            await KeyStore.SaveLemonadeModelSettingsAsync(lemonadeEditDraft);
+            ReloadAll();
+            editingLemonadeName = lemonadeEditDraft.Name;
+            lemonadeEditDraft = KeyStore.GetLemonadeModelSettings(lemonadeEditDraft.Name)?.Clone();
+            await ShowSaveFeedbackAsync("Lemonade model settings saved.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowSaveFeedbackAsync($"Could not save: {ex.Message}", isError: true);
+        }
+    }
+
+    async Task RemoveLemonadeEditingModel()
+    {
+        if (editingLemonadeName == null) return;
+        await KeyStore.RemoveLemonadeModelAsync(editingLemonadeName);
+        ReloadAll();
+        CloseLemonadeEditor();
+    }
+
+    async Task SaveModalityDefaults()
+    {
+        try
+        {
+            await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
+            await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
+            await KeyStore.SetLemonadeModalityDefaultsAsync(
+                defaultImageModel, defaultEditModel, defaultTtsModel, defaultSttModel, defaultVoice);
+            ReloadAll();
+            await ShowPageFeedbackAsync("Modality defaults saved.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            await ShowPageFeedbackAsync($"Could not save defaults: {ex.Message}", isError: true);
+        }
+    }
+
+    static bool IsNetworkError(string msg) =>
+        msg.Contains("CORS", StringComparison.OrdinalIgnoreCase) ||
+        msg.Contains("fetch", StringComparison.OrdinalIgnoreCase) ||
+        msg.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+        msg.Contains("Mixed Content", StringComparison.OrdinalIgnoreCase) ||
+        msg.Contains("Failed to refresh", StringComparison.OrdinalIgnoreCase) ||
+        msg.Contains("Connection refused", StringComparison.OrdinalIgnoreCase) ||
+        msg.Contains("actively refused", StringComparison.OrdinalIgnoreCase);
+
+    async Task ShowSaveFeedbackAsync(string message, bool isError)
+    {
+        _saveFeedbackCts?.Cancel();
+        _saveFeedbackCts?.Dispose();
+        _saveFeedbackCts = new CancellationTokenSource();
+        var token = _saveFeedbackCts.Token;
+        saveFeedback = message;
+        saveFeedbackIsError = isError;
+        StateHasChanged();
+        try { await Task.Delay(4000, token); saveFeedback = null; StateHasChanged(); }
+        catch (TaskCanceledException) { }
+    }
+
+    async Task ShowPageFeedbackAsync(string message, bool isError)
+    {
+        _pageFeedbackCts?.Cancel();
+        _pageFeedbackCts?.Dispose();
+        _pageFeedbackCts = new CancellationTokenSource();
+        var token = _pageFeedbackCts.Token;
+        pageFeedback = message;
+        pageFeedbackIsError = isError;
+        StateHasChanged();
+        try { await Task.Delay(isError ? 8000 : 4000, token); pageFeedback = null; StateHasChanged(); }
+        catch (TaskCanceledException) { }
+    }
+}

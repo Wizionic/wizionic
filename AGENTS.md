@@ -1,19 +1,19 @@
-# AGENTS.md — Chatfish.me
+# AGENTS.md — Wizionic
 
 ## Commands
 
 ```bash
-dotnet run --project ChatfishApp.csproj          # Run host (Blazor Server/WASM)
-dotnet build ChatfishApp.sln                     # Build solution
+dotnet run --project App.csproj          # Run host (Blazor Server/WASM)
+dotnet build App.sln                     # Build solution
 dotnet ef migrations add <Name>                  # Add EF Core migration
 dotnet ef database update                        # Apply pending migrations
-dotnet publish ChatfishApp.Maui/ -f net10.0-windows10.0.19041.0 -r win-x64 --self-contained   # MAUI build
+dotnet publish App.Maui/ -f net10.0-windows10.0.19041.0 -r win-x64 --self-contained   # MAUI build
 ```
 
 ## Architecture (key facts)
 
-- **Three targets from one codebase**: Host (`ChatfishApp.csproj`), WASM (`ChatfishApp.Client/`), MAUI (`ChatfishApp.Maui/`)
-- **Shared layers**: `ChatfishApp.Core/` (interfaces/DTOs, no platform code), `ChatfishApp.Shared/` (Razor components + shared services)
+- **Three targets from one codebase**: Host (`App.csproj`), WASM (`App.Client/`), MAUI (`App.Maui/`)
+- **Shared layers**: `App.Core/` (interfaces/DTOs, no platform code), `App.Shared/` (Razor components + shared services)
 - **Local-first**: Chat history and note bodies are AES-256-GCM encrypted on the client. Only auth metadata/signaling touches the server. Never add server-side chat storage for WASM/MAUI targets.
 - **Storage isolation**: Guest mode uses `wasmchat-` prefix in IndexedDB; authenticated mode uses `u-{userId}-`. Migration handled by `WasmGuestDataMigrationService`.
 - **AI routing**: Ollama → direct to localhost; cloud models → proxied via `/api/proxy/chat` with server-side keys; user-keyed models called directly from client.
@@ -23,11 +23,11 @@ dotnet publish ChatfishApp.Maui/ -f net10.0-windows10.0.19041.0 -r win-x64 --sel
 
 | Path | Role |
 |------|------|
-| `ChatfishApp.Core/` | Interfaces + DTOs (IConversationStore, ICryptoService, ISyncService, etc.) |
-| `ChatfishApp.Shared/Components/` | Razor pages: Login, Chat, Notes, Sync, LocalAI, CloudProviders, Settings, Tools |
-| `ChatfishApp.Shared/Services/` | ChatCompletionService, ChatModelCatalogService, McpToolSource, QuillInterop |
-| `ChatfishApp.Client/` | WASM impls: WasmConversationStore (IndexedDB), WasmCryptoService (WebCrypto) |
-| `ChatfishApp.Maui/` | MAUI impls: SqliteConversationStore, MauiCryptoService, MauiSyncService, SqliteKeyStore |
+| `App.Core/` | Interfaces + DTOs (IConversationStore, ICryptoService, ISyncService, etc.) |
+| `App.Shared/Components/` | Razor pages: Login, Chat, Notes, Sync, LocalAI, CloudProviders, Settings, Tools |
+| `App.Shared/Services/` | ChatCompletionService, ChatModelCatalogService, McpToolSource, QuillInterop |
+| `App.Client/` | WASM impls: WasmConversationStore (IndexedDB), WasmCryptoService (WebCrypto) |
+| `App.Maui/` | MAUI impls: SqliteConversationStore, MauiCryptoService, MauiSyncService, SqliteKeyStore |
 | `Apis/` | WasmApiEndpoints.cs (auth/keys/tools), AiProxyEndpoints.cs (cloud model proxy) |
 | `Data/` | EF Core context + entities, Migrations/ |
 
