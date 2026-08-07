@@ -26,6 +26,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string SyncTargetDevicesKey = "app-sync-target-devices";
     private const string AutoSyncChatKey = "app-auto-sync-chat";
     private const string AutoSyncNotesKey = "app-auto-sync-notes";
+    private const string AutoSyncGalleryKey = "app-auto-sync-gallery";
     private const string AutoSyncBookmarksKey = "app-auto-sync-bookmarks";
     private const string AutoSyncAppsKey = "app-auto-sync-apps";
     private const string SyncToAllDevicesKey = "app-sync-to-all-devices";
@@ -78,6 +79,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public bool SyncToAllDevices { get; private set; } = true;
     public bool AutoSyncChatHistory { get; private set; } = true;
     public bool AutoSyncNotes { get; private set; } = true;
+    public bool AutoSyncGallery { get; private set; } = true;
     public bool AutoSyncBookmarks { get; private set; } = true;
     public bool AutoSyncInstalledApps { get; private set; } = true;
     public bool AutoSyncLocalAi { get; private set; } = true;
@@ -94,6 +96,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public event Action? OnChanged;
     public event Action? OnConversationsChanged;
     public event Action? OnNotesChanged;
+    public event Action? OnGalleryChanged;
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
     public event Action? OnSettingsChanged;
@@ -101,6 +104,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;
     public event Action<string, string>? OnNoteSyncAckReceived;
+    public event Action<string, string, string>? OnAlbumSyncPayloadReceived;
+    public event Action<string, string>? OnAlbumSyncAckReceived;
 
     public MauiSyncService(
         MauiAuthCookieStore cookieStore,
@@ -373,6 +378,14 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinatorWired();
     }
 
+    public async Task SetAutoSyncGalleryAsync(bool enabled)
+    {
+        AutoSyncGallery = enabled;
+        await SetUserSettingAsync(AutoSyncGalleryKey, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
     public async Task SetAutoSyncBookmarksAsync(bool enabled)
     {
         AutoSyncBookmarks = enabled;
@@ -447,6 +460,18 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         return Coordinator.StartWebRtcNoteSyncAsync(targetDeviceId, noteId, title, entries);
     }
 
+    public Task StartWebRtcAlbumSyncAsync(string targetDeviceId, string albumId, string title)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.StartWebRtcAlbumSyncAsync(targetDeviceId, albumId, title);
+    }
+
+    public Task StartWebRtcAlbumImageSyncAsync(string targetDeviceId, string albumId, string imageId)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.StartWebRtcAlbumImageSyncAsync(targetDeviceId, albumId, imageId);
+    }
+
     public Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark)
     {
         EnsureCoordinatorWired();
@@ -475,6 +500,12 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         return Coordinator.SyncAllNotesToDevicesAsync(targetDeviceIds);
+    }
+
+    public Task<int> SyncAllAlbumsToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return Coordinator.SyncAllAlbumsToDevicesAsync(targetDeviceIds);
     }
 
     public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds)
@@ -511,6 +542,30 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         Coordinator.ScheduleAutoSyncNoteDeleteAfterLocalDelete(noteId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncAlbumMetaAfterLocalSave(string albumId, string title)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncAlbumMetaAfterLocalSave(albumId, title);
+    }
+
+    public void ScheduleAutoSyncAlbumDeleteAfterLocalDelete(string albumId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncAlbumDeleteAfterLocalDelete(albumId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncAlbumImageAfterLocalSave(string albumId, string imageId)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncAlbumImageAfterLocalSave(albumId, imageId);
+    }
+
+    public void ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(string albumId, string imageId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        Coordinator.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(albumId, imageId, deletedAtUtc);
     }
 
     public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId)
@@ -719,10 +774,13 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             transportCallbacks: this,
             browserStore: _browserStore,
             sidebarStore: _sidebarStore,
-            settingsStore: _settingsSync);
+            settingsStore: _settingsSync,
+            galleryStore: sp.GetRequiredService<IGalleryStore>(),
+            storageQuota: sp.GetService<IStorageQuotaService>());
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
+        _coordinator.OnGalleryChanged += () => OnGalleryChanged?.Invoke();
         _coordinator.OnBookmarksChanged += () => OnBookmarksChanged?.Invoke();
         _coordinator.OnInstalledAppsChanged += () => OnInstalledAppsChanged?.Invoke();
         _coordinator.OnSettingsChanged += () => OnSettingsChanged?.Invoke();
@@ -730,6 +788,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
         _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => OnNoteSyncPayloadReceived?.Invoke(n, j, f);
         _coordinator.OnNoteSyncAckReceived += (n, f) => OnNoteSyncAckReceived?.Invoke(n, f);
+        _coordinator.OnAlbumSyncPayloadReceived += (a, j, f) => OnAlbumSyncPayloadReceived?.Invoke(a, j, f);
+        _coordinator.OnAlbumSyncAckReceived += (a, f) => OnAlbumSyncAckReceived?.Invoke(a, f);
     }
 
     private void EnsureCoordinatorWired()
@@ -737,6 +797,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         EnsureCoordinator();
         _coordinator!.AutoSyncChatHistory = AutoSyncChatHistory;
         _coordinator.AutoSyncNotes = AutoSyncNotes;
+        _coordinator.AutoSyncGallery = AutoSyncGallery;
         _coordinator.AutoSyncBookmarks = AutoSyncBookmarks;
         _coordinator.AutoSyncInstalledApps = AutoSyncInstalledApps;
         _coordinator.AutoSyncLocalAi = AutoSyncLocalAi;
@@ -750,6 +811,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.AutoSyncAppearance = AutoSyncAppearance;
         _coordinator.SyncTargetDeviceIds = GetEffectiveSyncTargetDeviceIds();
         _coordinator.IsSelf = IsSelf;
+        _coordinator.LocalDeviceId = MyDeviceId;
         _coordinator.IsAuthenticated = () => _auth.IsAuthenticated;
         _coordinator.EnsureConnectedAsync = EnsureConnectedAndRegisteredAsync;
         _coordinator.GetDevices = () => Devices;
@@ -908,6 +970,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             SyncToAllDevices = await LoadBoolPrefAsync(SyncToAllDevicesKey, defaultValue: true);
             AutoSyncChatHistory = await LoadBoolPrefAsync(AutoSyncChatKey, defaultValue: true);
             AutoSyncNotes = await LoadBoolPrefAsync(AutoSyncNotesKey, defaultValue: true);
+            AutoSyncGallery = await LoadBoolPrefAsync(AutoSyncGalleryKey, defaultValue: true);
             AutoSyncBookmarks = await LoadBoolPrefAsync(AutoSyncBookmarksKey, defaultValue: true);
             AutoSyncInstalledApps = await LoadBoolPrefAsync(AutoSyncAppsKey, defaultValue: true);
             AutoSyncLocalAi = await LoadBoolPrefAsync(AutoSyncLocalAiKey, defaultValue: true);

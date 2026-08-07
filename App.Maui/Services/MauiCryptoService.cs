@@ -71,4 +71,36 @@ public class MauiCryptoService : ICryptoService
             return Task.FromResult(combinedBase64);
         }
     }
+
+    /// <summary>AES-GCM over raw bytes. Returns IV || ciphertext || tag.</summary>
+    public byte[] EncryptBytes(string keyBase64, byte[] plainBytes)
+    {
+        var key = Convert.FromBase64String(keyBase64);
+        var iv = RandomNumberGenerator.GetBytes(IvSize);
+        var cipher = new byte[plainBytes.Length];
+        var tag = new byte[TagSize];
+        using var aes = new AesGcm(key, TagSize);
+        aes.Encrypt(iv, plainBytes, cipher, tag);
+        var combined = new byte[IvSize + cipher.Length + TagSize];
+        Buffer.BlockCopy(iv, 0, combined, 0, IvSize);
+        Buffer.BlockCopy(cipher, 0, combined, IvSize, cipher.Length);
+        Buffer.BlockCopy(tag, 0, combined, IvSize + cipher.Length, TagSize);
+        return combined;
+    }
+
+    /// <summary>Decrypt AES-GCM IV || ciphertext || tag → raw plain bytes.</summary>
+    public byte[] DecryptBytes(string keyBase64, byte[] combined)
+    {
+        var key = Convert.FromBase64String(keyBase64);
+        if (combined.Length <= IvSize + TagSize)
+            throw new CryptographicException("ciphertext too short");
+        var iv = combined.AsSpan(0, IvSize);
+        var cipherAndTag = combined.AsSpan(IvSize);
+        var cipher = cipherAndTag[..^TagSize];
+        var tag = cipherAndTag[^TagSize..];
+        var plain = new byte[cipher.Length];
+        using var aes = new AesGcm(key, TagSize);
+        aes.Decrypt(iv, cipher, tag, plain);
+        return plain;
+    }
 }

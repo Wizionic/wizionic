@@ -14,6 +14,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     private readonly IWebRtcTransport _webrtc;
     private readonly IConversationStore _conversationStore;
     private readonly INoteStore _noteStore;
+    private readonly IGalleryStore? _galleryStore;
+    private readonly IStorageQuotaService? _storageQuota;
     private readonly IBrowserStore? _browserStore;
     private readonly IBrowserSidebarStore? _sidebarStore;
     private readonly ISettingsSyncStore? _settingsStore;
@@ -32,11 +34,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         IWebRtcTransportCallbacks? transportCallbacks = null,
         IBrowserStore? browserStore = null,
         IBrowserSidebarStore? sidebarStore = null,
-        ISettingsSyncStore? settingsStore = null)
+        ISettingsSyncStore? settingsStore = null,
+        IGalleryStore? galleryStore = null,
+        IStorageQuotaService? storageQuota = null)
     {
         _webrtc = webrtc;
         _conversationStore = conversationStore;
         _noteStore = noteStore;
+        _galleryStore = galleryStore;
+        _storageQuota = storageQuota;
         _prefs = prefs;
         _sendSignalingAsync = sendSignalingAsync;
         _isHubConnected = isHubConnected;
@@ -48,6 +54,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
     public bool AutoSyncChatHistory { get; set; }
     public bool AutoSyncNotes { get; set; }
+    public bool AutoSyncGallery { get; set; }
     public bool AutoSyncBookmarks { get; set; }
     public bool AutoSyncInstalledApps { get; set; }
     public bool AutoSyncLocalAi { get; set; }
@@ -61,12 +68,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public bool AutoSyncAppearance { get; set; }
     public IReadOnlyCollection<string> SyncTargetDeviceIds { get; set; } = Array.Empty<string>();
     public Func<string, bool>? IsSelf { get; set; }
+    /// <summary>This device's sync id — used for deterministic WebRTC glare (perfect negotiation).</summary>
+    public string? LocalDeviceId { get; set; }
     public Func<bool>? IsAuthenticated { get; set; }
     public Func<Task>? EnsureConnectedAsync { get; set; }
     public Func<IReadOnlyList<SyncDeviceInfo>>? GetDevices { get; set; }
 
     public event Action? OnConversationsChanged;
     public event Action? OnNotesChanged;
+    public event Action? OnGalleryChanged;
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
     public event Action? OnSettingsChanged;
@@ -74,6 +84,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public event Action<string, string>? OnSyncAckReceived;
     public event Action<string, string, string>? OnNoteSyncPayloadReceived;
     public event Action<string, string>? OnNoteSyncAckReceived;
+    public event Action<string, string, string>? OnAlbumSyncPayloadReceived;
+    public event Action<string, string>? OnAlbumSyncAckReceived;
 
     public Task HandleReceiveSignalingAsync(string fromDeviceId, string type, string payload)
     {
@@ -110,11 +122,32 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     private readonly Dictionary<string, CancellationTokenSource> _autoSyncDebounce = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CancellationTokenSource> _peerOnlineAutoSyncDebounce = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ChunkAssembly> _chunkAssemblies = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Remote offers deferred while we have an outbound transfer in flight (avoids killing the DataChannel mid-image).</summary>
+    private readonly Dictionary<string, string> _deferredRemoteOffers = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// After we were the passive answerer, claim one outbound turn so the polite peer can push
+    /// its own albums/notes instead of forever yielding to the other device's continuous offers.
+    /// </summary>
+    private readonly HashSet<string> _owedOutboundTurn = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _galleryChangedDebounceCts;
     private static readonly TimeSpan SyncItemTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan AutoSyncDebounce = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan PeerOnlineAutoSyncDebounce = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ManifestRecheckCooldown = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan GalleryChangedDebounce = TimeSpan.FromMilliseconds(400);
     private const int MaxSyncRetries = 2;
+
+    /// <summary>
+    /// Large gallery albums can be 100MB+ over the DataChannel; 45s is far too short.
+    /// Scale with payload size: ~90s base + 3s/MB, capped at 30 minutes.
+    /// </summary>
+    private static TimeSpan TimeoutForPayloadBytes(int payloadBytes)
+    {
+        var mb = Math.Max(0, payloadBytes) / (1024.0 * 1024.0);
+        var seconds = Math.Clamp(90 + (mb * 3.0), 90, 1800);
+        return TimeSpan.FromSeconds(seconds);
+    }
+
     private sealed class ChunkAssembly
     {
         public required SyncItemKind Kind { get; init; }
@@ -136,6 +169,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         public bool IsManifestExchange { get; init; }
         public bool IncludeConvosInManifest { get; init; }
         public bool IncludeNotesInManifest { get; init; }
+        public bool IncludeAlbumsInManifest { get; init; }
         public bool IncludeBookmarksInManifest { get; init; }
         public bool IncludeSidebarAppsInManifest { get; init; }
         public int RetryCount { get; set; }
@@ -146,7 +180,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         List<SyncManifestEntry> Notes,
         List<SyncManifestEntry>? Bookmarks = null,
         List<SyncManifestEntry>? BookmarkFolders = null,
-        List<SyncManifestEntry>? SidebarApps = null);
+        List<SyncManifestEntry>? SidebarApps = null,
+        List<SyncManifestEntry>? Albums = null,
+        List<SyncManifestEntry>? AlbumImages = null);
 
     private record SyncManifestResponse(
         List<string> NeededConvos,
@@ -163,7 +199,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         int UpToDateSidebarApps = 0,
         List<DeleteSyncPayload>? SenderShouldDeleteBookmarks = null,
         List<DeleteSyncPayload>? SenderShouldDeleteBookmarkFolders = null,
-        List<DeleteSyncPayload>? SenderShouldDeleteSidebarApps = null);
+        List<DeleteSyncPayload>? SenderShouldDeleteSidebarApps = null,
+        List<string>? NeededAlbums = null,
+        int UpToDateAlbums = 0,
+        List<DeleteSyncPayload>? SenderShouldDeleteAlbums = null,
+        List<string>? NeededAlbumImages = null,
+        int UpToDateAlbumImages = 0,
+        List<DeleteSyncPayload>? SenderShouldDeleteAlbumImages = null);
 
     private const string SyncAckStateKey = "app-sync-ack-state";
     private const string SyncManifestVerifiedKey = "app-sync-manifest-verified";
@@ -266,6 +308,97 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         await EnqueueSyncAsync(targetDeviceId, item);
     }
 
+    public async Task EnqueueAlbumMetaSyncAsync(string targetDeviceId, string albumId, string title)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || _galleryStore == null)
+            return;
+        if (!_isHubConnected())
+        {
+            SyncDebugLog.Info($"Cannot enqueue album meta {albumId}: hub not connected.");
+            return;
+        }
+
+        var index = await _galleryStore.LoadIndexAsync();
+        var meta = index.FirstOrDefault(n => n.Id == albumId);
+        var isProtected = meta?.IsPasswordProtected == true;
+        var proticks = meta?.ProtectionChangedTicks ?? 0;
+        var images = await _galleryStore.LoadAlbumAsync(albumId);
+        var refs = images
+            .Select((img, i) => new AlbumImageRef(
+                img.Id,
+                SyncFingerprint.ForAlbumImage(albumId, GalleryImageSyncPayload.ForWire(img)),
+                i,
+                img.DeletedAt?.Ticks))
+            .ToList();
+        var dataJson = GalleryAlbumMetaPayload.Serialize(albumId, title, refs, isProtected, proticks);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.Album,
+            ItemId = albumId,
+            NoteTitle = title,
+            DataJson = dataJson,
+            ContentFingerprint = SyncFingerprint.ForAlbumMeta(albumId, title, refs, isProtected, proticks)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueAlbumImageSyncAsync(string targetDeviceId, string albumId, string imageId)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || _galleryStore == null)
+            return;
+        if (!_isHubConnected())
+        {
+            SyncDebugLog.Info($"Cannot enqueue album image {albumId}/{imageId}: hub not connected.");
+            return;
+        }
+
+        var image = await _galleryStore.LoadImageAsync(albumId, imageId);
+        if (image == null)
+            return;
+
+        var composite = GalleryImageSyncPayload.CompositeId(albumId, imageId);
+        if (image.DeletedAt.HasValue)
+        {
+            await EnqueueAlbumImageDeleteAsync(targetDeviceId, albumId, imageId, image.DeletedAt.Value);
+            return;
+        }
+
+        var dataJson = GalleryImageSyncPayload.Serialize(albumId, image);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.AlbumImage,
+            ItemId = composite,
+            NoteTitle = image.Name,
+            DataJson = dataJson,
+            ContentFingerprint = SyncFingerprint.ForAlbumImage(albumId, image)
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public async Task EnqueueAlbumImageDeleteAsync(string targetDeviceId, string albumId, string imageId, DateTime deletedAtUtc)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected() || _galleryStore == null)
+            return;
+
+        var composite = GalleryImageSyncPayload.CompositeId(albumId, imageId);
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.AlbumImage,
+            IsDelete = true,
+            ItemId = composite,
+            DataJson = DeleteSyncPayload.Serialize(composite, deletedAtUtc.Ticks),
+            ContentFingerprint = DeleteSyncPayload.AckValue(deletedAtUtc.Ticks),
+            DeletedAtTicks = deletedAtUtc.Ticks
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
+    public Task StartWebRtcAlbumSyncAsync(string targetDeviceId, string albumId, string title) =>
+        EnqueueAlbumMetaSyncAsync(targetDeviceId, albumId, title);
+
+    public Task StartWebRtcAlbumImageSyncAsync(string targetDeviceId, string albumId, string imageId) =>
+        EnqueueAlbumImageSyncAsync(targetDeviceId, albumId, imageId);
+
     public async Task EnqueueBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark)
     {
         if (string.IsNullOrEmpty(targetDeviceId) || _browserStore == null)
@@ -340,19 +473,22 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeConvos,
         bool includeNotes,
         bool includeBookmarks = false,
-        bool includeSidebarApps = false)
+        bool includeSidebarApps = false,
+        bool includeAlbums = false)
     {
         if (_browserStore == null)
             includeBookmarks = false;
         if (_sidebarStore == null)
             includeSidebarApps = false;
+        if (_galleryStore == null)
+            includeAlbums = false;
 
         var targets = targetDeviceIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (targets.Count == 0 || !_isHubConnected())
             return 0;
 
         foreach (var targetId in targets)
-            await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes, includeBookmarks, includeSidebarApps);
+            await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums);
 
         return targets.Count;
     }
@@ -362,6 +498,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
     public Task<int> SyncAllNotesToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
         StartDeltaSyncToDevicesAsync(targetDeviceIds, includeConvos: false, includeNotes: true);
+
+    public Task<int> SyncAllAlbumsToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
+        StartDeltaSyncToDevicesAsync(targetDeviceIds, includeConvos: false, includeNotes: false, includeAlbums: true);
 
     public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds)
     {
@@ -424,7 +563,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeConvos,
         bool includeNotes,
         bool includeBookmarks = false,
-        bool includeSidebarApps = false)
+        bool includeSidebarApps = false,
+        bool includeAlbums = false)
     {
         if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
             return;
@@ -433,11 +573,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             includeBookmarks = false;
         if (_sidebarStore == null)
             includeSidebarApps = false;
+        if (_galleryStore == null)
+            includeAlbums = false;
 
-        if (!includeConvos && !includeNotes && !includeBookmarks && !includeSidebarApps)
+        if (!includeConvos && !includeNotes && !includeBookmarks && !includeSidebarApps && !includeAlbums)
             return;
 
-        var manifest = await BuildLocalManifestAsync(includeConvos, includeNotes, includeBookmarks, includeSidebarApps);
+        var manifest = await BuildLocalManifestAsync(includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums);
         var item = new SyncQueueItem
         {
             IsManifestExchange = true,
@@ -446,6 +588,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             DataJson = System.Text.Json.JsonSerializer.Serialize(manifest),
             IncludeConvosInManifest = includeConvos,
             IncludeNotesInManifest = includeNotes,
+            IncludeAlbumsInManifest = includeAlbums,
             IncludeBookmarksInManifest = includeBookmarks,
             IncludeSidebarAppsInManifest = includeSidebarApps
         };
@@ -472,7 +615,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeConvos,
         bool includeNotes,
         bool includeBookmarks,
-        bool includeSidebarApps)
+        bool includeSidebarApps,
+        bool includeAlbums = false)
     {
         var convos = includeConvos
             ? await _conversationStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true)
@@ -483,6 +627,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         List<SyncManifestEntry>? bookmarks = null;
         List<SyncManifestEntry>? folders = null;
         List<SyncManifestEntry>? apps = null;
+        List<SyncManifestEntry>? albums = null;
 
         if (includeBookmarks && _browserStore != null)
         {
@@ -500,7 +645,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             SyncDebugLog.Browser($"BuildLocalManifest sidebarApps={apps.Count}");
         }
 
-        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps);
+        List<SyncManifestEntry>? albumImages = null;
+        if (includeAlbums && _galleryStore != null)
+        {
+            albums = await _galleryStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true);
+            albumImages = await _galleryStore.LoadImageManifestEntriesAsync();
+            SyncDebugLog.Info($"BuildLocalManifest albums={albums.Count} albumImages={albumImages.Count}");
+        }
+
+        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps, albums, albumImages);
     }
 
     private static bool ManifestEntryNeedsSync(
@@ -544,6 +697,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     {
         SyncItemKind.Conversation => $"c:{itemId}",
         SyncItemKind.Note => $"n:{itemId}",
+        SyncItemKind.Album => $"g:{itemId}",
+        SyncItemKind.AlbumImage => $"gi:{itemId}",
         SyncItemKind.Bookmark => $"b:{itemId}",
         SyncItemKind.BookmarkFolder => $"f:{itemId}",
         SyncItemKind.SidebarApp => $"a:{itemId}",
@@ -555,6 +710,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     {
         SyncItemKind.Conversation => "convo",
         SyncItemKind.Note => "note",
+        SyncItemKind.Album => "album",
+        SyncItemKind.AlbumImage => "album-image",
         SyncItemKind.Bookmark => "bookmark",
         SyncItemKind.BookmarkFolder => "folder",
         SyncItemKind.SidebarApp => "app",
@@ -566,6 +723,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     {
         SyncItemKind.Conversation => "app-sync",
         SyncItemKind.Note => "app-note-sync",
+        SyncItemKind.Album => "app-album-sync",
+        SyncItemKind.AlbumImage => "app-album-image-sync",
         SyncItemKind.Bookmark => "app-bookmark-sync",
         SyncItemKind.BookmarkFolder => "app-folder-sync",
         SyncItemKind.SidebarApp => "wizionic-app-sync",
@@ -577,6 +736,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     {
         SyncItemKind.Conversation => "convo-delete",
         SyncItemKind.Note => "note-delete",
+        SyncItemKind.Album => "album-delete",
+        SyncItemKind.AlbumImage => "album-image-delete",
         SyncItemKind.Bookmark => "bookmark-delete",
         SyncItemKind.BookmarkFolder => "folder-delete",
         SyncItemKind.SidebarApp => "app-delete",
@@ -587,6 +748,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     {
         SyncItemKind.Conversation => "sync-data",
         SyncItemKind.Note => "note-sync-data",
+        SyncItemKind.Album => "album-sync-data",
+        SyncItemKind.AlbumImage => "album-image-sync-data",
         SyncItemKind.Bookmark => "bookmark-sync-data",
         SyncItemKind.BookmarkFolder => "folder-sync-data",
         SyncItemKind.SidebarApp => "app-sync-data",
@@ -839,6 +1002,23 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         await EnqueueSyncAsync(targetDeviceId, item);
     }
 
+    public async Task EnqueueAlbumDeleteAsync(string targetDeviceId, string albumId, DateTime deletedAtUtc)
+    {
+        if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected() || _galleryStore == null)
+            return;
+
+        var item = new SyncQueueItem
+        {
+            Kind = SyncItemKind.Album,
+            IsDelete = true,
+            ItemId = albumId,
+            DataJson = DeleteSyncPayload.Serialize(albumId, deletedAtUtc.Ticks),
+            ContentFingerprint = DeleteSyncPayload.AckValue(deletedAtUtc.Ticks),
+            DeletedAtTicks = deletedAtUtc.Ticks
+        };
+        await EnqueueSyncAsync(targetDeviceId, item);
+    }
+
     public async Task EnqueueBookmarkDeleteAsync(string targetDeviceId, string bookmarkId, DateTime deletedAtUtc)
     {
         if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
@@ -945,6 +1125,25 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
         }
 
+        if (_galleryStore != null)
+        {
+            foreach (var albumId in (response.NeededAlbums ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var index = await _galleryStore.LoadIndexAsync();
+                var albumMeta = index.FirstOrDefault(n => n.Id == albumId);
+                var title = albumMeta?.Title ?? albumId;
+                await EnqueueAlbumMetaSyncAsync(peerId, albumId, title);
+                queued++;
+            }
+
+            foreach (var composite in (response.NeededAlbumImages ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!GalleryImageSyncPayload.TrySplitCompositeId(composite, out var albumId, out var imageId))
+                    continue;
+                await EnqueueAlbumImageSyncAsync(peerId, albumId, imageId);
+                queued++;
+            }
+        }
         // Folders first so bookmarks can resolve folder membership on the peer.
         if (_browserStore != null)
         {
@@ -1085,20 +1284,21 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         }
     }
 
-    private void StartSyncTimeout(string peerId)
+    private void StartSyncTimeout(string peerId, TimeSpan? duration = null)
     {
         CancelSyncTimeout(peerId);
         var cts = new CancellationTokenSource();
         _syncTimeoutByPeer[peerId] = cts;
+        var timeout = duration ?? SyncItemTimeout;
 
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(SyncItemTimeout, cts.Token);
+                await Task.Delay(timeout, cts.Token);
                 if (!cts.Token.IsCancellationRequested && _activeSyncByPeer.ContainsKey(peerId))
                 {
-                    SyncDebugLog.Info($"Sync timed out for peer {peerId} after {SyncItemTimeout.TotalSeconds}s");
+                    SyncDebugLog.Info($"Sync timed out for peer {peerId} after {timeout.TotalSeconds:0}s");
                     await FailActiveSyncAsync(peerId, "timed out waiting for peer acknowledgement");
                 }
             }
@@ -1136,11 +1336,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
 
             queue.Enqueue(failedItem);
-            SyncDebugLog.Info($"Re-queued {KindLabel(failedItem.Kind)} {failedItem.ItemId} " +
+            SyncDebugLog.Info($"Re-queued {DescribeQueueItem(failedItem)} " +
                 $"for {peerId} (retry {failedItem.RetryCount}/{MaxSyncRetries})");
         }
 
         await ProcessSyncQueueAsync(peerId);
+        // Stale glare SDPs must not be applied after a failed round — the peer has moved on.
+        if (!_activeSyncByPeer.ContainsKey(peerId)
+            && (!_syncQueues.TryGetValue(peerId, out var remaining) || remaining.Count == 0))
+            _deferredRemoteOffers.Remove(peerId);
     }
 
     private bool IsAlreadyQueuedOrActive(string targetDeviceId, SyncQueueItem item)
@@ -1158,8 +1362,18 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         if (item.IsManifestExchange)
             return "manifest";
         if (item.IsDelete)
-            return $"{KindLabel(item.Kind)} delete {item.ItemId}";
-        return $"{KindLabel(item.Kind)} {item.ItemId}";
+            return $"{KindLabel(item.Kind)} delete {DescribeItemId(item)}";
+        return $"{KindLabel(item.Kind)} {DescribeItemId(item)}";
+    }
+
+    /// <summary>Prefer human name for album images when available.</summary>
+    private static string DescribeItemId(SyncQueueItem item)
+    {
+        if (item.Kind == SyncItemKind.AlbumImage
+            && !string.IsNullOrWhiteSpace(item.NoteTitle)
+            && !string.Equals(item.NoteTitle, item.ItemId, StringComparison.Ordinal))
+            return $"\"{item.NoteTitle}\" ({item.ItemId})";
+        return item.ItemId;
     }
 
     private static bool ItemsMatchForDedup(SyncQueueItem a, SyncQueueItem b)
@@ -1294,6 +1508,111 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         });
     }
 
+    public void ScheduleAutoSyncAlbumDeleteAfterLocalDelete(string albumId, DateTime deletedAtUtc)
+    {
+        if (!AutoSyncGallery || _galleryStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"album-delete:{albumId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected())
+                return;
+
+            foreach (var targetId in GetOnlineSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Album, albumId, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                {
+                    SyncDebugLog.Info($"Skipping album delete {albumId} for {targetId} (already acknowledged)");
+                    continue;
+                }
+
+                await EnqueueAlbumDeleteAsync(targetId, albumId, deletedAtUtc);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncAlbumMetaAfterLocalSave(string albumId, string title)
+    {
+        if (!AutoSyncGallery || _galleryStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        _ = DebouncedAutoSyncAsync($"album-meta:{albumId}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected() || _galleryStore == null)
+                return;
+
+            var manifest = await _galleryStore.LoadManifestEntriesAsync();
+            var entry = manifest.FirstOrDefault(n => n.Id == albumId);
+            var fingerprint = entry?.ContentFingerprint;
+
+            foreach (var targetId in GetOnlineSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.Album, albumId, fingerprint))
+                {
+                    SyncDebugLog.Info($"Skipping album meta {albumId} for {targetId} (unchanged since last ack)");
+                    continue;
+                }
+
+                await EnqueueAlbumMetaSyncAsync(targetId, albumId, title);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncAlbumImageAfterLocalSave(string albumId, string imageId)
+    {
+        if (!AutoSyncGallery || _galleryStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        var composite = GalleryImageSyncPayload.CompositeId(albumId, imageId);
+        _ = DebouncedAutoSyncAsync($"album-image:{composite}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected() || _galleryStore == null)
+                return;
+
+            var imgManifest = await _galleryStore.LoadImageManifestEntriesAsync();
+            var entry = imgManifest.FirstOrDefault(n => n.Id == composite);
+            var fingerprint = entry?.ContentFingerprint;
+
+            foreach (var targetId in GetOnlineSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.AlbumImage, composite, fingerprint))
+                {
+                    SyncDebugLog.Info($"Skipping album image {composite} for {targetId} (unchanged since last ack)");
+                    continue;
+                }
+
+                await EnqueueAlbumImageSyncAsync(targetId, albumId, imageId);
+            }
+        });
+    }
+
+    public void ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(string albumId, string imageId, DateTime deletedAtUtc)
+    {
+        if (!AutoSyncGallery || _galleryStore == null || SyncTargetDeviceIds.Count == 0)
+            return;
+
+        var composite = GalleryImageSyncPayload.CompositeId(albumId, imageId);
+        _ = DebouncedAutoSyncAsync($"album-image-delete:{composite}", async () =>
+        {
+            if (EnsureConnectedAsync != null)
+                await EnsureConnectedAsync();
+            if (!_isHubConnected())
+                return;
+
+            foreach (var targetId in GetOnlineSyncTargetIdsInternal())
+            {
+                if (await IsItemAcknowledgedAsync(targetId, SyncItemKind.AlbumImage, composite, DeleteSyncPayload.AckValue(deletedAtUtc.Ticks)))
+                    continue;
+                await EnqueueAlbumImageDeleteAsync(targetId, albumId, imageId, deletedAtUtc);
+            }
+        });
+    }
     public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId)
     {
         if (!AutoSyncBookmarks || _browserStore == null || SyncTargetDeviceIds.Count == 0)
@@ -1554,7 +1873,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeConvos,
         bool includeNotes,
         bool includeBookmarks = false,
-        bool includeSidebarApps = false)
+        bool includeSidebarApps = false,
+        bool includeAlbums = false)
     {
         var ackState = await LoadPeerAckStateAsync(peerId);
 
@@ -1569,6 +1889,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         {
             var notes = await _noteStore.LoadManifestEntriesAsync();
             if (notes.Any(n => ManifestEntryHasPendingAck(ackState, SyncItemKind.Note, n)))
+                return true;
+        }
+
+        if (includeAlbums && _galleryStore != null)
+        {
+            var albums = await _galleryStore.LoadManifestEntriesAsync();
+            if (albums.Any(a => ManifestEntryHasPendingAck(ackState, SyncItemKind.Album, a)))
+                return true;
+            var albumImages = await _galleryStore.LoadImageManifestEntriesAsync();
+            if (albumImages.Any(a => ManifestEntryHasPendingAck(ackState, SyncItemKind.AlbumImage, a)))
                 return true;
         }
 
@@ -1666,23 +1996,25 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var supportsBrowser = DeviceSupportsBrowserSync(deviceId);
         var includeBookmarks = AutoSyncBookmarks && supportsBrowser && _browserStore != null;
         var includeApps = AutoSyncInstalledApps && supportsBrowser && _sidebarStore != null;
+        var includeAlbums = AutoSyncGallery && _galleryStore != null;
         var anySettingsAuto = AutoSyncLocalAi || AutoSyncLemonade || AutoSyncCloudProviders
             || AutoSyncHomeAssistant || AutoSyncTools || AutoSyncSystemPrompt
             || AutoSyncProfile || AutoSyncMemories || AutoSyncAppearance;
 
-        if (!AutoSyncChatHistory && !AutoSyncNotes && !includeBookmarks && !includeApps && !anySettingsAuto)
+        if (!AutoSyncChatHistory && !AutoSyncNotes && !includeAlbums && !includeBookmarks && !includeApps && !anySettingsAuto)
             return;
 
         try
         {
-            if (AutoSyncChatHistory || AutoSyncNotes || includeBookmarks || includeApps)
+            if (AutoSyncChatHistory || AutoSyncNotes || includeAlbums || includeBookmarks || includeApps)
             {
                 if (!await HasPendingOutboundSyncAsync(
                         deviceId,
                         AutoSyncChatHistory,
                         AutoSyncNotes,
                         includeBookmarks,
-                        includeApps))
+                        includeApps,
+                        includeAlbums))
                 {
                     SyncDebugLog.Info($"Skipping data auto-sync for {deviceId} (all items already acknowledged)");
                 }
@@ -1702,7 +2034,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                             AutoSyncChatHistory,
                             AutoSyncNotes,
                             includeBookmarks,
-                            includeApps);
+                            includeApps,
+                            includeAlbums);
                         SyncDebugLog.Info($"Auto-sync manifest queued for {deviceId}");
                     }
                 }
@@ -1723,10 +2056,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         CancelSyncTimeout(peerId);
         ClearChunkAssembliesForPeer(peerId);
+        // Successfully completed at least one outbound item — turn fulfilled.
+        _owedOutboundTurn.Remove(peerId);
 
         if (!_syncQueues.TryGetValue(peerId, out var queue) || queue.Count == 0)
         {
             try { await CloseWebRtcPeerAsync(peerId); } catch { }
+            // Drop any glare-deferred offer — it is stale once we finished our outbound work
+            // (the polite peer already answered us / rolled back). Applying it breaks the next round.
+            _deferredRemoteOffers.Remove(peerId);
             return;
         }
 
@@ -1763,7 +2101,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 : ChannelLabelFor(nextItem.Kind);
             var label = nextItem.IsManifestExchange
                 ? "manifest"
-                : $"{KindLabel(nextItem.Kind)} {nextItem.ItemId}";
+                : DescribeQueueItem(nextItem);
             SyncDebugLog.Info($"Starting WebRTC sync for {peerId}: {label}");
             await StartWebRtcDataChannelAsync(peerId, channelLabel);
         }
@@ -1797,6 +2135,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             {
                 SyncItemKind.Conversation => new DataChannelMessage(dataType, convoId: itemId, content: contentJson),
                 SyncItemKind.Note => new DataChannelMessage(dataType, content: contentJson),
+                SyncItemKind.Album => new DataChannelMessage(dataType, content: contentJson, itemId: itemId),
                 _ => new DataChannelMessage(dataType, content: contentJson, itemId: itemId)
             };
             return await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(msg));
@@ -1806,6 +2145,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         {
             SyncItemKind.Conversation => "sync-chunk",
             SyncItemKind.Note => "note-sync-chunk",
+            SyncItemKind.Album => "album-sync-chunk",
+            SyncItemKind.AlbumImage => "album-image-sync-chunk",
             SyncItemKind.Bookmark => "bookmark-sync-chunk",
             SyncItemKind.BookmarkFolder => "folder-sync-chunk",
             SyncItemKind.SidebarApp => "app-sync-chunk",
@@ -1815,6 +2156,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         var chunkCount = (contentBytes.Length + chunkPayloadBytes - 1) / chunkPayloadBytes;
         SyncDebugLog.Info($"Chunking sync payload for {itemId}: {contentBytes.Length} bytes -> {chunkCount} chunk(s)");
+
+        // Keep the per-item timeout alive for the whole multi-chunk transfer + peer assembly.
+        StartSyncTimeout(peerId, TimeoutForPayloadBytes(contentBytes.Length));
 
         for (var i = 0; i < chunkCount; i++)
         {
@@ -1829,15 +2173,37 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 chunkIndex: i,
                 chunkCount: chunkCount,
                 chunkData: slice,
-                itemId: kind is SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp or SyncItemKind.Settings
+                itemId: kind is SyncItemKind.Album or SyncItemKind.AlbumImage or SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp or SyncItemKind.Settings
                     ? itemId
                     : null);
 
+            // Pace sends so the SCTP/WebRTC outbound buffer is not flooded (silent drops).
+            await _webrtc.WaitForSendBufferAsync(peerId, maxBufferedBytes: Math.Max(chunkPayloadBytes * 2, 256 * 1024));
+
             var sent = await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(chunkMsg));
             if (!sent)
+            {
+                SyncDebugLog.Info($"Chunk send failed for {itemId} at {i + 1}/{chunkCount}");
                 return false;
+            }
+
+            if (i == 0 || (i + 1) % 50 == 0 || i + 1 == chunkCount)
+            {
+                SyncDebugLog.Info($"Chunk progress for {itemId}: {i + 1}/{chunkCount} ({chunkType})");
+            }
         }
 
+        // Wait for outbound buffer to drain so the peer has actually received chunks before we
+        // only wait on ack (SCTP may still be delivering after the last Send returns).
+        for (var drain = 0; drain < 40; drain++)
+        {
+            await _webrtc.WaitForSendBufferAsync(peerId, maxBufferedBytes: 4096);
+            await Task.Delay(25);
+        }
+
+        // After enqueueing all chunks, give the peer time to assemble, persist, and ack.
+        StartSyncTimeout(peerId, TimeoutForPayloadBytes(contentBytes.Length));
+        SyncDebugLog.Info($"Finished sending {chunkCount} chunk(s) of {chunkType} for {itemId} ({contentBytes.Length} bytes)");
         return true;
     }
 
@@ -1898,20 +2264,105 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
     private async Task HandleWebRtcOffer(string fromDeviceId, string offerJson)
     {
-                SyncDebugLog.WebRtc($"Received offer from {fromDeviceId}");
+        SyncDebugLog.WebRtc($"Received offer from {fromDeviceId}");
+
+        // Perfect negotiation (polite peer): when both sides send offers at once, exactly one
+        // must yield. Lexicographically greater LocalDeviceId is polite and rolls back;
+        // the impolite peer keeps its offer and the polite peer answers it.
+        // Old code deferred for ANY active item (including settings) → dual-defer deadlock
+        // and endless "timed out waiting for peer acknowledgement" on both browsers.
+        if (_activeSyncByPeer.TryGetValue(fromDeviceId, out var active))
+        {
+            var polite = IsPoliteToward(fromDeviceId);
+            // If we just finished receiving and still have outbound work, keep our offer once
+            // so this device can push its own album/notes (fixes polite peer never sending).
+            var claimTurn = _owedOutboundTurn.Contains(fromDeviceId)
+                            && HasOutboundPending(fromDeviceId);
+
+            if (!polite || claimTurn)
+            {
+                SyncDebugLog.Info(
+                    claimTurn
+                        ? $"Claiming outbound turn vs {fromDeviceId}; deferring remote offer while active: {DescribeQueueItem(active)}"
+                        : $"Impolite glare: deferring remote offer from {fromDeviceId} while active: {DescribeQueueItem(active)}");
+                _deferredRemoteOffers[fromDeviceId] = offerJson;
+                return;
+            }
+
+            SyncDebugLog.Info(
+                $"Polite glare: yielding to {fromDeviceId}; re-queueing active {DescribeQueueItem(active)}");
+            CancelSyncTimeout(fromDeviceId);
+            if (_activeSyncByPeer.Remove(fromDeviceId, out var interrupted) && !interrupted.IsManifestExchange)
+            {
+                if (!_syncQueues.TryGetValue(fromDeviceId, out var queue))
+                {
+                    queue = new Queue<SyncQueueItem>();
+                    _syncQueues[fromDeviceId] = queue;
+                }
+
+                // Front of queue so we retry this item first after the remote transfer ends.
+                var rest = queue.ToArray();
+                queue.Clear();
+                queue.Enqueue(interrupted);
+                foreach (var q in rest)
+                    queue.Enqueue(q);
+            }
+            ClearChunkAssembliesForPeer(fromDeviceId);
+        }
 
         try
         {
-            await _webrtc.CreatePeerConnectionAsync(fromDeviceId, _transportCallbacks);
-            await _webrtc.SetRemoteDescriptionAsync(fromDeviceId, offerJson);
-
-            var answerJson = await _webrtc.CreateAnswerAsync(fromDeviceId);
-            await _sendSignalingAsync(fromDeviceId, "webrtc-answer", answerJson ?? "");
-            SyncDebugLog.WebRtc($"Sent answer to {fromDeviceId}");
+            await ApplyRemoteOfferAsync(fromDeviceId, offerJson);
         }
         catch (Exception ex)
         {
             SyncDebugLog.Info($"Handle offer failed: {ex.Message}");
+        }
+    }
+
+    private bool HasOutboundPending(string peerId) =>
+        _activeSyncByPeer.ContainsKey(peerId)
+        || (_syncQueues.TryGetValue(peerId, out var q) && q.Count > 0);
+
+    /// <summary>
+    /// Perfect-negotiation polite peer: local id greater than remote ⇒ we roll back on glare.
+    /// If LocalDeviceId is unknown, treat as polite so we never dual-defer.
+    /// </summary>
+    private bool IsPoliteToward(string remoteDeviceId)
+    {
+        if (string.IsNullOrEmpty(LocalDeviceId))
+            return true;
+        return string.Compare(LocalDeviceId, remoteDeviceId, StringComparison.OrdinalIgnoreCase) > 0;
+    }
+
+    private async Task ApplyRemoteOfferAsync(string fromDeviceId, string offerJson)
+    {
+        await _webrtc.CreatePeerConnectionAsync(fromDeviceId, _transportCallbacks);
+        await _webrtc.SetRemoteDescriptionAsync(fromDeviceId, offerJson);
+
+        var answerJson = await _webrtc.CreateAnswerAsync(fromDeviceId);
+        await _sendSignalingAsync(fromDeviceId, "webrtc-answer", answerJson ?? "");
+        SyncDebugLog.WebRtc($"Sent answer to {fromDeviceId}");
+    }
+
+    /// <summary>Apply any deferred remote offer once we are no longer sending to that peer.</summary>
+    private async Task FlushDeferredRemoteOfferAsync(string peerId)
+    {
+        if (_activeSyncByPeer.ContainsKey(peerId))
+            return;
+        if (_syncQueues.TryGetValue(peerId, out var q) && q.Count > 0)
+            return;
+        if (!_deferredRemoteOffers.Remove(peerId, out var offerJson))
+            return;
+
+        SyncDebugLog.Info($"Applying deferred remote offer from {peerId}");
+        try
+        {
+            await ApplyRemoteOfferAsync(peerId, offerJson);
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Deferred offer apply failed for {peerId}: {ex.Message}");
         }
     }
 
@@ -1954,6 +2405,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public async Task OnDataChannelOpenAsync(string peerId, CancellationToken ct = default)
     {
         SyncDebugLog.Info($"DataChannel open for peer {peerId}");
+        // Our offer won (or we are answerer on a live channel) — discard any deferred glare SDP.
+        _deferredRemoteOffers.Remove(peerId);
 
         if (!_activeSyncByPeer.TryGetValue(peerId, out var item))
             return;
@@ -2003,7 +2456,11 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
             var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(item.DataJson);
             SyncDebugLog.Info($"Preparing {KindLabel(item.Kind)} sync payload " +
-                $"for {item.ItemId} ({payloadBytes} bytes)");
+                $"for {DescribeItemId(item)} ({payloadBytes} bytes)");
+
+            // Large album payloads need a much longer ack window than the default 45s.
+            if (payloadBytes > 256 * 1024)
+                StartSyncTimeout(peerId, TimeoutForPayloadBytes(payloadBytes));
 
             var payloadSent = await SendSyncPayloadAsync(peerId, item.Kind, item.ItemId, item.DataJson);
             if (!payloadSent)
@@ -2014,7 +2471,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
 
             SyncDebugLog.Info($"Sent {DataTypeFor(item.Kind)} " +
-                $"over DataChannel to {peerId} for {item.ItemId}");
+                $"over DataChannel to {peerId} for {DescribeItemId(item)}");
         }
         catch (Exception ex)
         {
@@ -2089,6 +2546,61 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             else if (msg.type == "note-sync-ack" && msg.noteId != null)
             {
                 HandleNoteSyncAck(msg.noteId, peerId);
+            }
+            else if ((msg.type == "album-sync-data" || msg.type == "album-sync-chunk")
+                     && (msg.content != null || msg.itemId != null))
+            {
+                var contentJson = msg.content;
+                if (msg.type == "album-sync-chunk")
+                {
+                    if (msg.itemId == null
+                        || !TryAddChunk(peerId, msg.itemId, SyncItemKind.Album, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingAlbumSyncPayload(contentJson, peerId);
+
+                var meta = GalleryAlbumMetaPayload.Deserialize(contentJson);
+                if (meta?.AlbumId != null)
+                {
+                    var ack = new DataChannelMessage("album-sync-ack", itemId: meta.AlbumId);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "album-sync-ack" && msg.itemId != null)
+            {
+                HandleAlbumSyncAck(msg.itemId, peerId);
+            }
+            else if ((msg.type == "album-image-sync-data" || msg.type == "album-image-sync-chunk")
+                     && (msg.content != null || msg.itemId != null))
+            {
+                var contentJson = msg.content;
+                if (msg.type == "album-image-sync-chunk")
+                {
+                    if (msg.itemId == null
+                        || !TryAddChunk(peerId, msg.itemId, SyncItemKind.AlbumImage, msg.chunkIndex, msg.chunkCount, msg.chunkData, out contentJson))
+                        return;
+                }
+
+                if (contentJson == null)
+                    return;
+
+                await HandleIncomingAlbumImageSyncPayload(contentJson, peerId);
+
+                var imgPayload = GalleryImageSyncPayload.Deserialize(contentJson);
+                if (imgPayload?.AlbumId != null && imgPayload.Image?.Id != null)
+                {
+                    var composite = GalleryImageSyncPayload.CompositeId(imgPayload.AlbumId, imgPayload.Image.Id);
+                    var ack = new DataChannelMessage("album-image-sync-ack", itemId: composite);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "album-image-sync-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("album-image-sync-ack", msg.itemId, peerId);
             }
             else if ((msg.type == "bookmark-sync-data" || msg.type == "bookmark-sync-chunk")
                      && (msg.content != null || msg.itemId != null))
@@ -2198,6 +2710,34 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             else if (msg.type == "note-delete-ack" && msg.noteId != null)
             {
                 HandleNoteDeleteAck(msg.noteId, peerId);
+            }
+            else if (msg.type == "album-delete" && msg.content != null)
+            {
+                await HandleIncomingAlbumDeleteAsync(msg.content, peerId);
+                var deletePayload = DeleteSyncPayload.Deserialize(msg.content);
+                if (deletePayload != null)
+                {
+                    var ack = new DataChannelMessage("album-delete-ack", itemId: deletePayload.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "album-delete-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("album-delete-ack", msg.itemId, peerId);
+            }
+            else if (msg.type == "album-image-delete" && msg.content != null)
+            {
+                await HandleIncomingAlbumImageDeleteAsync(msg.content, peerId);
+                var deletePayload = DeleteSyncPayload.Deserialize(msg.content);
+                if (deletePayload != null)
+                {
+                    var ack = new DataChannelMessage("album-image-delete-ack", itemId: deletePayload.Id);
+                    await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                }
+            }
+            else if (msg.type == "album-image-delete-ack" && msg.itemId != null)
+            {
+                HandleGenericItemAck("album-image-delete-ack", msg.itemId, peerId);
             }
             else if (msg.type == "bookmark-delete" && msg.content != null)
             {
@@ -2353,6 +2893,72 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 upToDateNotes++;
         }
 
+        var neededAlbums = new List<string>();
+        var senderShouldDeleteAlbums = new List<DeleteSyncPayload>();
+        var upToDateAlbums = 0;
+        var appliedAlbumDeletes = 0;
+        var neededAlbumImages = new List<string>();
+        var senderShouldDeleteAlbumImages = new List<DeleteSyncPayload>();
+        var upToDateAlbumImages = 0;
+        var appliedAlbumImageDeletes = 0;
+        var remoteAlbums = offer.Albums ?? [];
+        var remoteAlbumImages = offer.AlbumImages ?? [];
+        if (_galleryStore != null)
+        {
+            var localAlbums = await _galleryStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true);
+            foreach (var remote in remoteAlbums)
+            {
+                var local = localAlbums.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
+
+                if (remote.IsDeleted)
+                {
+                    if (await _galleryStore.TryApplyRemoteAlbumDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
+                        appliedAlbumDeletes++;
+                    upToDateAlbums++;
+                    continue;
+                }
+
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteAlbums.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateAlbums++;
+                    continue;
+                }
+
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededAlbums.Add(remote.Id);
+                else
+                    upToDateAlbums++;
+            }
+
+            var localImages = await _galleryStore.LoadImageManifestEntriesAsync();
+            foreach (var remote in remoteAlbumImages)
+            {
+                var local = localImages.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
+
+                if (remote.IsDeleted)
+                {
+                    if (GalleryImageSyncPayload.TrySplitCompositeId(remote.Id, out var aId, out var iId)
+                        && await _galleryStore.TryApplyRemoteImageDeleteAsync(aId, iId, remote.DeletedAtTicks!.Value))
+                        appliedAlbumImageDeletes++;
+                    upToDateAlbumImages++;
+                    continue;
+                }
+
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteAlbumImages.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateAlbumImages++;
+                    continue;
+                }
+
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededAlbumImages.Add(remote.Id);
+                else
+                    upToDateAlbumImages++;
+            }
+        }
+
         var neededBookmarks = new List<string>();
         var neededFolders = new List<string>();
         var neededApps = new List<string>();
@@ -2454,6 +3060,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             OnConversationsChanged?.Invoke();
         if (appliedNoteDeletes > 0)
             OnNotesChanged?.Invoke();
+        if (appliedAlbumDeletes > 0)
+            OnGalleryChanged?.Invoke();
         if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
             OnBookmarksChanged?.Invoke();
         if (appliedAppDeletes > 0)
@@ -2474,7 +3082,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             upToDateApps,
             senderShouldDeleteBookmarks,
             senderShouldDeleteFolders,
-            senderShouldDeleteApps);
+            senderShouldDeleteApps,
+            neededAlbums,
+            upToDateAlbums,
+            senderShouldDeleteAlbums,
+            neededAlbumImages,
+            upToDateAlbumImages,
+            senderShouldDeleteAlbumImages);
         var responseJson = System.Text.Json.JsonSerializer.Serialize(response);
         await _webrtc.SendDataAsync(
             peerId,
@@ -2482,10 +3096,11 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         SyncDebugLog.Info($"Manifest offer from {peerId}: " +
             $"{upToDateConvos}/{offer.Convos.Count} convos, {upToDateNotes}/{offer.Notes.Count} notes, " +
+            $"{upToDateAlbums}/{remoteAlbums.Count} albums, {upToDateAlbumImages}/{remoteAlbumImages.Count} album-images, " +
             $"{upToDateFolders}/{remoteFolders.Count} folders, {upToDateBookmarks}/{remoteBookmarks.Count} bookmarks, " +
             $"{upToDateApps}/{remoteApps.Count} apps up to date" +
-            (appliedConvoDeletes + appliedNoteDeletes + appliedBookmarkDeletes + appliedFolderDeletes + appliedAppDeletes > 0
-                ? $" (applied {appliedConvoDeletes} convo, {appliedNoteDeletes} note, {appliedFolderDeletes} folder, {appliedBookmarkDeletes} bookmark, {appliedAppDeletes} app delete(s))"
+            (appliedConvoDeletes + appliedNoteDeletes + appliedAlbumDeletes + appliedBookmarkDeletes + appliedFolderDeletes + appliedAppDeletes > 0
+                ? $" (applied {appliedConvoDeletes} convo, {appliedNoteDeletes} note, {appliedAlbumDeletes} album, {appliedFolderDeletes} folder, {appliedBookmarkDeletes} bookmark, {appliedAppDeletes} app delete(s))"
                 : ""));
     }
 
@@ -2510,6 +3125,23 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         {
             if (await _noteStore.TryApplyRemoteDeleteAsync(del.Id, del.DeletedAtTicks))
                 appliedNoteDeletes++;
+        }
+
+        var appliedAlbumDeletes = 0;
+        var appliedAlbumImageDeletes = 0;
+        if (_galleryStore != null)
+        {
+            foreach (var del in response.SenderShouldDeleteAlbums ?? [])
+            {
+                if (await _galleryStore.TryApplyRemoteAlbumDeleteAsync(del.Id, del.DeletedAtTicks))
+                    appliedAlbumDeletes++;
+            }
+            foreach (var del in response.SenderShouldDeleteAlbumImages ?? [])
+            {
+                if (GalleryImageSyncPayload.TrySplitCompositeId(del.Id, out var aId, out var iId)
+                    && await _galleryStore.TryApplyRemoteImageDeleteAsync(aId, iId, del.DeletedAtTicks))
+                    appliedAlbumImageDeletes++;
+            }
         }
 
         var appliedBookmarkDeletes = 0;
@@ -2543,6 +3175,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             OnConversationsChanged?.Invoke();
         if (appliedNoteDeletes > 0)
             OnNotesChanged?.Invoke();
+        if (appliedAlbumDeletes > 0)
+            OnGalleryChanged?.Invoke();
         if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
             OnBookmarksChanged?.Invoke();
         if (appliedAppDeletes > 0)
@@ -2552,6 +3186,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         var noNeeded =
             response.NeededConvos.Count == 0
             && response.NeededNotes.Count == 0
+            && (response.NeededAlbums?.Count ?? 0) == 0
+            && (response.NeededAlbumImages?.Count ?? 0) == 0
             && (response.NeededBookmarks?.Count ?? 0) == 0
             && (response.NeededBookmarkFolders?.Count ?? 0) == 0
             && (response.NeededSidebarApps?.Count ?? 0) == 0;
@@ -2682,6 +3318,143 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         }
     }
 
+    private void HandleAlbumSyncAck(string albumId, string peerId) =>
+        _ = HandleAlbumSyncAckAsync(albumId, peerId);
+
+    private async Task HandleAlbumSyncAckAsync(string albumId, string peerId)
+    {
+        SyncDebugLog.Info($"Received album-sync-ack for album {albumId} from peer {peerId}");
+        if (_activeSyncByPeer.TryGetValue(peerId, out var item))
+            await RecordSuccessfulSyncAsync(peerId, item);
+        OnAlbumSyncAckReceived?.Invoke(albumId, peerId);
+        await AdvanceSyncQueueAsync(peerId);
+    }
+
+    private async Task HandleIncomingAlbumSyncPayload(string json, string fromDeviceId)
+    {
+        if (_galleryStore == null)
+            return;
+
+        try
+        {
+            // Prefer meta payload (small); fall back not supported for legacy whole-album.
+            var meta = GalleryAlbumMetaPayload.Deserialize(json);
+            if (meta == null || string.IsNullOrEmpty(meta.AlbumId))
+            {
+                SyncDebugLog.Info("Ignoring unrecognized album sync payload (expect album meta)");
+                return;
+            }
+
+            await _galleryStore.ApplyRemoteAlbumMetaAsync(
+                meta.AlbumId,
+                meta.Title,
+                meta.IsPasswordProtected,
+                meta.ProtectionChangedTicks);
+
+            OnAlbumSyncPayloadReceived?.Invoke(meta.AlbumId, json, fromDeviceId);
+            NotifyGalleryChangedDebounced();
+            SyncDebugLog.Info($"Applied album meta for {meta.AlbumId} from {fromDeviceId} (images refs={meta.Images?.Count ?? 0})");
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Failed to persist incoming album meta: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingAlbumImageSyncPayload(string json, string fromDeviceId)
+    {
+        if (_galleryStore == null)
+            return;
+
+        try
+        {
+            var payload = GalleryImageSyncPayload.Deserialize(json);
+            if (payload?.Image == null || string.IsNullOrEmpty(payload.AlbumId) || string.IsNullOrEmpty(payload.Image.Id))
+                return;
+
+            if (!await _galleryStore.ShouldAcceptIncomingImageAsync(payload.AlbumId, payload.Image))
+            {
+                SyncDebugLog.Info($"Ignoring stale album image {payload.AlbumId}/{payload.Image.Id}");
+                return;
+            }
+
+            // Ensure album exists
+            var title = await _galleryStore.GetMetaTitleAsync(payload.AlbumId);
+            if (title == null)
+                await _galleryStore.CreateAlbumAsync(payload.AlbumId, "(empty)");
+
+            var normalized = GallerySyncMerger.NormalizeAll(new[] { payload.Image })[0];
+            if (_storageQuota != null && !string.IsNullOrEmpty(normalized.DataBase64))
+            {
+                var need = (long)(normalized.DataBase64.Length * 0.75);
+                if (!await _storageQuota.CanAcceptBytesAsync(need))
+                {
+                    SyncDebugLog.Info(
+                        $"Skipped album image {payload.AlbumId}/{normalized.Id} from {fromDeviceId}: storage limit");
+                    // Still ack so sender does not loop forever; user can raise limit and re-sync later.
+                    return;
+                }
+            }
+
+            await _galleryStore.UpsertImageAsync(payload.AlbumId, normalized);
+            OnAlbumSyncPayloadReceived?.Invoke(payload.AlbumId, json, fromDeviceId);
+            // Debounce: multi-image sync was re-rendering the whole album after every image.
+            NotifyGalleryChangedDebounced();
+            SyncDebugLog.Info($"Applied album image {payload.AlbumId}/{payload.Image.Id} from {fromDeviceId} size={payload.Image.Size}");
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Failed to persist album image: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingAlbumDeleteAsync(string json, string fromDeviceId)
+    {
+        if (_galleryStore == null)
+            return;
+
+        try
+        {
+            var payload = DeleteSyncPayload.Deserialize(json);
+            if (payload == null || string.IsNullOrEmpty(payload.Id))
+                return;
+
+            if (await _galleryStore.TryApplyRemoteAlbumDeleteAsync(payload.Id, payload.DeletedAtTicks))
+            {
+                OnGalleryChanged?.Invoke();
+                SyncDebugLog.Info($"Applied remote album delete for {payload.Id} from {fromDeviceId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Failed to apply album delete: {ex.Message}");
+        }
+    }
+
+    private async Task HandleIncomingAlbumImageDeleteAsync(string json, string fromDeviceId)
+    {
+        if (_galleryStore == null)
+            return;
+
+        try
+        {
+            var payload = DeleteSyncPayload.Deserialize(json);
+            if (payload == null || string.IsNullOrEmpty(payload.Id))
+                return;
+            if (!GalleryImageSyncPayload.TrySplitCompositeId(payload.Id, out var albumId, out var imageId))
+                return;
+
+            if (await _galleryStore.TryApplyRemoteImageDeleteAsync(albumId, imageId, payload.DeletedAtTicks))
+            {
+                OnGalleryChanged?.Invoke();
+                SyncDebugLog.Info($"Applied remote album image delete {payload.Id} from {fromDeviceId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Failed to apply album image delete: {ex.Message}");
+        }
+    }
     private async Task ApplyIncomingNoteProtectionAsync(NoteSyncPayload payload)
     {
         var index = await _noteStore.LoadIndexAsync();
@@ -3036,7 +3809,56 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         // Queue progression is owned by CompleteActiveSyncAsync / FailActiveSyncAsync.
         // Only treat a close as failure when a sync transfer is still marked active.
         if (_activeSyncByPeer.ContainsKey(peerId))
+        {
             _ = FailActiveSyncAsync(peerId, "data channel closed before acknowledgement");
+            return;
+        }
+
+        // After polite glare we answer as the passive peer (no active outbound). When the
+        // remote finishes and closes, resume any re-queued outbound work.
+        _ = ResumeQueueAfterPassiveChannelCloseAsync(peerId);
+    }
+
+    private async Task ResumeQueueAfterPassiveChannelCloseAsync(string peerId)
+    {
+        try
+        {
+            if (_activeSyncByPeer.ContainsKey(peerId))
+                return;
+            if (!_syncQueues.TryGetValue(peerId, out var q) || q.Count == 0)
+            {
+                _owedOutboundTurn.Remove(peerId);
+                await FlushDeferredRemoteOfferAsync(peerId);
+                return;
+            }
+
+            // Next glare: keep our offer so we can push local albums that the peer never requested.
+            _owedOutboundTurn.Add(peerId);
+            SyncDebugLog.Info($"Resuming outbound queue for {peerId} after passive channel close ({q.Count} pending, turn claimed)");
+            await ProcessSyncQueueAsync(peerId);
+        }
+        catch (Exception ex)
+        {
+            SyncDebugLog.Info($"Resume after passive close failed for {peerId}: {ex.Message}");
+        }
+    }
+
+    private void NotifyGalleryChangedDebounced()
+    {
+        try { _galleryChangedDebounceCts?.Cancel(); } catch { /* ignore */ }
+        _galleryChangedDebounceCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _galleryChangedDebounceCts = cts;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(GalleryChangedDebounce, cts.Token);
+                if (!cts.Token.IsCancellationRequested)
+                    OnGalleryChanged?.Invoke();
+            }
+            catch (TaskCanceledException) { }
+        });
     }
 
     
