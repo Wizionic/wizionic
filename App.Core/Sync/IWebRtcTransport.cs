@@ -15,5 +15,13 @@ public interface IWebRtcTransport
     Task<bool> SendDataAsync(string peerId, string data, CancellationToken ct = default);
     Task<bool> IsDataChannelOpenAsync(string peerId, CancellationToken ct = default);
     Task<int> GetMaxMessageSizeAsync(string peerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Wait until the outbound DataChannel buffer is at or below <paramref name="maxBufferedBytes"/>
+    /// (or a short fallback delay when the platform cannot report buffer size).
+    /// Used to pace large multi-chunk transfers without overflowing the SCTP send buffer.
+    /// </summary>
+    Task WaitForSendBufferAsync(string peerId, int maxBufferedBytes = 256 * 1024, CancellationToken ct = default);
+
     Task CloseAsync(string peerId, bool suppressCallbacks = false, CancellationToken ct = default);
 }

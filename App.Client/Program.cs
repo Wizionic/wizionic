@@ -60,6 +60,11 @@ builder.Services.AddScoped<WasmConversationStore>();
 builder.Services.AddScoped<IConversationStore>(sp => sp.GetRequiredService<WasmConversationStore>());
 builder.Services.AddScoped<WasmNoteStore>();
 builder.Services.AddScoped<INoteStore>(sp => sp.GetRequiredService<WasmNoteStore>());
+builder.Services.AddScoped<WasmGalleryStore>();
+builder.Services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<WasmGalleryStore>());
+builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddScoped<WasmStorageQuotaService>();
+builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
 // Guest key provider must be Singleton: ChatAuthService is Singleton and injects IGuestKeyProvider.
 builder.Services.AddSingleton<IGuestKeyProvider, BrowserGuestKeyProvider>();
 // Singleton auth so all stores share one identity/prefix (multi-user isolation).

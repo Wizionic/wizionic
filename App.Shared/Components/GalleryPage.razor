@@ -1,0 +1,1474 @@
+@implements IAsyncDisposable
+@using App.Core.Auth
+@using App.Core.Storage
+@using App.Core.UI
+@using App.Shared.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using System.Text
+@using System.Text.Json
+
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject IGalleryStore GalleryStore
+@inject IConversationStore ConversationStore
+@inject IAuthService AuthService
+@inject IGuestDataMigrationService GuestMigration
+@inject IGallerySyncBridge SyncBridge
+@inject IStorageQuotaService StorageQuota
+@inject ISidebarState SidebarState
+
+<WasmSidebarSync />
+
+<div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+    <div class="sidebar">
+        <nav class="cf-nav cf-column">
+            <div class="cf-item">
+                <span class="cf-link small">
+                   <h4>Gallery</h4>
+                    <div class="menu" @onclick:stopPropagation>
+                        <button id="gallery-menu-btn" class="menu-button" @onclick:stopPropagation @onclick="ToggleExportAllMenu" title="Gallery options">⋮</button>
+                    </div>
+                    <button class="menu-button" @onclick="OpenCreateAlbumDialog" title="New album">
+                        <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
+                    </button>
+                </span>
+            </div>
+
+            @foreach (var a in albums.OrderBy(x => x.SortOrder).ThenByDescending(x => x.LastUpdated))
+            {
+                var isActive = activeAlbumId == a.Id;
+                <div class="conversation-item @(isActive ? "active" : "")"
+                     @onclick="() => SelectAlbum(a.Id)">
+                    <div class="row-top">
+                        <div class="title">
+                            @if (a.IsPasswordProtected)
+                            {
+                                <i class="cf-icon bi bi-lock-fill" style="font-size:0.85em; margin-right:4px; opacity:0.85;" title="Password protected"></i>
+                            }
+                            @a.Title
+                        </div>
+                        <div class="menu" @onclick:stopPropagation>
+                            <button id="menu-btn-@a.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(a.Id)">⋮</button>
+                        </div>
+                    </div>
+                    <div class="date">@a.LastUpdated.ToLocalTime().ToString("MMM d")</div>
+                </div>
+            }
+            @if (!albums.Any())
+            {
+                <div class="cf-item" style="font-size:0.75em; color:var(--cf-text-muted); padding-left:12px;">No albums yet.</div>
+            }
+        </nav>
+    </div>
+
+    <main>
+        <div class="chat-wrapper" style="flex: 1; display: flex; flex-direction: column;">
+            @if (string.IsNullOrEmpty(activeAlbumId))
+            {
+                <div class="gallery-empty">
+                    <i class="bi bi-images" style="font-size:2.5rem; opacity:0.5;"></i>
+                    <p style="margin-top:0.75rem;">Create an album to get started.</p>
+                </div>
+            }
+            else if (IsActiveAlbumLocked)
+            {
+                <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:2rem; text-align:center;">
+                    <div style="max-width:360px;">
+                        <i class="cf-icon bi bi-lock-fill" style="font-size:2.5rem; color:var(--cf-text-muted); opacity:0.8;"></i>
+                        <h3 style="margin:0.75rem 0 0.35rem 0; font-size:1.15rem; color:var(--color-text);">Album locked</h3>
+                        <p style="margin:0; font-size:0.9rem; color:var(--cf-text-muted);">
+                            Enter your account password to view this album.
+                        </p>
+                        <button type="button" class="newnote-btn newnote-btn-primary" style="margin-top:1rem;" @onclick="() => OpenUnlockDialog(activeAlbumId!)">
+                            Unlock
+                        </button>
+                    </div>
+                </div>
+            }
+            else if (lightboxImageId != null)
+            {
+                var live = LiveImages;
+                var idx = live.FindIndex(i => i.Id == lightboxImageId);
+                var current = idx >= 0 ? live[idx] : null;
+                <div class="gallery-lightbox" @onkeydown="OnLightboxKeyDown" tabindex="0" @ref="lightboxRoot">
+                    <div class="gallery-lightbox-top">
+                        <button type="button" class="menu-button" title="Back to album" @onclick="CloseLightbox">
+                            <i class="bi bi-arrow-left" style="font-size:1.35rem;"></i>
+                        </button>
+                        <span style="font-size:0.9rem; color:var(--cf-text-muted);">
+                            @(current?.Name ?? "Photo") @(live.Count > 0 ? $"({Math.Max(idx, 0) + 1} / {live.Count})" : "")
+                        </span>
+                    </div>
+                    <div class="gallery-lightbox-stage">
+                        <button type="button" class="gallery-nav-btn gallery-nav-btn--prev" disabled="@(idx <= 0)" @onclick="LightboxPrev" title="Previous">
+                            <i class="bi bi-chevron-left" style="font-size:1.4rem;"></i>
+                        </button>
+                        @if (!string.IsNullOrEmpty(lightboxBlobUrl))
+                        {
+                            <img src="@lightboxBlobUrl" alt="@(current?.Name ?? "Photo")" />
+                        }
+                        else if (!string.IsNullOrEmpty(current?.ThumbnailUrl))
+                        {
+                            <img src="@current.ThumbnailUrl" alt="@(current?.Name ?? "Photo")" />
+                        }
+                        else if (lightboxLoading)
+                        {
+                            <span style="color:var(--cf-text-muted);">Loading…</span>
+                        }
+                        <button type="button" class="gallery-nav-btn gallery-nav-btn--next" disabled="@(idx < 0 || idx >= live.Count - 1)" @onclick="LightboxNext" title="Next">
+                            <i class="bi bi-chevron-right" style="font-size:1.4rem;"></i>
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="gallery-toolbar">
+                    <div class="gallery-layout-toggle" title="Layout">
+                        <button type="button" class="@(layoutMode == LayoutMode.Masonry ? "active" : "")" @onclick="() => SetLayout(LayoutMode.Masonry)">Masonry</button>
+                        <button type="button" class="@(layoutMode == LayoutMode.Square ? "active" : "")" @onclick="() => SetLayout(LayoutMode.Square)">Square</button>
+                    </div>
+                    <span style="font-size:0.8rem; color:var(--cf-text-muted);">@LiveImages.Count image(s)</span>
+                </div>
+                <div class="gallery-content">
+                    @if (!LiveImages.Any())
+                    {
+                        <div class="gallery-empty">
+                            <i class="bi bi-image" style="font-size:2rem; opacity:0.5;"></i>
+                            <p style="margin-top:0.5rem;">No images yet. Tap + to upload or add from chat.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="@(layoutMode == LayoutMode.Square ? "gallery-grid--square" : "gallery-grid--masonry")">
+                            @foreach (var img in LiveImages)
+                            {
+                                var captured = img;
+                                var aspect = captured.Width is > 0 && captured.Height is > 0
+                                    ? $"aspect-ratio:{captured.Width}/{captured.Height};"
+                                    : "";
+                                <div class="gallery-tile" style="@(layoutMode == LayoutMode.Masonry ? aspect : "")" @onclick="() => OpenLightbox(captured.Id)">
+                                    <img src="@(captured.ThumbnailUrl ?? captured.DataUrl)" alt="@captured.Name" loading="lazy" />
+                                    <div class="gallery-tile-menu" @onclick:stopPropagation>
+                                        <button type="button" id="tile-menu-@captured.Id" class="menu-button" @onclick="() => ToggleTileMenu(captured.Id)" title="Image options">⋮</button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </main>
+
+    @if (!string.IsNullOrEmpty(activeAlbumId) && nameDialogMode == NameDialogMode.None && !IsActiveAlbumLocked && lightboxImageId == null)
+    {
+        <button type="button"
+                class="menu-button notes-fab"
+                title="Add images"
+                @onclick="OpenAddMenu">
+            <i class="cf-icon bi bi-plus-circle"></i>
+        </button>
+    }
+
+    <InputFile id="gallery-file-input" style="display:none;" OnChange="OnFilesSelected" multiple accept="image/*" />
+
+    @if (openMenuId != null)
+    {
+        <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
+            <div @onclick="() => { CloseMenu(); OpenAddMenuForAlbum(openMenuId); }">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-plus-lg"></i></button>
+                Add
+            </div>
+            <div @onclick="() => OpenRenameDialog(openMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
+                Rename
+            </div>
+            <div @onclick="() => ExportAlbum(openMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-file-earmark-arrow-down"></i></button>
+                Export
+            </div>
+            @if (AuthService.IsAuthenticated && AuthService.HasPassword)
+            {
+                var menuAlbum = albums.FirstOrDefault(n => n.Id == openMenuId);
+                @if (menuAlbum?.IsPasswordProtected == true)
+                {
+                    <div @onclick="() => RemoveAlbumProtection(openMenuId)">
+                        <button type="button" class="menu-button"><i class="cf-icon bi bi-unlock"></i></button>
+                        Remove password protection
+                    </div>
+                }
+                else
+                {
+                    <div @onclick="() => ProtectAlbum(openMenuId)">
+                        <button type="button" class="menu-button"><i class="cf-icon bi bi-lock-fill"></i></button>
+                        Protect with password
+                    </div>
+                }
+            }
+            <div @onclick="() => PromptDeleteAlbum(openMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                Delete Album
+            </div>
+        </div>
+        <div class="menu-overlay" @onclick="CloseMenu"></div>
+    }
+
+    @if (openExportAllMenu)
+    {
+        <div class="menu-popup" style="@exportAllPopupStyle" @onclick:stopPropagation>
+            <div @onclick="ExportAllAlbums">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-file-earmark-arrow-down"></i></button>
+                Export all
+            </div>
+        </div>
+        <div class="menu-overlay" @onclick="CloseExportAllMenu"></div>
+    }
+
+    @if (openAddMenu)
+    {
+        <div class="menu-popup" style="@addMenuPopupStyle" @onclick:stopPropagation>
+            <div @onclick="TriggerUpload">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-upload"></i></button>
+                Upload
+            </div>
+            <div @onclick="OpenAddFromChat">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-chat-left-text"></i></button>
+                Add from chat
+            </div>
+        </div>
+        <div class="menu-overlay" @onclick="CloseAddMenu"></div>
+    }
+
+    @if (openTileMenuId != null)
+    {
+        <div class="menu-popup" style="@tilePopupStyle" @onclick:stopPropagation>
+            <div @onclick="() => DownloadImage(openTileMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-download"></i></button>
+                Download
+            </div>
+            <div @onclick="() => OpenMoveImageDialog(openTileMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-arrow-right-square"></i></button>
+                Move to album
+            </div>
+            <div @onclick="() => PromptDeleteImage(openTileMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                Delete
+            </div>
+        </div>
+        <div class="menu-overlay" @onclick="CloseTileMenu"></div>
+    }
+
+    @if (showMoveDialog)
+    {
+        <div class="newnote-overlay" @onclick="CloseMoveDialog">
+            <div class="newnote-modal move-notebook-modal" @onclick:stopPropagation>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Move to album</h4>
+                @if (moveTargetAlbums.Count == 0)
+                {
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:12px 0 0 0;">No other albums available.</p>
+                }
+                else
+                {
+                    @foreach (var target in moveTargetAlbums)
+                    {
+                        var t = target;
+                        <div class="move-notebook-item" @onclick="() => ConfirmMoveImage(t.Id)" @onclick:stopPropagation>
+                            <i class="cf-icon bi bi-images" style="font-size:1.1em;color:var(--cf-text-muted);margin-right:8px;"></i>
+                            <span>@t.Title</span>
+                        </div>
+                    }
+                }
+                <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseMoveDialog">Cancel</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (showAddFromChat)
+    {
+        <div class="newnote-overlay" @onclick="CloseAddFromChat">
+            <div class="newnote-modal" style="max-width:480px; width:92%;" @onclick:stopPropagation>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Add from chat</h4>
+                @if (chatPickStep == ChatPickStep.Conversations)
+                {
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 8px 0;">Choose a conversation that has images.</p>
+                    <div class="gallery-chat-pick-list">
+                        @if (!chatConvosWithImages.Any())
+                        {
+                            <p style="font-size:0.85rem;color:var(--cf-text-muted);">No chat images found.</p>
+                        }
+                        @foreach (var c in chatConvosWithImages)
+                        {
+                            var capt = c;
+                            <div class="gallery-chat-pick-item" @onclick="() => SelectChatConvo(capt.Id)">
+                                <i class="bi bi-chat-dots" style="font-size:1.2rem;color:var(--cf-text-muted);"></i>
+                                <div>
+                                    <div style="font-weight:500;">@capt.Title</div>
+                                    <div style="font-size:0.75rem;color:var(--cf-text-muted);">@capt.ImageCount image(s)</div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 8px 0;">Select images to add.</p>
+                    <div class="gallery-chat-pick-list">
+                        @foreach (var att in chatPickAttachments)
+                        {
+                            var a = att;
+                            var selected = chatSelectedKeys.Contains(a.Key);
+                            <div class="gallery-chat-pick-item @(selected ? "selected" : "")" @onclick="() => ToggleChatAttachment(a.Key)">
+                                @if (!string.IsNullOrEmpty(a.ThumbUrl))
+                                {
+                                    <img src="@a.ThumbUrl" alt="@a.Name" />
+                                }
+                                else
+                                {
+                                    <i class="bi bi-image" style="font-size:1.5rem;"></i>
+                                }
+                                <span style="font-size:0.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">@a.Name</span>
+                            </div>
+                        }
+                    </div>
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:space-between;">
+                        <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="() => chatPickStep = ChatPickStep.Conversations">Back</button>
+                        <div style="display:flex;gap:8px;">
+                            <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseAddFromChat">Cancel</button>
+                            <button type="button" class="newnote-btn newnote-btn-primary" disabled="@(!chatSelectedKeys.Any())" @onclick="ConfirmAddFromChat">
+                                Add (@chatSelectedKeys.Count)
+                            </button>
+                        </div>
+                    </div>
+                }
+                @if (chatPickStep == ChatPickStep.Conversations)
+                {
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                        <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseAddFromChat">Cancel</button>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <ConfirmDialog IsVisible="showDeleteConfirm"
+                   Title="@deleteConfirmTitle"
+                   Message="@deleteConfirmMessage"
+                   OnConfirm="ConfirmPendingDelete"
+                   OnCancel="CancelPendingDelete" />
+
+    @if (nameDialogMode != NameDialogMode.None)
+    {
+        <div class="newnote-overlay" @onclick="CancelNameDialog">
+            <div class="newnote-modal" @onclick:stopPropagation>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">
+                    @(nameDialogMode == NameDialogMode.Create ? "New Album" : "Rename Album")
+                </h4>
+                <input type="text"
+                       @bind="nameDialogTitle"
+                       @bind:event="oninput"
+                       placeholder="Album name..."
+                       class="newnote-input"
+                       @onkeydown="NameDialogKeyHandler" />
+                <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelNameDialog">Cancel</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmNameDialog" disabled="@(string.IsNullOrWhiteSpace(nameDialogTitle))">
+                        @(nameDialogMode == NameDialogMode.Create ? "Create" : "Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (showUnlockDialog)
+    {
+        <div class="newnote-overlay" @onclick="CancelUnlockDialog">
+            <div class="newnote-modal" @onclick:stopPropagation>
+                <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">
+                    <i class="cf-icon bi bi-lock-fill" style="margin-right:6px;"></i>
+                    @(pendingRemoveProtectionAlbumId != null ? "Remove password protection" : "Unlock album")
+                </h4>
+                <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 12px 0;">
+                    @(pendingRemoveProtectionAlbumId != null
+                        ? "Enter your account password to remove protection from this album."
+                        : "Enter your account password to open this album.")
+                </p>
+                @if (!string.IsNullOrEmpty(unlockError))
+                {
+                    <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@unlockError</div>
+                }
+                <input type="password"
+                       @bind="unlockPassword"
+                       @bind:event="oninput"
+                       placeholder="Password"
+                       class="newnote-input"
+                       autocomplete="current-password"
+                       @onkeydown="UnlockDialogKeyHandler" />
+                <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CancelUnlockDialog" disabled="@unlockBusy">Cancel</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="ConfirmUnlockDialog" disabled="@(unlockBusy || string.IsNullOrWhiteSpace(unlockPassword))">
+                        @(pendingRemoveProtectionAlbumId != null ? "Remove protection" : "Unlock")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<LocalAlbum> albums = new();
+    private string? activeAlbumId;
+    private List<GalleryImage> currentImages = new();
+    private List<GalleryImage>? _liveImagesCache;
+    private List<GalleryImage> LiveImages
+    {
+        get
+        {
+            _liveImagesCache ??= currentImages.Where(i => i.DeletedAt is null).ToList();
+            return _liveImagesCache;
+        }
+    }
+
+    private void InvalidateLiveImages() => _liveImagesCache = null;
+
+    private string? openMenuId;
+    private bool openExportAllMenu;
+    private bool openAddMenu;
+    private string? openTileMenuId;
+    private string activePopupStyle = "";
+    private string exportAllPopupStyle = "";
+    private string addMenuPopupStyle = "";
+    private string tilePopupStyle = "";
+
+    private string? lightboxImageId;
+    /// <summary>Short blob: URL for full-res lightbox — never multi-MB data: URLs in markup.</summary>
+    private string? lightboxBlobUrl;
+    private bool lightboxLoading;
+    private ElementReference lightboxRoot;
+
+    private enum LayoutMode { Masonry, Square }
+    private LayoutMode layoutMode = LayoutMode.Masonry;
+
+    private enum NameDialogMode { None, Create, Rename }
+    private NameDialogMode nameDialogMode = NameDialogMode.None;
+    private string? nameDialogAlbumId;
+    private string nameDialogTitle = "";
+
+    private bool showDeleteConfirm;
+    private string deleteConfirmTitle = "";
+    private string deleteConfirmMessage = "";
+    private string? pendingDeleteAlbumId;
+    private string? pendingDeleteImageId;
+
+    private bool showMoveDialog;
+    private string? moveImageId;
+    private List<LocalAlbum> moveTargetAlbums = new();
+
+    private readonly HashSet<string> unlockedAlbumIds = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool showUnlockDialog;
+    private string? unlockTargetAlbumId;
+    private string unlockPassword = "";
+    private string? unlockError;
+    private bool unlockBusy;
+    private bool unlockThenLoad;
+    private string? pendingRemoveProtectionAlbumId;
+
+    private bool showAddFromChat;
+    private enum ChatPickStep { Conversations, Images }
+    private ChatPickStep chatPickStep = ChatPickStep.Conversations;
+    private List<ChatConvoPick> chatConvosWithImages = new();
+    private List<ChatAttPick> chatPickAttachments = new();
+    private HashSet<string> chatSelectedKeys = new(StringComparer.Ordinal);
+    private string? addTargetAlbumId;
+
+    private const long MaxImageBytes = 15 * 1024 * 1024;
+
+    private bool IsActiveAlbumLocked =>
+        !string.IsNullOrEmpty(activeAlbumId)
+        && albums.FirstOrDefault(n => n.Id == activeAlbumId)?.IsPasswordProtected == true
+        && !unlockedAlbumIds.Contains(activeAlbumId);
+
+    private class PopupPosition
+    {
+        public double top { get; set; }
+        public double left { get; set; }
+    }
+
+    private sealed record ChatConvoPick(string Id, string Title, int ImageCount);
+    private sealed record ChatAttPick(string Key, string Name, string ContentType, string DataBase64, long Size, string? ThumbUrl);
+
+    private sealed class ImagePrepResult
+    {
+        public int width { get; set; }
+        public int height { get; set; }
+        public string? thumbnailBase64 { get; set; }
+    }
+
+    private Action? _sidebarStateChangedHandler;
+    private Action? _gallerySyncChangedHandler;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.LoadAsync();
+        if (AuthService.IsAuthenticated)
+            await GuestMigration.MigrateIfNeededAsync();
+
+        albums = await GalleryStore.LoadIndexAsync();
+
+        try
+        {
+            var pref = await JS.InvokeAsync<string?>("eval", "localStorage.getItem('gallery-layout-mode')");
+            if (string.Equals(pref, "square", StringComparison.OrdinalIgnoreCase))
+                layoutMode = LayoutMode.Square;
+        }
+        catch { /* ignore */ }
+
+        if (albums.Any())
+        {
+            activeAlbumId = albums.OrderByDescending(n => n.LastUpdated).First().Id;
+            await LoadAlbum(activeAlbumId);
+        }
+
+        _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
+        SidebarState.OnChanged += _sidebarStateChangedHandler;
+
+        _gallerySyncChangedHandler = () => _ = RefreshFromSyncAsync();
+        SyncBridge.OnGalleryChanged += _gallerySyncChangedHandler;
+    }
+
+    private async Task RefreshFromSyncAsync()
+    {
+        albums = await GalleryStore.LoadIndexAsync();
+        if (!string.IsNullOrEmpty(activeAlbumId))
+        {
+            if (albums.All(a => a.Id != activeAlbumId))
+            {
+                activeAlbumId = albums.OrderByDescending(a => a.LastUpdated).FirstOrDefault()?.Id;
+                currentImages = new();
+                InvalidateLiveImages();
+                ClearLightbox();
+            }
+            if (!string.IsNullOrEmpty(activeAlbumId) && !IsActiveAlbumLocked)
+            {
+                currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId);
+                InvalidateLiveImages();
+            }
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectAlbum(string id)
+    {
+        ClearLightbox();
+        if (activeAlbumId == id)
+        {
+            if (IsActiveAlbumLocked)
+                OpenUnlockDialog(id, thenLoad: true);
+            return;
+        }
+        activeAlbumId = id;
+        await LoadAlbum(id);
+    }
+
+    private async Task LoadAlbum(string id)
+    {
+        activeAlbumId = id;
+        ClearLightbox();
+
+        var album = albums.FirstOrDefault(a => a.Id == id);
+        if (album?.IsPasswordProtected == true && !unlockedAlbumIds.Contains(id))
+        {
+            currentImages = new();
+            InvalidateLiveImages();
+            OpenUnlockDialog(id, thenLoad: true);
+            StateHasChanged();
+            return;
+        }
+
+        // Thumbs only — never bind full multi-MB DataBase64 into the tile grid (freezes WASM).
+        currentImages = await GalleryStore.LoadAlbumThumbsAsync(id);
+        InvalidateLiveImages();
+        StateHasChanged();
+    }
+
+    private async Task SetLayout(LayoutMode mode)
+    {
+        layoutMode = mode;
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                $"localStorage.setItem('gallery-layout-mode','{(mode == LayoutMode.Square ? "square" : "masonry")}')");
+        }
+        catch { /* ignore */ }
+    }
+
+    private void OpenLightbox(string imageId)
+    {
+        lightboxImageId = imageId;
+        _ = EnsureLightboxBlobAsync(imageId);
+        StateHasChanged();
+    }
+
+    private void CloseLightbox()
+    {
+        _ = ClearLightboxAsync();
+        StateHasChanged();
+    }
+
+    private void ClearLightbox()
+    {
+        _ = ClearLightboxAsync();
+    }
+
+    private async Task ClearLightboxAsync()
+    {
+        lightboxImageId = null;
+        lightboxLoading = false;
+        if (!string.IsNullOrEmpty(lightboxBlobUrl))
+        {
+            var old = lightboxBlobUrl;
+            lightboxBlobUrl = null;
+            try { await GalleryStore.RevokeDisplayUrlAsync(old); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task EnsureLightboxBlobAsync(string imageId)
+    {
+        if (string.IsNullOrEmpty(activeAlbumId) || string.IsNullOrEmpty(imageId))
+            return;
+
+        // Revoke previous blob URL before loading next.
+        if (!string.IsNullOrEmpty(lightboxBlobUrl))
+        {
+            var old = lightboxBlobUrl;
+            lightboxBlobUrl = null;
+            try { await GalleryStore.RevokeDisplayUrlAsync(old); } catch { /* ignore */ }
+        }
+
+        lightboxLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var url = await GalleryStore.CreateDisplayUrlAsync(activeAlbumId, imageId);
+            if (lightboxImageId != imageId)
+            {
+                if (!string.IsNullOrEmpty(url))
+                    try { await GalleryStore.RevokeDisplayUrlAsync(url); } catch { /* ignore */ }
+                return;
+            }
+            lightboxBlobUrl = url;
+        }
+        finally
+        {
+            if (lightboxImageId == imageId)
+                lightboxLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void LightboxPrev()
+    {
+        var live = LiveImages;
+        var idx = live.FindIndex(i => i.Id == lightboxImageId);
+        if (idx > 0)
+        {
+            lightboxImageId = live[idx - 1].Id;
+            _ = EnsureLightboxBlobAsync(lightboxImageId!);
+        }
+    }
+
+    private void LightboxNext()
+    {
+        var live = LiveImages;
+        var idx = live.FindIndex(i => i.Id == lightboxImageId);
+        if (idx >= 0 && idx < live.Count - 1)
+        {
+            lightboxImageId = live[idx + 1].Id;
+            _ = EnsureLightboxBlobAsync(lightboxImageId!);
+        }
+    }
+
+    private void OnLightboxKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            CloseLightbox();
+        else if (e.Key == "ArrowLeft")
+            LightboxPrev();
+        else if (e.Key == "ArrowRight")
+            LightboxNext();
+    }
+
+    private async Task ToggleMenu(string albumId)
+    {
+        if (openMenuId == albumId)
+        {
+            CloseMenu();
+            return;
+        }
+        openMenuId = albumId;
+        openExportAllMenu = false;
+        openAddMenu = false;
+        openTileMenuId = null;
+        try
+        {
+            var pos = await JS.InvokeAsync<PopupPosition>("eval",
+                $@"(function(){{ var el=document.getElementById('menu-btn-{albumId}'); if(!el) return {{top:0,left:0}}; var r=el.getBoundingClientRect(); return {{top:r.bottom+4,left:Math.max(8,r.right-160)}}; }})()");
+            activePopupStyle = $"position:fixed; top:{pos.top}px; left:{pos.left}px; z-index:10000;";
+        }
+        catch
+        {
+            activePopupStyle = "position:fixed; top:80px; left:40px; z-index:10000;";
+        }
+    }
+
+    private void CloseMenu()
+    {
+        openMenuId = null;
+        activePopupStyle = "";
+    }
+
+    private async Task ToggleExportAllMenu()
+    {
+        if (openExportAllMenu)
+        {
+            CloseExportAllMenu();
+            return;
+        }
+        openExportAllMenu = true;
+        openMenuId = null;
+        openAddMenu = false;
+        try
+        {
+            var pos = await JS.InvokeAsync<PopupPosition>("eval",
+                @"(function(){ var el=document.getElementById('gallery-menu-btn'); if(!el) return {top:0,left:0}; var r=el.getBoundingClientRect(); return {top:r.bottom+4,left:Math.max(8,r.right-160)}; })()");
+            exportAllPopupStyle = $"position:fixed; top:{pos.top}px; left:{pos.left}px; z-index:10000;";
+        }
+        catch
+        {
+            exportAllPopupStyle = "position:fixed; top:80px; left:40px; z-index:10000;";
+        }
+    }
+
+    private void CloseExportAllMenu()
+    {
+        openExportAllMenu = false;
+        exportAllPopupStyle = "";
+    }
+
+    private async Task OpenAddMenu()
+    {
+        addTargetAlbumId = activeAlbumId;
+        openAddMenu = true;
+        openMenuId = null;
+        openTileMenuId = null;
+        try
+        {
+            addMenuPopupStyle = "position:fixed; bottom:90px; right:24px; z-index:10000;";
+        }
+        catch
+        {
+            addMenuPopupStyle = "position:fixed; bottom:90px; right:24px; z-index:10000;";
+        }
+        await Task.CompletedTask;
+    }
+
+    private void OpenAddMenuForAlbum(string? albumId)
+    {
+        if (string.IsNullOrEmpty(albumId)) return;
+        addTargetAlbumId = albumId;
+        openAddMenu = true;
+        addMenuPopupStyle = "position:fixed; top:120px; left:40px; z-index:10000;";
+        _ = EnsureAlbumActive(albumId);
+    }
+
+    private async Task EnsureAlbumActive(string albumId)
+    {
+        if (activeAlbumId != albumId)
+            await LoadAlbum(albumId);
+    }
+
+    private void CloseAddMenu()
+    {
+        openAddMenu = false;
+        addMenuPopupStyle = "";
+    }
+
+    private async Task ToggleTileMenu(string imageId)
+    {
+        if (openTileMenuId == imageId)
+        {
+            CloseTileMenu();
+            return;
+        }
+        openTileMenuId = imageId;
+        openMenuId = null;
+        openAddMenu = false;
+        try
+        {
+            var pos = await JS.InvokeAsync<PopupPosition>("eval",
+                $@"(function(){{ var el=document.getElementById('tile-menu-{imageId}'); if(!el) return {{top:0,left:0}}; var r=el.getBoundingClientRect(); return {{top:r.bottom+4,left:Math.max(8,r.right-160)}}; }})()");
+            tilePopupStyle = $"position:fixed; top:{pos.top}px; left:{pos.left}px; z-index:10000;";
+        }
+        catch
+        {
+            tilePopupStyle = "position:fixed; top:120px; left:40px; z-index:10000;";
+        }
+    }
+
+    private void CloseTileMenu()
+    {
+        openTileMenuId = null;
+        tilePopupStyle = "";
+    }
+
+    private async Task TriggerUpload()
+    {
+        CloseAddMenu();
+        if (string.IsNullOrEmpty(addTargetAlbumId ?? activeAlbumId))
+            return;
+        if (!string.IsNullOrEmpty(addTargetAlbumId) && activeAlbumId != addTargetAlbumId)
+            await LoadAlbum(addTargetAlbumId);
+        try
+        {
+            await JS.InvokeVoidAsync("eval", "document.getElementById('gallery-file-input').click()");
+        }
+        catch { /* ignore */ }
+    }
+
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        if (string.IsNullOrEmpty(activeAlbumId) || IsActiveAlbumLocked)
+            return;
+
+        var files = e.GetMultipleFiles(50).ToList();
+        if (files.Count == 0) return;
+
+        // One cheap quota check for the whole batch (never decrypts existing albums).
+        long totalBytes = 0;
+        foreach (var f in files)
+            totalBytes += f.Size;
+        if (totalBytes > 0 && !await StorageQuota.CanAcceptBytesAsync(totalBytes))
+        {
+            try { await JS.InvokeVoidAsync("alert", "Not enough space under your storage limit. Raise the limit on the Sync page."); } catch { }
+            return;
+        }
+
+        var added = false;
+        foreach (var file in files)
+        {
+            if (file.Size > MaxImageBytes)
+            {
+                try { await JS.InvokeVoidAsync("alert", $"File {file.Name} is too large (max 15MB)."); } catch { }
+                continue;
+            }
+            if (!string.IsNullOrEmpty(file.ContentType) && !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                using var stream = file.OpenReadStream(maxAllowedSize: MaxImageBytes + 1024);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                var bytes = ms.ToArray();
+                var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
+                var imageId = Guid.NewGuid().ToString("N");
+
+                // WASM: one JS hop (thumb + encrypt + IDB). MAUI: native encrypt.
+                // Avoid multi-MB base64 round-trips through Blazor interop.
+                var gi = await GalleryStore.UpsertImageFromRawBytesAsync(
+                    activeAlbumId!, imageId, file.Name, contentType, bytes);
+                SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(activeAlbumId!, gi.Id);
+                currentImages.Add(gi with { DataBase64 = "" });
+                InvalidateLiveImages();
+                added = true;
+                await Task.Yield();
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                try { await JS.InvokeVoidAsync("alert", "Could not read file: " + ex.Message); } catch { }
+            }
+        }
+
+        if (added && !string.IsNullOrEmpty(activeAlbumId))
+        {
+            var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
+            SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, album?.Title ?? "Untitled");
+            albums = await GalleryStore.LoadIndexAsync();
+            InvalidateLiveImages();
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveCurrentAlbumAsync()
+    {
+        if (string.IsNullOrEmpty(activeAlbumId)) return;
+        var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
+        var title = album?.Title ?? "Untitled";
+        // Per-image stores already persist on Upsert; refresh meta + index only.
+        await GalleryStore.UpdateAlbumMetaAsync(activeAlbumId, title);
+        albums = await GalleryStore.LoadIndexAsync();
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, title);
+        StateHasChanged();
+    }
+
+    private async Task PersistNewImagesAsync(IEnumerable<GalleryImage> newImages)
+    {
+        if (string.IsNullOrEmpty(activeAlbumId)) return;
+        var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
+        var title = album?.Title ?? "Untitled";
+        foreach (var img in newImages)
+        {
+            await GalleryStore.UpsertImageAsync(activeAlbumId, img);
+            SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(activeAlbumId, img.Id);
+        }
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, title);
+        currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId);
+        InvalidateLiveImages();
+        albums = await GalleryStore.LoadIndexAsync();
+        StateHasChanged();
+    }
+
+    private async Task DownloadImage(string? imageId)
+    {
+        CloseTileMenu();
+        if (string.IsNullOrEmpty(imageId) || string.IsNullOrEmpty(activeAlbumId)) return;
+        var img = await GalleryStore.LoadImageAsync(activeAlbumId, imageId);
+        if (img == null || string.IsNullOrEmpty(img.DataBase64)) return;
+        try
+        {
+            await JS.InvokeAsync<bool>("downloadBase64File", img.DataBase64, img.Name, img.ContentType);
+        }
+        catch { /* ignore */ }
+    }
+
+    private void PromptDeleteImage(string? imageId)
+    {
+        CloseTileMenu();
+        if (string.IsNullOrEmpty(imageId)) return;
+        pendingDeleteImageId = imageId;
+        pendingDeleteAlbumId = null;
+        deleteConfirmTitle = "Delete image";
+        deleteConfirmMessage = "Remove this image from the album?";
+        showDeleteConfirm = true;
+    }
+
+    private void PromptDeleteAlbum(string? albumId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(albumId)) return;
+        pendingDeleteAlbumId = albumId;
+        pendingDeleteImageId = null;
+        var title = albums.FirstOrDefault(a => a.Id == albumId)?.Title ?? "this album";
+        deleteConfirmTitle = "Delete album";
+        deleteConfirmMessage = $"Delete “{title}” and all of its images?";
+        showDeleteConfirm = true;
+    }
+
+    private void CancelPendingDelete()
+    {
+        showDeleteConfirm = false;
+        pendingDeleteAlbumId = null;
+        pendingDeleteImageId = null;
+    }
+
+    private async Task ConfirmPendingDelete()
+    {
+        showDeleteConfirm = false;
+        if (!string.IsNullOrEmpty(pendingDeleteImageId))
+        {
+            var id = pendingDeleteImageId;
+            pendingDeleteImageId = null;
+            var idx = currentImages.FindIndex(i => i.Id == id);
+            if (idx >= 0)
+            {
+                await GalleryStore.SoftDeleteImageAsync(activeAlbumId!, id);
+                SyncBridge.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(activeAlbumId!, id, DateTime.UtcNow);
+                var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
+                SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId!, album?.Title ?? "Untitled");
+                if (lightboxImageId == id)
+                    ClearLightbox();
+                currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId!);
+                InvalidateLiveImages();
+                albums = await GalleryStore.LoadIndexAsync();
+                StateHasChanged();
+            }
+        }
+        else if (!string.IsNullOrEmpty(pendingDeleteAlbumId))
+        {
+            var id = pendingDeleteAlbumId;
+            pendingDeleteAlbumId = null;
+            await DeleteAlbum(id);
+        }
+    }
+
+    private void OpenMoveImageDialog(string? imageId)
+    {
+        CloseTileMenu();
+        if (string.IsNullOrEmpty(imageId) || string.IsNullOrEmpty(activeAlbumId)) return;
+        moveImageId = imageId;
+        moveTargetAlbums = albums.Where(a => a.Id != activeAlbumId).OrderBy(a => a.Title).ToList();
+        showMoveDialog = true;
+    }
+
+    private void CloseMoveDialog()
+    {
+        showMoveDialog = false;
+        moveImageId = null;
+        moveTargetAlbums = new();
+    }
+
+    private async Task ConfirmMoveImage(string targetAlbumId)
+    {
+        if (string.IsNullOrEmpty(moveImageId) || string.IsNullOrEmpty(activeAlbumId))
+        {
+            CloseMoveDialog();
+            return;
+        }
+
+        var idx = currentImages.FindIndex(i => i.Id == moveImageId);
+        if (idx < 0)
+        {
+            CloseMoveDialog();
+            return;
+        }
+
+        var img = currentImages[idx];
+        await GalleryStore.MoveImageAsync(activeAlbumId!, targetAlbumId, img.Id);
+        SyncBridge.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(activeAlbumId!, img.Id, DateTime.UtcNow);
+        SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(targetAlbumId, img.Id);
+        var srcTitle = albums.FirstOrDefault(a => a.Id == activeAlbumId)?.Title ?? "Untitled";
+        var targetTitle = albums.FirstOrDefault(a => a.Id == targetAlbumId)?.Title ?? "Untitled";
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId!, srcTitle);
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(targetAlbumId, targetTitle);
+        currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId!);
+        InvalidateLiveImages();
+        albums = await GalleryStore.LoadIndexAsync();
+        CloseMoveDialog();
+        StateHasChanged();
+    }
+
+    private async Task OpenAddFromChat()
+    {
+        CloseAddMenu();
+        addTargetAlbumId = addTargetAlbumId ?? activeAlbumId;
+        if (string.IsNullOrEmpty(addTargetAlbumId)) return;
+        if (activeAlbumId != addTargetAlbumId)
+            await LoadAlbum(addTargetAlbumId);
+
+        showAddFromChat = true;
+        chatPickStep = ChatPickStep.Conversations;
+        chatSelectedKeys.Clear();
+        chatPickAttachments.Clear();
+        chatConvosWithImages = new();
+
+        var index = await ConversationStore.LoadIndexAsync();
+        foreach (var c in index.OrderByDescending(x => x.LastUpdated))
+        {
+            var msgs = await ConversationStore.LoadConversationAsync(c.Id);
+            var count = msgs
+                .Where(m => m.DeletedAt is null && m.Attachments != null)
+                .SelectMany(m => m.Attachments!)
+                .Count(a => a.ContentType != null && a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(a.DataBase64));
+            if (count > 0)
+                chatConvosWithImages.Add(new ChatConvoPick(c.Id, c.Title, count));
+        }
+        StateHasChanged();
+    }
+
+    private void CloseAddFromChat()
+    {
+        showAddFromChat = false;
+        chatPickAttachments.Clear();
+        chatSelectedKeys.Clear();
+    }
+
+    private async Task SelectChatConvo(string convoId)
+    {
+        chatPickAttachments.Clear();
+        chatSelectedKeys.Clear();
+        var msgs = await ConversationStore.LoadConversationAsync(convoId);
+        var n = 0;
+        foreach (var m in msgs.Where(m => m.DeletedAt is null && m.Attachments != null))
+        {
+            foreach (var a in m.Attachments!)
+            {
+                if (a.ContentType == null || !a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.IsNullOrWhiteSpace(a.DataBase64))
+                    continue;
+                var key = $"{convoId}:{n++}:{a.Name}";
+                chatPickAttachments.Add(new ChatAttPick(
+                    key,
+                    a.Name,
+                    a.ContentType,
+                    a.DataBase64,
+                    a.Size,
+                    a.DataUrl));
+            }
+        }
+        chatPickStep = ChatPickStep.Images;
+        StateHasChanged();
+    }
+
+    private void ToggleChatAttachment(string key)
+    {
+        if (!chatSelectedKeys.Add(key))
+            chatSelectedKeys.Remove(key);
+    }
+
+    private async Task ConfirmAddFromChat()
+    {
+        if (string.IsNullOrEmpty(activeAlbumId) || IsActiveAlbumLocked)
+        {
+            CloseAddFromChat();
+            return;
+        }
+
+        var selected = chatPickAttachments.Where(a => chatSelectedKeys.Contains(a.Key)).ToList();
+        foreach (var a in selected)
+        {
+            int? w = null, h = null;
+            string? thumb = null;
+            try
+            {
+                var prep = await JS.InvokeAsync<ImagePrepResult>("galleryPrepareImage", a.DataBase64, a.ContentType, 400);
+                if (prep != null)
+                {
+                    if (prep.width > 0) w = prep.width;
+                    if (prep.height > 0) h = prep.height;
+                    thumb = prep.thumbnailBase64;
+                }
+            }
+            catch { /* optional */ }
+
+            var now = DateTime.UtcNow;
+            var gi = new GalleryImage(
+                Id: Guid.NewGuid().ToString("N"),
+                Name: a.Name,
+                ContentType: a.ContentType,
+                DataBase64: a.DataBase64,
+                Size: a.Size,
+                ThumbnailBase64: thumb,
+                Width: w,
+                Height: h,
+                Timestamp: now,
+                ModifiedAt: now);
+            await GalleryStore.UpsertImageAsync(activeAlbumId, gi);
+            SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(activeAlbumId, gi.Id);
+            currentImages.Add(gi with { DataBase64 = "" });
+        }
+
+        CloseAddFromChat();
+        if (selected.Count > 0)
+        {
+            var album = albums.FirstOrDefault(x => x.Id == activeAlbumId);
+            SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, album?.Title ?? "Untitled");
+            albums = await GalleryStore.LoadIndexAsync();
+            StateHasChanged();
+        }
+    }
+
+    private void OpenCreateAlbumDialog()
+    {
+        nameDialogMode = NameDialogMode.Create;
+        nameDialogAlbumId = null;
+        nameDialogTitle = "";
+    }
+
+    private void OpenRenameDialog(string? albumId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(albumId)) return;
+        nameDialogMode = NameDialogMode.Rename;
+        nameDialogAlbumId = albumId;
+        nameDialogTitle = albums.FirstOrDefault(a => a.Id == albumId)?.Title ?? "";
+    }
+
+    private void CancelNameDialog()
+    {
+        nameDialogMode = NameDialogMode.None;
+        nameDialogAlbumId = null;
+        nameDialogTitle = "";
+    }
+
+    private async Task ConfirmNameDialog()
+    {
+        if (nameDialogMode == NameDialogMode.Create)
+            await ConfirmCreateAlbum();
+        else
+            await ConfirmRename();
+    }
+
+    private async Task ConfirmCreateAlbum()
+    {
+        if (string.IsNullOrWhiteSpace(nameDialogTitle)) return;
+        var id = Guid.NewGuid().ToString("N");
+        var title = nameDialogTitle.Trim();
+        await GalleryStore.CreateAlbumAsync(id, title);
+        albums = await GalleryStore.LoadIndexAsync();
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(id, title);
+        CancelNameDialog();
+        await LoadAlbum(id);
+    }
+
+    private async Task ConfirmRename()
+    {
+        if (nameDialogAlbumId is null || string.IsNullOrWhiteSpace(nameDialogTitle))
+            return;
+        var title = nameDialogTitle.Trim();
+        await GalleryStore.UpdateAlbumMetaAsync(nameDialogAlbumId, title);
+        albums = await GalleryStore.LoadIndexAsync();
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(nameDialogAlbumId, title);
+        CancelNameDialog();
+        StateHasChanged();
+    }
+
+    private async Task NameDialogKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(nameDialogTitle))
+            await ConfirmNameDialog();
+        else if (e.Key == "Escape")
+            CancelNameDialog();
+    }
+
+    private async Task DeleteAlbum(string id)
+    {
+        var deletedAt = await GalleryStore.DeleteAlbumAsync(id);
+        albums = await GalleryStore.LoadIndexAsync();
+        SyncBridge.ScheduleAutoSyncAlbumDeleteAfterLocalDelete(id, deletedAt);
+        unlockedAlbumIds.Remove(id);
+
+        // Drop SQLite freelist / legacy blobs so the storage meter falls.
+        try { await StorageQuota.CompactAsync(); } catch { /* non-fatal */ }
+
+        if (activeAlbumId == id)
+        {
+            activeAlbumId = null;
+            currentImages = new();
+            InvalidateLiveImages();
+            await ClearLightboxAsync();
+            if (albums.Any())
+            {
+                activeAlbumId = albums.OrderByDescending(n => n.LastUpdated).First().Id;
+                await LoadAlbum(activeAlbumId);
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void OpenUnlockDialog(string albumId, bool thenLoad = false)
+    {
+        unlockTargetAlbumId = albumId;
+        unlockPassword = "";
+        unlockError = null;
+        unlockBusy = false;
+        unlockThenLoad = thenLoad;
+        pendingRemoveProtectionAlbumId = null;
+        showUnlockDialog = true;
+    }
+
+    private void CancelUnlockDialog()
+    {
+        showUnlockDialog = false;
+        unlockTargetAlbumId = null;
+        unlockPassword = "";
+        unlockError = null;
+        unlockBusy = false;
+        unlockThenLoad = false;
+        pendingRemoveProtectionAlbumId = null;
+    }
+
+    private async Task UnlockDialogKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !unlockBusy && !string.IsNullOrWhiteSpace(unlockPassword))
+            await ConfirmUnlockDialog();
+        else if (e.Key == "Escape")
+            CancelUnlockDialog();
+    }
+
+    private async Task ConfirmUnlockDialog()
+    {
+        if (string.IsNullOrEmpty(unlockTargetAlbumId) || string.IsNullOrWhiteSpace(unlockPassword))
+            return;
+
+        unlockBusy = true;
+        unlockError = null;
+        try
+        {
+            var (success, err) = await AuthService.VerifyPasswordAsync(unlockPassword);
+            if (!success)
+            {
+                unlockError = err ?? "Incorrect password.";
+                return;
+            }
+
+            var albumId = unlockTargetAlbumId;
+            var shouldLoad = unlockThenLoad;
+            var removeProtection = pendingRemoveProtectionAlbumId != null
+                && string.Equals(pendingRemoveProtectionAlbumId, albumId, StringComparison.OrdinalIgnoreCase);
+
+            CancelUnlockDialog();
+
+            if (removeProtection)
+            {
+                await GalleryStore.SetPasswordProtectedAsync(albumId, false);
+                albums = await GalleryStore.LoadIndexAsync();
+                unlockedAlbumIds.Remove(albumId);
+                SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(
+                    albumId,
+                    albums.FirstOrDefault(n => n.Id == albumId)?.Title ?? "");
+            }
+            else
+            {
+                unlockedAlbumIds.Add(albumId);
+                if (shouldLoad)
+                {
+                    activeAlbumId = albumId;
+                    currentImages = await GalleryStore.LoadAlbumThumbsAsync(albumId);
+                    InvalidateLiveImages();
+                }
+            }
+
+            StateHasChanged();
+        }
+        finally
+        {
+            unlockBusy = false;
+        }
+    }
+
+    private async Task ProtectAlbum(string? albumId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(albumId)) return;
+        if (!AuthService.IsAuthenticated || !AuthService.HasPassword) return;
+
+        await GalleryStore.SetPasswordProtectedAsync(albumId, true);
+        albums = await GalleryStore.LoadIndexAsync();
+        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(
+            albumId,
+            albums.FirstOrDefault(n => n.Id == albumId)?.Title ?? "");
+
+        if (activeAlbumId == albumId)
+            unlockedAlbumIds.Add(albumId);
+
+        StateHasChanged();
+    }
+
+    private void RemoveAlbumProtection(string? albumId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(albumId)) return;
+        unlockTargetAlbumId = albumId;
+        unlockPassword = "";
+        unlockError = null;
+        unlockBusy = false;
+        unlockThenLoad = false;
+        pendingRemoveProtectionAlbumId = albumId;
+        showUnlockDialog = true;
+    }
+
+    private async Task ExportAlbum(string? albumId)
+    {
+        CloseMenu();
+        if (string.IsNullOrEmpty(albumId)) return;
+
+        var album = albums.FirstOrDefault(a => a.Id == albumId);
+        if (album == null) return;
+
+        if (album.IsPasswordProtected && !unlockedAlbumIds.Contains(album.Id))
+        {
+            OpenUnlockDialog(album.Id, thenLoad: true);
+            return;
+        }
+
+        var images = (await GalleryStore.LoadAlbumAsync(album.Id)).Where(i => i.DeletedAt is null).ToList();
+        if (!images.Any()) return;
+        await DownloadGalleryHtml(album.Title, images, SanitizeFileName(album.Title) + ".html");
+    }
+
+    private async Task ExportAllAlbums()
+    {
+        CloseExportAllMenu();
+        var sb = new StringBuilder();
+        sb.Append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>Gallery Export</title>");
+        sb.Append("<style>body{font-family:system-ui,sans-serif;margin:24px;background:#111;color:#eee}");
+        sb.Append("h1,h2{margin:1.2rem 0 0.5rem} .grid{display:flex;flex-wrap:wrap;gap:8px}");
+        sb.Append("img{max-width:240px;max-height:240px;object-fit:cover;border-radius:8px}</style></head><body>");
+        sb.Append("<h1>Gallery Export</h1>");
+
+        var any = false;
+        foreach (var a in albums.OrderByDescending(x => x.LastUpdated))
+        {
+            if (a.IsPasswordProtected && !unlockedAlbumIds.Contains(a.Id))
+                continue;
+            var images = (await GalleryStore.LoadAlbumAsync(a.Id)).Where(i => i.DeletedAt is null).ToList();
+            if (!images.Any()) continue;
+            any = true;
+            sb.Append("<h2>").Append(EncodeHtml(a.Title)).Append("</h2><div class=\"grid\">");
+            foreach (var img in images)
+            {
+                if (string.IsNullOrEmpty(img.DataUrl)) continue;
+                sb.Append("<img src=\"").Append(img.DataUrl).Append("\" alt=\"").Append(EncodeHtml(img.Name)).Append("\"/>");
+            }
+            sb.Append("</div>");
+        }
+
+        sb.Append("</body></html>");
+        if (!any) return;
+
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));
+        try
+        {
+            await JS.InvokeAsync<bool>("downloadBase64File", b64, "gallery-export.html", "text/html");
+        }
+        catch { /* ignore */ }
+    }
+
+    private async Task DownloadGalleryHtml(string title, List<GalleryImage> images, string fileName)
+    {
+        var sb = new StringBuilder();
+        sb.Append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>").Append(EncodeHtml(title)).Append("</title>");
+        sb.Append("<style>body{font-family:system-ui,sans-serif;margin:24px;background:#111;color:#eee}");
+        sb.Append("h1{margin:0 0 1rem}.grid{display:flex;flex-wrap:wrap;gap:8px}");
+        sb.Append("img{max-width:320px;max-height:320px;object-fit:cover;border-radius:8px}</style></head><body>");
+        sb.Append("<h1>").Append(EncodeHtml(title)).Append("</h1><div class=\"grid\">");
+        foreach (var img in images)
+        {
+            if (string.IsNullOrEmpty(img.DataUrl)) continue;
+            sb.Append("<img src=\"").Append(img.DataUrl).Append("\" alt=\"").Append(EncodeHtml(img.Name)).Append("\"/>");
+        }
+        sb.Append("</div></body></html>");
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));
+        try
+        {
+            await JS.InvokeAsync<bool>("downloadBase64File", b64, fileName, "text/html");
+        }
+        catch { /* ignore */ }
+    }
+
+    private static string EncodeHtml(string s) =>
+        s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+
+    private static readonly char[] InvalidFileNameChars = { '<', '>', ':', '"', '|', '?', '*', '\\', '/' };
+
+    private static string SanitizeFileName(string name) =>
+        new string(name.Select(c => InvalidFileNameChars.Contains(c) ? '_' : c).ToArray())
+            .Replace(" ", "_");
+
+    public ValueTask DisposeAsync()
+    {
+        if (_sidebarStateChangedHandler is not null)
+            SidebarState.OnChanged -= _sidebarStateChangedHandler;
+        if (_gallerySyncChangedHandler is not null)
+            SyncBridge.OnGalleryChanged -= _gallerySyncChangedHandler;
+        return ValueTask.CompletedTask;
+    }
+}

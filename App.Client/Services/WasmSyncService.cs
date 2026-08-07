@@ -33,6 +33,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private readonly IAuthService _auth;
     private readonly IConversationStore _conversationStore;
     private readonly INoteStore _noteStore;
+    private readonly IGalleryStore _galleryStore;
+    private readonly IStorageQuotaService _storageQuota;
     private readonly ChatModelCatalogService _modelCatalog;
     private readonly IKeyStore _keyStore;
     private readonly ChatCompletionService _chatCompletion;
@@ -51,6 +53,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string SyncTargetDevicesKey = "app-sync-target-devices";
     private const string AutoSyncChatKey = "app-auto-sync-chat";
     private const string AutoSyncNotesKey = "app-auto-sync-notes";
+    private const string AutoSyncGalleryKey = "app-auto-sync-gallery";
     private const string SyncToAllDevicesKey = "app-sync-to-all-devices";
     private const string AutoSyncLocalAiKey = "app-auto-sync-local-ai";
     private const string AutoSyncLemonadeKey = "app-auto-sync-lemonade";
@@ -88,6 +91,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public bool SyncToAllDevices { get; private set; } = true;
     public bool AutoSyncChatHistory { get; private set; } = true;
     public bool AutoSyncNotes { get; private set; } = true;
+    public bool AutoSyncGallery { get; private set; } = true;
     public bool AutoSyncBookmarks => false;
     public bool AutoSyncInstalledApps => false;
     public bool AutoSyncLocalAi { get; private set; } = true;
@@ -114,8 +118,11 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     /// Fired when a note is added or updated via incoming sync (background or foreground).
     /// </summary>
     public event Action? OnNotesChanged;
+    public event Action? OnGalleryChanged;
 
     public event Action<string, string, string>? OnSyncPayloadReceived;
+    public event Action<string, string, string>? OnAlbumSyncPayloadReceived;
+    public event Action<string, string>? OnAlbumSyncAckReceived;
 
     private readonly HashSet<string> _syncTargetDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _devicesSnapshotInitialized;
@@ -133,6 +140,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         IAuthService auth,
         IConversationStore conversationStore,
         INoteStore noteStore,
+        IGalleryStore galleryStore,
         ChatModelCatalogService modelCatalog,
         IKeyStore keyStore,
         ChatCompletionService chatCompletion,
@@ -145,6 +153,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         _auth = auth;
         _conversationStore = conversationStore;
         _noteStore = noteStore;
+        _galleryStore = galleryStore;
         _modelCatalog = modelCatalog;
         _keyStore = keyStore;
         _chatCompletion = chatCompletion;
@@ -163,15 +172,20 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             },
             () => _hub?.State == HubConnectionState.Connected,
             transportCallbacks: this,
-            settingsStore: _settingsSync);
+            settingsStore: _settingsSync,
+            galleryStore: _galleryStore,
+            storageQuota: null); // resolved lazily if needed; inject later if DI available at ctor
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
+        _coordinator.OnGalleryChanged += () => OnGalleryChanged?.Invoke();
         _coordinator.OnSettingsChanged += () => OnSettingsChanged?.Invoke();
         _coordinator.OnSyncPayloadReceived += (c, j, f) => OnSyncPayloadReceived?.Invoke(c, j, f);
         _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
         _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => OnNoteSyncPayloadReceived?.Invoke(n, j, f);
         _coordinator.OnNoteSyncAckReceived += (n, f) => OnNoteSyncAckReceived?.Invoke(n, f);
+        _coordinator.OnAlbumSyncPayloadReceived += (a, j, f) => OnAlbumSyncPayloadReceived?.Invoke(a, j, f);
+        _coordinator.OnAlbumSyncAckReceived += (a, f) => OnAlbumSyncAckReceived?.Invoke(a, f);
 
         _auth.OnChanged += OnAuthChanged;
     }
@@ -312,6 +326,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             SyncToAllDevices = await LoadBoolPrefAsync(SyncToAllDevicesKey, defaultValue: true);
             AutoSyncChatHistory = await LoadBoolPrefAsync(AutoSyncChatKey, defaultValue: true);
             AutoSyncNotes = await LoadBoolPrefAsync(AutoSyncNotesKey, defaultValue: true);
+            AutoSyncGallery = await LoadBoolPrefAsync(AutoSyncGalleryKey, defaultValue: true);
             AutoSyncLocalAi = await LoadBoolPrefAsync(AutoSyncLocalAiKey, defaultValue: true);
             AutoSyncLemonade = await LoadBoolPrefAsync(AutoSyncLemonadeKey, defaultValue: true);
             AutoSyncCloudProviders = await LoadBoolPrefAsync(AutoSyncCloudProvidersKey, defaultValue: true);
@@ -479,6 +494,14 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         AutoSyncNotes = enabled;
         await SetUserSettingAsync(AutoSyncNotesKey, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    public async Task SetAutoSyncGalleryAsync(bool enabled)
+    {
+        AutoSyncGallery = enabled;
+        await SetUserSettingAsync(AutoSyncGalleryKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -759,6 +782,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         _coordinator.AutoSyncChatHistory = AutoSyncChatHistory;
         _coordinator.AutoSyncNotes = AutoSyncNotes;
+        _coordinator.AutoSyncGallery = AutoSyncGallery;
         _coordinator.AutoSyncLocalAi = AutoSyncLocalAi;
         _coordinator.AutoSyncLemonade = AutoSyncLemonade;
         _coordinator.AutoSyncCloudProviders = AutoSyncCloudProviders;
@@ -770,6 +794,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.AutoSyncAppearance = AutoSyncAppearance;
         _coordinator.SyncTargetDeviceIds = GetEffectiveSyncTargetDeviceIds();
         _coordinator.IsSelf = IsSelf;
+        _coordinator.LocalDeviceId = MyDeviceId;
         _coordinator.IsAuthenticated = () => _auth.IsAuthenticated;
         _coordinator.EnsureConnectedAsync = EnsureConnectedAndRegisteredAsync;
         _coordinator.GetDevices = () => Devices;
@@ -843,6 +868,18 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         return _coordinator.StartWebRtcNoteSyncAsync(targetDeviceId, noteId, title, entries);
     }
 
+    public Task StartWebRtcAlbumSyncAsync(string targetDeviceId, string albumId, string title)
+    {
+        EnsureCoordinatorWired();
+        return _coordinator.StartWebRtcAlbumSyncAsync(targetDeviceId, albumId, title);
+    }
+
+    public Task StartWebRtcAlbumImageSyncAsync(string targetDeviceId, string albumId, string imageId)
+    {
+        EnsureCoordinatorWired();
+        return _coordinator.StartWebRtcAlbumImageSyncAsync(targetDeviceId, albumId, imageId);
+    }
+
     public Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark) =>
         Task.CompletedTask;
 
@@ -862,6 +899,12 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         return _coordinator.SyncAllNotesToDevicesAsync(targetDeviceIds);
+    }
+
+    public Task<int> SyncAllAlbumsToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return _coordinator.SyncAllAlbumsToDevicesAsync(targetDeviceIds);
     }
 
     public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
@@ -892,6 +935,30 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         _coordinator.ScheduleAutoSyncNoteDeleteAfterLocalDelete(noteId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncAlbumMetaAfterLocalSave(string albumId, string title)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncAlbumMetaAfterLocalSave(albumId, title);
+    }
+
+    public void ScheduleAutoSyncAlbumDeleteAfterLocalDelete(string albumId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncAlbumDeleteAfterLocalDelete(albumId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncAlbumImageAfterLocalSave(string albumId, string imageId)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncAlbumImageAfterLocalSave(albumId, imageId);
+    }
+
+    public void ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(string albumId, string imageId, DateTime deletedAtUtc)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(albumId, imageId, deletedAtUtc);
     }
 
     public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId) { }

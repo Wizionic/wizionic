@@ -172,6 +172,8 @@ builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthSer
 builder.Services.AddScoped<NullSyncService>();
 builder.Services.AddScoped<ISyncService>(sp => sp.GetRequiredService<NullSyncService>());
 builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
+builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
+builder.Services.AddSingleton<IStorageQuotaService>(_ => NullStorageQuotaService.Instance);
 builder.Services.AddSingleton<App.Core.Storage.ISettingsSyncStore>(
     _ => App.Shared.Services.NullSettingsSyncStore.Instance);
 
