@@ -17,6 +17,7 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
     private const string GuestNamespace = "wasmchat-";
     private const string ConvoPrefix = "wasmchat-convo-";
     private const string NotePrefix = "n-wasmchat-note-";
+    private const string AlbumPrefix = "a-wasmchat-album-";
     private const string LastConvoKey = "wasmchat-last-convo";
     private const string GuestEncryptionKeySetting = "guest-encryption-key";
 
@@ -67,7 +68,8 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
 
             var guestConvoMetas = await GetGuestConvoMetasAsync();
             var guestNoteMetas = await GetGuestNoteMetasAsync();
-            if (guestConvoMetas.Count == 0 && guestNoteMetas.Count == 0)
+            var guestAlbumMetas = await GetGuestAlbumMetasAsync();
+            if (guestConvoMetas.Count == 0 && guestNoteMetas.Count == 0 && guestAlbumMetas.Count == 0)
                 return;
 
             var guestKey = await _js.InvokeAsync<string?>("idbGetSetting", GuestEncryptionKeySetting);
@@ -80,11 +82,12 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
             var idMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var migratedConvos = await MigrateConversationsAsync(guestConvoMetas, authNs, authKey, guestKey, idMap);
             var migratedNotes = await MigrateNotesAsync(guestNoteMetas, authNs, authKey, guestKey, idMap);
+            var migratedAlbums = await MigrateAlbumsAsync(guestAlbumMetas, authNs, authKey, guestKey, idMap);
             await MigrateLastConvoSettingAsync(authNs, idMap);
 
-            if (migratedConvos > 0 || migratedNotes > 0)
+            if (migratedConvos > 0 || migratedNotes > 0 || migratedAlbums > 0)
             {
-                Console.WriteLine($"[GuestMigration] Migrated {migratedConvos} conversation(s) and {migratedNotes} note(s) to {authNs}");
+                Console.WriteLine($"[GuestMigration] Migrated {migratedConvos} conversation(s), {migratedNotes} note(s), {migratedAlbums} album(s) to {authNs}");
                 OnMigrated?.Invoke();
             }
         }
@@ -110,6 +113,21 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
         return metas
             .Where(m => string.IsNullOrEmpty(m.deletedAt))
             .ToList();
+    }
+
+    private async Task<List<AlbumStoredMeta>> GetGuestAlbumMetasAsync()
+    {
+        try
+        {
+            var metas = await _js.InvokeAsync<List<AlbumStoredMeta>>("idbGetAlbumMetasByNamespace", GuestNamespace);
+            return metas
+                .Where(m => string.IsNullOrEmpty(m.deletedAt))
+                .ToList();
+        }
+        catch
+        {
+            return new List<AlbumStoredMeta>();
+        }
     }
 
     private async Task<int> MigrateConversationsAsync(
@@ -283,6 +301,101 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
         return true;
     }
 
+    private async Task<int> MigrateAlbumsAsync(
+        List<AlbumStoredMeta> guestMetas,
+        string authNs,
+        string authKey,
+        string guestKey,
+        Dictionary<string, string> idMap)
+    {
+        if (guestMetas.Count == 0)
+            return 0;
+
+        List<AlbumStoredMeta> authMetas;
+        try
+        {
+            authMetas = await _js.InvokeAsync<List<AlbumStoredMeta>>("idbGetAlbumMetasByNamespace", authNs);
+        }
+        catch
+        {
+            authMetas = new List<AlbumStoredMeta>();
+        }
+
+        var authIds = authMetas
+            .Where(m => string.IsNullOrEmpty(m.deletedAt))
+            .Select(m => m.id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var migrated = 0;
+        foreach (var guestMeta in guestMetas)
+        {
+            var targetId = ResolveTargetId(guestMeta.id, authIds, idMap);
+            if (!await TryReencryptAndStoreAlbumAsync(guestMeta, targetId, authNs, authKey, guestKey))
+                continue;
+
+            authIds.Add(targetId);
+            migrated++;
+        }
+
+        return migrated;
+    }
+
+    private async Task<bool> TryReencryptAndStoreAlbumAsync(
+        AlbumStoredMeta guestMeta,
+        string targetId,
+        string authNs,
+        string authKey,
+        string guestKey)
+    {
+        var encrypted = await _js.InvokeAsync<string?>("idbGetAlbumContent", guestMeta.key);
+        if (string.IsNullOrEmpty(encrypted))
+        {
+            try { await _js.InvokeVoidAsync("idbDeleteAlbumContent", guestMeta.key); } catch { }
+            return false;
+        }
+
+        var plaintext = await _crypto.DecryptAsync(guestKey, encrypted);
+        if (string.IsNullOrEmpty(plaintext))
+        {
+            Console.WriteLine($"[GuestMigration] Could not decrypt album {guestMeta.id}; leaving guest copy.");
+            return false;
+        }
+
+        var reencrypted = await _crypto.EncryptAsync(authKey, plaintext);
+        var newKey = authNs + AlbumPrefix + targetId;
+        await _js.InvokeVoidAsync("idbPutAlbumContent", newKey, reencrypted);
+
+        var title = string.IsNullOrWhiteSpace(guestMeta.title) ? "(empty)" : guestMeta.title;
+        var images = JsonSerializer.Deserialize<List<GalleryImage>>(plaintext) ?? new List<GalleryImage>();
+        images = GallerySyncMerger.NormalizeAll(images);
+        var isProtected = guestMeta.isPasswordProtected == true;
+        var proticks = isProtected ? DateTime.UtcNow.Ticks : 0L;
+        var refs = images.Select((img, i) => new AlbumImageRef(
+            img.Id,
+            SyncFingerprint.ForAlbumImage(targetId, GalleryImageSyncPayload.ForWire(img)),
+            i,
+            img.DeletedAt?.Ticks)).ToList();
+        var fingerprint = SyncFingerprint.ForAlbumMeta(targetId, title, refs, isProtected, proticks);
+
+        await _js.InvokeVoidAsync("idbPutAlbumMeta", new
+        {
+            key = newKey,
+            id = targetId,
+            @namespace = authNs,
+            title,
+            lastUpdated = guestMeta.lastUpdated,
+            syncEnabled = true,
+            contentFingerprint = fingerprint,
+            deletedAt = "",
+            isPasswordProtected = isProtected,
+            sortOrder = guestMeta.sortOrder ?? 0,
+            protectionChangedTicks = proticks
+        });
+
+        try { await _js.InvokeVoidAsync("idbDeleteAlbumContent", guestMeta.key); } catch { }
+        return true;
+    }
+
     private async Task MigrateLastConvoSettingAsync(string authNs, Dictionary<string, string> idMap)
     {
         var guestLastConvo = await _js.InvokeAsync<string?>("idbGetSetting", GuestNamespace + LastConvoKey);
@@ -319,4 +432,16 @@ public class WasmGuestDataMigrationService : IGuestDataMigrationService
         string? contentFingerprint,
         string? deletedAt,
         bool? isPasswordProtected = null);
+
+    private record AlbumStoredMeta(
+        string key,
+        string id,
+        string @namespace,
+        string title,
+        string lastUpdated,
+        bool syncEnabled,
+        string? contentFingerprint,
+        string? deletedAt,
+        bool? isPasswordProtected = null,
+        int? sortOrder = null);
 }

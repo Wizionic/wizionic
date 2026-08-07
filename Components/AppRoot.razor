@@ -26,6 +26,7 @@
     <script src="_content/App.Shared/js/navLayoutInterop.js"></script>
     <script src="_content/App.Shared/js/sidebarInterop.js"></script>
     <script src="_content/App.Shared/js/notesReorderInterop.js"></script>
+    <script src="_content/App.Shared/js/galleryInterop.js"></script>
     <script>window.appTheme.applyEarly(); window.appNavLayout && window.appNavLayout.apply('top');</script>
 
     <HeadOutlet />
@@ -406,6 +407,23 @@
             );
         }
 
+        // Large gallery payloads (multi-MB) blow the stack with String.fromCharCode.apply on the whole array.
+        function uint8ToBase64(bytes) {
+            let binary = "";
+            const chunk = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunk) {
+                binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+            }
+            return btoa(binary);
+        }
+
+        function base64ToUint8(b64) {
+            const binary = atob(b64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        }
+
         window.encryptLocalData = async (base64Key, plaintext) => {
             if (!base64Key || !plaintext) return plaintext || "";
             try {
@@ -421,7 +439,7 @@
                 combined.set(iv, 0);
                 combined.set(new Uint8Array(ciphertext), iv.length);
                 // Return a single base64 string (IV || ciphertext) for easy storage.
-                return btoa(String.fromCharCode.apply(null, combined));
+                return uint8ToBase64(combined);
             } catch (e) {
                 console.warn("encryptLocalData failed, returning plaintext", e);
                 return plaintext;
@@ -430,9 +448,13 @@
 
         window.decryptLocalData = async (base64Key, combinedBase64) => {
             if (!base64Key || !combinedBase64) return combinedBase64 || "";
+            // Plaintext JSON (legacy / encrypt fallback) — never run through atob.
+            const trimmed = combinedBase64.length > 0 ? combinedBase64[0] : "";
+            if (trimmed === "{" || trimmed === "[")
+                return combinedBase64;
             try {
                 const key = await getAesGcmKey(base64Key);
-                const combined = Uint8Array.from(atob(combinedBase64), c => c.charCodeAt(0));
+                const combined = base64ToUint8(combinedBase64);
                 const iv = combined.slice(0, 12);
                 const ciphertext = combined.slice(12);
                 const decrypted = await crypto.subtle.decrypt(
@@ -446,6 +468,29 @@
                 console.warn("decryptLocalData failed (legacy data?), returning as-is", e);
                 return combinedBase64;
             }
+        };
+
+        /// AES-GCM for raw bytes (gallery images). Returns Uint8Array = IV || ciphertext||tag.
+        window.encryptLocalBytes = async (base64Key, plainBytes) => {
+            if (!base64Key || !plainBytes) return plainBytes || new Uint8Array(0);
+            const key = await getAesGcmKey(base64Key);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const plain = plainBytes instanceof Uint8Array ? plainBytes : new Uint8Array(plainBytes);
+            const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain);
+            const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+            combined.set(iv, 0);
+            combined.set(new Uint8Array(ciphertext), iv.length);
+            return combined;
+        };
+
+        window.decryptLocalBytes = async (base64Key, combinedBytes) => {
+            if (!base64Key || !combinedBytes) return combinedBytes || new Uint8Array(0);
+            const key = await getAesGcmKey(base64Key);
+            const combined = combinedBytes instanceof Uint8Array ? combinedBytes : new Uint8Array(combinedBytes);
+            const iv = combined.slice(0, 12);
+            const ciphertext = combined.slice(12);
+            const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+            return new Uint8Array(decrypted);
         };
 
         // --------------------------------------------------------------------
@@ -474,7 +519,7 @@
         async function getWizionicDb() {
             if (_wizionicDbPromise) return _wizionicDbPromise;
             _wizionicDbPromise = new Promise((resolve, reject) => {
-                const req = indexedDB.open("app-conversations", 2);
+                const req = indexedDB.open("app-conversations", 4);
                 req.onupgradeneeded = (ev) => {
                     const db = ev.target.result;
                     if (!db.objectStoreNames.contains("convoMetas")) {
@@ -493,6 +538,20 @@
                     }
                     if (!db.objectStoreNames.contains("noteContents")) {
                         db.createObjectStore("noteContents", { keyPath: "key" });
+                    }
+                    if (!db.objectStoreNames.contains("albumMetas")) {
+                        const ameta = db.createObjectStore("albumMetas", { keyPath: "key" });
+                        ameta.createIndex("byNamespace", "namespace", { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains("albumContents")) {
+                        db.createObjectStore("albumContents", { keyPath: "key" });
+                    }
+                    if (!db.objectStoreNames.contains("albumImageMetas")) {
+                        const imeta = db.createObjectStore("albumImageMetas", { keyPath: "key" });
+                        imeta.createIndex("byNamespace", "namespace", { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains("albumImageContents")) {
+                        db.createObjectStore("albumImageContents", { keyPath: "key" });
                     }
                 };
                 req.onsuccess = () => resolve(req.result);
@@ -684,6 +743,320 @@
         };
 
         // --------------------------------------------------------------------
+        // IndexedDB helpers for Gallery (albumMetas + albumContents stores)
+        // Parallel to noteMetas/noteContents but keyed with "a-" prefix.
+        // --------------------------------------------------------------------
+        window.idbGetAlbumMetasByNamespace = async (namespace) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumMetas", "readonly");
+                const store = tx.objectStore("albumMetas");
+                const idx = store.index("byNamespace");
+                const req = idx.getAll(namespace || "");
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutAlbumMeta = async (meta) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumMetas", "readwrite");
+                tx.objectStore("albumMetas").put(meta);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetAlbumContent = async (key) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumContents", "readonly");
+                const req = tx.objectStore("albumContents").get(key);
+                req.onsuccess = () => resolve(req.result ? req.result.content : null);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutAlbumContent = async (key, content) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumContents", "readwrite");
+                tx.objectStore("albumContents").put({ key, content });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteAlbumContent = async (key) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumContents", "readwrite");
+                tx.objectStore("albumContents").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetAllAlbumMetas = async () => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumMetas", "readonly");
+                const req = tx.objectStore("albumMetas").getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbGetAlbumImageMetasByNamespace = async (namespace) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumImageMetas", "readonly");
+                const store = tx.objectStore("albumImageMetas");
+                const idx = store.index("byNamespace");
+                const req = idx.getAll(namespace || "");
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutAlbumImageMeta = async (meta) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumImageMetas", "readwrite");
+                tx.objectStore("albumImageMetas").put(meta);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteAlbumImageMeta = async (key) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumImageMetas", "readwrite");
+                tx.objectStore("albumImageMetas").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        // format: 'bin-v1' = encrypted raw image bytes (Uint8Array); legacy string = encrypted JSON GalleryImage
+        window.idbGetAlbumImageContent = async (key) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumImageContents", "readonly");
+                const req = tx.objectStore("albumImageContents").get(key);
+                req.onsuccess = () => {
+                    const row = req.result;
+                    if (!row) { resolve(null); return; }
+                    resolve({
+                        content: row.content,
+                        format: row.format || (typeof row.content === "string" ? "legacy" : "bin-v1")
+                    });
+                };
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutAlbumImageContent = async (key, content, format) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumImageContents", "readwrite");
+                tx.objectStore("albumImageContents").put({
+                    key,
+                    content,
+                    format: format || (typeof content === "string" ? "legacy" : "bin-v1")
+                });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteAlbumImageContent = async (key) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("albumImageContents", "readwrite");
+                tx.objectStore("albumImageContents").delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        /// Sum meta.size for images in a namespace (never opens content blobs).
+        window.idbSumAlbumImageMetaSizes = async (namespace) => {
+            const metas = await window.idbGetAlbumImageMetasByNamespace(namespace || "");
+            let sum = 0;
+            for (const m of metas || []) {
+                if (m.deletedAt) continue;
+                const s = typeof m.size === "number" ? m.size : parseInt(m.size, 10);
+                if (!isNaN(s) && s > 0) sum += s;
+            }
+            return sum;
+        };
+
+        /// Encrypt base64 image → bin-v1 ArrayBuffer in IDB (never stores multi-MB JSON).
+        window.galleryStoreImageBinary = async (contentKey, encKeyB64, dataBase64) => {
+            const plain = base64ToUint8(dataBase64);
+            let toStore = plain;
+            if (encKeyB64)
+                toStore = await window.encryptLocalBytes(encKeyB64, plain);
+            await window.idbPutAlbumImageContent(contentKey, toStore, "bin-v1");
+        };
+
+        /// Encrypt raw bytes (Uint8Array from .NET) → bin-v1 in IDB.
+        window.galleryStoreImageBinaryBytes = async (contentKey, encKeyB64, plainBytes) => {
+            const plain = plainBytes instanceof Uint8Array ? plainBytes : new Uint8Array(plainBytes);
+            let toStore = plain;
+            if (encKeyB64)
+                toStore = await window.encryptLocalBytes(encKeyB64, plain);
+            await window.idbPutAlbumImageContent(contentKey, toStore, "bin-v1");
+        };
+
+        // One-shot WASM upload: thumb + encrypt + IDB in JS (no multi-MB base64 round-trips).
+        // plainBytes = Uint8Array from .NET byte[]. Returns { width, height, thumbnailBase64, size, contentSha256Base64 }.
+        window.galleryIngestUpload = async (contentKey, encKeyB64, plainBytes, contentType, maxEdge) => {
+            maxEdge = maxEdge || 400;
+            const plain = plainBytes instanceof Uint8Array ? plainBytes : new Uint8Array(plainBytes);
+            const mime = (contentType && contentType.indexOf("image/") === 0) ? contentType : "image/jpeg";
+
+            // Thumb via blob URL (faster than multi-MB data: URL + avoids second base64).
+            let width = 0, height = 0, thumbnailBase64 = null;
+            try {
+                const blob = new Blob([plain], { type: mime });
+                const objUrl = URL.createObjectURL(blob);
+                try {
+                    const img = await new Promise((resolve, reject) => {
+                        const el = new Image();
+                        el.onload = () => resolve(el);
+                        el.onerror = () => reject(new Error("decode failed"));
+                        el.src = objUrl;
+                    });
+                    width = img.naturalWidth || img.width || 0;
+                    height = img.naturalHeight || img.height || 0;
+                    if (width > 0 && height > 0) {
+                        const scale = Math.min(1, maxEdge / Math.max(width, height));
+                        const tw = Math.max(1, Math.round(width * scale));
+                        const th = Math.max(1, Math.round(height * scale));
+                        const canvas = document.createElement("canvas");
+                        canvas.width = tw;
+                        canvas.height = th;
+                        canvas.getContext("2d").drawImage(img, 0, 0, tw, th);
+                        const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+                        const comma = dataUrl.indexOf(",");
+                        thumbnailBase64 = comma >= 0 ? dataUrl.substring(comma + 1) : null;
+                    }
+                } finally {
+                    URL.revokeObjectURL(objUrl);
+                }
+            } catch (e) {
+                console.warn("galleryIngestUpload thumb failed", e);
+            }
+
+            // Content hash for fingerprint (does not require serializing multi-MB JSON in .NET).
+            let contentSha256Base64 = "";
+            try {
+                const digest = await crypto.subtle.digest("SHA-256", plain);
+                contentSha256Base64 = uint8ToBase64(new Uint8Array(digest));
+            } catch (e) {
+                contentSha256Base64 = plain.length + ":" + (plain[0] || 0);
+            }
+
+            // Encrypt + store binary while still in JS.
+            let toStore = plain;
+            if (encKeyB64)
+                toStore = await window.encryptLocalBytes(encKeyB64, plain);
+            await window.idbPutAlbumImageContent(contentKey, toStore, "bin-v1");
+
+            return {
+                width,
+                height,
+                thumbnailBase64,
+                size: plain.byteLength,
+                contentSha256Base64
+            };
+        };
+
+        /// Decrypt bin-v1/legacy content → base64 of raw image bytes (for sync / rare full load).
+        window.galleryLoadImageBase64FromIdb = async (contentKey, encKeyB64) => {
+            try {
+                const rec = await window.idbGetAlbumImageContent(contentKey);
+                if (!rec || rec.content == null) return null;
+                let plainBytes;
+                if (rec.format === "bin-v1" || rec.content instanceof ArrayBuffer || ArrayBuffer.isView(rec.content)) {
+                    const cipher = rec.content instanceof Uint8Array
+                        ? rec.content
+                        : new Uint8Array(rec.content);
+                    plainBytes = encKeyB64
+                        ? await window.decryptLocalBytes(encKeyB64, cipher)
+                        : cipher;
+                } else if (typeof rec.content === "string") {
+                    let json = rec.content;
+                    if (encKeyB64)
+                        json = await window.decryptLocalData(encKeyB64, rec.content);
+                    if (!json || (json[0] !== "{" && json[0] !== "[")) return null;
+                    const obj = JSON.parse(json);
+                    return obj.DataBase64 || obj.dataBase64 || null;
+                } else {
+                    return null;
+                }
+                return uint8ToBase64(plainBytes);
+            } catch (e) {
+                console.warn("galleryLoadImageBase64FromIdb failed", e);
+                return null;
+            }
+        };
+
+        /// Decrypt stored gallery image entirely in JS and return a short-lived blob: URL.
+        window.galleryCreateObjectUrlFromIdb = async (contentKey, encKeyB64, contentType) => {
+            try {
+                const rec = await window.idbGetAlbumImageContent(contentKey);
+                if (!rec || rec.content == null) return null;
+                let plainBytes;
+                if (rec.format === "bin-v1" || rec.content instanceof ArrayBuffer || ArrayBuffer.isView(rec.content)) {
+                    const cipher = rec.content instanceof Uint8Array
+                        ? rec.content
+                        : new Uint8Array(rec.content);
+                    plainBytes = encKeyB64
+                        ? await window.decryptLocalBytes(encKeyB64, cipher)
+                        : cipher;
+                } else if (typeof rec.content === "string") {
+                    let json = rec.content;
+                    if (encKeyB64)
+                        json = await window.decryptLocalData(encKeyB64, rec.content);
+                    if (!json || (json[0] !== "{" && json[0] !== "[")) return null;
+                    const obj = JSON.parse(json);
+                    const b64 = obj.DataBase64 || obj.dataBase64 || "";
+                    if (!b64) return null;
+                    plainBytes = base64ToUint8(b64);
+                } else {
+                    return null;
+                }
+                const mime = (contentType && contentType.indexOf("image/") === 0) ? contentType : "image/jpeg";
+                const blob = new Blob([plainBytes], { type: mime });
+                return URL.createObjectURL(blob);
+            } catch (e) {
+                console.warn("galleryCreateObjectUrlFromIdb failed", e);
+                return null;
+            }
+        };
+
+        window.galleryObjectUrlFromBase64 = (b64, contentType) => {
+            try {
+                if (!b64) return null;
+                const bytes = base64ToUint8(b64);
+                const mime = (contentType && contentType.indexOf("image/") === 0) ? contentType : "image/jpeg";
+                return URL.createObjectURL(new Blob([bytes], { type: mime }));
+            } catch (e) {
+                console.warn("galleryObjectUrlFromBase64 failed", e);
+                return null;
+            }
+        };
+
+        window.galleryRevokeObjectUrl = (url) => {
+            try { if (url) URL.revokeObjectURL(url); } catch { /* ignore */ }
+        };
+
+        // --------------------------------------------------------------------
         // WebRTC helpers for Phase 2 real peer-to-peer chat history sync (DataChannel).
         // Signaling (offer/answer/ICE + sync-start) goes through SyncHub.
         // The actual (encrypted) history blob travels directly over the RTCDataChannel.
@@ -829,6 +1202,31 @@
             } catch (e) {
                 console.warn('[WebRTC] send failed:', e?.message || e);
                 return false;
+            }
+        };
+
+        // Pace multi-chunk transfers so SCTP outbound buffer does not overflow / drop.
+        window.storageEstimate = async () => {
+            try {
+                if (navigator.storage && navigator.storage.estimate) {
+                    const e = await navigator.storage.estimate();
+                    return { usage: e.usage || 0, quota: e.quota || 0 };
+                }
+            } catch (err) { console.warn('storageEstimate', err); }
+            return { usage: 0, quota: 0 };
+        };
+
+        window.webrtcWaitForSendBuffer = async (peerId, maxBufferedBytes) => {
+            const entry = window._webrtcConnections[peerId];
+            const dc = entry?.dataChannel;
+            if (!dc || dc.readyState !== 'open') return;
+            const limit = (typeof maxBufferedBytes === 'number' && maxBufferedBytes > 0)
+                ? maxBufferedBytes
+                : 256 * 1024;
+            let spins = 0;
+            while (dc.readyState === 'open' && (dc.bufferedAmount || 0) > limit && spins < 5000) {
+                await new Promise(r => setTimeout(r, 20));
+                spins++;
             }
         };
 

@@ -9,8 +9,10 @@
 @inject IAuthService AuthService
 @inject IConversationStore ConversationStore
 @inject INoteStore NoteStore
+@inject IGalleryStore GalleryStore
 @inject IBrowserStore BrowserStore
 @inject IBrowserSidebarStore SidebarStore
+@inject IStorageQuotaService StorageQuota
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
@@ -245,6 +247,63 @@
             </section>
         }
 
+        @* ── Panel: Storage limit ─────────────────────────────────────── *@
+        <section class="sync-panel">
+            <div class="sync-panel-header">
+                <h3 class="sync-panel-title">Storage limit</h3>
+                <button type="button" class="btn btn-outline-primary btn-sm" @onclick="RefreshStorageQuota" disabled="@_quotaBusy">
+                    @(_quotaBusy ? "…" : "Refresh")
+                </button>
+            </div>
+            <p class="sync-desc-text sync-panel-lead">
+                Cap how much local space Wizionic may use for <strong>all</strong> synced data (chat, notes, gallery, etc.).
+                Default is <strong>50% of available capacity</strong>
+                @if (_quotaSnapshot?.CapacitySource == "browser-quota")
+                {
+                    <span> (browser storage quota for this site).</span>
+                }
+                else if (_quotaSnapshot?.CapacitySource == "disk-free")
+                {
+                    <span> (free disk space on this device).</span>
+                }
+                else
+                {
+                    <span>.</span>
+                }
+            </p>
+            @if (_quotaSnapshot != null)
+            {
+                <div class="sync-muted-text" style="margin-bottom:8px;">
+                    Used: <strong>@FormatBytes(_quotaSnapshot.AppUsageBytes)</strong>
+                    · Capacity: <strong>@FormatBytes(_quotaSnapshot.AvailableCapacityBytes)</strong>
+                    · Your limit: <strong>@FormatBytes(_quotaSnapshot.EffectiveLimitBytes)</strong>
+                    (@_quotaPercent.ToString("0")%)
+                </div>
+                <div style="height:8px;background:var(--color-bg-muted,#eee);border-radius:4px;overflow:hidden;margin-bottom:12px;">
+                    <div style="height:100%;width:@QuotaBarPercent()%;background:var(--primary-blue,#4a90d9);"></div>
+                </div>
+            }
+            <label class="sync-auto-sync-label" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span>Use up to</span>
+                <input type="range" min="10" max="90" step="5" value="@_quotaPercent"
+                       @oninput="OnQuotaPercentInput" style="flex:1;min-width:120px;" />
+                <strong style="min-width:3rem;">@_quotaPercent.ToString("0")%</strong>
+                <button type="button" class="btn btn-outline-primary btn-sm" @onclick="SaveQuotaSettings" disabled="@_quotaBusy">Save</button>
+            </label>
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CompactStorage" disabled="@_quotaBusy">
+                    Reclaim free space
+                </button>
+                <span class="sync-muted-text" style="font-size:0.8rem;">
+                    MAUI data folder: local chat/notes/gallery live in the app data DB (not homeserver.db).
+                </span>
+            </div>
+            @if (!string.IsNullOrEmpty(_quotaMessage))
+            {
+                <div class="sync-muted-text" style="margin-top:8px;">@_quotaMessage</div>
+            }
+        </section>
+
         @* ── Panel 3: What to sync ────────────────────────────────────── *@
         <section class="sync-panel">
             <div class="sync-panel-header">
@@ -269,6 +328,9 @@
                             </button>
                         }
                         <label class="sync-auto-sync-label ms-auto">
+                            <span class="sync-muted-text" style="margin-right:10px;font-size:0.85rem;" title="Local encrypted chat history size">
+                                @FormatBytes(_quotaSnapshot?.ChatHistoryBytes ?? 0)
+                            </span>
                             <input type="checkbox" checked="@SyncService.AutoSyncChatHistory" @onchange="ToggleAutoSyncChat" />
                             Auto sync
                         </label>
@@ -312,6 +374,9 @@
                             </button>
                         }
                         <label class="sync-auto-sync-label ms-auto">
+                            <span class="sync-muted-text" style="margin-right:10px;font-size:0.85rem;" title="Local encrypted notes size">
+                                @FormatBytes(_quotaSnapshot?.NotesBytes ?? 0)
+                            </span>
                             <input type="checkbox" checked="@SyncService.AutoSyncNotes" @onchange="ToggleAutoSyncNotes" />
                             Auto sync
                         </label>
@@ -338,6 +403,52 @@
                         else
                         {
                             <div class="sync-muted-text">No notes yet on this device.</div>
+                        }
+                    }
+                </div>
+
+                @* Gallery *@
+                <div class="sync-category-row">
+                    <div class="sync-section-header">
+                        <h4 class="sync-category-title">Gallery</h4>
+                        @if (!SyncService.AutoSyncGallery)
+                        {
+                            <button @onclick="SyncAllAlbums"
+                                    class="btn btn-outline-primary btn-sm"
+                                    disabled="@(!HasSyncTargets || !localAlbums.Any() || isBulkSyncing)">
+                                @(isBulkSyncing ? "Syncing…" : "Sync All")
+                            </button>
+                        }
+                        <label class="sync-auto-sync-label ms-auto">
+                            <span class="sync-muted-text" style="margin-right:10px;font-size:0.85rem;" title="Local encrypted gallery images size">
+                                @FormatBytes(_quotaSnapshot?.GalleryBytes ?? 0)
+                            </span>
+                            <input type="checkbox" checked="@SyncService.AutoSyncGallery" @onchange="ToggleAutoSyncGallery" />
+                            Auto sync
+                        </label>
+                    </div>
+                    @if (!SyncService.AutoSyncGallery)
+                    {
+                        @if (localAlbums.Any())
+                        {
+                            <div class="sync-items-list">
+                                @foreach (var a in localAlbums.OrderByDescending(x => x.LastUpdated))
+                                {
+                                    <div class="cf-sync-card sync-item-row">
+                                        <div class="sync-item-info">
+                                            <div class="sync-item-title">@a.Title</div>
+                                            <div class="sync-item-date">@a.LastUpdated.ToLocalTime().ToString("MMM d, HH:mm")</div>
+                                        </div>
+                                        <button @onclick="() => SyncAlbum(a)"
+                                                class="btn btn-outline-primary btn-sm"
+                                                disabled="@(!HasSyncTargets)">Sync</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="sync-muted-text">No albums yet on this device.</div>
                         }
                     }
                 </div>
@@ -494,6 +605,7 @@
     private List<SyncDeviceInfo> devices = new();
     private List<LocalConvo> localConvos = new();
     private List<LocalNote> localNotes = new();
+    private List<LocalAlbum> localAlbums = new();
     private List<BrowserBookmark> localBookmarks = new();
     private List<SidebarApp> localApps = new();
     private HashSet<string> selectedTargetDeviceIds = new(StringComparer.OrdinalIgnoreCase);
@@ -501,6 +613,11 @@
     private string? statusMessage;
     private bool isRefreshing;
     private bool isBulkSyncing;
+
+    private StorageQuotaSnapshot? _quotaSnapshot;
+    private double _quotaPercent = 50;
+    private bool _quotaBusy;
+    private string? _quotaMessage;
 
     private bool HasSyncTargets => SyncService.GetEffectiveSyncTargetDeviceIds().Any();
 
@@ -529,7 +646,7 @@
         </div>
     };
 
-    private Action? _syncChangedHandler, _authChangedHandler, _conversationsChangedHandler, _notesChangedHandler;
+    private Action? _syncChangedHandler, _authChangedHandler, _conversationsChangedHandler, _notesChangedHandler, _galleryChangedHandler;
     private Action? _bookmarksChangedHandler, _appsChangedHandler, _syncDebugHandler;
     private bool _syncDebugEnabled;
     private bool _syncDebugCopied;
@@ -542,6 +659,8 @@
         await SyncService.InitializeAsync();
         localConvos = await ConversationStore.LoadIndexAsync();
         localNotes = await NoteStore.LoadIndexAsync();
+        localAlbums = await GalleryStore.LoadIndexAsync();
+        await RefreshStorageQuota();
 
         _syncDebugEnabled = SyncDebugLog.Enabled;
         _syncLogFilePath = SyncDebugLog.LogFilePath;
@@ -562,6 +681,8 @@
         SyncService.OnConversationsChanged += _conversationsChangedHandler;
         _notesChangedHandler = () => _ = RefreshNotesAsync();
         SyncService.OnNotesChanged += _notesChangedHandler;
+        _galleryChangedHandler = () => _ = RefreshAlbumsAsync();
+        SyncService.OnGalleryChanged += _galleryChangedHandler;
         _bookmarksChangedHandler = () => _ = RefreshBookmarksAsync();
         SyncService.OnBookmarksChanged += _bookmarksChangedHandler;
         _appsChangedHandler = () => _ = RefreshAppsAsync();
@@ -573,6 +694,8 @@
         SyncService.OnSyncAckReceived += HandleSyncAckReceived;
         SyncService.OnNoteSyncPayloadReceived += HandleIncomingNoteSyncPayload;
         SyncService.OnNoteSyncAckReceived += HandleNoteSyncAckReceived;
+        SyncService.OnAlbumSyncPayloadReceived += HandleIncomingAlbumSyncPayload;
+        SyncService.OnAlbumSyncAckReceived += HandleAlbumSyncAckReceived;
 
         if (AuthService.IsAuthenticated)
         {
@@ -591,6 +714,92 @@
 
     private async Task RefreshConversationsAsync() { localConvos = await ConversationStore.LoadIndexAsync(); await InvokeAsync(StateHasChanged); }
     private async Task RefreshNotesAsync() { localNotes = await NoteStore.LoadIndexAsync(); await InvokeAsync(StateHasChanged); }
+    private async Task RefreshAlbumsAsync() { localAlbums = await GalleryStore.LoadIndexAsync(); await InvokeAsync(StateHasChanged); }
+
+    private async Task RefreshStorageQuota()
+    {
+        _quotaBusy = true;
+        try
+        {
+            var settings = await StorageQuota.GetSettingsAsync();
+            _quotaPercent = settings.PercentOfAvailable;
+            _quotaSnapshot = await StorageQuota.GetSnapshotAsync();
+        }
+        catch (Exception ex)
+        {
+            _quotaMessage = "Could not read storage: " + ex.Message;
+        }
+        finally
+        {
+            _quotaBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnQuotaPercentInput(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), out var v))
+            _quotaPercent = Math.Clamp(v, 10, 90);
+    }
+
+    private async Task SaveQuotaSettings()
+    {
+        _quotaBusy = true;
+        try
+        {
+            await StorageQuota.SetSettingsAsync(new StorageQuotaSettings(_quotaPercent, null));
+            _quotaSnapshot = await StorageQuota.GetSnapshotAsync();
+            _quotaMessage = $"Saved. Limit is {FormatBytes(_quotaSnapshot.EffectiveLimitBytes)}.";
+        }
+        catch (Exception ex)
+        {
+            _quotaMessage = "Save failed: " + ex.Message;
+        }
+        finally
+        {
+            _quotaBusy = false;
+        }
+    }
+
+    private async Task CompactStorage()
+    {
+        _quotaBusy = true;
+        _quotaMessage = "Reclaiming free space…";
+        try
+        {
+            await StorageQuota.CompactAsync();
+            _quotaSnapshot = await StorageQuota.GetSnapshotAsync();
+            _quotaMessage =
+                $"Reclaimed. Used now {FormatBytes(_quotaSnapshot.AppUsageBytes)} " +
+                $"(chat {FormatBytes(_quotaSnapshot.ChatHistoryBytes)}, notes {FormatBytes(_quotaSnapshot.NotesBytes)}, " +
+                $"gallery {FormatBytes(_quotaSnapshot.GalleryBytes)}).";
+        }
+        catch (Exception ex)
+        {
+            _quotaMessage = "Compact failed: " + ex.Message;
+        }
+        finally
+        {
+            _quotaBusy = false;
+        }
+    }
+
+    private double QuotaBarPercent()
+    {
+        if (_quotaSnapshot == null || _quotaSnapshot.EffectiveLimitBytes <= 0)
+            return 0;
+        return Math.Min(100, 100.0 * _quotaSnapshot.AppUsageBytes / _quotaSnapshot.EffectiveLimitBytes);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        double v = bytes;
+        string[] units = { "KB", "MB", "GB", "TB" };
+        var i = -1;
+        do { v /= 1024; i++; } while (v >= 1024 && i < units.Length - 1);
+        return $"{v:0.##} {units[i]}";
+    }
     private async Task RefreshBookmarksAsync()
     {
         if (!AppEnvironment.IsMaui) return;
@@ -638,6 +847,7 @@
 
     private async Task ToggleAutoSyncChat(ChangeEventArgs e) { var enabled = e.Value is bool b2 && b2; await SyncService.SetAutoSyncChatHistoryAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncNotes(ChangeEventArgs e) { var enabled = e.Value is bool b3 && b3; await SyncService.SetAutoSyncNotesAsync(enabled); StateHasChanged(); }
+    private async Task ToggleAutoSyncGallery(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncGalleryAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncBookmarks(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncBookmarksAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncApps(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncInstalledAppsAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncLocalAi(ChangeEventArgs e) { await SyncService.SetAutoSyncLocalAiAsync(e.Value is bool b && b); StateHasChanged(); }
@@ -695,6 +905,22 @@
             var queued = await SyncService.SyncAllNotesToDevicesAsync(targets);
             var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
             statusMessage = $"Checking {queued} device(s) for notes that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
+        }
+        finally { isBulkSyncing = false; StateHasChanged(); }
+    }
+
+    private async Task SyncAllAlbums()
+    {
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        isBulkSyncing = true; StateHasChanged();
+        try
+        {
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+            if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
+            var queued = await SyncService.SyncAllAlbumsToDevicesAsync(targets);
+            var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
+            statusMessage = $"Checking {queued} device(s) for albums that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
         }
         finally { isBulkSyncing = false; StateHasChanged(); }
     }
@@ -815,6 +1041,27 @@
         StateHasChanged(); ScheduleAckTimeout();
     }
 
+    private async Task SyncAlbum(LocalAlbum album)
+    {
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        var tds = devices.Where(d => targets.Contains(d.DeviceId)).ToList();
+        await SyncService.EnsureConnectedAndRegisteredAsync();
+        if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; StateHasChanged(); return; }
+        // Thumbs/meta only — StartWebRtcAlbumImageSyncAsync loads full bytes from the store per image.
+        var images = await GalleryStore.LoadAlbumThumbsAsync(album.Id);
+        foreach (var tid in targets)
+        {
+            await SyncService.StartWebRtcAlbumSyncAsync(tid, album.Id, album.Title);
+            foreach (var img in images.Where(i => i.DeletedAt is null))
+                await SyncService.StartWebRtcAlbumImageSyncAsync(tid, album.Id, img.Id);
+        }
+        var tNames = tds.Select(d => d.Name).ToList();
+        var liveCount = images.Count(i => i.DeletedAt is null);
+        statusMessage = $"Initiated gallery sync for album \"{album.Title}\" (meta + {liveCount} image(s)) to: {string.Join(", ", tNames)}…";
+        StateHasChanged(); ScheduleAckTimeout();
+    }
+
     private async Task SyncConversation(LocalConvo convo)
     {
         var targets = CurrentTargets();
@@ -872,8 +1119,18 @@
     private void HandleNoteSyncAckReceived(string noteId, string fromPeerId)
     { statusMessage = $"Peer confirmed receipt of note \"{GetNoteTitle(noteId)}\"."; StateHasChanged(); ScheduleStatusClear("confirmed receipt"); }
 
+    private async void HandleIncomingAlbumSyncPayload(string albumId, string json, string fromDeviceId)
+    {
+        try { await RefreshAlbumsAsync(); statusMessage = $"Received sync for album \"{GetAlbumTitle(albumId)}\" from {fromDeviceId}."; StateHasChanged(); }
+        catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming album sync payload: {ex.Message}"); }
+    }
+
+    private void HandleAlbumSyncAckReceived(string albumId, string fromPeerId)
+    { statusMessage = $"Peer confirmed receipt of album \"{GetAlbumTitle(albumId)}\"."; StateHasChanged(); ScheduleStatusClear("confirmed receipt"); }
+
     private string GetConvoTitle(string id) => localConvos.FirstOrDefault(c => c.Id == id)?.Title ?? id;
     private string GetNoteTitle(string id) => localNotes.FirstOrDefault(n => n.Id == id)?.Title ?? id;
+    private string GetAlbumTitle(string id) => localAlbums.FirstOrDefault(a => a.Id == id)?.Title ?? id;
 
     private void ScheduleStatusClear(string marker)
     {
@@ -931,6 +1188,7 @@
         if (_authChangedHandler is not null) AuthService.OnChanged -= _authChangedHandler;
         if (_conversationsChangedHandler is not null) SyncService.OnConversationsChanged -= _conversationsChangedHandler;
         if (_notesChangedHandler is not null) SyncService.OnNotesChanged -= _notesChangedHandler;
+        if (_galleryChangedHandler is not null) SyncService.OnGalleryChanged -= _galleryChangedHandler;
         if (_bookmarksChangedHandler is not null) SyncService.OnBookmarksChanged -= _bookmarksChangedHandler;
         if (_appsChangedHandler is not null) SyncService.OnInstalledAppsChanged -= _appsChangedHandler;
         if (_syncDebugHandler is not null) SyncDebugLog.Changed -= _syncDebugHandler;
@@ -938,5 +1196,7 @@
         SyncService.OnSyncAckReceived -= HandleSyncAckReceived;
         SyncService.OnNoteSyncPayloadReceived -= HandleIncomingNoteSyncPayload;
         SyncService.OnNoteSyncAckReceived -= HandleNoteSyncAckReceived;
+        SyncService.OnAlbumSyncPayloadReceived -= HandleIncomingAlbumSyncPayload;
+        SyncService.OnAlbumSyncAckReceived -= HandleAlbumSyncAckReceived;
     }
 }

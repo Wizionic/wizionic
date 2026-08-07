@@ -32,6 +32,46 @@ public static class SyncFingerprint
         long protectionChangedTicks = 0) =>
         Compute(NoteSyncPayload.Serialize(noteId, title, entries, isPasswordProtected, protectionChangedTicks));
 
+    public static string ForAlbumMeta(
+        string albumId,
+        string title,
+        IReadOnlyList<AlbumImageRef> imageRefs,
+        bool isPasswordProtected = false,
+        long protectionChangedTicks = 0) =>
+        Compute(GalleryAlbumMetaPayload.Serialize(
+            albumId, title, imageRefs, isPasswordProtected, protectionChangedTicks));
+
+    public static string ForAlbumImage(string albumId, GalleryImage image)
+    {
+        // Prefer content hash when full bytes are present (avoids multi-MB JSON serialization).
+        if (!string.IsNullOrEmpty(image.DataBase64))
+        {
+            try
+            {
+                var raw = Convert.FromBase64String(image.DataBase64);
+                var size = image.Size > 0 ? image.Size : raw.LongLength;
+                return ForAlbumImageRaw(albumId, image.Id, size, raw);
+            }
+            catch
+            {
+                // fall through
+            }
+        }
+
+        // Meta-only / no body — still need a stable value for deletes & empty stubs.
+        return Compute(GalleryImageSyncPayload.Serialize(albumId, GalleryImageSyncPayload.WithoutThumbnail(image)));
+    }
+
+    /// <summary>Stable fingerprint from raw image bytes (SHA-256). Matches WASM galleryIngestUpload.</summary>
+    public static string ForAlbumImageRaw(string albumId, string imageId, long size, byte[] rawBytes)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(rawBytes);
+        return ForAlbumImageHash(albumId, imageId, size, Convert.ToBase64String(hash));
+    }
+
+    public static string ForAlbumImageHash(string albumId, string imageId, long size, string contentSha256Base64) =>
+        Compute($"img|{albumId}|{imageId}|{size}|{contentSha256Base64}");
+
     public static string ForBookmark(BrowserBookmark bookmark) =>
         Compute(BookmarkSyncPayload.Serialize(bookmark));
 
@@ -218,6 +258,103 @@ public record NoteSyncPayload(
         {
             return null;
         }
+    }
+}
+
+/// <summary>Lightweight image pointer inside album meta (no base64).</summary>
+public record AlbumImageRef(
+    string Id,
+    string ContentFingerprint,
+    int SortOrder = 0,
+    long? DeletedAtTicks = null);
+
+/// <summary>Album metadata only — title, protection, ordered image fingerprints.</summary>
+public record GalleryAlbumMetaPayload(
+    string AlbumId,
+    string Title,
+    List<AlbumImageRef> Images,
+    bool? IsPasswordProtected = null,
+    long? ProtectionChangedTicks = null)
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public static string Serialize(
+        string albumId,
+        string title,
+        IReadOnlyList<AlbumImageRef> images,
+        bool isPasswordProtected = false,
+        long protectionChangedTicks = 0) =>
+        JsonSerializer.Serialize(
+            new GalleryAlbumMetaPayload(
+                albumId,
+                title,
+                images?.ToList() ?? new List<AlbumImageRef>(),
+                isPasswordProtected,
+                protectionChangedTicks > 0 ? protectionChangedTicks : null),
+            JsonOpts);
+
+    public static GalleryAlbumMetaPayload? Deserialize(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<GalleryAlbumMetaPayload>(json, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>Single image create/update over the wire.</summary>
+public record GalleryImageSyncPayload(string AlbumId, GalleryImage Image)
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    /// <summary>Drop thumbnail bytes (for fingerprints only). Prefer keeping thumbs on wire and in local storage.</summary>
+    public static GalleryImage WithoutThumbnail(GalleryImage image) =>
+        string.IsNullOrEmpty(image.ThumbnailBase64) ? image : image with { ThumbnailBase64 = null };
+
+    /// <summary>Legacy alias — prefer <see cref="WithoutThumbnail"/>.</summary>
+    public static GalleryImage ForWire(GalleryImage image) => WithoutThumbnail(image);
+
+    /// <summary>Serialize for wire/local payload. Includes thumbnail so peers can render the grid without re-decoding full images.</summary>
+    public static string Serialize(string albumId, GalleryImage image) =>
+        JsonSerializer.Serialize(new GalleryImageSyncPayload(albumId, image), JsonOpts);
+
+    public static GalleryImageSyncPayload? Deserialize(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<GalleryImageSyncPayload>(json, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Stable manifest/ack id: albumId/imageId</summary>
+    public static string CompositeId(string albumId, string imageId) => $"{albumId}/{imageId}";
+
+    public static bool TrySplitCompositeId(string composite, out string albumId, out string imageId)
+    {
+        albumId = "";
+        imageId = "";
+        if (string.IsNullOrEmpty(composite))
+            return false;
+        var idx = composite.IndexOf('/');
+        if (idx <= 0 || idx >= composite.Length - 1)
+            return false;
+        albumId = composite[..idx];
+        imageId = composite[(idx + 1)..];
+        return !string.IsNullOrEmpty(albumId) && !string.IsNullOrEmpty(imageId);
     }
 }
 

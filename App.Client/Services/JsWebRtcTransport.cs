@@ -48,6 +48,9 @@ public sealed class JsWebRtcTransport : IWebRtcTransport, IAsyncDisposable
     public Task<int> GetMaxMessageSizeAsync(string peerId, CancellationToken ct = default) =>
         _js.InvokeAsync<int>("webrtcGetMaxMessageSize", ct, peerId).AsTask();
 
+    public Task WaitForSendBufferAsync(string peerId, int maxBufferedBytes = 256 * 1024, CancellationToken ct = default) =>
+        _js.InvokeVoidAsync("webrtcWaitForSendBuffer", ct, peerId, maxBufferedBytes).AsTask();
+
     public async Task CloseAsync(string peerId, bool suppressCallbacks = false, CancellationToken ct = default)
     {
         if (_peers.Remove(peerId, out var entry))

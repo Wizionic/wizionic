@@ -18,6 +18,44 @@ public record LocalNote(
     /// <summary>UTC ticks of last intentional lock/unlock (0 = unknown / legacy).</summary>
     long ProtectionChangedTicks = 0);
 
+public record LocalAlbum(
+    string Id,
+    string Title,
+    DateTime LastUpdated,
+    bool IsPasswordProtected = false,
+    int SortOrder = 0,
+    /// <summary>UTC ticks of last intentional lock/unlock (0 = unknown / legacy).</summary>
+    long ProtectionChangedTicks = 0);
+
+/// <summary>Single image inside a gallery album (encrypted with the album body).</summary>
+public record GalleryImage(
+    string Id,
+    string Name,
+    string ContentType,
+    string DataBase64,
+    long Size,
+    string? ThumbnailBase64 = null,
+    int? Width = null,
+    int? Height = null,
+    DateTime? Timestamp = null,
+    DateTime? ModifiedAt = null,
+    DateTime? DeletedAt = null)
+{
+    public string? DataUrl => !string.IsNullOrEmpty(DataBase64) && ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+        ? $"data:{ContentType};base64,{DataBase64}"
+        : null;
+
+    public string? ThumbnailUrl
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(ThumbnailBase64))
+                return $"data:image/jpeg;base64,{ThumbnailBase64}";
+            return DataUrl;
+        }
+    }
+}
+
 public record SyncManifestEntry(
     string Id,
     string Title,

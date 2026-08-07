@@ -233,6 +233,15 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
         return Task.FromResult(DefaultMaxMessageSize);
     }
 
+    public async Task WaitForSendBufferAsync(string peerId, int maxBufferedBytes = 256 * 1024, CancellationToken ct = default)
+    {
+        // SIPSorcery does not expose a reliable bufferedAmount; pace large sends with a short yield.
+        // Browser JS transport waits on RTCDataChannel.bufferedAmount instead.
+        // When maxBufferedBytes is small (post-send drain), wait longer so SCTP can flush.
+        var delayMs = maxBufferedBytes <= 8192 ? 40 : 12;
+        await Task.Delay(delayMs, ct);
+    }
+
     public async Task CloseAsync(string peerId, bool suppressCallbacks = false, CancellationToken ct = default)
     {
         await _peerGate.WaitAsync(ct);
