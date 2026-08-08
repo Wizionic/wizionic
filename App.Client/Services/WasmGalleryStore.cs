@@ -522,6 +522,9 @@ public class WasmGalleryStore : IGalleryStore
         int? w = ingest is { width: > 0 } ? ingest.width : null;
         int? h = ingest is { height: > 0 } ? ingest.height : null;
         var thumb = ingest?.thumbnailBase64;
+        // Tool path may lack circuit JS for canvas thumbs — keep a displayable tile source.
+        if (string.IsNullOrEmpty(thumb) && rawBytes.Length > 0)
+            thumb = Convert.ToBase64String(rawBytes);
 
         await _js.InvokeVoidAsync("idbPutAlbumImageMeta", new
         {

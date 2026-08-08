@@ -413,11 +413,13 @@ public class SqliteGalleryStore : IGalleryStore
         CancellationToken ct = default)
     {
         // MAUI: thumb via JS, encrypt native — still much faster than WASM base64 path.
+        // Tool saves often run outside the Blazor circuit scope (IServiceScopeFactory), so
+        // IJSRuntime may fail; always fall back so the thumbs-only grid can still render.
         int? w = null, h = null;
         string? thumb = null;
+        var b64 = Convert.ToBase64String(rawBytes);
         try
         {
-            var b64 = Convert.ToBase64String(rawBytes);
             var prep = await _js.InvokeAsync<PrepResult?>("galleryPrepareImage", b64, contentType, 400);
             if (prep != null)
             {
@@ -426,14 +428,17 @@ public class SqliteGalleryStore : IGalleryStore
                 thumb = prep.thumbnailBase64;
             }
         }
-        catch { /* optional */ }
+        catch { /* optional — common for tool-path scopes without circuit JS */ }
+
+        if (string.IsNullOrEmpty(thumb) && rawBytes.Length > 0)
+            thumb = b64; // full image as tile source (ThumbnailUrl sniffs PNG/JPEG)
 
         var now = DateTime.UtcNow;
         var gi = new GalleryImage(
             Id: imageId,
             Name: name,
             ContentType: contentType,
-            DataBase64: Convert.ToBase64String(rawBytes),
+            DataBase64: b64,
             Size: rawBytes.LongLength,
             ThumbnailBase64: thumb,
             Width: w,

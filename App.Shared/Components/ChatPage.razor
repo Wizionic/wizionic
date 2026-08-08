@@ -8,10 +8,12 @@
 @using App.Core.Lemonade
 @using App.Core.Storage
 @using App.Core.Sync
+@using App.Core.Tools
 @using App.Core.UI
 @using App.Core.Browser
 @using App.Shared.Services
 @using App.Shared.Services.Lemonade
+@using App.Shared.Services.Tools
 @using Microsoft.AspNetCore.Components.Forms
 @using ChatMessage = App.Core.Storage.ChatMessage
 @using Attachment = App.Core.Storage.Attachment
@@ -19,6 +21,7 @@
 @using LocalNote = App.Core.Storage.LocalNote
 
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 @inject IKeyStore KeyStore
 @inject IConversationStore ConversationStore
 @inject IChatModelCatalog ModelCatalog
@@ -29,6 +32,10 @@
 @inject ILemonadeImageService LemonadeImages
 @inject ILemonadeSpeechService LemonadeSpeech
 @inject INoteStore NoteStore
+@inject IGalleryStore GalleryStore
+@inject IGalleryChatHandoff GalleryChatHandoff
+@inject IConversationMediaBuffer MediaBuffer
+@inject IStorageQuotaService StorageQuota
 @inject ISidebarState SidebarState
 @inject IBrowserPanelState BrowserPanel
 @inject IChatPanelState ChatPanel
@@ -145,7 +152,10 @@
                                                 }
                                                 @if (thumbSrc != null)
                                                 {
-                                                    <img src="@thumbSrc" alt="@att.Name" style="width:100%; height:100%; object-fit:cover;" title="@att.Name" />
+                                                    <img src="@thumbSrc" alt="@att.Name"
+                                                         style="width:100%; height:100%; object-fit:cover; cursor:pointer;"
+                                                         title="@att.Name — click for options"
+                                                         @onclick="() => OpenImagePreview(thumbSrc, att.Name, att.DataBase64, att.ContentType)" />
                                                 }
                                                 else
                                                 {
@@ -204,7 +214,7 @@
                                                          style="display:block; max-width:100%; height:auto; cursor:pointer;"
                                                          title="@att.Name"
                                                          @onclick="() => OpenImagePreview(botThumb, att.Name, att.DataBase64, att.ContentType)" />
-                                                    <div style="display:flex; gap:4px; padding:4px 6px; border-top:1px solid var(--cf-border); background:var(--cf-bg, #fff);">
+                                                    <div style="display:flex; gap:4px; padding:4px 6px; border-top:1px solid var(--cf-border); background:var(--cf-bg, #fff); flex-wrap:wrap;">
                                                         <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
                                                                 title="Download" @onclick="() => DownloadAttachment(att)" @onclick:stopPropagation>
                                                             <i class="bi bi-download"></i> Download
@@ -212,6 +222,10 @@
                                                         <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
                                                                 title="Copy image" @onclick="() => CopyAttachment(att)" @onclick:stopPropagation>
                                                             <i class="bi bi-clipboard"></i> Copy
+                                                        </button>
+                                                        <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
+                                                                title="Save to Gallery" @onclick="() => OpenSaveToGallery(att)" @onclick:stopPropagation>
+                                                            <i class="bi bi-images"></i> Save to Gallery
                                                         </button>
                                                     </div>
                                                 }
@@ -771,12 +785,60 @@
                     @onclick="() => CopyPreviewImage()">
                 <i class="bi bi-clipboard"></i> Copy
             </button>
+            <button type="button" class="btn btn-outline-secondary" style="background:#fff;"
+                    @onclick="OpenSaveToGalleryFromPreview">
+                <i class="bi bi-images"></i> Save to Gallery
+            </button>
             <button type="button" class="btn btn-outline-secondary" style="background:#fff;" @onclick="() => imagePreviewUrl = null">Close</button>
         </div>
         @if (!string.IsNullOrEmpty(imageActionFeedback))
         {
             <div style="text-align:center; font-size:0.8em; margin-top:6px; color:#fff;">@imageActionFeedback</div>
         }
+    </div>
+}
+
+@if (showSaveToGalleryDialog)
+{
+    <div class="newnote-overlay" style="z-index:60;" @onclick="CloseSaveToGallery">
+        <div class="newnote-modal move-notebook-modal" @onclick:stopPropagation>
+            <h4 style="margin:0 0 12px 0;font-size:1.1rem;color:var(--color-text);">Save to Gallery</h4>
+            @if (saveToGalleryBusy)
+            {
+                <p style="font-size:0.85rem;color:var(--cf-text-muted);">Saving…</p>
+            }
+            else if (saveToGalleryAlbums.Count == 0)
+            {
+                <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 12px 0;">No albums yet. Create one below.</p>
+            }
+            else
+            {
+                <p style="font-size:0.85rem;color:var(--cf-text-muted);margin:0 0 8px 0;">Choose an album:</p>
+                @foreach (var a in saveToGalleryAlbums)
+                {
+                    var capt = a;
+                    <div class="move-notebook-item" @onclick="() => ConfirmSaveToGallery(capt.Id)" @onclick:stopPropagation>
+                        <i class="cf-icon bi bi-images" style="font-size:1.1em;color:var(--cf-text-muted);margin-right:8px;"></i>
+                        <span>@capt.Title</span>
+                    </div>
+                }
+            }
+            <div style="margin-top:12px; display:flex; gap:8px; align-items:center;">
+                <input class="newnote-input" style="flex:1;" placeholder="New album name"
+                       @bind="saveToGalleryNewTitle" @bind:event="oninput"
+                       @onkeydown="SaveToGalleryNewKey" />
+                <button type="button" class="newnote-btn newnote-btn-primary"
+                        disabled="@(saveToGalleryBusy || string.IsNullOrWhiteSpace(saveToGalleryNewTitle))"
+                        @onclick="ConfirmSaveToNewAlbum">Create &amp; save</button>
+            </div>
+            @if (!string.IsNullOrEmpty(saveToGalleryError))
+            {
+                <p style="color:var(--cf-danger, #c00); font-size:0.85rem; margin:8px 0 0 0;">@saveToGalleryError</p>
+            }
+            <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="CloseSaveToGallery" disabled="@saveToGalleryBusy">Cancel</button>
+            </div>
+        </div>
     </div>
 }
 
@@ -905,6 +967,14 @@
     string? imagePanelError;
     byte[]? imageEditSourceBytes;
     string? imageEditPreviewUrl;
+    // Save chat attachment → Gallery
+    bool showSaveToGalleryDialog;
+    bool saveToGalleryBusy;
+    string? saveToGalleryError;
+    string saveToGalleryNewTitle = "";
+    Attachment? saveToGalleryAttachment;
+    List<LocalAlbum> saveToGalleryAlbums = new();
+
     string? imagePreviewUrl;
     string? imagePreviewName;
     string? imagePreviewBase64;
@@ -1277,8 +1347,24 @@
         var lastId = await ConversationStore.GetLastConvoIdAsync();
         await InvokeAsync(StateHasChanged);
 
-        // Phase 2 — active conversation body only (not every chat).
-        if (!string.IsNullOrEmpty(lastId) && localConvos.Any(c => c.Id == lastId))
+        // Gallery "Edit with AI" → new chat with the image attached (skip last-convo restore).
+        var fromGalleryEdit = GalleryChatHandoff.TryTakeEditWithAiRequest(out var editImage);
+        if (fromGalleryEdit && editImage != null)
+        {
+            await NewConversation();
+            pendingFiles.Add(editImage);
+            SelectPreferredImageEditModel();
+            await InvokeAsync(StateHasChanged);
+            // Drop query string so refresh does not re-trigger without handoff.
+            try
+            {
+                var uri = Nav.ToAbsoluteUri(Nav.Uri);
+                if (uri.Query.Contains("galleryEdit", StringComparison.OrdinalIgnoreCase))
+                    Nav.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace: true);
+            }
+            catch { /* ignore */ }
+        }
+        else if (!string.IsNullOrEmpty(lastId) && localConvos.Any(c => c.Id == lastId))
         {
             activeConvoId = lastId;
             await LoadConversation(lastId);
@@ -1299,6 +1385,20 @@
         _ = CompleteChatInitInBackgroundAsync();
     }
 
+    /// <summary>Prefer Lemonade Image+Edit models for gallery edit handoff.</summary>
+    private void SelectPreferredImageEditModel()
+    {
+        var edit = modelList.FirstOrDefault(m => m.SupportsImageEdit && m.IsImageGeneration)
+                   ?? modelList.FirstOrDefault(m => m.SupportsImageEdit)
+                   ?? modelList.FirstOrDefault(m => m.IsImageGeneration);
+        if (edit != null)
+        {
+            selectedModel = edit.Id;
+            _ = KeyStore.SetLastSelectedModelAsync(selectedModel);
+            ApplyImageParamsFromModel(selectedModel);
+        }
+    }
+
     private async Task CompleteChatInitInBackgroundAsync()
     {
         try
@@ -1311,7 +1411,11 @@
                 modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
             else
                 modelList = ModelCatalog.GetAvailableModels();
-            EnsureValidModelSelection();
+            // Keep gallery-edit model if we still have a pending image attachment.
+            if (pendingFiles.Any(IsImageAttachment) && CurrentModelInfo?.SupportsImageEdit != true)
+                SelectPreferredImageEditModel();
+            else
+                EnsureValidModelSelection();
             await InvokeAsync(StateHasChanged);
 
             if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
@@ -2406,8 +2510,62 @@
             return;
         }
 
-        await AppendGeneratedImageMessageAsync(prompt, result.Base64Png, result.Model ?? modelName, wantsEdit);
+        try
+        {
+            var convoId = activeConvoId ?? "_default";
+            MediaBuffer.AddImage(
+                convoId,
+                result.Base64Png,
+                "image/png",
+                wantsEdit ? "edited-image.png" : "generated-image.png",
+                wantsEdit ? "lemonade_edit" : "lemonade_generate");
+        }
+        catch { /* non-fatal */ }
+
+        // Direct image-model path has no LLM tools — auto-save when the prompt names an album.
+        string? autoSaveNote = null;
+        if (ContextualRequestRouter.MessageSuggestsGalleryTools(prompt))
+        {
+            autoSaveNote = await TryAutoSaveGeneratedImageAsync(prompt, result.Base64Png);
+        }
+
+        await AppendGeneratedImageMessageAsync(
+            prompt, result.Base64Png, result.Model ?? modelName, wantsEdit, autoSaveNote);
         StateHasChanged();
+    }
+
+    /// <summary>
+    /// When the chat picker is an image model (no tool loop), honor "save to Fruit album" in the prompt.
+    /// </summary>
+    async Task<string?> TryAutoSaveGeneratedImageAsync(string prompt, string base64Png)
+    {
+        var albumName = ContextualRequestRouter.TryExtractAlbumName(prompt);
+        if (string.IsNullOrWhiteSpace(albumName))
+        {
+            if (prompt.Contains("gallery", StringComparison.OrdinalIgnoreCase)
+                || prompt.Contains("album", StringComparison.OrdinalIgnoreCase))
+                albumName = "Gallery";
+            else
+                return null;
+        }
+
+        try
+        {
+            var raw = Convert.FromBase64String(base64Png);
+            var (ok, msg) = await GallerySaveHelper.SaveImageAsync(
+                GalleryStore,
+                SyncService,
+                StorageQuota,
+                albumName,
+                raw,
+                "image/png",
+                "generated-image.png");
+            return ok ? msg : "Could not auto-save to gallery: " + msg;
+        }
+        catch (Exception ex)
+        {
+            return "Could not auto-save to gallery: " + ex.Message;
+        }
     }
 
     async Task AppendImageErrorMessageAsync(string userLine, string error)
@@ -2463,6 +2621,20 @@
             return text;
 
         _pendingResultAttachments = extracted.Attachments;
+        try
+        {
+            var convoId = activeConvoId ?? "_default";
+            foreach (var att in extracted.Attachments)
+            {
+                if (att.ContentType != null
+                    && att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(att.DataBase64))
+                {
+                    MediaBuffer.AddImage(convoId, att.DataBase64, att.ContentType, att.Name, "omni");
+                }
+            }
+        }
+        catch { /* non-fatal */ }
         return string.IsNullOrWhiteSpace(extracted.CleanText)
             ? "Generated media:"
             : extracted.CleanText;
@@ -2770,6 +2942,138 @@
         }
     }
 
+    async Task OpenSaveToGallery(Attachment att)
+    {
+        if (!IsImageAttachment(att)) return;
+        saveToGalleryAttachment = att;
+        saveToGalleryError = null;
+        saveToGalleryNewTitle = "";
+        saveToGalleryBusy = false;
+        try
+        {
+            saveToGalleryAlbums = (await GalleryStore.LoadIndexAsync())
+                .Where(a => string.IsNullOrEmpty(a.Id) == false)
+                .OrderBy(a => a.SortOrder)
+                .ThenByDescending(a => a.LastUpdated)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            saveToGalleryError = "Could not load albums: " + ex.Message;
+            saveToGalleryAlbums = new();
+        }
+        showSaveToGalleryDialog = true;
+        StateHasChanged();
+    }
+
+    void OpenSaveToGalleryFromPreview()
+    {
+        if (string.IsNullOrWhiteSpace(imagePreviewBase64))
+        {
+            imageActionFeedback = "Image data not available to save.";
+            return;
+        }
+        var att = new Attachment(
+            Name: imagePreviewName ?? "image.png",
+            ContentType: imagePreviewContentType ?? "image/png",
+            DataBase64: imagePreviewBase64,
+            Size: (long)(imagePreviewBase64.Length * 0.75));
+        _ = OpenSaveToGallery(att);
+    }
+
+    void CloseSaveToGallery()
+    {
+        if (saveToGalleryBusy) return;
+        showSaveToGalleryDialog = false;
+        saveToGalleryAttachment = null;
+        saveToGalleryError = null;
+        saveToGalleryNewTitle = "";
+        saveToGalleryAlbums = new();
+    }
+
+    async Task SaveToGalleryNewKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !saveToGalleryBusy && !string.IsNullOrWhiteSpace(saveToGalleryNewTitle))
+            await ConfirmSaveToNewAlbum();
+    }
+
+    async Task ConfirmSaveToNewAlbum()
+    {
+        if (string.IsNullOrWhiteSpace(saveToGalleryNewTitle) || saveToGalleryAttachment == null)
+            return;
+        saveToGalleryBusy = true;
+        saveToGalleryError = null;
+        try
+        {
+            var albumId = Guid.NewGuid().ToString("N");
+            var title = saveToGalleryNewTitle.Trim();
+            await GalleryStore.CreateAlbumAsync(albumId, title);
+            await SaveAttachmentToAlbumAsync(albumId, saveToGalleryAttachment);
+            showSaveToGalleryDialog = false;
+            saveToGalleryAttachment = null;
+            imageActionFeedback = $"Saved to “{title}”.";
+            imagePreviewUrl = null; // close lightbox if open
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            saveToGalleryError = ex.Message;
+        }
+        finally
+        {
+            saveToGalleryBusy = false;
+        }
+    }
+
+    async Task ConfirmSaveToGallery(string albumId)
+    {
+        if (saveToGalleryAttachment == null || string.IsNullOrEmpty(albumId)) return;
+        saveToGalleryBusy = true;
+        saveToGalleryError = null;
+        try
+        {
+            await SaveAttachmentToAlbumAsync(albumId, saveToGalleryAttachment);
+            var title = saveToGalleryAlbums.FirstOrDefault(a => a.Id == albumId)?.Title ?? "album";
+            showSaveToGalleryDialog = false;
+            saveToGalleryAttachment = null;
+            imageActionFeedback = $"Saved to “{title}”.";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            saveToGalleryError = ex.Message;
+        }
+        finally
+        {
+            saveToGalleryBusy = false;
+        }
+    }
+
+    async Task SaveAttachmentToAlbumAsync(string albumId, Attachment att)
+    {
+        var now = DateTime.UtcNow;
+        var gi = new GalleryImage(
+            Id: Guid.NewGuid().ToString("N"),
+            Name: string.IsNullOrWhiteSpace(att.Name) ? "chat-image.png" : att.Name,
+            ContentType: string.IsNullOrWhiteSpace(att.ContentType) ? "image/png" : att.ContentType,
+            DataBase64: att.DataBase64,
+            Size: att.Size > 0 ? att.Size : (long)(att.DataBase64.Length * 0.75),
+            Timestamp: now,
+            ModifiedAt: now);
+
+        // Prefer raw-bytes ingest when available (WASM generates thumb).
+        try
+        {
+            var bytes = Convert.FromBase64String(att.DataBase64);
+            await GalleryStore.UpsertImageFromRawBytesAsync(
+                albumId, gi.Id, gi.Name, gi.ContentType, bytes);
+        }
+        catch
+        {
+            await GalleryStore.UpsertImageAsync(albumId, gi);
+        }
+    }
+
     bool MessageHasImageAttachment(int index)
     {
         if (index < 0 || index >= messages.Count) return false;
@@ -2958,11 +3262,16 @@
             return;
         }
 
+        string? panelAutoSave = null;
+        if (ContextualRequestRouter.MessageSuggestsGalleryTools(imagePrompt))
+            panelAutoSave = await TryAutoSaveGeneratedImageAsync(imagePrompt, result.Base64Png);
+
         await AppendGeneratedImageMessageAsync(
             imagePrompt.Trim(),
             result.Base64Png,
             result.Model ?? imageModel,
-            isEdit: imagePanelMode == "edit");
+            isEdit: imagePanelMode == "edit",
+            autoSaveNote: panelAutoSave);
 
         showImagePanel = false;
         imageEditSourceBytes = null;
@@ -2971,7 +3280,8 @@
         StateHasChanged();
     }
 
-    async Task AppendGeneratedImageMessageAsync(string prompt, string base64Png, string modelName, bool isEdit)
+    async Task AppendGeneratedImageMessageAsync(
+        string prompt, string base64Png, string modelName, bool isEdit, string? autoSaveNote = null)
     {
         if (string.IsNullOrEmpty(activeConvoId))
         {
@@ -2999,6 +3309,8 @@
         var caption = isEdit
             ? $"Edited image for: {prompt}"
             : $"Generated image for: {prompt}";
+        if (!string.IsNullOrWhiteSpace(autoSaveNote))
+            caption = caption + "\n\n" + autoSaveNote;
 
         messages.Add(new ChatMessage(
             Role: "assistant",

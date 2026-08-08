@@ -22,6 +22,7 @@ using App.Core.Tools;
 using App.Core.UI;
 using App.Shared.Services.Lemonade;
 using App.Shared.Services.Tools;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace App.Shared.Services;
 
@@ -39,6 +40,10 @@ public sealed class ChatCompletionService : IChatCompletionService
     private readonly IBrowserPanelState _browserPanel;
     private readonly IBrowserAgentService _browserAgent;
     private readonly ISmartHomeService _smartHome;
+    private readonly IToolConversationContext _toolConvo;
+    private readonly IConversationMediaBuffer _mediaBuffer;
+    private readonly IServiceProvider _services;
+    private readonly IServiceScopeFactory _scopeFactory;
     private IReadOnlyList<AITool> _currentTools = [];
     private RequestRoute? _currentRoute;
     private static readonly HttpClient OllamaHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
@@ -52,7 +57,11 @@ public sealed class ChatCompletionService : IChatCompletionService
         IRoutingSessionStore sessions,
         IBrowserPanelState browserPanel,
         IBrowserAgentService browserAgent,
-        ISmartHomeService smartHome)
+        ISmartHomeService smartHome,
+        IToolConversationContext toolConvo,
+        IConversationMediaBuffer mediaBuffer,
+        IServiceProvider services,
+        IServiceScopeFactory scopeFactory)
     {
         _catalog = catalog;
         _keyStore = keyStore;
@@ -63,6 +72,10 @@ public sealed class ChatCompletionService : IChatCompletionService
         _browserPanel = browserPanel;
         _browserAgent = browserAgent;
         _smartHome = smartHome ?? throw new ArgumentNullException(nameof(smartHome));
+        _toolConvo = toolConvo ?? throw new ArgumentNullException(nameof(toolConvo));
+        _mediaBuffer = mediaBuffer ?? throw new ArgumentNullException(nameof(mediaBuffer));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     }
 
     public async Task<ChatCompletionResult> CompleteAsync(
@@ -97,6 +110,8 @@ public sealed class ChatCompletionService : IChatCompletionService
 
         try
         {
+            _toolConvo.ConversationId = string.IsNullOrWhiteSpace(conversationId) ? "_default" : conversationId;
+
             var (effectiveMessages, visionProxyTrace) = await ApplyVisionProxyAsync(
                 modelId, messages, currentUser, supportsVision, ct);
             var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory);
@@ -147,13 +162,37 @@ public sealed class ChatCompletionService : IChatCompletionService
 
                 // Tool selection strategy (critical for small local models + TTFT):
                 // - HA / Browser session: module tools + Native
-                // - Clear search/weather/time/math intent: Native only (no HA/Lemonade dump)
-                // - General knowledge chat: NO tools (matches Lemonade pure-chat quality & latency)
+                // - Image generate/edit: Lemonade + Gallery + Native
+                // - Gallery save / albums: Gallery + Native
+                // - Clear search/weather/time/math intent: Native only
+                // - General knowledge chat: NO tools
+                var imageIntent = ContextualRequestRouter.MessageSuggestsImageTools(lastUserMessage);
+                var galleryIntent = ContextualRequestRouter.MessageSuggestsGalleryTools(lastUserMessage);
+                // Image tools win when both apply (e.g. "create a fruit and save to Fruits album").
+                var lemonadeAndGallery = imageIntent;
+
                 if (route.TargetModule != null)
                 {
-                    _currentTools = _toolProvider.GetToolsForModules(
-                        [route.TargetModule, "Native"], includeMcp: true);
+                    var modules = new List<string> { route.TargetModule, "Native" };
+                    if (galleryIntent) modules.Add("Gallery");
+                    if (lemonadeAndGallery) { modules.Add("Lemonade"); modules.Add("Gallery"); }
+                    _currentTools = _toolProvider.GetToolsForModules(modules.Distinct(), includeMcp: true);
                     _trace.Record($"🧭 Route: {route.Type} → {route.TargetModule}");
+                }
+                else if (lemonadeAndGallery)
+                {
+                    _currentTools = _toolProvider.GetToolsForModules(
+                        ["Lemonade", "Gallery", "Native"], includeMcp: false);
+                    _trace.Record(
+                        galleryIntent
+                            ? "🧭 Route: ToolAssistedChat → Lemonade+Gallery (create/save image intent)"
+                            : "🧭 Route: ToolAssistedChat → Lemonade+Gallery (image intent)");
+                }
+                else if (galleryIntent)
+                {
+                    _currentTools = _toolProvider.GetToolsForModules(
+                        ["Gallery", "Native"], includeMcp: false);
+                    _trace.Record("🧭 Route: ToolAssistedChat → Gallery (gallery intent)");
                 }
                 else if (ContextualRequestRouter.MessageSuggestsUtilityTools(lastUserMessage))
                 {
@@ -385,16 +424,55 @@ public sealed class ChatCompletionService : IChatCompletionService
                         if (extracted.Attachments.Count > 0)
                         {
                             resultAttachments = extracted.Attachments;
+                            BufferExtractedImages(conversationId, extracted.Attachments);
                             _trace.Record(
                                 $"🍋 Omni media: extracted {extracted.ImageCount} image(s), {extracted.AudioCount} audio clip(s).");
-                            toolTrace = string.Join("\n", _trace.GetCurrentTrace());
-                            if (!string.IsNullOrWhiteSpace(reasoningTrace))
-                            {
-                                toolTrace = string.IsNullOrWhiteSpace(toolTrace)
-                                    ? $"💭 Model reasoning:\n{reasoningTrace}"
-                                    : $"💭 Model reasoning:\n{reasoningTrace}\n\n{toolTrace}";
-                            }
                         }
+                    }
+
+                    // Tool-generated images (lemonade_generate/edit) never re-enter the model as base64;
+                    // pull them from the conversation media buffer for the chat UI.
+                    var turnBuffered = CollectBufferedImageAttachments(
+                        conversationId, sinceUtc: wallStart);
+                    if (turnBuffered.Count > 0)
+                    {
+                        resultAttachments ??= new List<StoreAttachment>();
+                        foreach (var att in turnBuffered)
+                        {
+                            if (!resultAttachments.Any(a =>
+                                    a.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+                                    && a.DataBase64 == att.DataBase64))
+                                resultAttachments.Add(att);
+                        }
+                        _trace.Record($"🖼️ Attached {turnBuffered.Count} buffered image(s) to chat result.");
+                    }
+
+                    // Omni / weak tool models: if the user asked to save to an album and we have an image,
+                    // persist without relying on client save_to_gallery (Omni has client tools disabled).
+                    var galleryIntent = ContextualRequestRouter.MessageSuggestsGalleryTools(lastUserMessage);
+                    var alreadySaved = toolTrace.Contains("save_to_gallery", StringComparison.OrdinalIgnoreCase)
+                                       && toolTrace.Contains("✅", StringComparison.Ordinal);
+                    if (!cancelled && galleryIntent && !alreadySaved
+                        && resultAttachments?.Any(a =>
+                            a.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+                            && !string.IsNullOrWhiteSpace(a.DataBase64)) == true)
+                    {
+                        var autoMsg = await TryAutoSaveGalleryAsync(
+                            lastUserMessage, conversationId, resultAttachments, ct);
+                        if (!string.IsNullOrWhiteSpace(autoMsg))
+                        {
+                            text = string.IsNullOrWhiteSpace(text) || text == "Generated media:"
+                                ? autoMsg
+                                : text.TrimEnd() + "\n\n" + autoMsg;
+                        }
+                    }
+
+                    toolTrace = string.Join("\n", _trace.GetCurrentTrace());
+                    if (!string.IsNullOrWhiteSpace(reasoningTrace))
+                    {
+                        toolTrace = string.IsNullOrWhiteSpace(toolTrace)
+                            ? $"💭 Model reasoning:\n{reasoningTrace}"
+                            : $"💭 Model reasoning:\n{reasoningTrace}\n\n{toolTrace}";
                     }
 
                     var totalMs = (DateTime.UtcNow - requestStart).TotalMilliseconds;
@@ -1368,6 +1446,135 @@ public sealed class ChatCompletionService : IChatCompletionService
     {
         var t = text.Trim();
         return t is "0" or "1" or "stop" or "length" or "tool_calls" or "auto" or "none";
+    }
+
+    /// <summary>Stash extracted images so save_to_gallery can find them after Omni / tool turns.</summary>
+    private void BufferExtractedImages(string? conversationId, IReadOnlyList<StoreAttachment> attachments)
+    {
+        var convoId = string.IsNullOrWhiteSpace(conversationId) ? "_default" : conversationId;
+        foreach (var att in attachments)
+        {
+            if (att.ContentType == null
+                || !att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(att.DataBase64))
+                continue;
+            try
+            {
+                var id = _mediaBuffer.AddImage(
+                    convoId, att.DataBase64, att.ContentType, att.Name, "omni");
+                _trace.Record($"🖼️ Buffered chat image id={id} for save_to_gallery");
+            }
+            catch (Exception ex)
+            {
+                _trace.Record($"🖼️ Buffer image failed: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Images produced this turn via lemonade tools (short tool results; bytes live in media buffer).
+    /// </summary>
+    private List<StoreAttachment> CollectBufferedImageAttachments(string? conversationId, DateTime sinceUtc)
+    {
+        var convoId = string.IsNullOrWhiteSpace(conversationId) ? "_default" : conversationId;
+        var list = new List<StoreAttachment>();
+        foreach (var summary in _mediaBuffer.ListRecent(convoId, 8))
+        {
+            if (summary.CreatedUtc < sinceUtc.AddSeconds(-2))
+                continue;
+            if (!_mediaBuffer.TryGetImage(convoId, summary.GenerationId, out var img) || img == null)
+                continue;
+            list.Add(new StoreAttachment(
+                Name: img.Name ?? "generated-image.png",
+                ContentType: img.ContentType,
+                DataBase64: img.Base64,
+                Size: (long)(img.Base64.Length * 0.75)));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// When client tools are off (Omni) or the model skips save_to_gallery, still honor "save to X album".
+    /// </summary>
+    private async Task<string?> TryAutoSaveGalleryAsync(
+        string lastUserMessage,
+        string? conversationId,
+        IReadOnlyList<StoreAttachment> attachments,
+        CancellationToken ct)
+    {
+        var albumName = ContextualRequestRouter.TryExtractAlbumName(lastUserMessage);
+        if (string.IsNullOrWhiteSpace(albumName))
+        {
+            // Fallback: "gallery" alone → default album name "Gallery"
+            if (lastUserMessage.Contains("gallery", StringComparison.OrdinalIgnoreCase)
+                || lastUserMessage.Contains("album", StringComparison.OrdinalIgnoreCase))
+                albumName = "Gallery";
+            else
+                return null;
+        }
+
+        var image = attachments.LastOrDefault(a =>
+            a.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+            && !string.IsNullOrWhiteSpace(a.DataBase64));
+        if (image == null)
+            return null;
+
+        byte[] raw;
+        try
+        {
+            raw = Convert.FromBase64String(image.DataBase64);
+        }
+        catch
+        {
+            _trace.Record("🖼️ Auto-save failed: invalid image base64");
+            return null;
+        }
+
+        IServiceScope? ownedScope = null;
+        try
+        {
+            IGalleryStore gallery;
+            IGallerySyncBridge? syncBridge;
+            IStorageQuotaService? quota;
+            try
+            {
+                gallery = _services.GetService<IGalleryStore>()
+                          ?? throw new InvalidOperationException("no ambient gallery");
+                syncBridge = _services.GetService<IGallerySyncBridge>();
+                quota = _services.GetService<IStorageQuotaService>();
+            }
+            catch
+            {
+                ownedScope = _scopeFactory.CreateScope();
+                gallery = ownedScope.ServiceProvider.GetRequiredService<IGalleryStore>();
+                syncBridge = ownedScope.ServiceProvider.GetService<IGallerySyncBridge>();
+                quota = ownedScope.ServiceProvider.GetService<IStorageQuotaService>();
+            }
+
+            var (ok, msg) = await GallerySaveHelper.SaveImageAsync(
+                gallery, syncBridge, quota, albumName, raw,
+                image.ContentType ?? "image/png",
+                image.Name ?? "generated-image.png",
+                ct);
+
+            if (ok)
+            {
+                _trace.Record("🖼️ Auto-save: " + msg);
+                return msg;
+            }
+
+            _trace.Record("🖼️ Auto-save failed: " + msg);
+            return "Could not auto-save to gallery: " + msg;
+        }
+        catch (Exception ex)
+        {
+            _trace.Record("🖼️ Auto-save error: " + ex.Message);
+            return null;
+        }
+        finally
+        {
+            ownedScope?.Dispose();
+        }
     }
 
     private static string? CoerceToString(object? value)
