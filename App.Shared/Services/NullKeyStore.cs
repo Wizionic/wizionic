@@ -1,4 +1,5 @@
 using App.Core.Storage;
+using App.Core.Tools;
 
 namespace App.Shared.Services;
 
@@ -33,6 +34,11 @@ public sealed class NullKeyStore : IKeyStore
     public string BuildUserContextForPrompt() => "";
 
     public Task SetLastSelectedModelAsync(string modelId, CancellationToken ct = default) => Task.CompletedTask;
+
+    public ToolRoutingMode ToolRoutingMode => ToolRoutingMode.Rules;
+    public string? ToolRoutingModelId => null;
+    public Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default) =>
+        Task.CompletedTask;
 
     public string GetKey(string providerId) => "";
     public Task SetKeyAsync(string providerId, string key, CancellationToken ct = default) => Task.CompletedTask;

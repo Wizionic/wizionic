@@ -1,3 +1,5 @@
+using App.Core.Tools;
+
 namespace App.Core.Storage;
 
 public interface IKeyStore
@@ -20,6 +22,12 @@ public interface IKeyStore
     string BuildUserContextForPrompt();
 
     Task SetLastSelectedModelAsync(string modelId, CancellationToken ct = default);
+
+    /// <summary>How chat turns choose tool modules (Rules / Ai / Hybrid).</summary>
+    ToolRoutingMode ToolRoutingMode { get; }
+    /// <summary>Catalog model id for AI routing (e.g. lemonade/Qwen…); empty = Rules only.</summary>
+    string? ToolRoutingModelId { get; }
+    Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default);
 
     string GetKey(string providerId);
     Task SetKeyAsync(string providerId, string key, CancellationToken ct = default);

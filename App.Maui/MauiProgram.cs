@@ -309,7 +309,9 @@ public static class MauiProgram
 		services.AddScoped<IGuestDataMigrationService>(sp => sp.GetRequiredService<NullGuestDataMigrationService>());
 		services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
 		services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
-		services.AddSingleton<IRequestRouter, ContextualRequestRouter>();
+		services.AddSingleton<ContextualRequestRouter>();
+		services.AddSingleton<AiRequestRouter>();
+		services.AddSingleton<IRequestRouter, CompositeRequestRouter>();
 		services.AddSingleton<ISmartHomeService, HomeAssistantService>();
 		services.AddSingleton<MauiBrowserContext>();
 		services.AddSingleton<IBrowserContext>(sp => sp.GetRequiredService<MauiBrowserContext>());

@@ -9,12 +9,17 @@
 @inject App.Shared.Services.ThemeService Theme
 @inject INavLayoutState NavLayout
 @inject App.Core.Auth.IAuthService Auth
+@inject App.Core.Chat.IChatModelCatalog ModelCatalog
+@inject App.Shared.Services.Tools.IRequestRouter RequestRouter
+@inject App.Shared.Services.Tools.IToolProvider ToolProvider
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @using App.Core.Update
 @using App.Core.Homeserver
 @using App.Core.Sync
+@using App.Core.Tools
 @using App.Shared.Services
+@using App.Shared.Services.Tools
 @implements IDisposable
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
@@ -234,6 +239,64 @@
         </div>
     </div>
 
+    <!-- Tool routing -->
+    <div class="settings-card" style="margin-top: 1rem;">
+        <h3 style="margin: 0 0 0.25rem;">Tool routing</h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+            Decides which tool modules (Native, Lemonade, Gallery, etc.) are attached before the chat model runs.
+            <strong>Rules</strong> is instant and free.
+            <strong>Hybrid</strong> uses rules for clear cases and a small model for ambiguous multi-intent messages.
+            <strong>AI</strong> always classifies with the routing model (falls back to rules on failure).
+        </p>
+
+        <label>Mode</label>
+        <select class="form-select form-select-sm" style="max-width: 20rem;" @bind="routingModeDraft">
+            <option value="Rules">Rules only (default)</option>
+            <option value="Hybrid">Hybrid (rules + AI when weak)</option>
+            <option value="Ai">AI router</option>
+        </select>
+
+        <label style="margin-top: 0.75rem;">Routing model</label>
+        <select class="form-select form-select-sm" style="max-width: 28rem;" @bind="routingModelDraft">
+            <option value="">— none (Rules only) —</option>
+            @foreach (var m in routingModelOptions)
+            {
+                <option value="@m.Id">@m.Label</option>
+            }
+        </select>
+        <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0.35rem 0 0;">
+            Prefer a small local model (Lemonade / Ollama). Not used when mode is Rules or model is empty.
+        </p>
+
+        <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+            <button type="button" class="btn btn-primary btn-sm" @onclick="SaveToolRouting" disabled="@routingBusy">
+                @(routingBusy ? "Saving…" : "Save tool routing")
+            </button>
+        </div>
+        @if (!string.IsNullOrEmpty(routingSaveMessage))
+        {
+            <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(routingSaveIsError ? "#c00" : "#1a7a3c");">
+                @routingSaveMessage
+            </div>
+        }
+
+        <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--cf-border, #eee);">
+            <label>Test routing</label>
+            <textarea class="form-control" rows="2" style="font-size: 0.9em;"
+                      @bind="routingTestMessage"
+                      placeholder="e.g. create a purple fruit and save it to the Fruits album"></textarea>
+            <button type="button" class="btn btn-outline-secondary btn-sm" style="margin-top: 0.5rem;"
+                    @onclick="RunRoutingTest" disabled="@routingTestBusy">
+                @(routingTestBusy ? "Classifying…" : "Classify this message")
+            </button>
+            @if (!string.IsNullOrEmpty(routingTestResult))
+            {
+                <pre style="margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--cf-bg-muted, #f5f5f5);
+                            border-radius: 6px; font-size: 0.8em; white-space: pre-wrap;">@routingTestResult</pre>
+            }
+        </div>
+    </div>
+
     <!-- System prompt -->
     <h3 style="margin: 1.25rem 0 0.5rem;">System prompt</h3>
     <p style="color: #666; font-size: 0.85em; margin-bottom: 0.5rem;">
@@ -411,6 +474,16 @@
     private bool loginServerIsError;
     private bool loginServerBusy;
 
+    private string routingModeDraft = "Rules";
+    private string routingModelDraft = "";
+    private List<(string Id, string Label)> routingModelOptions = new();
+    private bool routingBusy;
+    private string? routingSaveMessage;
+    private bool routingSaveIsError;
+    private string routingTestMessage = "";
+    private string? routingTestResult;
+    private bool routingTestBusy;
+
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
         UpdateCheckStatus.UpToDate => updateCheckResult.Message ?? "You're on the latest version.",
@@ -436,6 +509,7 @@
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
         ReloadMemories();
+        LoadToolRoutingDraft();
 
         if (AppEnvironment.IsMaui)
         {
@@ -444,6 +518,114 @@
                 loginServerDraft = "https://wizionic.com";
             LoadInstalledVersion();
             RefreshHomeserverStatus();
+        }
+    }
+
+    private void LoadToolRoutingDraft()
+    {
+        routingModeDraft = KeyStore.ToolRoutingMode switch
+        {
+            ToolRoutingMode.Ai => "Ai",
+            ToolRoutingMode.Hybrid => "Hybrid",
+            _ => "Rules"
+        };
+        routingModelDraft = KeyStore.ToolRoutingModelId ?? "";
+        try
+        {
+            routingModelOptions = ModelCatalog.GetAvailableModels()
+                .Where(m => !string.IsNullOrWhiteSpace(m.Id) && !m.IsImageGeneration)
+                .Select(m => (m.Id, string.IsNullOrWhiteSpace(m.Label) ? m.Id : $"{m.Label} ({m.Id})"))
+                .OrderBy(m => m.Item2, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            routingModelOptions = new();
+        }
+    }
+
+    private async Task SaveToolRouting()
+    {
+        routingBusy = true;
+        routingSaveMessage = null;
+        StateHasChanged();
+        try
+        {
+            var mode = routingModeDraft switch
+            {
+                "Ai" => ToolRoutingMode.Ai,
+                "Hybrid" => ToolRoutingMode.Hybrid,
+                _ => ToolRoutingMode.Rules
+            };
+            var modelId = string.IsNullOrWhiteSpace(routingModelDraft) ? null : routingModelDraft.Trim();
+            if (mode != ToolRoutingMode.Rules && string.IsNullOrEmpty(modelId))
+            {
+                routingSaveMessage = "Pick a routing model for AI or Hybrid mode (or switch to Rules only).";
+                routingSaveIsError = true;
+                return;
+            }
+
+            await KeyStore.SetToolRoutingAsync(mode, modelId);
+            routingSaveMessage = mode == ToolRoutingMode.Rules
+                ? "Tool routing saved: Rules only."
+                : $"Tool routing saved: {mode} with {modelId}.";
+            routingSaveIsError = false;
+        }
+        catch (Exception ex)
+        {
+            routingSaveMessage = ex.Message;
+            routingSaveIsError = true;
+        }
+        finally
+        {
+            routingBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RunRoutingTest()
+    {
+        if (string.IsNullOrWhiteSpace(routingTestMessage))
+        {
+            routingTestResult = "Enter a sample user message first.";
+            return;
+        }
+
+        routingTestBusy = true;
+        routingTestResult = null;
+        StateHasChanged();
+        try
+        {
+            // Persist draft so the test uses the same mode/model the user selected (even if not saved).
+            var mode = routingModeDraft switch
+            {
+                "Ai" => ToolRoutingMode.Ai,
+                "Hybrid" => ToolRoutingMode.Hybrid,
+                _ => ToolRoutingMode.Rules
+            };
+            await KeyStore.SetToolRoutingAsync(
+                mode,
+                string.IsNullOrWhiteSpace(routingModelDraft) ? null : routingModelDraft.Trim());
+
+            var modules = ToolProvider.GetActiveModules();
+            var route = await RequestRouter.ClassifyRequestAsync(routingTestMessage.Trim(), modules);
+            var modStr = route.HasTools ? string.Join(", ", route.Modules) : "(none)";
+            routingTestResult =
+                $"Source: {route.Source ?? "?"}\n" +
+                $"Type: {route.Type}\n" +
+                $"Modules: {modStr}\n" +
+                $"Target: {route.TargetModule ?? "—"}\n" +
+                $"MCP: {route.IncludeMcp}\n" +
+                $"Reason: {route.Reason ?? "—"}";
+        }
+        catch (Exception ex)
+        {
+            routingTestResult = "Error: " + ex.Message;
+        }
+        finally
+        {
+            routingTestBusy = false;
+            StateHasChanged();
         }
     }
 

@@ -157,63 +157,34 @@ public sealed class ChatCompletionService : IChatCompletionService
             if (supportsTools)
             {
                 var activeModules = _toolProvider.GetActiveModules();
-                var route = _router.ClassifyRequest(lastUserMessage, activeModules, conversationId);
+                var route = await _router.ClassifyRequestAsync(
+                    lastUserMessage, activeModules, conversationId, ct);
                 _currentRoute = route;
 
-                // Tool selection strategy (critical for small local models + TTFT):
-                // - HA / Browser session: module tools + Native
-                // - Image generate/edit: Lemonade + Gallery + Native
-                // - Gallery save / albums: Gallery + Native
-                // - Clear search/weather/time/math intent: Native only
-                // - General knowledge chat: NO tools
-                var imageIntent = ContextualRequestRouter.MessageSuggestsImageTools(lastUserMessage);
-                var galleryIntent = ContextualRequestRouter.MessageSuggestsGalleryTools(lastUserMessage);
-                // Image tools win when both apply (e.g. "create a fruit and save to Fruits album").
-                var lemonadeAndGallery = imageIntent;
+                // All tool-set decisions live in IRequestRouter (rules / AI / hybrid).
+                _currentTools = route.HasTools
+                    ? _toolProvider.GetToolsForModules(route.Modules, includeMcp: route.IncludeMcp)
+                    : [];
 
-                if (route.TargetModule != null)
+                var src = string.IsNullOrWhiteSpace(route.Source) ? "Rules" : route.Source;
+                var reason = string.IsNullOrWhiteSpace(route.Reason) ? "" : $" ({route.Reason})";
+                if (route.HasTools)
                 {
-                    var modules = new List<string> { route.TargetModule, "Native" };
-                    if (galleryIntent) modules.Add("Gallery");
-                    if (lemonadeAndGallery) { modules.Add("Lemonade"); modules.Add("Gallery"); }
-                    _currentTools = _toolProvider.GetToolsForModules(modules.Distinct(), includeMcp: true);
-                    _trace.Record($"🧭 Route: {route.Type} → {route.TargetModule}");
-                }
-                else if (lemonadeAndGallery)
-                {
-                    _currentTools = _toolProvider.GetToolsForModules(
-                        ["Lemonade", "Gallery", "Native"], includeMcp: false);
+                    var modList = string.Join("+", route.Modules);
                     _trace.Record(
-                        galleryIntent
-                            ? "🧭 Route: ToolAssistedChat → Lemonade+Gallery (create/save image intent)"
-                            : "🧭 Route: ToolAssistedChat → Lemonade+Gallery (image intent)");
-                }
-                else if (galleryIntent)
-                {
-                    _currentTools = _toolProvider.GetToolsForModules(
-                        ["Gallery", "Native"], includeMcp: false);
-                    _trace.Record("🧭 Route: ToolAssistedChat → Gallery (gallery intent)");
-                }
-                else if (ContextualRequestRouter.MessageSuggestsUtilityTools(lastUserMessage))
-                {
-                    _currentTools = _toolProvider.GetToolsForModules(["Native"], includeMcp: false);
-                    _trace.Record("🧭 Route: ToolAssistedChat → Native (utility intent)");
+                        route.TargetModule != null
+                            ? $"🧭 Route: {src} → {route.Type} → {route.TargetModule} [{modList}]{reason}"
+                            : $"🧭 Route: {src} → {route.Type} → {modList}{reason}");
                 }
                 else
                 {
-                    _currentTools = [];
-                    _trace.Record("🧭 Route: PureChat (no tools — faster, better factual answers)");
+                    _trace.Record($"🧭 Route: {src} → PureChat{reason}");
                 }
 
-                if (route.TargetModule == "HomeAssistant")
+                if (route.TargetModule == "HomeAssistant"
+                    && route.Reason?.Contains("active session", StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    var session = _sessions.Get(conversationId);
-                    var assistantName = _keyStore.HomeAssistantAssistantName;
-                    if (!ContextualRequestRouter.ContainsWakeWord(lastUserMessage, assistantName) &&
-                        session.IsActive("HomeAssistant", ContextualRequestRouter.SessionTtl))
-                    {
-                        _trace.Record("🧭 Session: continuing active Home Assistant conversation");
-                    }
+                    _trace.Record("🧭 Session: continuing active Home Assistant conversation (rules stickiness)");
                 }
 
                 var toolNames = _currentTools.OfType<AIFunction>().Select(f => f.Name).ToList();
@@ -312,8 +283,11 @@ public sealed class ChatCompletionService : IChatCompletionService
                     if (!string.IsNullOrWhiteSpace(extractSource))
                         _trace.Record($"ℹ️ Extracted final response from {extractSource}.");
 
+                    // Only force HA retry when this turn actually looks like device control.
+                    // Avoid turning a weather answer into Assist fallback after a prior light command.
                     if (ContextualRequestRouter.ShouldEnforceHomeAssistantTools(_currentRoute) &&
-                        !HaToolsWereInvoked())
+                        !HaToolsWereInvoked() &&
+                        ContextualRequestRouter.MessageSuggestsHomeAssistant(lastUserMessage))
                     {
                         _trace.Record("⚠️ Model replied without calling Home Assistant tools — retrying with tool-required prompt.");
 
