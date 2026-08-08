@@ -63,6 +63,7 @@ builder.Services.AddScoped<INoteStore>(sp => sp.GetRequiredService<WasmNoteStore
 builder.Services.AddScoped<WasmGalleryStore>();
 builder.Services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<WasmGalleryStore>());
 builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 builder.Services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 builder.Services.AddScoped<WasmStorageQuotaService>();
 builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
