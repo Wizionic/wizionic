@@ -18,6 +18,7 @@
 @inject IGallerySyncBridge SyncBridge
 @inject IStorageQuotaService StorageQuota
 @inject ISidebarState SidebarState
+@inject IGalleryChatHandoff GalleryChatHandoff
 
 <WasmSidebarSync />
 
@@ -245,6 +246,10 @@
     @if (openTileMenuId != null)
     {
         <div class="menu-popup" style="@tilePopupStyle" @onclick:stopPropagation>
+            <div @onclick="() => EditImageWithAi(openTileMenuId)">
+                <button type="button" class="menu-button"><i class="cf-icon bi bi-magic"></i></button>
+                Edit with AI
+            </div>
             <div @onclick="() => DownloadImage(openTileMenuId)">
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-download"></i></button>
                 Download
@@ -945,6 +950,28 @@
             await JS.InvokeAsync<bool>("downloadBase64File", img.DataBase64, img.Name, img.ContentType);
         }
         catch { /* ignore */ }
+    }
+
+    private async Task EditImageWithAi(string? imageId)
+    {
+        CloseTileMenu();
+        if (string.IsNullOrEmpty(imageId) || string.IsNullOrEmpty(activeAlbumId)) return;
+
+        var img = await GalleryStore.LoadImageAsync(activeAlbumId, imageId);
+        if (img == null || string.IsNullOrEmpty(img.DataBase64))
+        {
+            try { await JS.InvokeVoidAsync("alert", "Could not load image for editing."); } catch { }
+            return;
+        }
+
+        GalleryChatHandoff.SetEditWithAiRequest(new Attachment(
+            Name: img.Name,
+            ContentType: string.IsNullOrWhiteSpace(img.ContentType) ? "image/jpeg" : img.ContentType,
+            DataBase64: img.DataBase64,
+            Size: img.Size > 0 ? img.Size : (long)(img.DataBase64.Length * 0.75)));
+
+        // New chat with image attached + preferred image-edit model (handled in ChatPage).
+        Nav.NavigateTo("/chat?galleryEdit=1");
     }
 
     private void PromptDeleteImage(string? imageId)

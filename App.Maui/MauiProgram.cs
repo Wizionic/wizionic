@@ -240,6 +240,7 @@ public static class MauiProgram
 		services.AddScoped<INoteStore>(sp => sp.GetRequiredService<SqliteNoteStore>());
 		services.AddScoped<SqliteGalleryStore>();
 		services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<SqliteGalleryStore>());
+		services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 		services.AddSingleton<MauiStorageQuotaService>();
 		services.AddSingleton<IStorageQuotaService>(sp => sp.GetRequiredService<MauiStorageQuotaService>());
 		services.AddSingleton<ISyncPreferencesStore, SqliteSyncPreferencesStore>();
@@ -314,14 +315,18 @@ public static class MauiProgram
 		services.AddSingleton<IBrowserContext>(sp => sp.GetRequiredService<MauiBrowserContext>());
 		services.AddSingleton<McpToolSource>();
 		services.AddSingleton<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
+		services.AddSingleton<App.Core.Tools.IConversationMediaBuffer, App.Shared.Services.Tools.ConversationMediaBuffer>();
+		services.AddSingleton<App.Core.Tools.IToolConversationContext, App.Shared.Services.Tools.ToolConversationContext>();
 		services.AddSingleton<NativeToolModule>();
 		services.AddSingleton<HomeAssistantToolModule>();
 		services.AddSingleton<BrowserAgentToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.LemonadeToolModule>();
+		services.AddSingleton<App.Shared.Services.Tools.GalleryToolModule>();
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<HomeAssistantToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<BrowserAgentToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.LemonadeToolModule>());
+		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.GalleryToolModule>());
 		services.AddSingleton<IToolProvider, CompositeToolProvider>();
 		services.AddSingleton<ChatModelCatalogService>();
 		services.AddSingleton<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
