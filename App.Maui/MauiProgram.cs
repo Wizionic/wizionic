@@ -240,6 +240,7 @@ public static class MauiProgram
 		services.AddScoped<INoteStore>(sp => sp.GetRequiredService<SqliteNoteStore>());
 		services.AddScoped<SqliteGalleryStore>();
 		services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<SqliteGalleryStore>());
+		services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 		services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 		services.AddSingleton<MauiStorageQuotaService>();
 		services.AddSingleton<IStorageQuotaService>(sp => sp.GetRequiredService<MauiStorageQuotaService>());

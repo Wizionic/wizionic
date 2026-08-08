@@ -419,12 +419,20 @@ public class WasmGalleryStore : IGalleryStore
     public async Task CreateAlbumAsync(string albumId, string title, CancellationToken ct = default)
     {
         var index = await LoadIndexAsync(ct);
-        var sort = index.Count == 0 ? 0 : index.Max(a => a.SortOrder) + 1;
-        await PersistAlbumMetaAsync(albumId, title, false, 0, sort, null, ct);
+        var sort = GalleryConstants.IsMyMediaAlbum(albumId)
+            ? -1
+            : (index.Count == 0 ? 0 : index.Max(a => a.SortOrder) + 1);
+        var albumTitle = GalleryConstants.IsMyMediaAlbum(albumId)
+            ? GalleryConstants.MyMediaAlbumTitle
+            : title;
+        await PersistAlbumMetaAsync(albumId, albumTitle, false, 0, sort, null, ct);
     }
 
     public async Task UpsertImageAsync(string albumId, GalleryImage image, CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+            throw new InvalidOperationException("My Media is a virtual album; images cannot be added directly.");
+
         var ns = GetPrefix();
         var album = await GetAlbumMetaAsync(albumId);
         if (album == null || !string.IsNullOrEmpty(album.deletedAt))
@@ -497,6 +505,9 @@ public class WasmGalleryStore : IGalleryStore
         byte[] rawBytes,
         CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+            throw new InvalidOperationException("My Media is a virtual album; images cannot be added directly.");
+
         var ns = GetPrefix();
         var album = await GetAlbumMetaAsync(albumId);
         if (album == null || !string.IsNullOrEmpty(album.deletedAt))
@@ -614,6 +625,9 @@ public class WasmGalleryStore : IGalleryStore
 
     public async Task MoveImageAsync(string fromAlbumId, string toAlbumId, string imageId, CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(fromAlbumId) || GalleryConstants.IsMyMediaAlbum(toAlbumId))
+            throw new InvalidOperationException("My Media is virtual; use copy-to-album from the gallery UI.");
+
         var img = await LoadImageAsync(fromAlbumId, imageId, ct);
         if (img == null || img.DeletedAt.HasValue)
             return;
@@ -625,6 +639,9 @@ public class WasmGalleryStore : IGalleryStore
 
     public async Task<DateTime> DeleteAlbumAsync(string albumId, CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+            throw new InvalidOperationException("My Media cannot be deleted.");
+
         var deletedAt = DateTime.UtcNow;
         var album = await GetAlbumMetaAsync(albumId);
         var title = album?.title ?? "(deleted)";
@@ -664,9 +681,12 @@ public class WasmGalleryStore : IGalleryStore
         var album = await GetAlbumMetaAsync(albumId);
         if (album == null || !string.IsNullOrEmpty(album.deletedAt))
             return;
+        var nextTitle = GalleryConstants.IsMyMediaAlbum(albumId)
+            ? GalleryConstants.MyMediaAlbumTitle
+            : title;
         await PersistAlbumMetaAsync(
             albumId,
-            title,
+            nextTitle,
             album.isPasswordProtected == true,
             album.protectionChangedTicks ?? 0,
             album.sortOrder ?? 0,

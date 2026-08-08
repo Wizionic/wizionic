@@ -346,12 +346,21 @@ public class SqliteGalleryStore : IGalleryStore
     public async Task CreateAlbumAsync(string albumId, string title, CancellationToken ct = default)
     {
         var index = await LoadIndexAsync(ct);
-        var sort = index.Count == 0 ? 0 : index.Max(a => a.SortOrder) + 1;
-        await PersistAlbumMetaAsync(albumId, title, false, 0, sort, null, ct);
+        // My Media is virtual — pin first; only meta (protection) is stored, never images.
+        var sort = GalleryConstants.IsMyMediaAlbum(albumId)
+            ? -1
+            : (index.Count == 0 ? 0 : index.Max(a => a.SortOrder) + 1);
+        var albumTitle = GalleryConstants.IsMyMediaAlbum(albumId)
+            ? GalleryConstants.MyMediaAlbumTitle
+            : title;
+        await PersistAlbumMetaAsync(albumId, albumTitle, false, 0, sort, null, ct);
     }
 
     public async Task UpsertImageAsync(string albumId, GalleryImage image, CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+            throw new InvalidOperationException("My Media is a virtual album; images cannot be added directly.");
+
         var ns = GetPrefix();
         var album = await _db.GetAlbumMetaByIdAsync(ns, albumId, ct);
         if (album == null || !string.IsNullOrEmpty(album.DeletedAt))
@@ -412,6 +421,9 @@ public class SqliteGalleryStore : IGalleryStore
         byte[] rawBytes,
         CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+            throw new InvalidOperationException("My Media is a virtual album; images cannot be added directly.");
+
         // MAUI: thumb via JS, encrypt native — still much faster than WASM base64 path.
         // Tool saves often run outside the Blazor circuit scope (IServiceScopeFactory), so
         // IJSRuntime may fail; always fall back so the thumbs-only grid can still render.
@@ -489,6 +501,9 @@ public class SqliteGalleryStore : IGalleryStore
 
     public async Task MoveImageAsync(string fromAlbumId, string toAlbumId, string imageId, CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(fromAlbumId) || GalleryConstants.IsMyMediaAlbum(toAlbumId))
+            throw new InvalidOperationException("My Media is virtual; use copy-to-album from the gallery UI.");
+
         var img = await LoadImageAsync(fromAlbumId, imageId, ct);
         if (img == null || img.DeletedAt.HasValue) return;
         var now = DateTime.UtcNow;
@@ -498,6 +513,9 @@ public class SqliteGalleryStore : IGalleryStore
 
     public async Task<DateTime> DeleteAlbumAsync(string albumId, CancellationToken ct = default)
     {
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+            throw new InvalidOperationException("My Media cannot be deleted.");
+
         var deletedAt = DateTime.UtcNow;
         var ns = GetPrefix();
         var album = await _db.GetAlbumMetaByIdAsync(ns, albumId, ct);
@@ -526,7 +544,11 @@ public class SqliteGalleryStore : IGalleryStore
     {
         var album = await _db.GetAlbumMetaByIdAsync(GetPrefix(), albumId, ct);
         if (album == null || !string.IsNullOrEmpty(album.DeletedAt)) return;
-        await PersistAlbumMetaAsync(albumId, title, album.IsPasswordProtected, album.ProtectionChangedTicks, album.SortOrder, null, ct);
+        // My Media title is fixed (virtual album).
+        var nextTitle = GalleryConstants.IsMyMediaAlbum(albumId)
+            ? GalleryConstants.MyMediaAlbumTitle
+            : title;
+        await PersistAlbumMetaAsync(albumId, nextTitle, album.IsPasswordProtected, album.ProtectionChangedTicks, album.SortOrder, null, ct);
     }
 
     public async Task SetPasswordProtectedAsync(string albumId, bool isProtected, long? protectionChangedTicks = null, CancellationToken ct = default)

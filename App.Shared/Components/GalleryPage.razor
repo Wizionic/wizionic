@@ -13,6 +13,7 @@
 @inject NavigationManager Nav
 @inject IGalleryStore GalleryStore
 @inject IConversationStore ConversationStore
+@inject IChatMediaLibrary ChatMedia
 @inject IAuthService AuthService
 @inject IGuestDataMigrationService GuestMigration
 @inject IGallerySyncBridge SyncBridge
@@ -37,9 +38,12 @@
                 </span>
             </div>
 
-            @foreach (var a in albums.OrderBy(x => x.SortOrder).ThenByDescending(x => x.LastUpdated))
+            @foreach (var a in albums.OrderBy(x => GalleryConstants.IsMyMediaAlbum(x.Id) ? -1 : 0)
+                                     .ThenBy(x => x.SortOrder)
+                                     .ThenByDescending(x => x.LastUpdated))
             {
                 var isActive = activeAlbumId == a.Id;
+                var isMyMedia = GalleryConstants.IsMyMediaAlbum(a.Id);
                 <div class="conversation-item @(isActive ? "active" : "")"
                      @onclick="() => SelectAlbum(a.Id)">
                     <div class="row-top">
@@ -48,13 +52,17 @@
                             {
                                 <i class="cf-icon bi bi-lock-fill" style="font-size:0.85em; margin-right:4px; opacity:0.85;" title="Password protected"></i>
                             }
+                            @if (isMyMedia)
+                            {
+                                <i class="cf-icon bi bi-collection-play" style="font-size:0.85em; margin-right:4px; opacity:0.85;" title="Chat media library"></i>
+                            }
                             @a.Title
                         </div>
                         <div class="menu" @onclick:stopPropagation>
                             <button id="menu-btn-@a.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(a.Id)">⋮</button>
                         </div>
                     </div>
-                    <div class="date">@a.LastUpdated.ToLocalTime().ToString("MMM d")</div>
+                    <div class="date">@(isMyMedia ? "Library" : a.LastUpdated.ToLocalTime().ToString("MMM d"))</div>
                 </div>
             }
             @if (!albums.Any())
@@ -138,7 +146,16 @@
                     {
                         <div class="gallery-empty">
                             <i class="bi bi-image" style="font-size:2rem; opacity:0.5;"></i>
-                            <p style="margin-top:0.5rem;">No images yet. Tap + to upload or add from chat.</p>
+                            <p style="margin-top:0.5rem;">
+                                @if (IsMyMediaActive)
+                                {
+                                    <text>No chat images yet. Generate or upload images in Chat to see them here.</text>
+                                }
+                                else
+                                {
+                                    <text>No images yet. Tap + to upload or add from chat.</text>
+                                }
+                            </p>
                         </div>
                     }
                     else
@@ -164,7 +181,8 @@
         </div>
     </main>
 
-    @if (!string.IsNullOrEmpty(activeAlbumId) && nameDialogMode == NameDialogMode.None && !IsActiveAlbumLocked && lightboxImageId == null)
+    @if (!string.IsNullOrEmpty(activeAlbumId) && nameDialogMode == NameDialogMode.None && !IsActiveAlbumLocked
+         && lightboxImageId == null && !IsMyMediaActive)
     {
         <button type="button"
                 class="menu-button notes-fab"
@@ -178,15 +196,19 @@
 
     @if (openMenuId != null)
     {
+        var menuIsMyMedia = GalleryConstants.IsMyMediaAlbum(openMenuId);
         <div class="menu-popup" style="@activePopupStyle" @onclick:stopPropagation>
-            <div @onclick="() => { CloseMenu(); OpenAddMenuForAlbum(openMenuId); }">
-                <button type="button" class="menu-button"><i class="cf-icon bi bi-plus-lg"></i></button>
-                Add
-            </div>
-            <div @onclick="() => OpenRenameDialog(openMenuId)">
-                <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
-                Rename
-            </div>
+            @if (!menuIsMyMedia)
+            {
+                <div @onclick="() => { CloseMenu(); OpenAddMenuForAlbum(openMenuId); }">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-plus-lg"></i></button>
+                    Add
+                </div>
+                <div @onclick="() => OpenRenameDialog(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-pencil-square"></i></button>
+                    Rename
+                </div>
+            }
             <div @onclick="() => ExportAlbum(openMenuId)">
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-file-earmark-arrow-down"></i></button>
                 Export
@@ -209,10 +231,13 @@
                     </div>
                 }
             }
-            <div @onclick="() => PromptDeleteAlbum(openMenuId)">
-                <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
-                Delete Album
-            </div>
+            @if (!menuIsMyMedia)
+            {
+                <div @onclick="() => PromptDeleteAlbum(openMenuId)">
+                    <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
+                    Delete Album
+                </div>
+            }
         </div>
         <div class="menu-overlay" @onclick="CloseMenu"></div>
     }
@@ -260,7 +285,7 @@
             </div>
             <div @onclick="() => PromptDeleteImage(openTileMenuId)">
                 <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
-                Delete
+                @(IsMyMediaActive ? "Delete from chat" : "Delete")
             </div>
         </div>
         <div class="menu-overlay" @onclick="CloseTileMenu"></div>
@@ -498,6 +523,8 @@
         && albums.FirstOrDefault(n => n.Id == activeAlbumId)?.IsPasswordProtected == true
         && !unlockedAlbumIds.Contains(activeAlbumId);
 
+    private bool IsMyMediaActive => GalleryConstants.IsMyMediaAlbum(activeAlbumId);
+
     private class PopupPosition
     {
         public double top { get; set; }
@@ -523,7 +550,7 @@
         if (AuthService.IsAuthenticated)
             await GuestMigration.MigrateIfNeededAsync();
 
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
 
         try
         {
@@ -535,7 +562,9 @@
 
         if (albums.Any())
         {
-            activeAlbumId = albums.OrderByDescending(n => n.LastUpdated).First().Id;
+            // Prefer My Media as default landing when present.
+            activeAlbumId = albums.FirstOrDefault(a => GalleryConstants.IsMyMediaAlbum(a.Id))?.Id
+                            ?? albums.OrderByDescending(n => n.LastUpdated).First().Id;
             await LoadAlbum(activeAlbumId);
         }
 
@@ -548,7 +577,7 @@
 
     private async Task RefreshFromSyncAsync()
     {
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         if (!string.IsNullOrEmpty(activeAlbumId))
         {
             if (albums.All(a => a.Id != activeAlbumId))
@@ -560,7 +589,10 @@
             }
             if (!string.IsNullOrEmpty(activeAlbumId) && !IsActiveAlbumLocked)
             {
-                currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId);
+                if (GalleryConstants.IsMyMediaAlbum(activeAlbumId))
+                    currentImages = await ChatMedia.LoadThumbsAsync();
+                else
+                    currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId);
                 InvalidateLiveImages();
             }
         }
@@ -595,10 +627,51 @@
             return;
         }
 
-        // Thumbs only — never bind full multi-MB DataBase64 into the tile grid (freezes WASM).
-        currentImages = await GalleryStore.LoadAlbumThumbsAsync(id);
+        if (GalleryConstants.IsMyMediaAlbum(id))
+        {
+            // Virtual album: thumbs from chat attachments (pointers).
+            currentImages = await ChatMedia.LoadThumbsAsync();
+        }
+        else
+        {
+            // Thumbs only — never bind full multi-MB DataBase64 into the tile grid (freezes WASM).
+            currentImages = await GalleryStore.LoadAlbumThumbsAsync(id);
+        }
         InvalidateLiveImages();
         StateHasChanged();
+    }
+
+    /// <summary>Ensure reserved My Media meta exists (for password protection) and is listed.</summary>
+    private async Task<List<LocalAlbum>> EnsureMyMediaAndLoadIndexAsync()
+    {
+        var list = await GalleryStore.LoadIndexAsync();
+        if (!list.Any(a => GalleryConstants.IsMyMediaAlbum(a.Id)))
+        {
+            try
+            {
+                await GalleryStore.CreateAlbumAsync(
+                    GalleryConstants.MyMediaAlbumId,
+                    GalleryConstants.MyMediaAlbumTitle);
+            }
+            catch { /* may already exist race */ }
+            list = await GalleryStore.LoadIndexAsync();
+        }
+
+        // Always show canonical title; pin sort visually even if meta is stale.
+        return list
+            .Select(a => GalleryConstants.IsMyMediaAlbum(a.Id)
+                ? a with { Title = GalleryConstants.MyMediaAlbumTitle, SortOrder = -1 }
+                : a)
+            .ToList();
+    }
+
+    private async Task<GalleryImage?> LoadFullImageAsync(string imageId)
+    {
+        if (IsMyMediaActive)
+            return await ChatMedia.LoadImageAsync(imageId);
+        if (string.IsNullOrEmpty(activeAlbumId))
+            return null;
+        return await GalleryStore.LoadImageAsync(activeAlbumId, imageId);
     }
 
     private async Task SetLayout(LayoutMode mode)
@@ -653,17 +726,39 @@
             var old = lightboxBlobUrl;
             lightboxBlobUrl = null;
             try { await GalleryStore.RevokeDisplayUrlAsync(old); } catch { /* ignore */ }
+            try { await JS.InvokeVoidAsync("galleryRevokeObjectUrl", old); } catch { /* ignore */ }
         }
 
         lightboxLoading = true;
         await InvokeAsync(StateHasChanged);
         try
         {
-            var url = await GalleryStore.CreateDisplayUrlAsync(activeAlbumId, imageId);
+            string? url = null;
+            if (IsMyMediaActive)
+            {
+                var img = await ChatMedia.LoadImageAsync(imageId);
+                if (img != null && !string.IsNullOrEmpty(img.DataBase64))
+                {
+                    try
+                    {
+                        url = await JS.InvokeAsync<string?>(
+                            "galleryObjectUrlFromBase64", img.DataBase64, img.ContentType);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+            else
+            {
+                url = await GalleryStore.CreateDisplayUrlAsync(activeAlbumId, imageId);
+            }
+
             if (lightboxImageId != imageId)
             {
                 if (!string.IsNullOrEmpty(url))
+                {
                     try { await GalleryStore.RevokeDisplayUrlAsync(url); } catch { /* ignore */ }
+                    try { await JS.InvokeVoidAsync("galleryRevokeObjectUrl", url); } catch { /* ignore */ }
+                }
                 return;
             }
             lightboxBlobUrl = url;
@@ -904,7 +999,7 @@
         {
             var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
             SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, album?.Title ?? "Untitled");
-            albums = await GalleryStore.LoadIndexAsync();
+            albums = await EnsureMyMediaAndLoadIndexAsync();
             InvalidateLiveImages();
             StateHasChanged();
         }
@@ -917,7 +1012,7 @@
         var title = album?.Title ?? "Untitled";
         // Per-image stores already persist on Upsert; refresh meta + index only.
         await GalleryStore.UpdateAlbumMetaAsync(activeAlbumId, title);
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, title);
         StateHasChanged();
     }
@@ -935,7 +1030,7 @@
         SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, title);
         currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId);
         InvalidateLiveImages();
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         StateHasChanged();
     }
 
@@ -943,7 +1038,7 @@
     {
         CloseTileMenu();
         if (string.IsNullOrEmpty(imageId) || string.IsNullOrEmpty(activeAlbumId)) return;
-        var img = await GalleryStore.LoadImageAsync(activeAlbumId, imageId);
+        var img = await LoadFullImageAsync(imageId);
         if (img == null || string.IsNullOrEmpty(img.DataBase64)) return;
         try
         {
@@ -957,7 +1052,7 @@
         CloseTileMenu();
         if (string.IsNullOrEmpty(imageId) || string.IsNullOrEmpty(activeAlbumId)) return;
 
-        var img = await GalleryStore.LoadImageAsync(activeAlbumId, imageId);
+        var img = await LoadFullImageAsync(imageId);
         if (img == null || string.IsNullOrEmpty(img.DataBase64))
         {
             try { await JS.InvokeVoidAsync("alert", "Could not load image for editing."); } catch { }
@@ -980,15 +1075,17 @@
         if (string.IsNullOrEmpty(imageId)) return;
         pendingDeleteImageId = imageId;
         pendingDeleteAlbumId = null;
-        deleteConfirmTitle = "Delete image";
-        deleteConfirmMessage = "Remove this image from the album?";
+        deleteConfirmTitle = IsMyMediaActive ? "Delete from chat" : "Delete image";
+        deleteConfirmMessage = IsMyMediaActive
+            ? "Remove this image from its chat message? It will disappear from My Media."
+            : "Remove this image from the album?";
         showDeleteConfirm = true;
     }
 
     private void PromptDeleteAlbum(string? albumId)
     {
         CloseMenu();
-        if (string.IsNullOrEmpty(albumId)) return;
+        if (string.IsNullOrEmpty(albumId) || GalleryConstants.IsMyMediaAlbum(albumId)) return;
         pendingDeleteAlbumId = albumId;
         pendingDeleteImageId = null;
         var title = albums.FirstOrDefault(a => a.Id == albumId)?.Title ?? "this album";
@@ -1014,15 +1111,22 @@
             var idx = currentImages.FindIndex(i => i.Id == id);
             if (idx >= 0)
             {
-                await GalleryStore.SoftDeleteImageAsync(activeAlbumId!, id);
-                SyncBridge.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(activeAlbumId!, id, DateTime.UtcNow);
-                var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
-                SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId!, album?.Title ?? "Untitled");
+                if (IsMyMediaActive)
+                {
+                    await ChatMedia.DeletePointerAsync(id);
+                }
+                else
+                {
+                    await GalleryStore.SoftDeleteImageAsync(activeAlbumId!, id);
+                    SyncBridge.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(activeAlbumId!, id, DateTime.UtcNow);
+                    var album = albums.FirstOrDefault(a => a.Id == activeAlbumId);
+                    SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId!, album?.Title ?? "Untitled");
+                }
+
                 if (lightboxImageId == id)
                     ClearLightbox();
-                currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId!);
-                InvalidateLiveImages();
-                albums = await GalleryStore.LoadIndexAsync();
+                await LoadAlbum(activeAlbumId!);
+                albums = await EnsureMyMediaAndLoadIndexAsync();
                 StateHasChanged();
             }
         }
@@ -1030,7 +1134,8 @@
         {
             var id = pendingDeleteAlbumId;
             pendingDeleteAlbumId = null;
-            await DeleteAlbum(id);
+            if (!GalleryConstants.IsMyMediaAlbum(id))
+                await DeleteAlbum(id);
         }
     }
 
@@ -1039,7 +1144,11 @@
         CloseTileMenu();
         if (string.IsNullOrEmpty(imageId) || string.IsNullOrEmpty(activeAlbumId)) return;
         moveImageId = imageId;
-        moveTargetAlbums = albums.Where(a => a.Id != activeAlbumId).OrderBy(a => a.Title).ToList();
+        // Never offer My Media as a move/save target (virtual).
+        moveTargetAlbums = albums
+            .Where(a => a.Id != activeAlbumId && !GalleryConstants.IsMyMediaAlbum(a.Id))
+            .OrderBy(a => a.Title)
+            .ToList();
         showMoveDialog = true;
     }
 
@@ -1052,7 +1161,8 @@
 
     private async Task ConfirmMoveImage(string targetAlbumId)
     {
-        if (string.IsNullOrEmpty(moveImageId) || string.IsNullOrEmpty(activeAlbumId))
+        if (string.IsNullOrEmpty(moveImageId) || string.IsNullOrEmpty(activeAlbumId)
+            || GalleryConstants.IsMyMediaAlbum(targetAlbumId))
         {
             CloseMoveDialog();
             return;
@@ -1066,16 +1176,31 @@
         }
 
         var img = currentImages[idx];
-        await GalleryStore.MoveImageAsync(activeAlbumId!, targetAlbumId, img.Id);
-        SyncBridge.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(activeAlbumId!, img.Id, DateTime.UtcNow);
-        SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(targetAlbumId, img.Id);
-        var srcTitle = albums.FirstOrDefault(a => a.Id == activeAlbumId)?.Title ?? "Untitled";
-        var targetTitle = albums.FirstOrDefault(a => a.Id == targetAlbumId)?.Title ?? "Untitled";
-        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId!, srcTitle);
-        SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(targetAlbumId, targetTitle);
-        currentImages = await GalleryStore.LoadAlbumThumbsAsync(activeAlbumId!);
-        InvalidateLiveImages();
-        albums = await GalleryStore.LoadIndexAsync();
+        if (IsMyMediaActive)
+        {
+            // Materialize into a real album, then remove the chat attachment (true move).
+            var newId = await ChatMedia.CopyToAlbumAsync(img.Id, targetAlbumId);
+            await ChatMedia.DeletePointerAsync(img.Id);
+            SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(targetAlbumId, newId);
+            var targetTitle = albums.FirstOrDefault(a => a.Id == targetAlbumId)?.Title ?? "Untitled";
+            SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(targetAlbumId, targetTitle);
+            if (lightboxImageId == img.Id)
+                ClearLightbox();
+            await LoadAlbum(activeAlbumId!);
+        }
+        else
+        {
+            await GalleryStore.MoveImageAsync(activeAlbumId!, targetAlbumId, img.Id);
+            SyncBridge.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(activeAlbumId!, img.Id, DateTime.UtcNow);
+            SyncBridge.ScheduleAutoSyncAlbumImageAfterLocalSave(targetAlbumId, img.Id);
+            var srcTitle = albums.FirstOrDefault(a => a.Id == activeAlbumId)?.Title ?? "Untitled";
+            var targetTitle = albums.FirstOrDefault(a => a.Id == targetAlbumId)?.Title ?? "Untitled";
+            SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId!, srcTitle);
+            SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(targetAlbumId, targetTitle);
+            await LoadAlbum(activeAlbumId!);
+        }
+
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         CloseMoveDialog();
         StateHasChanged();
     }
@@ -1197,7 +1322,7 @@
         {
             var album = albums.FirstOrDefault(x => x.Id == activeAlbumId);
             SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(activeAlbumId, album?.Title ?? "Untitled");
-            albums = await GalleryStore.LoadIndexAsync();
+            albums = await EnsureMyMediaAndLoadIndexAsync();
             StateHasChanged();
         }
     }
@@ -1239,7 +1364,7 @@
         var id = Guid.NewGuid().ToString("N");
         var title = nameDialogTitle.Trim();
         await GalleryStore.CreateAlbumAsync(id, title);
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(id, title);
         CancelNameDialog();
         await LoadAlbum(id);
@@ -1251,7 +1376,7 @@
             return;
         var title = nameDialogTitle.Trim();
         await GalleryStore.UpdateAlbumMetaAsync(nameDialogAlbumId, title);
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(nameDialogAlbumId, title);
         CancelNameDialog();
         StateHasChanged();
@@ -1268,7 +1393,7 @@
     private async Task DeleteAlbum(string id)
     {
         var deletedAt = await GalleryStore.DeleteAlbumAsync(id);
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         SyncBridge.ScheduleAutoSyncAlbumDeleteAfterLocalDelete(id, deletedAt);
         unlockedAlbumIds.Remove(id);
 
@@ -1346,7 +1471,7 @@
             if (removeProtection)
             {
                 await GalleryStore.SetPasswordProtectedAsync(albumId, false);
-                albums = await GalleryStore.LoadIndexAsync();
+                albums = await EnsureMyMediaAndLoadIndexAsync();
                 unlockedAlbumIds.Remove(albumId);
                 SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(
                     albumId,
@@ -1378,7 +1503,7 @@
         if (!AuthService.IsAuthenticated || !AuthService.HasPassword) return;
 
         await GalleryStore.SetPasswordProtectedAsync(albumId, true);
-        albums = await GalleryStore.LoadIndexAsync();
+        albums = await EnsureMyMediaAndLoadIndexAsync();
         SyncBridge.ScheduleAutoSyncAlbumMetaAfterLocalSave(
             albumId,
             albums.FirstOrDefault(n => n.Id == albumId)?.Title ?? "");
@@ -1416,7 +1541,23 @@
             return;
         }
 
-        var images = (await GalleryStore.LoadAlbumAsync(album.Id)).Where(i => i.DeletedAt is null).ToList();
+        List<GalleryImage> images;
+        if (GalleryConstants.IsMyMediaAlbum(albumId))
+        {
+            var thumbs = await ChatMedia.LoadThumbsAsync();
+            images = new List<GalleryImage>();
+            foreach (var t in thumbs)
+            {
+                var full = await ChatMedia.LoadImageAsync(t.Id);
+                if (full != null && !string.IsNullOrEmpty(full.DataBase64))
+                    images.Add(full);
+            }
+        }
+        else
+        {
+            images = (await GalleryStore.LoadAlbumAsync(album.Id)).Where(i => i.DeletedAt is null).ToList();
+        }
+
         if (!images.Any()) return;
         await DownloadGalleryHtml(album.Title, images, SanitizeFileName(album.Title) + ".html");
     }
@@ -1432,11 +1573,28 @@
         sb.Append("<h1>Gallery Export</h1>");
 
         var any = false;
-        foreach (var a in albums.OrderByDescending(x => x.LastUpdated))
+        foreach (var a in albums.OrderBy(x => GalleryConstants.IsMyMediaAlbum(x.Id) ? 0 : 1)
+                                .ThenByDescending(x => x.LastUpdated))
         {
             if (a.IsPasswordProtected && !unlockedAlbumIds.Contains(a.Id))
                 continue;
-            var images = (await GalleryStore.LoadAlbumAsync(a.Id)).Where(i => i.DeletedAt is null).ToList();
+
+            List<GalleryImage> images;
+            if (GalleryConstants.IsMyMediaAlbum(a.Id))
+            {
+                images = new List<GalleryImage>();
+                foreach (var t in await ChatMedia.LoadThumbsAsync())
+                {
+                    var full = await ChatMedia.LoadImageAsync(t.Id);
+                    if (full != null && !string.IsNullOrEmpty(full.DataBase64))
+                        images.Add(full);
+                }
+            }
+            else
+            {
+                images = (await GalleryStore.LoadAlbumAsync(a.Id)).Where(i => i.DeletedAt is null).ToList();
+            }
+
             if (!images.Any()) continue;
             any = true;
             sb.Append("<h2>").Append(EncodeHtml(a.Title)).Append("</h2><div class=\"grid\">");
