@@ -14,11 +14,19 @@ public sealed class LemonadeToolModule : IToolModule
 {
     private readonly ILemonadeImageService _images;
     private readonly ILemonadeSpeechService _speech;
+    private readonly IConversationMediaBuffer _media;
+    private readonly IToolConversationContext _convoCtx;
 
-    public LemonadeToolModule(ILemonadeImageService images, ILemonadeSpeechService speech)
+    public LemonadeToolModule(
+        ILemonadeImageService images,
+        ILemonadeSpeechService speech,
+        IConversationMediaBuffer media,
+        IToolConversationContext convoCtx)
     {
         _images = images;
         _speech = speech;
+        _media = media;
+        _convoCtx = convoCtx;
     }
 
     public string ModuleName => "Lemonade";
@@ -38,7 +46,8 @@ public sealed class LemonadeToolModule : IToolModule
                     Description =
                         "Generate an image locally via Lemonade (Stable Diffusion). " +
                         "Use when the user asks you to draw, illustrate, or generate a picture. " +
-                        "Returns a markdown image with base64 data for immediate display."
+                        "Returns a short generation_id only (the image is shown to the user automatically). " +
+                        "If the user also asked to save to a gallery/album, call save_to_gallery with that generation_id."
                 }));
         }
 
@@ -51,7 +60,8 @@ public sealed class LemonadeToolModule : IToolModule
                     Description =
                         "Edit an existing image with Lemonade using an instruction prompt. " +
                         "Pass the source image as base64 PNG (no data: prefix). " +
-                        "Only works with edit-capable models (e.g. Flux-2-Klein)."
+                        "Only works with edit-capable models (e.g. Flux-2-Klein). " +
+                        "Returns a short generation_id only (image is shown automatically); use save_to_gallery to persist."
                 }));
         }
 
@@ -86,7 +96,13 @@ public sealed class LemonadeToolModule : IToolModule
         if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
             return "Image generation failed: " + (result.Error ?? "unknown error");
 
-        return $"![generated image](data:image/png;base64,{result.Base64Png})";
+        // Never return multi-MB base64 into the tool loop — small models OOM / crash the app.
+        // ChatCompletionService attaches the buffered image to the UI result after the turn.
+        var genId = BufferImage(result.Base64Png, "image/png", "generated-image.png", "lemonade_generate");
+        return
+            $"OK: image generated. generation_id={genId}. " +
+            "The image is displayed to the user (do not re-output image data). " +
+            $"If they asked to save it, call save_to_gallery(album_name=…, generation_id={genId}).";
     }
 
     [Description("Edit an image with a text instruction using Lemonade.")]
@@ -118,7 +134,11 @@ public sealed class LemonadeToolModule : IToolModule
         if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
             return "Image edit failed: " + (result.Error ?? "unknown error");
 
-        return $"![edited image](data:image/png;base64,{result.Base64Png})";
+        var genId = BufferImage(result.Base64Png, "image/png", "edited-image.png", "lemonade_edit");
+        return
+            $"OK: image edited. generation_id={genId}. " +
+            "The image is displayed to the user (do not re-output image data). " +
+            $"If they asked to save it, call save_to_gallery(album_name=…, generation_id={genId}).";
     }
 
     [Description("Speak text using Lemonade text-to-speech.")]
@@ -137,5 +157,11 @@ public sealed class LemonadeToolModule : IToolModule
 
         var b64 = Convert.ToBase64String(result.AudioBytes);
         return $"<audio>data:audio/mpeg;base64,{b64}</audio>";
+    }
+
+    private string BufferImage(string base64, string contentType, string name, string source)
+    {
+        var convoId = _convoCtx.ConversationId ?? "_default";
+        return _media.AddImage(convoId, base64, contentType, name, source);
     }
 }

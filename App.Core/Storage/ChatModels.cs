@@ -49,10 +49,35 @@ public record GalleryImage(
     {
         get
         {
-            if (!string.IsNullOrEmpty(ThumbnailBase64))
-                return $"data:image/jpeg;base64,{ThumbnailBase64}";
-            return DataUrl;
+            if (string.IsNullOrEmpty(ThumbnailBase64))
+                return DataUrl;
+
+            // Prepared thumbs from canvas are JPEG; full-image fallback (tool path when JS
+            // thumb gen is unavailable) may be PNG/WebP — sniff so the grid does not break.
+            var mime = SniffImageMime(ThumbnailBase64)
+                       ?? (ContentType is { Length: > 0 } && ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                           ? ContentType
+                           : "image/jpeg");
+            return $"data:{mime};base64,{ThumbnailBase64}";
         }
+    }
+
+    /// <summary>Best-effort image MIME from base64 magic (no full decode).</summary>
+    public static string? SniffImageMime(string base64)
+    {
+        if (string.IsNullOrEmpty(base64)) return null;
+        // Skip optional data: URL prefix
+        var b64 = base64;
+        var comma = b64.IndexOf(',');
+        if (b64.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && comma > 0)
+            b64 = b64[(comma + 1)..];
+
+        // PNG → iVBORw0KGgo…  JPEG → /9j/  GIF → R0lGOD  WebP (RIFF…WEBP) → UklGR…
+        if (b64.StartsWith("iVBOR", StringComparison.Ordinal)) return "image/png";
+        if (b64.StartsWith("/9j/", StringComparison.Ordinal)) return "image/jpeg";
+        if (b64.StartsWith("R0lGOD", StringComparison.Ordinal)) return "image/gif";
+        if (b64.StartsWith("UklGR", StringComparison.Ordinal)) return "image/webp";
+        return null;
     }
 }
 

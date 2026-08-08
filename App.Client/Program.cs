@@ -63,6 +63,7 @@ builder.Services.AddScoped<INoteStore>(sp => sp.GetRequiredService<WasmNoteStore
 builder.Services.AddScoped<WasmGalleryStore>();
 builder.Services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<WasmGalleryStore>());
 builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 builder.Services.AddScoped<WasmStorageQuotaService>();
 builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
 // Guest key provider must be Singleton: ChatAuthService is Singleton and injects IGuestKeyProvider.
@@ -97,10 +98,14 @@ builder.Services.AddSingleton<ISmartHomeService, NullSmartHomeService>();
 builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 builder.Services.AddScoped<McpToolSource>();
 builder.Services.AddScoped<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
+builder.Services.AddSingleton<App.Core.Tools.IConversationMediaBuffer, App.Shared.Services.Tools.ConversationMediaBuffer>();
+builder.Services.AddScoped<App.Core.Tools.IToolConversationContext, App.Shared.Services.Tools.ToolConversationContext>();
 builder.Services.AddScoped<NativeToolModule>();
 builder.Services.AddScoped<App.Shared.Services.Tools.LemonadeToolModule>();
+builder.Services.AddScoped<App.Shared.Services.Tools.GalleryToolModule>();
 builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
 builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.LemonadeToolModule>());
+builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.GalleryToolModule>());
 builder.Services.AddScoped<IToolProvider, CompositeToolProvider>();
 
 var host = builder.Build();
