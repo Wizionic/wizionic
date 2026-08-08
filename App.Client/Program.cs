@@ -93,7 +93,9 @@ builder.Services.AddSingleton<App.Core.UI.IUrlEmbedOverlay>(
 // (ToolExecutionTrace no longer uses AsyncLocal — that type fails on WASM).
 builder.Services.AddScoped<IToolExecutionTrace, ToolExecutionTrace>();
 builder.Services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
-builder.Services.AddSingleton<IRequestRouter, ContextualRequestRouter>();
+builder.Services.AddScoped<ContextualRequestRouter>();
+builder.Services.AddScoped<AiRequestRouter>();
+builder.Services.AddScoped<IRequestRouter, CompositeRequestRouter>();
 builder.Services.AddSingleton<ISmartHomeService, NullSmartHomeService>();
 builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 builder.Services.AddScoped<McpToolSource>();

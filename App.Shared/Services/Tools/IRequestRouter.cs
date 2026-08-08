@@ -8,15 +8,54 @@ public enum RouteType
     AgentTask
 }
 
-public record RequestRoute(RouteType Type, string? TargetModule = null);
+/// <summary>
+/// Tool-module selection for one chat turn. Produced by rules and/or an AI router.
+/// </summary>
+public record RequestRoute(
+    RouteType Type,
+    IReadOnlyList<string> Modules,
+    string? TargetModule = null,
+    bool IncludeMcp = false,
+    string? Reason = null,
+    /// <summary>Trace label: Rules, AI, Hybrid→Rules, Hybrid→AI, etc.</summary>
+    string? Source = null)
+{
+    public static readonly IReadOnlyList<string> EmptyModules = Array.Empty<string>();
+
+    public static RequestRoute PureChat(string reason, string source = "Rules") =>
+        new(RouteType.StandardChat, EmptyModules, Reason: reason, Source: source);
+
+    public static RequestRoute WithModules(
+        IEnumerable<string> modules,
+        string reason,
+        string? targetModule = null,
+        bool includeMcp = false,
+        string source = "Rules")
+    {
+        var list = modules
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return new RequestRoute(
+            list.Count == 0 ? RouteType.StandardChat : RouteType.ToolAssistedChat,
+            list,
+            targetModule,
+            includeMcp,
+            reason,
+            source);
+    }
+
+    public bool HasTools => Modules.Count > 0;
+}
 
 /// <summary>
-/// Classifies user intent before chat completion. Hook for future routing models.
+/// Classifies user intent before chat completion — rules, AI model, or hybrid.
 /// </summary>
 public interface IRequestRouter
 {
-    RequestRoute ClassifyRequest(
+    Task<RequestRoute> ClassifyRequestAsync(
         string message,
         IReadOnlyList<IToolModule> activeModules,
-        string? conversationId = null);
+        string? conversationId = null,
+        CancellationToken ct = default);
 }
