@@ -10,7 +10,7 @@ $REMOTE_ROOT = "/var/www/wizionic"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "0.1.8"   # bump this before each release
+$VERSION      = "0.1.9"   # bump this before each release
 $UPDATE_FEED  = "https://wizionic.com/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
 
