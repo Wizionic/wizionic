@@ -3,6 +3,7 @@ using App.Core.Lemonade;
 using App.Core.Ollama;
 using App.Core.SmartHome;
 using App.Core.Storage;
+using App.Core.Tools;
 using System.Net.Http.Json;
 using System.Text.Json;
 
@@ -21,6 +22,7 @@ public class SqliteKeyStore : IKeyStore
     private const string McpTokensKey = "wasm-mcp-tokens";
     private const string McpCustomConnectorsKey = "wasm-mcp-custom-connectors";
     private const string LastSelectedModelKey = "wasm-last-selected-model";
+    private const string ToolRoutingKey = "wasm-tool-routing";
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
@@ -31,6 +33,8 @@ public class SqliteKeyStore : IKeyStore
 
     private Dictionary<string, string> _providerKeys = new();
     private string _lastSelectedModel = "";
+    private ToolRoutingMode _toolRoutingMode = ToolRoutingMode.Rules;
+    private string? _toolRoutingModelId;
     private string? _systemPrompt;
     private bool _systemPromptCustomized;
     private UserProfileSettings _userProfile = new();
@@ -98,6 +102,23 @@ public class SqliteKeyStore : IKeyStore
         }
 
         _lastSelectedModel = await GetItemAsync(LastSelectedModelKey, ct) ?? "";
+
+        var toolRoutingJson = await GetItemAsync(ToolRoutingKey, ct);
+        if (!string.IsNullOrEmpty(toolRoutingJson))
+        {
+            try
+            {
+                var tr = JsonSerializer.Deserialize<ToolRoutingConfig>(toolRoutingJson);
+                if (tr != null)
+                {
+                    _toolRoutingMode = Enum.IsDefined(typeof(ToolRoutingMode), tr.Mode)
+                        ? (ToolRoutingMode)tr.Mode
+                        : ToolRoutingMode.Rules;
+                    _toolRoutingModelId = string.IsNullOrWhiteSpace(tr.ModelId) ? null : tr.ModelId.Trim();
+                }
+            }
+            catch { /* keep defaults */ }
+        }
 
         var systemPromptJson = await GetItemAsync(SystemPromptKey, ct);
         _systemPromptCustomized = systemPromptJson != null;
@@ -289,6 +310,27 @@ public class SqliteKeyStore : IKeyStore
             await RemoveItemAsync(LastSelectedModelKey, ct);
         else
             await SetItemAsync(LastSelectedModelKey, _lastSelectedModel, ct);
+    }
+
+    public ToolRoutingMode ToolRoutingMode => _toolRoutingMode;
+    public string? ToolRoutingModelId => _toolRoutingModelId;
+
+    public async Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default)
+    {
+        _toolRoutingMode = mode;
+        _toolRoutingModelId = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
+        var json = JsonSerializer.Serialize(new ToolRoutingConfig
+        {
+            Mode = (int)_toolRoutingMode,
+            ModelId = _toolRoutingModelId
+        });
+        await SetItemAsync(ToolRoutingKey, json, ct);
+    }
+
+    private sealed class ToolRoutingConfig
+    {
+        public int Mode { get; set; }
+        public string? ModelId { get; set; }
     }
 
     public string GetKey(string providerId) =>

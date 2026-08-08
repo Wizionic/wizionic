@@ -6,7 +6,8 @@ using App.Core.UI;
 namespace App.Shared.Services.Tools;
 
 /// <summary>
-/// Routes by wake word and per-conversation session context. Designed as a swap point for a future intent model.
+/// Rule-based tool router: wake word, browser panel, session, and keyword heuristics.
+/// Zero model cost. Used alone (Rules mode) or as the Hybrid fast path / AI fallback.
 /// </summary>
 public sealed class ContextualRequestRouter : IRequestRouter
 {
@@ -26,31 +27,119 @@ public sealed class ContextualRequestRouter : IRequestRouter
         _browserPanel = browserPanel ?? throw new ArgumentNullException(nameof(browserPanel));
     }
 
-    public RequestRoute ClassifyRequest(
+    public Task<RequestRoute> ClassifyRequestAsync(
         string message,
         IReadOnlyList<IToolModule> activeModules,
-        string? conversationId = null)
+        string? conversationId = null,
+        CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(message))
-            return new RequestRoute(RouteType.ToolAssistedChat);
+        ct.ThrowIfCancellationRequested();
+        // Direct Rules mode (when Composite is not used): keep session stickiness.
+        return Task.FromResult(ClassifyRules(message, activeModules, conversationId, useSessionStickiness: true));
+    }
 
-        var haAvailable = activeModules.Any(m => m.ModuleName == "HomeAssistant" && m.IsAvailable);
-        if (haAvailable)
+    /// <summary>
+    /// Synchronous rules path (also used by Hybrid / AI fallback).
+    /// <paramref name="useSessionStickiness"/>: when true (Rules mode), continue HA for ~15 min after a tool call
+    /// so short follow-ups work without the wake word. When false (AI / Hybrid), only wake word forces HA —
+    /// AI or smart-home heuristics re-open HA on real device commands so topic switches (e.g. weather) work.
+    /// </summary>
+    public RequestRoute ClassifyRules(
+        string message,
+        IReadOnlyList<IToolModule> activeModules,
+        string? conversationId = null,
+        bool useSessionStickiness = true)
+    {
+        var available = new HashSet<string>(
+            activeModules.Where(m => m.IsAvailable).Select(m => m.ModuleName),
+            StringComparer.OrdinalIgnoreCase);
+
+        bool Has(string name) => available.Contains(name);
+
+        if (string.IsNullOrWhiteSpace(message))
+            return RequestRoute.PureChat("empty message", "Rules");
+
+        // Hard routes: HA wake-word; optional active session (Rules mode only)
+        if (Has("HomeAssistant"))
         {
             var assistantName = _keyStore.HomeAssistantAssistantName;
             var session = _sessions.Get(conversationId);
+            var wake = ContainsWakeWord(message, assistantName);
+            var sticky = useSessionStickiness && session.IsActive("HomeAssistant", SessionTtl);
+            if (wake || sticky)
+            {
+                var modules = new List<string> { "HomeAssistant", "Native" };
+                if (MessageSuggestsGalleryTools(message) && Has("Gallery"))
+                    modules.Add("Gallery");
+                if (MessageSuggestsImageTools(message) && Has("Lemonade"))
+                {
+                    modules.Add("Lemonade");
+                    if (Has("Gallery")) modules.Add("Gallery");
+                }
 
-            if (ContainsWakeWord(message, assistantName) || session.IsActive("HomeAssistant", SessionTtl))
-                return new RequestRoute(RouteType.ToolAssistedChat, "HomeAssistant");
+                return RequestRoute.WithModules(
+                    modules,
+                    wake
+                        ? "Home Assistant wake word"
+                        : "Home Assistant active session (rules stickiness)",
+                    targetModule: "HomeAssistant",
+                    includeMcp: true,
+                    source: "Rules");
+            }
         }
 
-        if (_browserPanel.IsOpen &&
-            activeModules.Any(m => m.ModuleName == "BrowserAgent" && m.IsAvailable))
+        // Hard route: browser panel open
+        if (_browserPanel.IsOpen && Has("BrowserAgent"))
         {
-            return new RequestRoute(RouteType.ToolAssistedChat, "BrowserAgent");
+            var modules = new List<string> { "BrowserAgent", "Native" };
+            if (MessageSuggestsGalleryTools(message) && Has("Gallery"))
+                modules.Add("Gallery");
+            if (MessageSuggestsImageTools(message) && Has("Lemonade"))
+            {
+                modules.Add("Lemonade");
+                if (Has("Gallery")) modules.Add("Gallery");
+            }
+
+            return RequestRoute.WithModules(
+                modules,
+                "browser panel open",
+                targetModule: "BrowserAgent",
+                includeMcp: true,
+                source: "Rules");
         }
 
-        return new RequestRoute(RouteType.ToolAssistedChat);
+        var imageIntent = MessageSuggestsImageTools(message);
+        var galleryIntent = MessageSuggestsGalleryTools(message);
+
+        if (imageIntent)
+        {
+            var modules = new List<string> { "Native" };
+            if (Has("Lemonade")) modules.Add("Lemonade");
+            if (Has("Gallery")) modules.Add("Gallery");
+            return RequestRoute.WithModules(
+                modules,
+                galleryIntent
+                    ? "create/save image intent"
+                    : "image intent",
+                source: "Rules");
+        }
+
+        if (galleryIntent)
+        {
+            var modules = new List<string> { "Native" };
+            if (Has("Gallery")) modules.Add("Gallery");
+            return RequestRoute.WithModules(modules, "gallery intent", source: "Rules");
+        }
+
+        if (MessageSuggestsUtilityTools(message))
+        {
+            return RequestRoute.WithModules(
+                ["Native"],
+                "utility intent (search/weather/time/math)",
+                source: "Rules");
+        }
+
+        return RequestRoute.PureChat("general chat — no tools", "Rules");
     }
 
     public static bool ShouldEnforceHomeAssistantTools(RequestRoute? route) =>
@@ -70,24 +159,20 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
         var m = message.ToLowerInvariant();
 
-        // Web / current info
         if (m.Contains("search") || m.Contains("look up") || m.Contains("lookup") ||
             m.Contains("google") || m.Contains("latest") || m.Contains("news") ||
             m.Contains("current price") || m.Contains("today's") || m.Contains("todays") ||
             m.Contains("what happened") || m.Contains("who won") || m.Contains("score"))
             return true;
 
-        // Weather / time
         if (m.Contains("weather") || m.Contains("forecast") || m.Contains("temperature") ||
             m.Contains("what time") || m.Contains("current time") || m.Contains("utc"))
             return true;
 
-        // Explicit math
         if (m.Contains("calculate") || m.Contains("compute") || m.Contains("what is ") &&
             (m.Contains("+") || m.Contains("*") || m.Contains("%") || m.Contains("divided")))
             return true;
 
-        // URL present
         if (m.Contains("http://") || m.Contains("https://") || m.Contains("www."))
             return true;
 
@@ -96,7 +181,6 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
     /// <summary>
     /// User wants image generation/editing (attach Lemonade + Gallery tools).
-    /// Keyword list only — no album-name vocabulary.
     /// Also true for "create/make … and save to album" style prompts that omit the word "image".
     /// </summary>
     public static bool MessageSuggestsImageTools(string message)
@@ -106,7 +190,6 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
         var m = message.ToLowerInvariant();
 
-        // Explicit image / draw language
         if (m.Contains("generate") && (m.Contains("image") || m.Contains("picture") || m.Contains("photo")
                                        || m.Contains("illustration") || m.Contains("drawing") || m.Contains("artwork"))
             || m.Contains("draw ") || m.Contains("draw a") || m.Contains("draw me") || m.Contains("draw an")
@@ -121,37 +204,22 @@ public sealed class ContextualRequestRouter : IRequestRouter
             || m.Contains("generate me") && (m.Contains("image") || m.Contains("picture") || m.Contains("photo")))
             return true;
 
-        // "create a purple orange fruit and save to the Fruits album" — no "image" word,
-        // but create/make + gallery save clearly wants generation.
         if (MessageSuggestsGalleryTools(message) && MessageSuggestsCreateMake(m))
             return true;
 
         return false;
     }
 
-    /// <summary>Create/make/generate verbs that imply producing new media (not "create a list").</summary>
-    private static bool MessageSuggestsCreateMake(string mLower)
-    {
-        // Prefer generative verbs; avoid pure "create album" without other create phrasing.
-        if (mLower.Contains("create album") || mLower.Contains("new album") || mLower.Contains("make album"))
-        {
-            // Still allow if they also ask to create a subject: "create a cat and a new album"
-            // Fall through only when another create/make phrase exists.
-        }
+    private static bool MessageSuggestsCreateMake(string mLower) =>
+        mLower.Contains("create a ") || mLower.Contains("create an ") || mLower.Contains("create me ")
+        || mLower.Contains("create some ") || mLower.Contains("can you create")
+        || mLower.Contains("make a ") || mLower.Contains("make an ") || mLower.Contains("make me ")
+        || mLower.Contains("make some ") || mLower.Contains("can you make")
+        || mLower.Contains("generate a ") || mLower.Contains("generate an ") || mLower.Contains("generate me ")
+        || mLower.Contains("generate some ") || mLower.Contains("can you generate")
+        || mLower.Contains("draw a ") || mLower.Contains("draw an ") || mLower.Contains("draw me ")
+        || mLower.Contains("paint a ") || mLower.Contains("paint an ") || mLower.Contains("paint me ");
 
-        return mLower.Contains("create a ") || mLower.Contains("create an ") || mLower.Contains("create me ")
-               || mLower.Contains("create some ") || mLower.Contains("can you create")
-               || mLower.Contains("make a ") || mLower.Contains("make an ") || mLower.Contains("make me ")
-               || mLower.Contains("make some ") || mLower.Contains("can you make")
-               || mLower.Contains("generate a ") || mLower.Contains("generate an ") || mLower.Contains("generate me ")
-               || mLower.Contains("generate some ") || mLower.Contains("can you generate")
-               || mLower.Contains("draw a ") || mLower.Contains("draw an ") || mLower.Contains("draw me ")
-               || mLower.Contains("paint a ") || mLower.Contains("paint an ") || mLower.Contains("paint me ");
-    }
-
-    /// <summary>
-    /// User wants to save/list gallery albums (attach Gallery tools).
-    /// </summary>
     public static bool MessageSuggestsGalleryTools(string message)
     {
         if (string.IsNullOrWhiteSpace(message))
@@ -168,16 +236,51 @@ public sealed class ContextualRequestRouter : IRequestRouter
     }
 
     /// <summary>
-    /// Best-effort album title from natural language, e.g.
-    /// "save to the Fruit album", "put it in Fruit gallery", "album Fruit".
-    /// Returns null when no clear album phrase is present.
+    /// Smart-home control language without requiring the HA wake word.
+    /// Used by the AI router fallback so pure AI/Hybrid can open HomeAssistant tools.
+    /// Rules-only mode still requires the wake word / active session (avoids false HA on every chat).
     /// </summary>
+    public static bool MessageSuggestsHomeAssistant(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+
+        // Explicit domains / devices
+        if (m.Contains("light") || m.Contains("lamp") || m.Contains("lights")
+            || m.Contains("switch") || m.Contains("outlet") || m.Contains("plug")
+            || m.Contains("thermostat") || m.Contains("climate") || m.Contains("hvac")
+            || m.Contains("temperature set") || m.Contains("set temperature")
+            || m.Contains("media player") || m.Contains("tv ") || m.Contains(" tv")
+            || m.Contains("volume") || m.Contains("mute") || m.Contains("unmute")
+            || m.Contains("cover") || m.Contains("blinds") || m.Contains("garage")
+            || m.Contains("lock the") || m.Contains("unlock") || m.Contains("door lock")
+            || m.Contains("vacuum") || m.Contains("scene ") || m.Contains("activate scene")
+            || m.Contains("home assistant") || m.Contains("smart home"))
+            return true;
+
+        // Actions commonly paired with HA
+        if ((m.Contains("turn on") || m.Contains("turn off") || m.Contains("turn the")
+             || m.Contains("dim ") || m.Contains("brighten") || m.Contains("brightness")
+             || m.Contains("set the") && (m.Contains("%") || m.Contains("percent") || m.Contains("color") || m.Contains("colour")))
+            && (m.Contains("room") || m.Contains("kitchen") || m.Contains("living") || m.Contains("bedroom")
+                || m.Contains("hallway") || m.Contains("office") || m.Contains("den") || m.Contains("bath")
+                || m.Contains("ceiling") || m.Contains("fan") || m.Contains("bulb")))
+            return true;
+
+        if (m.Contains("brightness") || m.Contains("color to") || m.Contains("colour to")
+            || m.Contains("purple") && (m.Contains("light") || m.Contains("lamp") || m.Contains("%")))
+            return true;
+
+        return false;
+    }
+
     public static string? TryExtractAlbumName(string message)
     {
         if (string.IsNullOrWhiteSpace(message))
             return null;
 
-        // save|add|put … to|into|in … [the|my] NAME [album|gallery]
         var m = Regex.Match(
             message,
             @"(?:save|add|put|store|move)\s+(?:it|this|that|the\s+image|the\s+picture|them)?\s*" +
@@ -186,7 +289,6 @@ public sealed class ContextualRequestRouter : IRequestRouter
         if (m.Success)
             return CleanAlbumExtract(m.Groups[1].Value);
 
-        // … to|into the NAME album|gallery (no save verb required when album/gallery present)
         m = Regex.Match(
             message,
             @"(?:to|into|in)\s+(?:the\s+|my\s+)?[""']?([A-Za-z0-9][\w\s\-]{0,40}?)[""']?\s*(?:album|gallery)\b",
@@ -194,7 +296,6 @@ public sealed class ContextualRequestRouter : IRequestRouter
         if (m.Success)
             return CleanAlbumExtract(m.Groups[1].Value);
 
-        // album|gallery named|called NAME / NAME album
         m = Regex.Match(
             message,
             @"(?:album|gallery)\s+(?:named|called)\s+[""']?([A-Za-z0-9][\w\s\-]{0,40}?)[""']?\b",
@@ -217,7 +318,6 @@ public sealed class ContextualRequestRouter : IRequestRouter
         var t = raw.Trim().Trim('"', '\'', ',', '.', '!');
         if (t.Length == 0 || t.Length > 48)
             return null;
-        // Reject generic filler
         if (t.Equals("the", StringComparison.OrdinalIgnoreCase)
             || t.Equals("my", StringComparison.OrdinalIgnoreCase)
             || t.Equals("a", StringComparison.OrdinalIgnoreCase)
