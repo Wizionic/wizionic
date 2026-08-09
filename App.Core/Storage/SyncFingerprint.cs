@@ -80,6 +80,20 @@ public static class SyncFingerprint
 
     public static string ForSidebarApp(SidebarApp app) =>
         Compute(SidebarAppSyncPayload.Serialize(app));
+
+    public static string ForCalendar(
+        string calendarId,
+        string name,
+        string color,
+        bool isVisible,
+        string? description,
+        long lastUpdatedTicks,
+        bool isWorkflowCalendar = false) =>
+        Compute(CalendarMetaSyncPayload.Serialize(
+            calendarId, name, color, isVisible, description, lastUpdatedTicks, isWorkflowCalendar));
+
+    public static string ForCalendarEvent(CalendarEvent evt) =>
+        Compute(CalendarEventSyncPayload.Serialize(evt.CalendarId, evt));
 }
 
 /// <summary>

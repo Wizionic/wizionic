@@ -9,12 +9,13 @@ namespace App.Core.Sync;
 /// Shared WebRTC data-channel sync protocol (queue, manifest, ack state, signaling handlers).
 /// Platform sync services own SignalR hub wiring and delegate data transfer here.
 /// </summary>
-public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDisposable
+public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDisposable
 {
     private readonly IWebRtcTransport _webrtc;
     private readonly IConversationStore _conversationStore;
     private readonly INoteStore _noteStore;
     private readonly IGalleryStore? _galleryStore;
+    private readonly ICalendarStore? _calendarStore;
     private readonly IStorageQuotaService? _storageQuota;
     private readonly IBrowserStore? _browserStore;
     private readonly IBrowserSidebarStore? _sidebarStore;
@@ -36,12 +37,14 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         IBrowserSidebarStore? sidebarStore = null,
         ISettingsSyncStore? settingsStore = null,
         IGalleryStore? galleryStore = null,
-        IStorageQuotaService? storageQuota = null)
+        IStorageQuotaService? storageQuota = null,
+        ICalendarStore? calendarStore = null)
     {
         _webrtc = webrtc;
         _conversationStore = conversationStore;
         _noteStore = noteStore;
         _galleryStore = galleryStore;
+        _calendarStore = calendarStore;
         _storageQuota = storageQuota;
         _prefs = prefs;
         _sendSignalingAsync = sendSignalingAsync;
@@ -55,6 +58,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public bool AutoSyncChatHistory { get; set; }
     public bool AutoSyncNotes { get; set; }
     public bool AutoSyncGallery { get; set; }
+    public bool AutoSyncCalendar { get; set; }
     public bool AutoSyncBookmarks { get; set; }
     public bool AutoSyncInstalledApps { get; set; }
     public bool AutoSyncLocalAi { get; set; }
@@ -77,6 +81,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
     public event Action? OnConversationsChanged;
     public event Action? OnNotesChanged;
     public event Action? OnGalleryChanged;
+    public event Action? OnCalendarsChanged;
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
     public event Action? OnSettingsChanged;
@@ -170,6 +175,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         public bool IncludeConvosInManifest { get; init; }
         public bool IncludeNotesInManifest { get; init; }
         public bool IncludeAlbumsInManifest { get; init; }
+        public bool IncludeCalendarsInManifest { get; init; }
         public bool IncludeBookmarksInManifest { get; init; }
         public bool IncludeSidebarAppsInManifest { get; init; }
         public int RetryCount { get; set; }
@@ -182,7 +188,9 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         List<SyncManifestEntry>? BookmarkFolders = null,
         List<SyncManifestEntry>? SidebarApps = null,
         List<SyncManifestEntry>? Albums = null,
-        List<SyncManifestEntry>? AlbumImages = null);
+        List<SyncManifestEntry>? AlbumImages = null,
+        List<SyncManifestEntry>? Calendars = null,
+        List<SyncManifestEntry>? CalendarEvents = null);
 
     private record SyncManifestResponse(
         List<string> NeededConvos,
@@ -205,7 +213,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         List<DeleteSyncPayload>? SenderShouldDeleteAlbums = null,
         List<string>? NeededAlbumImages = null,
         int UpToDateAlbumImages = 0,
-        List<DeleteSyncPayload>? SenderShouldDeleteAlbumImages = null);
+        List<DeleteSyncPayload>? SenderShouldDeleteAlbumImages = null,
+        List<string>? NeededCalendars = null,
+        int UpToDateCalendars = 0,
+        List<DeleteSyncPayload>? SenderShouldDeleteCalendars = null,
+        List<string>? NeededCalendarEvents = null,
+        int UpToDateCalendarEvents = 0,
+        List<DeleteSyncPayload>? SenderShouldDeleteCalendarEvents = null);
 
     private const string SyncAckStateKey = "app-sync-ack-state";
     private const string SyncManifestVerifiedKey = "app-sync-manifest-verified";
@@ -474,7 +488,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeNotes,
         bool includeBookmarks = false,
         bool includeSidebarApps = false,
-        bool includeAlbums = false)
+        bool includeAlbums = false,
+        bool includeCalendars = false)
     {
         if (_browserStore == null)
             includeBookmarks = false;
@@ -482,13 +497,15 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             includeSidebarApps = false;
         if (_galleryStore == null)
             includeAlbums = false;
+        if (_calendarStore == null)
+            includeCalendars = false;
 
         var targets = targetDeviceIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (targets.Count == 0 || !_isHubConnected())
             return 0;
 
         foreach (var targetId in targets)
-            await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums);
+            await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums, includeCalendars);
 
         return targets.Count;
     }
@@ -564,7 +581,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeNotes,
         bool includeBookmarks = false,
         bool includeSidebarApps = false,
-        bool includeAlbums = false)
+        bool includeAlbums = false,
+        bool includeCalendars = false)
     {
         if (string.IsNullOrEmpty(targetDeviceId) || !_isHubConnected())
             return;
@@ -575,11 +593,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             includeSidebarApps = false;
         if (_galleryStore == null)
             includeAlbums = false;
+        if (_calendarStore == null)
+            includeCalendars = false;
 
-        if (!includeConvos && !includeNotes && !includeBookmarks && !includeSidebarApps && !includeAlbums)
+        if (!includeConvos && !includeNotes && !includeBookmarks && !includeSidebarApps && !includeAlbums && !includeCalendars)
             return;
 
-        var manifest = await BuildLocalManifestAsync(includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums);
+        var manifest = await BuildLocalManifestAsync(includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums, includeCalendars);
         var item = new SyncQueueItem
         {
             IsManifestExchange = true,
@@ -589,6 +609,7 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             IncludeConvosInManifest = includeConvos,
             IncludeNotesInManifest = includeNotes,
             IncludeAlbumsInManifest = includeAlbums,
+            IncludeCalendarsInManifest = includeCalendars,
             IncludeBookmarksInManifest = includeBookmarks,
             IncludeSidebarAppsInManifest = includeSidebarApps
         };
@@ -616,7 +637,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         bool includeNotes,
         bool includeBookmarks,
         bool includeSidebarApps,
-        bool includeAlbums = false)
+        bool includeAlbums = false,
+        bool includeCalendars = false)
     {
         var convos = includeConvos
             ? await _conversationStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true)
@@ -653,7 +675,16 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             SyncDebugLog.Info($"BuildLocalManifest albums={albums.Count} albumImages={albumImages.Count}");
         }
 
-        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps, albums, albumImages);
+        List<SyncManifestEntry>? calendars = null;
+        List<SyncManifestEntry>? calendarEvents = null;
+        if (includeCalendars && _calendarStore != null)
+        {
+            calendars = await _calendarStore.LoadCalendarManifestEntriesAsync(backfillMissingFingerprints: true);
+            calendarEvents = await _calendarStore.LoadEventManifestEntriesAsync(backfillMissingFingerprints: true);
+            SyncDebugLog.Info($"BuildLocalManifest calendars={calendars.Count} calendarEvents={calendarEvents.Count}");
+        }
+
+        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps, albums, albumImages, calendars, calendarEvents);
     }
 
     private static bool ManifestEntryNeedsSync(
@@ -699,6 +730,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Note => $"n:{itemId}",
         SyncItemKind.Album => $"g:{itemId}",
         SyncItemKind.AlbumImage => $"gi:{itemId}",
+        SyncItemKind.Calendar => $"cal:{itemId}",
+        SyncItemKind.CalendarEvent => $"cale:{itemId}",
         SyncItemKind.Bookmark => $"b:{itemId}",
         SyncItemKind.BookmarkFolder => $"f:{itemId}",
         SyncItemKind.SidebarApp => $"a:{itemId}",
@@ -712,6 +745,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Note => "note",
         SyncItemKind.Album => "album",
         SyncItemKind.AlbumImage => "album-image",
+        SyncItemKind.Calendar => "calendar",
+        SyncItemKind.CalendarEvent => "calendar-event",
         SyncItemKind.Bookmark => "bookmark",
         SyncItemKind.BookmarkFolder => "folder",
         SyncItemKind.SidebarApp => "app",
@@ -725,6 +760,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Note => "app-note-sync",
         SyncItemKind.Album => "app-album-sync",
         SyncItemKind.AlbumImage => "app-album-image-sync",
+        SyncItemKind.Calendar => "app-calendar-sync",
+        SyncItemKind.CalendarEvent => "app-calendar-event-sync",
         SyncItemKind.Bookmark => "app-bookmark-sync",
         SyncItemKind.BookmarkFolder => "app-folder-sync",
         SyncItemKind.SidebarApp => "wizionic-app-sync",
@@ -738,6 +775,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Note => "note-delete",
         SyncItemKind.Album => "album-delete",
         SyncItemKind.AlbumImage => "album-image-delete",
+        SyncItemKind.Calendar => "calendar-delete",
+        SyncItemKind.CalendarEvent => "calendar-event-delete",
         SyncItemKind.Bookmark => "bookmark-delete",
         SyncItemKind.BookmarkFolder => "folder-delete",
         SyncItemKind.SidebarApp => "app-delete",
@@ -750,6 +789,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
         SyncItemKind.Note => "note-sync-data",
         SyncItemKind.Album => "album-sync-data",
         SyncItemKind.AlbumImage => "album-image-sync-data",
+        SyncItemKind.Calendar => "calendar-sync-data",
+        SyncItemKind.CalendarEvent => "calendar-event-sync-data",
         SyncItemKind.Bookmark => "bookmark-sync-data",
         SyncItemKind.BookmarkFolder => "folder-sync-data",
         SyncItemKind.SidebarApp => "app-sync-data",
@@ -1144,6 +1185,24 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
                 queued++;
             }
         }
+
+        if (_calendarStore != null)
+        {
+            foreach (var calendarId in (response.NeededCalendars ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                await EnqueueCalendarMetaSyncAsync(peerId, calendarId);
+                queued++;
+            }
+
+            foreach (var eventId in (response.NeededCalendarEvents ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var evt = await _calendarStore.LoadEventAsync(eventId);
+                if (evt is null) continue;
+                await EnqueueCalendarEventSyncAsync(peerId, evt.CalendarId, eventId);
+                queued++;
+            }
+        }
+
         // Folders first so bookmarks can resolve folder membership on the peer.
         if (_browserStore != null)
         {
@@ -2147,6 +2206,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             SyncItemKind.Note => "note-sync-chunk",
             SyncItemKind.Album => "album-sync-chunk",
             SyncItemKind.AlbumImage => "album-image-sync-chunk",
+            SyncItemKind.Calendar => "calendar-sync-chunk",
+            SyncItemKind.CalendarEvent => "calendar-event-sync-chunk",
             SyncItemKind.Bookmark => "bookmark-sync-chunk",
             SyncItemKind.BookmarkFolder => "folder-sync-chunk",
             SyncItemKind.SidebarApp => "app-sync-chunk",
@@ -2602,6 +2663,10 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             {
                 HandleGenericItemAck("album-image-sync-ack", msg.itemId, peerId);
             }
+            else if (await TryHandleCalendarDataChannelAsync(peerId, msg.type ?? "", msg.content, msg.itemId, msg.chunkIndex, msg.chunkCount, msg.chunkData))
+            {
+                // calendar-sync-*, calendar-event-*, calendar-*-delete handled in partial
+            }
             else if ((msg.type == "bookmark-sync-data" || msg.type == "bookmark-sync-chunk")
                      && (msg.content != null || msg.itemId != null))
             {
@@ -3056,12 +3121,73 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
         }
 
+        var neededCalendars = new List<string>();
+        var senderShouldDeleteCalendars = new List<DeleteSyncPayload>();
+        var upToDateCalendars = 0;
+        var appliedCalendarDeletes = 0;
+        var neededCalendarEvents = new List<string>();
+        var senderShouldDeleteCalendarEvents = new List<DeleteSyncPayload>();
+        var upToDateCalendarEvents = 0;
+        var appliedCalendarEventDeletes = 0;
+        var remoteCalendars = offer.Calendars ?? [];
+        var remoteCalendarEvents = offer.CalendarEvents ?? [];
+        if (_calendarStore != null)
+        {
+            var localCals = await _calendarStore.LoadCalendarManifestEntriesAsync(backfillMissingFingerprints: true);
+            foreach (var remote in remoteCalendars)
+            {
+                var local = localCals.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
+                if (remote.IsDeleted)
+                {
+                    if (await _calendarStore.TryApplyRemoteCalendarDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
+                        appliedCalendarDeletes++;
+                    upToDateCalendars++;
+                    continue;
+                }
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteCalendars.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateCalendars++;
+                    continue;
+                }
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededCalendars.Add(remote.Id);
+                else
+                    upToDateCalendars++;
+            }
+
+            var localEvents = await _calendarStore.LoadEventManifestEntriesAsync(backfillMissingFingerprints: true);
+            foreach (var remote in remoteCalendarEvents)
+            {
+                var local = localEvents.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
+                if (remote.IsDeleted)
+                {
+                    if (await _calendarStore.TryApplyRemoteEventDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
+                        appliedCalendarEventDeletes++;
+                    upToDateCalendarEvents++;
+                    continue;
+                }
+                if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
+                {
+                    senderShouldDeleteCalendarEvents.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
+                    upToDateCalendarEvents++;
+                    continue;
+                }
+                if (ManifestEntryNeedsSync(remote, local))
+                    neededCalendarEvents.Add(remote.Id);
+                else
+                    upToDateCalendarEvents++;
+            }
+        }
+
         if (appliedConvoDeletes > 0)
             OnConversationsChanged?.Invoke();
         if (appliedNoteDeletes > 0)
             OnNotesChanged?.Invoke();
         if (appliedAlbumDeletes > 0)
             OnGalleryChanged?.Invoke();
+        if (appliedCalendarDeletes + appliedCalendarEventDeletes > 0)
+            OnCalendarsChanged?.Invoke();
         if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
             OnBookmarksChanged?.Invoke();
         if (appliedAppDeletes > 0)
@@ -3088,7 +3214,13 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             senderShouldDeleteAlbums,
             neededAlbumImages,
             upToDateAlbumImages,
-            senderShouldDeleteAlbumImages);
+            senderShouldDeleteAlbumImages,
+            neededCalendars,
+            upToDateCalendars,
+            senderShouldDeleteCalendars,
+            neededCalendarEvents,
+            upToDateCalendarEvents,
+            senderShouldDeleteCalendarEvents);
         var responseJson = System.Text.Json.JsonSerializer.Serialize(response);
         await _webrtc.SendDataAsync(
             peerId,
@@ -3096,12 +3228,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
 
         SyncDebugLog.Info($"Manifest offer from {peerId}: " +
             $"{upToDateConvos}/{offer.Convos.Count} convos, {upToDateNotes}/{offer.Notes.Count} notes, " +
-            $"{upToDateAlbums}/{remoteAlbums.Count} albums, {upToDateAlbumImages}/{remoteAlbumImages.Count} album-images, " +
-            $"{upToDateFolders}/{remoteFolders.Count} folders, {upToDateBookmarks}/{remoteBookmarks.Count} bookmarks, " +
-            $"{upToDateApps}/{remoteApps.Count} apps up to date" +
-            (appliedConvoDeletes + appliedNoteDeletes + appliedAlbumDeletes + appliedBookmarkDeletes + appliedFolderDeletes + appliedAppDeletes > 0
-                ? $" (applied {appliedConvoDeletes} convo, {appliedNoteDeletes} note, {appliedAlbumDeletes} album, {appliedFolderDeletes} folder, {appliedBookmarkDeletes} bookmark, {appliedAppDeletes} app delete(s))"
-                : ""));
+            $"{upToDateAlbums}/{remoteAlbums.Count} albums, {upToDateCalendars}/{remoteCalendars.Count} calendars, " +
+            $"{upToDateCalendarEvents}/{remoteCalendarEvents.Count} cal-events up to date");
     }
 
     private async Task HandleManifestResponseAsync(string peerId, string responseJson)
@@ -3144,6 +3272,22 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             }
         }
 
+        var appliedCalendarDeletes = 0;
+        var appliedCalendarEventDeletes = 0;
+        if (_calendarStore != null)
+        {
+            foreach (var del in response.SenderShouldDeleteCalendars ?? [])
+            {
+                if (await _calendarStore.TryApplyRemoteCalendarDeleteAsync(del.Id, del.DeletedAtTicks))
+                    appliedCalendarDeletes++;
+            }
+            foreach (var del in response.SenderShouldDeleteCalendarEvents ?? [])
+            {
+                if (await _calendarStore.TryApplyRemoteEventDeleteAsync(del.Id, del.DeletedAtTicks))
+                    appliedCalendarEventDeletes++;
+            }
+        }
+
         var appliedBookmarkDeletes = 0;
         var appliedFolderDeletes = 0;
         if (_browserStore != null)
@@ -3177,6 +3321,8 @@ public sealed class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, IAsyncDis
             OnNotesChanged?.Invoke();
         if (appliedAlbumDeletes > 0)
             OnGalleryChanged?.Invoke();
+        if (appliedCalendarDeletes + appliedCalendarEventDeletes > 0)
+            OnCalendarsChanged?.Invoke();
         if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
             OnBookmarksChanged?.Invoke();
         if (appliedAppDeletes > 0)

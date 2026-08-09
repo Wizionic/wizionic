@@ -71,6 +71,10 @@ public sealed class ContextualRequestRouter : IRequestRouter
                 var modules = new List<string> { "HomeAssistant", "Native" };
                 if (MessageSuggestsGalleryTools(message) && Has("Gallery"))
                     modules.Add("Gallery");
+                if (MessageSuggestsCalendarTools(message) && Has("Calendar"))
+                    modules.Add("Calendar");
+                if (MessageSuggestsNotesTools(message) && Has("Notes"))
+                    modules.Add("Notes");
                 if (MessageSuggestsImageTools(message) && Has("Lemonade"))
                 {
                     modules.Add("Lemonade");
@@ -94,6 +98,8 @@ public sealed class ContextualRequestRouter : IRequestRouter
             var modules = new List<string> { "BrowserAgent", "Native" };
             if (MessageSuggestsGalleryTools(message) && Has("Gallery"))
                 modules.Add("Gallery");
+            if (MessageSuggestsNotesTools(message) && Has("Notes"))
+                modules.Add("Notes");
             if (MessageSuggestsImageTools(message) && Has("Lemonade"))
             {
                 modules.Add("Lemonade");
@@ -110,17 +116,22 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
         var imageIntent = MessageSuggestsImageTools(message);
         var galleryIntent = MessageSuggestsGalleryTools(message);
+        var notesIntent = MessageSuggestsNotesTools(message);
 
         if (imageIntent)
         {
             var modules = new List<string> { "Native" };
             if (Has("Lemonade")) modules.Add("Lemonade");
             if (Has("Gallery")) modules.Add("Gallery");
+            // "draw X and add to my notes" — attach Notes so the model can save after generate
+            if (notesIntent && Has("Notes")) modules.Add("Notes");
             return RequestRoute.WithModules(
                 modules,
                 galleryIntent
                     ? "create/save image intent"
-                    : "image intent",
+                    : notesIntent
+                        ? "create image + notes intent"
+                        : "image intent",
                 source: "Rules");
         }
 
@@ -129,6 +140,21 @@ public sealed class ContextualRequestRouter : IRequestRouter
             var modules = new List<string> { "Native" };
             if (Has("Gallery")) modules.Add("Gallery");
             return RequestRoute.WithModules(modules, "gallery intent", source: "Rules");
+        }
+
+        var calendarIntent = MessageSuggestsCalendarTools(message);
+        if (calendarIntent)
+        {
+            var modules = new List<string> { "Native" };
+            if (Has("Calendar")) modules.Add("Calendar");
+            return RequestRoute.WithModules(modules, "calendar intent", source: "Rules");
+        }
+
+        if (notesIntent)
+        {
+            var modules = new List<string> { "Native" };
+            if (Has("Notes")) modules.Add("Notes");
+            return RequestRoute.WithModules(modules, "notes intent", source: "Rules");
         }
 
         if (MessageSuggestsUtilityTools(message))
@@ -159,8 +185,10 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
         var m = message.ToLowerInvariant();
 
+        // Avoid bare "latest" — it matches "append to the latest one" (notes) and similar.
         if (m.Contains("search") || m.Contains("look up") || m.Contains("lookup") ||
-            m.Contains("google") || m.Contains("latest") || m.Contains("news") ||
+            m.Contains("google") || m.Contains("news") ||
+            m.Contains("latest news") || m.Contains("the latest") && (m.Contains("news") || m.Contains("score") || m.Contains("price") || m.Contains("headline")) ||
             m.Contains("current price") || m.Contains("today's") || m.Contains("todays") ||
             m.Contains("what happened") || m.Contains("who won") || m.Contains("score"))
             return true;
@@ -233,6 +261,123 @@ public sealed class ContextualRequestRouter : IRequestRouter
                || m.Contains("add to gallery") || m.Contains("add to album")
                || m.Contains("put it in") && (m.Contains("gallery") || m.Contains("album"))
                || m.Contains("save to the") || m.Contains("save into");
+    }
+
+    /// <summary>
+    /// User wants calendar list/add/update/delete or schedule language.
+    /// </summary>
+    public static bool MessageSuggestsCalendarTools(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+
+        if (m.Contains("calendar") || m.Contains("calendars")
+            || m.Contains("schedule") || m.Contains("reschedule")
+            || m.Contains("appointment") || m.Contains("meeting")
+            || m.Contains("add an event") || m.Contains("add a event")
+            || m.Contains("add event") || m.Contains("create an event") || m.Contains("create event")
+            || m.Contains("book a") || m.Contains("put on my calendar")
+            || m.Contains("add to my calendar") || m.Contains("add to the calendar")
+            || m.Contains("add to calendar") || m.Contains("on my calendar")
+            || m.Contains("to my calendar") || m.Contains("into my calendar")
+            || m.Contains("repeating event") || m.Contains("recurring event")
+            || m.Contains("what's on my") || m.Contains("whats on my")
+            || m.Contains("what is on my") || m.Contains("am i free")
+            || m.Contains("free on") || m.Contains("busy on")
+            || m.Contains("list events") || m.Contains("show events")
+            || m.Contains("delete the event") || m.Contains("cancel the event")
+            || m.Contains("update the event") || m.Contains("move the event"))
+            return true;
+
+        // "every Wednesday" + add/play sports-style scheduling without saying "calendar"
+        if ((m.Contains("every ") || m.Contains("each ") || m.Contains("repeating") || m.Contains("recurring"))
+            && (m.Contains("wednesday") || m.Contains("monday") || m.Contains("tuesday")
+                || m.Contains("thursday") || m.Contains("friday") || m.Contains("saturday")
+                || m.Contains("sunday") || m.Contains("weekday") || m.Contains("week")))
+        {
+            if (m.Contains("add") || m.Contains("schedule") || m.Contains("create")
+                || m.Contains("book") || m.Contains("set up") || m.Contains("setup")
+                || m.Contains("put") || m.Contains("playing") || m.Contains("practice"))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// User wants notebook create/list or add/append note entries (text and/or images).
+    /// </summary>
+    public static bool MessageSuggestsNotesTools(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+
+        // Explicit notebook product language
+        if (m.Contains("notebook") || m.Contains("notebooks")
+            || m.Contains("list notebooks") || m.Contains("show notebooks")
+            || m.Contains("create a notebook") || m.Contains("create notebook")
+            || m.Contains("new notebook") || m.Contains("make a notebook")
+            || m.Contains("list_note") || m.Contains("add_note") || m.Contains("append_to_note")
+            || m.Contains("list_notebooks") || m.Contains("create_notebook"))
+            return true;
+
+        // List / show entries (often omits the word "note" — e.g. "list entries in Travel Journal")
+        if (m.Contains("list entries") || m.Contains("show entries") || m.Contains("list note entries")
+            || m.Contains("show note entries") || m.Contains("entries in ")
+            || m.Contains("note entries") || m.Contains("note entry")
+            || m.Contains("notebook entries") || m.Contains("journal entries"))
+            return true;
+
+        // Append / update existing entry language
+        // "append '…' to the latest one" (no "note"/"notebook" in the sentence)
+        if (m.Contains("append ") || m.Contains("append to") || m.Contains("append '") || m.Contains("append \"")
+            || m.Contains("to the latest one") || m.Contains("to the latest entry")
+            || m.Contains("to the last one") || m.Contains("to the last entry")
+            || m.Contains("to that entry") || m.Contains("to the entry")
+            || m.Contains("update the entry") || m.Contains("edit the entry")
+            || m.Contains("add to the latest") || m.Contains("add to the last"))
+            return true;
+
+        // "journal" as notebook synonym only with action verbs (avoids "journal article")
+        if (m.Contains("journal")
+            && (m.Contains("list ") || m.Contains("show ") || m.Contains("add ") || m.Contains("create ")
+                || m.Contains("append ") || m.Contains("save ") || m.Contains("write ") || m.Contains("put ")
+                || m.Contains("entries") || m.Contains("entry") || m.Contains("my journal")))
+            return true;
+
+        // "notes" alone is noisy (e.g. "take note of that"); require action phrasing
+        if (m.Contains("add to notes") || m.Contains("add to my notes") || m.Contains("add to the notes")
+            || m.Contains("add to notebook") || m.Contains("add to my notebook")
+            || m.Contains("add to a note") || m.Contains("add to the note")
+            || m.Contains("save to notes") || m.Contains("save to my notes") || m.Contains("save to notebook")
+            || m.Contains("save in notes") || m.Contains("save into notes") || m.Contains("save into notebook")
+            || m.Contains("put in notes") || m.Contains("put into notes") || m.Contains("put in my notes")
+            || m.Contains("put in notebook") || m.Contains("write in notes") || m.Contains("write to notes")
+            || m.Contains("append to note") || m.Contains("append to the note") || m.Contains("append to my note")
+            || m.Contains("add a note") || m.Contains("add note entry") || m.Contains("add an entry")
+            || m.Contains("create a note") || m.Contains("create note") || m.Contains("new note entry")
+            || m.Contains("add this to notes") || m.Contains("add that to notes")
+            || m.Contains("add this to my notes") || m.Contains("add that to my notes")
+            || m.Contains("add this image to notes") || m.Contains("add the image to notes")
+            || m.Contains("add this image to my notes") || m.Contains("save image to notes")
+            || m.Contains("save the image to notes") || m.Contains("save picture to notes")
+            || m.Contains("into my notes") || m.Contains("in my notes") || m.Contains("to my notebook")
+            || m.Contains("into my notebook") || m.Contains("in my notebook")
+            || m.Contains("to my journal") || m.Contains("in my journal") || m.Contains("into my journal")
+            || m.Contains("add to journal") || m.Contains("save to journal"))
+            return true;
+
+        // "add … to the Travel notebook" style without the word "notes"
+        if ((m.Contains("notebook") || m.Contains("journal") || m.Contains(" note ") || m.Contains(" note.") || m.EndsWith(" note"))
+            && (m.Contains("add ") || m.Contains("create ") || m.Contains("write ") || m.Contains("append ")
+                || m.Contains("save ") || m.Contains("put ") || m.Contains("list ")))
+            return true;
+
+        return false;
     }
 
     /// <summary>

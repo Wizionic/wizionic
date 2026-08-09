@@ -13,5 +13,9 @@ public enum SyncItemKind
     /// <summary>Gallery album meta only (title, protection, image id set — no bytes).</summary>
     Album = 6,
     /// <summary>Single gallery image create/update/delete.</summary>
-    AlbumImage = 7
+    AlbumImage = 7,
+    /// <summary>Calendar meta (name, color, visibility).</summary>
+    Calendar = 8,
+    /// <summary>Single calendar event create/update/delete.</summary>
+    CalendarEvent = 9
 }
