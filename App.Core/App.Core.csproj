@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Ical.Net" Version="5.2.3" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.8" />
     <PackageReference Include="Microsoft.JSInterop" Version="10.0.8" />
     <!-- System.Net.Http.Json is in the shared framework for net10.0; no PackageReference needed. -->

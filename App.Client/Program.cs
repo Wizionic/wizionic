@@ -63,6 +63,9 @@ builder.Services.AddScoped<INoteStore>(sp => sp.GetRequiredService<WasmNoteStore
 builder.Services.AddScoped<WasmGalleryStore>();
 builder.Services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<WasmGalleryStore>());
 builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddScoped<WasmCalendarStore>();
+builder.Services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<WasmCalendarStore>());
+builder.Services.AddScoped<ICalendarSyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
 builder.Services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 builder.Services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 builder.Services.AddScoped<WasmStorageQuotaService>();
@@ -106,9 +109,13 @@ builder.Services.AddScoped<App.Core.Tools.IToolConversationContext, App.Shared.S
 builder.Services.AddScoped<NativeToolModule>();
 builder.Services.AddScoped<App.Shared.Services.Tools.LemonadeToolModule>();
 builder.Services.AddScoped<App.Shared.Services.Tools.GalleryToolModule>();
+builder.Services.AddScoped<App.Shared.Services.Tools.CalendarToolModule>();
+builder.Services.AddScoped<App.Shared.Services.Tools.NotesToolModule>();
 builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
 builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.LemonadeToolModule>());
 builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.GalleryToolModule>());
+builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.CalendarToolModule>());
+builder.Services.AddScoped<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.NotesToolModule>());
 builder.Services.AddScoped<IToolProvider, CompositeToolProvider>();
 
 var host = builder.Build();

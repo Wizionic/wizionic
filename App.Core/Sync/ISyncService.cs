@@ -6,7 +6,7 @@ namespace App.Core.Sync;
 /// <summary>
 /// Cross-device sync: SignalR presence/signaling, WebRTC data transfer, and optional AI proxy.
 /// </summary>
-public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, IAsyncDisposable
+public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarSyncBridge, IAsyncDisposable
 {
     string? MyDeviceId { get; }
     string MyDeviceName { get; }
@@ -22,6 +22,7 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, IAsyncDisp
     bool AutoSyncChatHistory { get; }
     bool AutoSyncNotes { get; }
     bool AutoSyncGallery { get; }
+    bool AutoSyncCalendar { get; }
     bool AutoSyncBookmarks { get; }
     bool AutoSyncInstalledApps { get; }
     bool AutoSyncLocalAi { get; }
@@ -63,6 +64,7 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, IAsyncDisp
     Task SetAutoSyncChatHistoryAsync(bool enabled);
     Task SetAutoSyncNotesAsync(bool enabled);
     Task SetAutoSyncGalleryAsync(bool enabled);
+    Task SetAutoSyncCalendarAsync(bool enabled);
     Task SetAutoSyncBookmarksAsync(bool enabled);
     Task SetAutoSyncInstalledAppsAsync(bool enabled);
     Task SetAutoSyncLocalAiAsync(bool enabled);
@@ -81,6 +83,8 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, IAsyncDisp
     Task StartWebRtcNoteSyncAsync(string targetDeviceId, string noteId, string title, List<ChatMessage> entries);
     Task StartWebRtcAlbumSyncAsync(string targetDeviceId, string albumId, string title);
     Task StartWebRtcAlbumImageSyncAsync(string targetDeviceId, string albumId, string imageId);
+    Task StartWebRtcCalendarSyncAsync(string targetDeviceId, string calendarId);
+    Task StartWebRtcCalendarEventSyncAsync(string targetDeviceId, string calendarId, string eventId);
     Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark);
     Task StartWebRtcFolderSyncAsync(string targetDeviceId, BrowserBookmarkFolder folder);
     Task StartWebRtcSidebarAppSyncAsync(string targetDeviceId, SidebarApp app);
@@ -89,6 +93,7 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, IAsyncDisp
     Task<int> SyncAllConversationsToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllNotesToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllAlbumsToDevicesAsync(IEnumerable<string> targetDeviceIds);
+    Task<int> SyncAllCalendarsToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds);
     Task<int> SyncSettingsCategoryToDevicesAsync(string category, IEnumerable<string> targetDeviceIds);

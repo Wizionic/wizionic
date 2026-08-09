@@ -1,0 +1,1386 @@
+@implements IAsyncDisposable
+@using App.Core.Auth
+@using App.Core.Storage
+@using App.Core.UI
+@using App.Shared.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Text
+
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject ICalendarStore CalendarStore
+@inject IAuthService AuthService
+@inject ICalendarSyncBridge SyncBridge
+@inject ISidebarState SidebarState
+
+<WasmSidebarSync />
+
+<div class="page cal-page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+    <div class="sidebar cal-sidebar">
+        <div class="cal-sidebar-inner">
+            <button type="button" class="cal-create-btn" @onclick="OpenCreateEventDialog" title="Create event">
+                <i class="bi bi-plus-lg"></i>
+                <span>Create</span>
+            </button>
+
+            <div class="cal-mini">
+                <div class="cal-mini-header">
+                    <button type="button" class="cal-nav-btn" @onclick="MiniPrevMonth" title="Previous month">‹</button>
+                    <span class="cal-mini-title">@_miniMonth.ToString("MMMM yyyy")</span>
+                    <button type="button" class="cal-nav-btn" @onclick="MiniNextMonth" title="Next month">›</button>
+                </div>
+                <div class="cal-mini-dow">
+                    @foreach (var d in _dowLabels)
+                    {
+                        <span>@d</span>
+                    }
+                </div>
+                <div class="cal-mini-grid">
+                    @foreach (var cell in BuildMiniMonthCells())
+                    {
+                        var isOther = cell.Month != _miniMonth.Month;
+                        var isToday = cell.Date == DateTime.Today;
+                        var isSelected = cell.Date == _focusDate.Date;
+                        <button type="button"
+                                class="cal-mini-day @(isOther ? "other-month" : "") @(isToday ? "today" : "") @(isSelected ? "selected" : "")"
+                                @onclick="() => OnMiniDayClick(cell.Date)">
+                            @cell.Date.Day
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="cal-my-cals">
+                <div class="cal-section-header">
+                    <h4>My calendars</h4>
+                    <button type="button" class="menu-button" @onclick="OpenCreateCalendarDialog" title="New calendar">
+                        <i class="bi bi-plus-circle" style="font-size:1.1rem;"></i>
+                    </button>
+                </div>
+                @foreach (var cal in _calendars.Where(c => !c.IsWorkflowCalendar).OrderBy(c => c.SortOrder).ThenBy(c => c.Name))
+                {
+                    <div class="cal-list-item">
+                        <label class="cal-list-label" title="@cal.Name">
+                            <input type="checkbox" checked="@cal.IsVisible" @onchange="e => ToggleCalendarVisible(cal.Id, e)" />
+                            <span class="cal-color-swatch" style="background:@cal.Color"></span>
+                            <span class="cal-list-name">@cal.Name</span>
+                        </label>
+                        <div class="menu" @onclick:stopPropagation>
+                            <button type="button" id="cal-menu-btn-@cal.Id" class="menu-button" @onclick="() => ToggleCalMenu(cal.Id)">⋮</button>
+                        </div>
+                    </div>
+                }
+                @if (!_calendars.Any(c => !c.IsWorkflowCalendar))
+                {
+                    <div class="cal-empty-hint">No calendars yet.</div>
+                }
+            </div>
+
+            @* Fixed position under ⋮ (getMenuPopupPosition) — outside list rows to avoid sidebar overflow clipping *@
+            @if (_openCalMenuId is not null)
+            {
+                var openCal = _calendars.FirstOrDefault(c => c.Id == _openCalMenuId);
+                if (openCal is not null)
+                {
+                    <div class="cal-dropdown" style="@_calMenuStyle" @onclick:stopPropagation>
+                        <button type="button" @onclick="() => OpenEditCalendarDialog(openCal)">Edit</button>
+                        <button type="button" @onclick="() => ExportCalendarAsync(openCal)">Export .ics</button>
+                        <button type="button" @onclick="() => BeginImport(openCal.Id)">Import .ics</button>
+                        <button type="button" class="danger" @onclick="() => ConfirmDeleteCalendar(openCal)">Delete</button>
+                    </div>
+                    <div class="menu-overlay" @onclick="CloseCalMenu"></div>
+                }
+            }
+
+            <div class="cal-workflows">
+                <div class="cal-section-header">
+                    <h4>Workflows</h4>
+                </div>
+                <div class="cal-empty-hint">Coming soon — AI workflows will appear here.</div>
+            </div>
+        </div>
+    </div>
+
+    <main class="cal-main">
+        <div class="cal-toolbar">
+            <div class="cal-toolbar-left">
+                <button type="button" class="cal-today-btn" @onclick="GoToday">Today</button>
+                <button type="button" class="cal-nav-btn" @onclick="NavigatePrev" title="Previous">‹</button>
+                <button type="button" class="cal-nav-btn" @onclick="NavigateNext" title="Next">›</button>
+                <h2 class="cal-title">@TitleText</h2>
+            </div>
+            <div class="cal-toolbar-right">
+                <div class="cal-view-select">
+                    <select value="@_view.ToString()" @onchange="OnViewChanged">
+                        <option value="Day">Day</option>
+                        <option value="Week">Week</option>
+                        <option value="Month">Month</option>
+                        <option value="Year">Year</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        @if (_loading)
+        {
+            <div class="cal-loading">Loading calendar…</div>
+        }
+        else if (_view == CalView.Month)
+        {
+            <div class="cal-month">
+                <div class="cal-month-dow">
+                    @foreach (var d in _dowLabelsFull)
+                    {
+                        <div class="cal-month-dow-cell">@d</div>
+                    }
+                </div>
+                <div class="cal-month-grid">
+                    @foreach (var week in BuildMonthWeeks())
+                    {
+                        var weekStart = week[0].Date;
+                        var spans = LayoutWeekSpans(weekStart, _occurrences, maxLanes: MaxMonthSpanLanes);
+                        var spanPad = spans.Count == 0 ? 0 : (spans.Max(s => s.Lane) + 1) * SpanBarRowPx + 2;
+                        <div class="cal-month-week" style="--cal-span-pad: @(spanPad)px;">
+                            <div class="cal-month-week-days">
+                                @for (var col = 0; col < 7; col++)
+                                {
+                                    var day = week[col];
+                                    var isOther = day.Month != _focusDate.Month;
+                                    var isToday = day.Date == DateTime.Today;
+                                    var timed = TimedEventsForDayOnly(day).Take(3).ToList();
+                                    var moreTimed = TimedEventsForDayOnly(day).Count() - timed.Count;
+                                    <div class="cal-month-cell @(isOther ? "other-month" : "") @(isToday ? "today" : "")"
+                                         @onclick="() => OnDayCellClick(day)"
+                                         @onclick:stopPropagation="false">
+                                        <div class="cal-month-daynum">@day.Day</div>
+                                        <div class="cal-month-events" style="padding-top: @(spanPad)px;">
+                                            @foreach (var occ in timed)
+                                            {
+                                                <div class="cal-event-chip timed-dot"
+                                                     title="@occ.Summary"
+                                                     @onclick="() => OpenEditEvent(occ.EventId)"
+                                                     @onclick:stopPropagation>
+                                                    <span class="cal-event-dot" style="background:@occ.Color"></span>
+                                                    <span class="cal-event-time">@FormatLocalTime(occ.StartUtc)</span>
+                                                    <span class="cal-event-title">@occ.Summary</span>
+                                                </div>
+                                            }
+                                            @if (moreTimed > 0)
+                                            {
+                                                <div class="cal-event-more">+@moreTimed more</div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                            <div class="cal-month-week-spans" aria-hidden="false">
+                                @foreach (var seg in spans)
+                                {
+                                    var topPx = 22 + seg.Lane * SpanBarRowPx; // under day number
+                                    <div class="cal-span-bar @(seg.ContinuesLeft ? "cont-left" : "") @(seg.ContinuesRight ? "cont-right" : "")"
+                                         style="@SpanBarStyle(seg, topPx)"
+                                         title="@seg.Summary"
+                                         @onclick="() => OpenEditEvent(seg.EventId)"
+                                         @onclick:stopPropagation>
+                                        @seg.Summary
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        else if (_view == CalView.Week)
+        {
+            var weekDays = WeekDays();
+            var weekStart = weekDays[0].Date;
+            var weekSpans = LayoutWeekSpans(weekStart, _occurrences, maxLanes: 8, allDayOrMultiOnly: true);
+            var weekSpanH = weekSpans.Count == 0 ? 28 : Math.Max(28, (weekSpans.Max(s => s.Lane) + 1) * SpanBarRowPx + 6);
+            <div class="cal-week">
+                <div class="cal-week-header">
+                    <div class="cal-week-gutter"></div>
+                    @foreach (var day in weekDays)
+                    {
+                        var isToday = day.Date == DateTime.Today;
+                        <div class="cal-week-dayhead @(isToday ? "today" : "")">
+                            <div class="cal-week-dow">@day.ToString("ddd")</div>
+                            <div class="cal-week-date">@day.Day</div>
+                        </div>
+                    }
+                </div>
+                <div class="cal-week-allday" style="min-height: @(weekSpanH)px;">
+                    <div class="cal-week-gutter"><span class="cal-allday-label">All day</span></div>
+                    <div class="cal-week-allday-track">
+                        @for (var col = 0; col < 7; col++)
+                        {
+                            <div class="cal-week-allday-col"></div>
+                        }
+                        @foreach (var seg in weekSpans)
+                        {
+                            var topPx = 2 + seg.Lane * SpanBarRowPx;
+                            <div class="cal-span-bar week @(seg.ContinuesLeft ? "cont-left" : "") @(seg.ContinuesRight ? "cont-right" : "")"
+                                 style="@SpanBarStyle(seg, topPx)"
+                                 title="@seg.Summary"
+                                 @onclick="() => OpenEditEvent(seg.EventId)"
+                                 @onclick:stopPropagation>
+                                @seg.Summary
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="cal-week-body">
+                    <div class="cal-week-hours">
+                        @for (var h = 0; h < 24; h++)
+                        {
+                            <div class="cal-hour-row">
+                                <div class="cal-week-gutter"><span>@FormatHour(h)</span></div>
+                                @foreach (var day in weekDays)
+                                {
+                                    <div class="cal-hour-cell" @onclick="() => OnHourClick(day, h)">
+                                        @foreach (var occ in TimedEventsStartingAt(day, h))
+                                        {
+                                            <div class="cal-event-chip timed"
+                                                 style="background:@occ.Color; height:@(EventHeightPx(occ))px; top:@(EventTopOffsetPx(occ))px;"
+                                                 @onclick="() => OpenEditEvent(occ.EventId)"
+                                                 @onclick:stopPropagation>
+                                                <span class="cal-event-time">@FormatLocalTime(occ.StartUtc)</span>
+                                                @occ.Summary
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+        else if (_view == CalView.Day)
+        {
+            <div class="cal-day">
+                <div class="cal-day-allday">
+                    @foreach (var occ in EventsForDay(_focusDate).Where(e => e.IsAllDay || IsMultiDay(e)))
+                    {
+                        <div class="cal-event-chip cal-event-bar"
+                             style="background:@occ.Color"
+                             @onclick="() => OpenEditEvent(occ.EventId)">@occ.Summary</div>
+                    }
+                </div>
+                <div class="cal-day-hours">
+                    @for (var h = 0; h < 24; h++)
+                    {
+                        <div class="cal-hour-row day">
+                            <div class="cal-week-gutter"><span>@FormatHour(h)</span></div>
+                            <div class="cal-hour-cell" @onclick="() => OnHourClick(_focusDate, h)">
+                                @foreach (var occ in TimedEventsStartingAt(_focusDate, h))
+                                {
+                                    <div class="cal-event-chip timed"
+                                         style="background:@occ.Color; height:@(EventHeightPx(occ))px; top:@(EventTopOffsetPx(occ))px;"
+                                         @onclick="() => OpenEditEvent(occ.EventId)"
+                                         @onclick:stopPropagation>
+                                        <span class="cal-event-time">@FormatLocalTime(occ.StartUtc)</span>
+                                        @occ.Summary
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        else if (_view == CalView.Year)
+        {
+            <div class="cal-year">
+                @for (var m = 1; m <= 12; m++)
+                {
+                    var month = new DateTime(_focusDate.Year, m, 1);
+                    <div class="cal-year-month" @onclick="() => GoToMonth(month)">
+                        <div class="cal-year-month-title">@month.ToString("MMMM")</div>
+                        <div class="cal-mini-dow year">
+                            @foreach (var d in _dowLabels)
+                            {
+                                <span>@d</span>
+                            }
+                        </div>
+                        <div class="cal-mini-grid year">
+                            @foreach (var cell in BuildMiniMonthCellsFor(month))
+                            {
+                                var isOther = cell.Month != m;
+                                var isToday = cell.Date == DateTime.Today;
+                                <span class="cal-mini-day static @(isOther ? "other-month" : "") @(isToday ? "today" : "")">@cell.Date.Day</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </main>
+</div>
+
+@* Create / edit event dialog *@
+@if (_showEventDialog)
+{
+    <div class="cal-modal-overlay" @onclick="CloseEventDialog">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3>@(_editingEventId is null ? "Create event" : "Edit event")</h3>
+            <label>Title
+                <input type="text" @bind="_formSummary" placeholder="Add title" />
+            </label>
+            <label class="cal-checkbox">
+                <input type="checkbox" checked="@_formAllDay" @onchange="OnAllDayChanged" /> All day
+            </label>
+            <div class="cal-form-row">
+                <label>Start
+                    @if (_formAllDay)
+                    {
+                        <input type="date" value="@_formStartStr" @onchange="OnFormStartChanged" />
+                    }
+                    else
+                    {
+                        <input type="datetime-local" value="@_formStartStr" @onchange="OnFormStartChanged" />
+                    }
+                </label>
+                <label>End
+                    @if (_formAllDay)
+                    {
+                        <input type="date" value="@_formEndStr" @onchange="OnFormEndChanged" />
+                    }
+                    else
+                    {
+                        <input type="datetime-local" value="@_formEndStr" @onchange="OnFormEndChanged" />
+                    }
+                </label>
+            </div>
+            <label>Calendar
+                <select @bind="_formCalendarId">
+                    @foreach (var c in _calendars.Where(x => !x.IsWorkflowCalendar))
+                    {
+                        <option value="@c.Id">@c.Name</option>
+                    }
+                </select>
+            </label>
+            <label>Repeat
+                <select @bind="_formRepeatPreset">
+                    <option value="none">Does not repeat</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="weekdays">Every Weekday</option>
+                    <option value="monthly">@MonthlyRepeatOptionText</option>
+                    <option value="yearly">Annually</option>
+                    @if (_formRepeatPreset == "custom")
+                    {
+                        <option value="custom">Custom (imported)</option>
+                    }
+                </select>
+            </label>
+            @if (_formRepeatPreset == "monthly")
+            {
+                <div class="cal-empty-hint" style="margin-top:-0.35rem;">@MonthlyRepeatOptionText</div>
+            }
+            else if (_formRepeatPreset == "custom" && !string.IsNullOrEmpty(_formCustomRRule))
+            {
+                <div class="cal-empty-hint" style="margin-top:-0.35rem;">@_formCustomRRule</div>
+            }
+            <label>Location
+                <input type="text" @bind="_formLocation" placeholder="Add location" />
+            </label>
+            <label>Description
+                <textarea @bind="_formDescription" rows="3" placeholder="Add description"></textarea>
+            </label>
+            <div class="cal-modal-actions">
+                @if (_editingEventId is not null)
+                {
+                    <button type="button" class="cal-btn danger" @onclick="DeleteEditingEvent">Delete</button>
+                }
+                <div class="cal-modal-actions-right">
+                    <button type="button" class="cal-btn" @onclick="CloseEventDialog">Cancel</button>
+                    <button type="button" class="cal-btn primary" @onclick="SaveEvent">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* Create / edit calendar dialog *@
+@if (_showCalDialog)
+{
+    <div class="cal-modal-overlay" @onclick="CloseCalDialog">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3>@(_editingCalId is null ? "New calendar" : "Edit calendar")</h3>
+            <label>Name
+                <input type="text" @bind="_calFormName" placeholder="Calendar name" />
+            </label>
+            <label>Color
+                <div class="cal-color-picker">
+                    @foreach (var color in CalendarConstants.Palette)
+                    {
+                        <button type="button"
+                                class="cal-color-option @(_calFormColor == color ? "selected" : "")"
+                                style="background:@color"
+                                @onclick="() => _calFormColor = color"></button>
+                    }
+                </div>
+            </label>
+            <div class="cal-modal-actions">
+                <div class="cal-modal-actions-right">
+                    <button type="button" class="cal-btn" @onclick="CloseCalDialog">Cancel</button>
+                    <button type="button" class="cal-btn primary" @onclick="SaveCalendar">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_confirmDeleteCal is not null)
+{
+    <div class="cal-modal-overlay" @onclick="() => _confirmDeleteCal = null">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3>Delete calendar?</h3>
+            <p>Delete “@_confirmDeleteCal.Name” and all of its events? This cannot be undone on this device.</p>
+            <div class="cal-modal-actions">
+                <div class="cal-modal-actions-right">
+                    <button type="button" class="cal-btn" @onclick="() => _confirmDeleteCal = null">Cancel</button>
+                    <button type="button" class="cal-btn danger" @onclick="DeleteConfirmedCalendar">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(_importTargetCalendarId))
+{
+    <div class="cal-modal-overlay" @onclick="CancelImport">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3>Import .ics</h3>
+            <p style="margin:0; font-size:0.9rem; color:var(--cf-text-muted);">
+                Events will be added to the selected calendar. Matching UIDs update existing events.
+            </p>
+            <InputFile OnChange="OnIcsFileSelected" accept=".ics,text/calendar" />
+            @if (!string.IsNullOrEmpty(_importStatus))
+            {
+                <div class="cal-empty-hint">@_importStatus</div>
+            }
+            <div class="cal-modal-actions">
+                <div class="cal-modal-actions-right">
+                    <button type="button" class="cal-btn" @onclick="CancelImport">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private enum CalView { Day, Week, Month, Year }
+
+    private static readonly string[] _dowLabels = ["S", "M", "T", "W", "T", "F", "S"];
+    private static readonly string[] _dowLabelsFull = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    private List<LocalCalendar> _calendars = new();
+    private List<CalendarOccurrence> _occurrences = new();
+    private Dictionary<string, string> _colorByCal = new(StringComparer.OrdinalIgnoreCase);
+
+    private DateTime _focusDate = DateTime.Today;
+    private DateTime _miniMonth;
+    private CalView _view = CalView.Month;
+    private bool _loading = true;
+    private bool _hasLoadedOnce;
+
+    private Action? _sidebarHandler;
+    private Action? _syncHandler;
+
+    private string? _openCalMenuId;
+    private string _calMenuStyle = "";
+
+    private sealed class PopupPosition
+    {
+        public double top { get; set; }
+        public double left { get; set; }
+    }
+
+    // Event form
+    private bool _showEventDialog;
+    private string? _editingEventId;
+    private string _formSummary = "";
+    private string _formLocation = "";
+    private string _formDescription = "";
+    private string _formCalendarId = "";
+    private bool _formAllDay;
+    /// <summary>HTML date / datetime-local value strings (avoids DateTime bind format wipe).</summary>
+    private string _formStartStr = "";
+    private string _formEndStr = "";
+    private string _formRepeatPreset = "none";
+    private string? _formCustomRRule;
+    private const double HourRowPx = 48;
+
+    private string? _importTargetCalendarId;
+    private string? _importStatus;
+
+    // Calendar form
+    private bool _showCalDialog;
+    private string? _editingCalId;
+    private string _calFormName = "";
+    private string _calFormColor = CalendarConstants.DefaultCalendarColor;
+    private LocalCalendar? _confirmDeleteCal;
+
+    private string TitleText => _view switch
+    {
+        CalView.Day => _focusDate.ToString("dddd, MMMM d, yyyy"),
+        CalView.Week => WeekRangeTitle(),
+        CalView.Year => _focusDate.Year.ToString(),
+        _ => _focusDate.ToString("MMMM yyyy")
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _miniMonth = new DateTime(_focusDate.Year, _focusDate.Month, 1);
+        _sidebarHandler = () => InvokeAsync(StateHasChanged);
+        SidebarState.OnChanged += _sidebarHandler;
+        _syncHandler = () => _ = InvokeAsync(ReloadAsync);
+        SyncBridge.OnCalendarsChanged += _syncHandler;
+
+        // Load like NotesPage — OnInitializedAsync works for InteractiveWebAssembly (prerender: false).
+        // Avoid await InvokeAsync(StateHasChanged) mid-load (can stall WASM on "Loading…").
+        await ReloadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            await SidebarState.SetCollapsedAsync(false, JS);
+        }
+        catch { /* static render / JS not ready */ }
+    }
+
+    /// <summary>
+    /// Full reload (calendars + events). Use after create/delete/sync.
+    /// Always re-renders when done — fire-and-forget callers need this on WASM.
+    /// </summary>
+    private async Task ReloadAsync()
+    {
+        // Only blank the main pane on the very first load, not on mini-calendar / nav clicks.
+        var showOverlay = !_hasLoadedOnce;
+        if (showOverlay)
+            _loading = true;
+
+        try
+        {
+            await CalendarStore.EnsureDefaultCalendarAsync();
+            _calendars = await CalendarStore.LoadCalendarsAsync() ?? new List<LocalCalendar>();
+            _colorByCal = _calendars
+                .GroupBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Color, StringComparer.OrdinalIgnoreCase);
+            await LoadOccurrencesAsync();
+            _hasLoadedOnce = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CalendarPage] load failed: {ex}");
+            _calendars ??= new List<LocalCalendar>();
+            _occurrences ??= new List<CalendarOccurrence>();
+            _hasLoadedOnce = true; // don't stay on Loading forever
+        }
+        finally
+        {
+            _loading = false;
+            // Critical for WASM: fire-and-forget (_ = ReloadAsync()) does not auto re-render.
+            try { await InvokeAsync(StateHasChanged); }
+            catch { /* disposed */ }
+        }
+    }
+
+    /// <summary>
+    /// Soft refresh for focus/view changes — reloads event index only, never shows Loading overlay.
+    /// </summary>
+    private async Task RefreshViewAsync()
+    {
+        try
+        {
+            await LoadOccurrencesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CalendarPage] refresh view failed: {ex.Message}");
+        }
+        finally
+        {
+            try { await InvokeAsync(StateHasChanged); }
+            catch { /* disposed */ }
+        }
+    }
+
+    private async Task LoadOccurrencesAsync()
+    {
+        var (from, to) = VisibleRangeUtc();
+        // Load a wider index window so RRULE masters that start before the visible range are included
+        var indexFrom = from.AddMonths(-1);
+        var indexTo = to.AddYears(2);
+        var index = await CalendarStore.LoadEventIndexAsync(indexFrom, indexTo) ?? new List<CalendarEventIndex>();
+        var visibleCalIds = _calendars.Where(c => c.IsVisible).Select(c => c.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var filtered = index.Where(e => visibleCalIds.Contains(e.CalendarId)).ToList();
+
+        _occurrences = CalendarIcs.ExpandOccurrences(filtered, _colorByCal, from, to).ToList();
+    }
+
+    private (DateTime from, DateTime to) VisibleRangeUtc()
+    {
+        DateTime localStart, localEnd;
+        switch (_view)
+        {
+            case CalView.Day:
+                localStart = _focusDate.Date;
+                localEnd = localStart.AddDays(1);
+                break;
+            case CalView.Week:
+                localStart = StartOfWeek(_focusDate);
+                localEnd = localStart.AddDays(7);
+                break;
+            case CalView.Year:
+                localStart = new DateTime(_focusDate.Year, 1, 1);
+                localEnd = localStart.AddYears(1);
+                break;
+            default:
+                var first = new DateTime(_focusDate.Year, _focusDate.Month, 1);
+                localStart = StartOfWeek(first);
+                localEnd = localStart.AddDays(42);
+                break;
+        }
+        return (localStart.ToUniversalTime(), localEnd.ToUniversalTime());
+    }
+
+    private static DateTime StartOfWeek(DateTime d)
+    {
+        // Sunday start (Google Calendar default in US)
+        var diff = (int)d.DayOfWeek;
+        return d.Date.AddDays(-diff);
+    }
+
+    private const int MaxMonthSpanLanes = 3;
+    private const int SpanBarRowPx = 18;
+
+    private sealed record SpanSegment(
+        string EventId,
+        string Summary,
+        string Color,
+        int StartCol,
+        int EndColExclusive,
+        int Lane,
+        bool ContinuesLeft,
+        bool ContinuesRight);
+
+    private IEnumerable<CalendarOccurrence> EventsForDay(DateTime day)
+    {
+        var start = day.Date.ToUniversalTime();
+        var end = day.Date.AddDays(1).ToUniversalTime();
+        return _occurrences
+            .Where(o => o.EndUtc > start && o.StartUtc < end)
+            .OrderBy(o => o.IsAllDay ? 0 : 1)
+            .ThenBy(o => o.StartUtc);
+    }
+
+    /// <summary>Same-day timed events only (not multi-day / all-day bars).</summary>
+    private IEnumerable<CalendarOccurrence> TimedEventsForDayOnly(DateTime day)
+    {
+        return EventsForDay(day)
+            .Where(o => !o.IsAllDay && !IsMultiDay(o))
+            .OrderBy(o => o.StartUtc);
+    }
+
+    private static bool IsMultiDay(CalendarOccurrence o)
+    {
+        var start = o.StartUtc.ToLocalTime().Date;
+        var end = o.EndUtc.ToLocalTime();
+        // All-day DTEND is exclusive midnight → end.Date is day after last inclusive day
+        var endDate = o.IsAllDay
+            ? (end.TimeOfDay == TimeSpan.Zero ? end.Date.AddDays(-1) : end.Date)
+            : end.Date;
+        return endDate > start;
+    }
+
+    /// <summary>
+    /// Layout multi-day / all-day occurrences as Google-style bars within one week row (Sun–Sat).
+    /// </summary>
+    private static List<SpanSegment> LayoutWeekSpans(
+        DateTime weekStart,
+        IReadOnlyList<CalendarOccurrence> occurrences,
+        int maxLanes = 8,
+        bool allDayOrMultiOnly = false)
+    {
+        weekStart = weekStart.Date;
+        var weekEnd = weekStart.AddDays(7); // exclusive
+        var candidates = new List<(CalendarOccurrence Occ, int StartCol, int EndCol, bool ContL, bool ContR)>();
+
+        foreach (var o in occurrences)
+        {
+            if (allDayOrMultiOnly && !o.IsAllDay && !IsMultiDay(o))
+                continue;
+            // In month view: only span all-day or multi-day; timed same-day use dots
+            if (!allDayOrMultiOnly && !o.IsAllDay && !IsMultiDay(o))
+                continue;
+
+            var startLocal = o.StartUtc.ToLocalTime().Date;
+            var endLocal = o.EndUtc.ToLocalTime();
+            // Inclusive last day for painting
+            DateTime lastDay;
+            if (o.IsAllDay)
+                lastDay = endLocal.TimeOfDay == TimeSpan.Zero ? endLocal.Date.AddDays(-1) : endLocal.Date;
+            else
+                lastDay = endLocal.Date;
+
+            if (lastDay < weekStart || startLocal >= weekEnd)
+                continue;
+
+            var contL = startLocal < weekStart;
+            var contR = lastDay >= weekEnd;
+            var segStart = contL ? weekStart : startLocal;
+            var segLast = contR ? weekEnd.AddDays(-1) : lastDay;
+            var startCol = (int)(segStart - weekStart).TotalDays;
+            var endColEx = (int)(segLast - weekStart).TotalDays + 1;
+            startCol = Math.Clamp(startCol, 0, 6);
+            endColEx = Math.Clamp(endColEx, startCol + 1, 7);
+            candidates.Add((o, startCol, endColEx, contL, contR));
+        }
+
+        // Longer spans first, then earlier start — better Google-like packing
+        candidates = candidates
+            .OrderBy(c => c.StartCol)
+            .ThenByDescending(c => c.EndCol - c.StartCol)
+            .ThenBy(c => c.Occ.Summary, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var laneEnds = new List<int>(); // exclusive end col per lane
+        var result = new List<SpanSegment>();
+
+        foreach (var c in candidates)
+        {
+            var lane = -1;
+            for (var i = 0; i < laneEnds.Count; i++)
+            {
+                if (laneEnds[i] <= c.StartCol)
+                {
+                    lane = i;
+                    laneEnds[i] = c.EndCol;
+                    break;
+                }
+            }
+
+            if (lane < 0)
+            {
+                if (laneEnds.Count >= maxLanes)
+                    continue; // drop overflow spans (rare)
+                lane = laneEnds.Count;
+                laneEnds.Add(c.EndCol);
+            }
+
+            result.Add(new SpanSegment(
+                c.Occ.EventId,
+                c.Occ.Summary,
+                c.Occ.Color,
+                c.StartCol,
+                c.EndCol,
+                lane,
+                c.ContL,
+                c.ContR));
+        }
+
+        return result;
+    }
+
+    /// <summary>Events that begin in this hour cell (rendered with height spanning duration).</summary>
+    private IEnumerable<CalendarOccurrence> TimedEventsStartingAt(DateTime day, int hour)
+    {
+        return _occurrences
+            .Where(o => !o.IsAllDay
+                        && !IsMultiDay(o)
+                        && o.StartUtc.ToLocalTime().Date == day.Date
+                        && o.StartUtc.ToLocalTime().Hour == hour)
+            .OrderBy(o => o.StartUtc);
+    }
+
+    private static double EventHeightPx(CalendarOccurrence occ)
+    {
+        var hours = (occ.EndUtc - occ.StartUtc).TotalHours;
+        if (hours <= 0) hours = 0.5;
+        // Cap very long events so layout stays usable; min ~15 minutes
+        hours = Math.Clamp(hours, 0.25, 24);
+        return hours * HourRowPx;
+    }
+
+    private static double EventTopOffsetPx(CalendarOccurrence occ)
+    {
+        var local = occ.StartUtc.ToLocalTime();
+        return (local.Minute / 60.0) * HourRowPx;
+    }
+
+    private static string SpanBarStyle(SpanSegment seg, int topPx)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var leftPct = seg.StartCol * (100.0 / 7.0);
+        var widthPct = (seg.EndColExclusive - seg.StartCol) * (100.0 / 7.0);
+        return $"left:calc({leftPct.ToString("0.###", inv)}% + 2px);width:calc({widthPct.ToString("0.###", inv)}% - 4px);top:{topPx}px;background:{seg.Color};";
+    }
+
+    private List<(DateTime Date, int Month)> BuildMiniMonthCells() =>
+        BuildMiniMonthCellsFor(_miniMonth);
+
+    private static List<(DateTime Date, int Month)> BuildMiniMonthCellsFor(DateTime month)
+    {
+        var first = new DateTime(month.Year, month.Month, 1);
+        var start = StartOfWeek(first);
+        var cells = new List<(DateTime, int)>(42);
+        for (var i = 0; i < 42; i++)
+        {
+            var d = start.AddDays(i);
+            cells.Add((d, month.Month));
+        }
+        return cells;
+    }
+
+    private List<List<DateTime>> BuildMonthWeeks()
+    {
+        var first = new DateTime(_focusDate.Year, _focusDate.Month, 1);
+        var start = StartOfWeek(first);
+        var weeks = new List<List<DateTime>>(6);
+        for (var w = 0; w < 6; w++)
+        {
+            var week = new List<DateTime>(7);
+            for (var d = 0; d < 7; d++)
+                week.Add(start.AddDays(w * 7 + d));
+            weeks.Add(week);
+        }
+        return weeks;
+    }
+
+    private List<DateTime> WeekDays()
+    {
+        var start = StartOfWeek(_focusDate);
+        return Enumerable.Range(0, 7).Select(i => start.AddDays(i)).ToList();
+    }
+
+    private string WeekRangeTitle()
+    {
+        var days = WeekDays();
+        var a = days[0];
+        var b = days[6];
+        if (a.Month == b.Month)
+            return $"{a:MMMM d} – {b:d, yyyy}";
+        if (a.Year == b.Year)
+            return $"{a:MMM d} – {b:MMM d, yyyy}";
+        return $"{a:MMM d, yyyy} – {b:MMM d, yyyy}";
+    }
+
+    private static string FormatHour(int h) =>
+        DateTime.Today.AddHours(h).ToString("h tt").ToLowerInvariant();
+
+    private static string FormatLocalTime(DateTime utc) =>
+        utc.ToLocalTime().ToString("h:mm tt").ToLowerInvariant();
+
+    private void GoToday()
+    {
+        _focusDate = DateTime.Today;
+        _miniMonth = new DateTime(_focusDate.Year, _focusDate.Month, 1);
+        _ = RefreshViewAsync();
+    }
+
+    private void NavigatePrev()
+    {
+        _focusDate = _view switch
+        {
+            CalView.Day => _focusDate.AddDays(-1),
+            CalView.Week => _focusDate.AddDays(-7),
+            CalView.Year => _focusDate.AddYears(-1),
+            _ => _focusDate.AddMonths(-1)
+        };
+        _miniMonth = new DateTime(_focusDate.Year, _focusDate.Month, 1);
+        _ = RefreshViewAsync();
+    }
+
+    private void NavigateNext()
+    {
+        _focusDate = _view switch
+        {
+            CalView.Day => _focusDate.AddDays(1),
+            CalView.Week => _focusDate.AddDays(7),
+            CalView.Year => _focusDate.AddYears(1),
+            _ => _focusDate.AddMonths(1)
+        };
+        _miniMonth = new DateTime(_focusDate.Year, _focusDate.Month, 1);
+        _ = RefreshViewAsync();
+    }
+
+    private void MiniPrevMonth()
+    {
+        _miniMonth = _miniMonth.AddMonths(-1);
+    }
+
+    private void MiniNextMonth()
+    {
+        _miniMonth = _miniMonth.AddMonths(1);
+    }
+
+    private void OnMiniDayClick(DateTime day)
+    {
+        _focusDate = day;
+        _miniMonth = new DateTime(day.Year, day.Month, 1);
+        if (_view == CalView.Year)
+            _view = CalView.Day;
+        _ = RefreshViewAsync();
+    }
+
+    private void GoToMonth(DateTime month)
+    {
+        _focusDate = month;
+        _miniMonth = month;
+        _view = CalView.Month;
+        _ = RefreshViewAsync();
+    }
+
+    private void OnDayCellClick(DateTime day)
+    {
+        _focusDate = day;
+        OpenCreateEventDialog(day.Date.AddHours(9), day.Date.AddHours(10), allDay: false);
+    }
+
+    private void OnHourClick(DateTime day, int hour)
+    {
+        var start = day.Date.AddHours(hour);
+        OpenCreateEventDialog(start, start.AddHours(1), allDay: false);
+    }
+
+    private async Task OnViewChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<CalView>(e.Value?.ToString(), out var v))
+            _view = v;
+        await RefreshViewAsync();
+    }
+
+    private async Task ToggleCalendarVisible(string id, ChangeEventArgs e)
+    {
+        var visible = e.Value is bool b && b;
+        await CalendarStore.SetCalendarVisibleAsync(id, visible);
+        SyncBridge.ScheduleAutoSyncCalendarAfterLocalSave(id);
+        await ReloadAsync();
+    }
+
+    private void ToggleCalMenu(string id)
+    {
+        if (_openCalMenuId == id)
+        {
+            CloseCalMenu();
+            return;
+        }
+
+        _openCalMenuId = id;
+        _ = PositionCalMenuAsync(id);
+    }
+
+    private void CloseCalMenu()
+    {
+        _openCalMenuId = null;
+        _calMenuStyle = "";
+    }
+
+    private async Task PositionCalMenuAsync(string id)
+    {
+        try
+        {
+            // Align under ⋮ with right edges flush (sidebar menus sit above the list, not at the bottom)
+            var pos = await JS.InvokeAsync<PopupPosition>("getBotMenuPopupPosition", $"cal-menu-btn-{id}");
+            _calMenuStyle = $"position: fixed; top: {pos.top}px; left: {pos.left}px; z-index: 10000;";
+        }
+        catch
+        {
+            _calMenuStyle = "position: fixed; top: 200px; left: 180px; z-index: 10000;";
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OpenCreateEventDialog() =>
+        OpenCreateEventDialog(DateTime.Now.AddHours(1).Date.AddHours(DateTime.Now.Hour + 1),
+            DateTime.Now.AddHours(1).Date.AddHours(DateTime.Now.Hour + 2), false);
+
+    private void OpenCreateEventDialog(DateTime startLocal, DateTime endLocal, bool allDay)
+    {
+        _editingEventId = null;
+        _formSummary = "";
+        _formLocation = "";
+        _formDescription = "";
+        _formAllDay = allDay;
+        _formRepeatPreset = "none";
+        _formCustomRRule = null;
+        SetFormTimesFromLocal(startLocal, endLocal, allDay);
+        _formCalendarId = _calendars.FirstOrDefault(c => c.IsVisible && !c.IsWorkflowCalendar)?.Id
+                          ?? _calendars.FirstOrDefault()?.Id
+                          ?? "";
+        _showEventDialog = true;
+    }
+
+    private async Task OpenEditEvent(string eventId)
+    {
+        var evt = await CalendarStore.LoadEventAsync(eventId);
+        if (evt is null) return;
+        _editingEventId = evt.Id;
+        _formSummary = evt.Summary;
+        _formLocation = evt.Location ?? "";
+        _formDescription = evt.Description ?? "";
+        _formAllDay = evt.IsAllDay;
+        // All-day end is exclusive (next day) in storage — show inclusive end date in the form
+        var startLocal = evt.StartUtc.ToLocalTime();
+        var endLocal = evt.EndUtc.ToLocalTime();
+        if (evt.IsAllDay && endLocal.TimeOfDay == TimeSpan.Zero && endLocal > startLocal)
+            endLocal = endLocal.AddDays(-1);
+        SetFormTimesFromLocal(startLocal, endLocal, evt.IsAllDay);
+        _formCalendarId = evt.CalendarId;
+        SetRepeatPresetFromRRule(evt.RRule, startLocal);
+        _showEventDialog = true;
+        StateHasChanged();
+    }
+
+    private void SetRepeatPresetFromRRule(string? rrule, DateTime startLocal)
+    {
+        _formCustomRRule = null;
+        if (string.IsNullOrWhiteSpace(rrule))
+        {
+            _formRepeatPreset = "none";
+            return;
+        }
+
+        // Match UI presets first (order: weekdays before weekly; monthly token depends on start date)
+        foreach (var preset in new[] { "daily", "weekdays", "weekly", "monthly", "yearly" })
+        {
+            var built = CalendarIcs.BuildRRule(preset, startLocal);
+            if (string.Equals(built, rrule, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(NormalizeRRule(built), NormalizeRRule(rrule), StringComparison.OrdinalIgnoreCase))
+            {
+                _formRepeatPreset = preset;
+                return;
+            }
+        }
+
+        // Heuristic match for common RRULEs
+        var u = NormalizeRRule(rrule);
+        if (u.StartsWith("FREQ=DAILY") && !u.Contains("BYDAY="))
+        {
+            _formRepeatPreset = "daily";
+            return;
+        }
+        if (u.Contains("FREQ=WEEKLY") && u.Contains("BYDAY=MO,TU,WE,TH,FR") && !u.Contains("INTERVAL="))
+        {
+            _formRepeatPreset = "weekdays";
+            return;
+        }
+        if (u.StartsWith("FREQ=WEEKLY"))
+        {
+            _formRepeatPreset = "weekly";
+            return;
+        }
+        // Monthly by weekday (2SA) or by month day
+        if (u.StartsWith("FREQ=MONTHLY"))
+        {
+            _formRepeatPreset = "monthly";
+            return;
+        }
+        if (u.StartsWith("FREQ=YEARLY"))
+        {
+            _formRepeatPreset = "yearly";
+            return;
+        }
+
+        _formRepeatPreset = "custom";
+        _formCustomRRule = rrule;
+    }
+
+    /// <summary>Google-style monthly label from the form start date, e.g. "Monthly on the 2nd Saturday".</summary>
+    private string MonthlyRepeatOptionText
+    {
+        get
+        {
+            if (!TryParseFormDateTime(_formStartStr, _formAllDay, out var start))
+                start = DateTime.Now;
+            return CalendarIcs.MonthlyRepeatOptionLabel(start);
+        }
+    }
+
+    private static string NormalizeRRule(string? r)
+    {
+        if (string.IsNullOrWhiteSpace(r)) return "";
+        return r.ToUpperInvariant().Replace(" ", "").TrimEnd(';');
+    }
+
+    private void CloseEventDialog() => _showEventDialog = false;
+
+    private void OnFormStartChanged(ChangeEventArgs e) =>
+        _formStartStr = e.Value?.ToString() ?? "";
+
+    private void OnFormEndChanged(ChangeEventArgs e) =>
+        _formEndStr = e.Value?.ToString() ?? "";
+
+    private void SetFormTimesFromLocal(DateTime startLocal, DateTime endLocal, bool allDay)
+    {
+        if (allDay)
+        {
+            _formStartStr = startLocal.ToString("yyyy-MM-dd");
+            _formEndStr = endLocal.ToString("yyyy-MM-dd");
+        }
+        else
+        {
+            // datetime-local requires no seconds / timezone for reliable browser display
+            _formStartStr = startLocal.ToString("yyyy-MM-ddTHH:mm");
+            _formEndStr = endLocal.ToString("yyyy-MM-ddTHH:mm");
+        }
+    }
+
+    private void OnAllDayChanged(ChangeEventArgs e)
+    {
+        var next = e.Value is bool b && b;
+        // Preserve calendar day when switching modes
+        if (!TryParseFormDateTime(_formStartStr, _formAllDay, out var start))
+            start = DateTime.Now;
+        if (!TryParseFormDateTime(_formEndStr, _formAllDay, out var end))
+            end = start.AddHours(1);
+
+        _formAllDay = next;
+        if (next)
+            SetFormTimesFromLocal(start.Date, end.Date == start.Date && end.TimeOfDay > TimeSpan.Zero ? end.Date : end.Date, allDay: true);
+        else
+            SetFormTimesFromLocal(
+                start.Date.AddHours(Math.Max(9, start.Hour)),
+                end.Date.AddHours(end.Hour == 0 && end.Date > start.Date ? 10 : Math.Max(end.Hour, start.Hour + 1)),
+                allDay: false);
+    }
+
+    private static bool TryParseFormDateTime(string? s, bool allDay, out DateTime local)
+    {
+        local = default;
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        if (allDay)
+        {
+            if (DateTime.TryParseExact(s, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var d))
+            {
+                local = DateTime.SpecifyKind(d.Date, DateTimeKind.Local);
+                return true;
+            }
+        }
+        else
+        {
+            // Accept with or without seconds
+            string[] formats = ["yyyy-MM-ddTHH:mm", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-dd HH:mm"];
+            if (DateTime.TryParseExact(s, formats, null, System.Globalization.DateTimeStyles.None, out var dt)
+                || DateTime.TryParse(s, out dt))
+            {
+                local = DateTime.SpecifyKind(dt, DateTimeKind.Local);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private async Task SaveEvent()
+    {
+        if (string.IsNullOrWhiteSpace(_formSummary) || string.IsNullOrEmpty(_formCalendarId))
+            return;
+
+        if (!TryParseFormDateTime(_formStartStr, _formAllDay, out var startLocal))
+            return;
+        if (!TryParseFormDateTime(_formEndStr, _formAllDay, out var endLocal))
+            endLocal = _formAllDay ? startLocal : startLocal.AddHours(1);
+
+        DateTime startUtc, endUtc;
+        if (_formAllDay)
+        {
+            // RFC 5545: all-day DTEND is exclusive (day after last day)
+            startUtc = DateTime.SpecifyKind(startLocal.Date, DateTimeKind.Local).ToUniversalTime();
+            var endDate = endLocal.Date;
+            if (endDate < startLocal.Date) endDate = startLocal.Date;
+            endUtc = DateTime.SpecifyKind(endDate.AddDays(1), DateTimeKind.Local).ToUniversalTime();
+        }
+        else
+        {
+            startUtc = startLocal.ToUniversalTime();
+            endUtc = endLocal.ToUniversalTime();
+            if (endUtc <= startUtc) endUtc = startUtc.AddHours(1);
+        }
+
+        var now = DateTime.UtcNow;
+        var id = _editingEventId ?? Guid.NewGuid().ToString("N");
+        var existing = _editingEventId is not null ? await CalendarStore.LoadEventAsync(_editingEventId) : null;
+
+        string? rrule = null;
+        if (_formRepeatPreset == "custom")
+            rrule = _formCustomRRule;
+        else
+            rrule = CalendarIcs.BuildRRule(_formRepeatPreset, startLocal);
+
+        var evt = new CalendarEvent(
+            id,
+            _formCalendarId,
+            _formSummary.Trim(),
+            startUtc,
+            endUtc,
+            _formAllDay,
+            string.IsNullOrWhiteSpace(_formDescription) ? null : _formDescription.Trim(),
+            string.IsNullOrWhiteSpace(_formLocation) ? null : _formLocation.Trim(),
+            TimeZoneId: TimeZoneInfo.Local.Id,
+            RRule: rrule,
+            Sequence: (existing?.Sequence ?? 0) + (_editingEventId is null ? 0 : 1),
+            CreatedUtc: existing?.CreatedUtc ?? now,
+            ModifiedUtc: now,
+            WorkflowId: existing?.WorkflowId);
+
+        await CalendarStore.UpsertEventAsync(evt);
+        SyncBridge.ScheduleAutoSyncEventAfterLocalSave(evt.CalendarId, evt.Id);
+        _showEventDialog = false;
+        await ReloadAsync();
+    }
+
+    private async Task DeleteEditingEvent()
+    {
+        if (_editingEventId is null) return;
+        var evt = await CalendarStore.LoadEventAsync(_editingEventId);
+        var deletedAt = await CalendarStore.DeleteEventAsync(_editingEventId);
+        if (evt is not null)
+            SyncBridge.ScheduleAutoSyncEventDeleteAfterLocalDelete(evt.CalendarId, evt.Id, deletedAt);
+        _showEventDialog = false;
+        await ReloadAsync();
+    }
+
+    private void OpenCreateCalendarDialog()
+    {
+        _editingCalId = null;
+        _calFormName = "";
+        _calFormColor = CalendarConstants.ColorForIndex(_calendars.Count);
+        _showCalDialog = true;
+        _openCalMenuId = null;
+    }
+
+    private void OpenEditCalendarDialog(LocalCalendar cal)
+    {
+        _editingCalId = cal.Id;
+        _calFormName = cal.Name;
+        _calFormColor = cal.Color;
+        _showCalDialog = true;
+        CloseCalMenu();
+    }
+
+    private void CloseCalDialog() => _showCalDialog = false;
+
+    private async Task SaveCalendar()
+    {
+        if (string.IsNullOrWhiteSpace(_calFormName)) return;
+        if (_editingCalId is null)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            await CalendarStore.CreateCalendarAsync(id, _calFormName.Trim(), _calFormColor);
+            SyncBridge.ScheduleAutoSyncCalendarAfterLocalSave(id);
+        }
+        else
+        {
+            var existing = _calendars.FirstOrDefault(c => c.Id == _editingCalId);
+            await CalendarStore.UpdateCalendarAsync(
+                _editingCalId, _calFormName.Trim(), _calFormColor, existing?.IsVisible ?? true);
+            SyncBridge.ScheduleAutoSyncCalendarAfterLocalSave(_editingCalId);
+        }
+        _showCalDialog = false;
+        await ReloadAsync();
+    }
+
+    private void ConfirmDeleteCalendar(LocalCalendar cal)
+    {
+        _confirmDeleteCal = cal;
+        CloseCalMenu();
+    }
+
+    private async Task DeleteConfirmedCalendar()
+    {
+        if (_confirmDeleteCal is null) return;
+        var id = _confirmDeleteCal.Id;
+        var deletedAt = await CalendarStore.DeleteCalendarAsync(id);
+        SyncBridge.ScheduleAutoSyncCalendarDeleteAfterLocalDelete(id, deletedAt);
+        _confirmDeleteCal = null;
+        await ReloadAsync();
+    }
+
+    // ── ICS import / export ────────────────────────────────────────────────
+
+    private async Task ExportCalendarAsync(LocalCalendar cal)
+    {
+        CloseCalMenu();
+        try
+        {
+            var events = await CalendarStore.LoadEventsForCalendarAsync(cal.Id);
+            var ics = CalendarIcs.ExportCalendar(cal, events);
+            var bytes = Encoding.UTF8.GetBytes(ics);
+            var b64 = Convert.ToBase64String(bytes);
+            var fileName = CalendarIcs.SafeFileName(cal.Name) + ".ics";
+            await JS.InvokeAsync<bool>("downloadBase64File", b64, fileName, "text/calendar");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CalendarPage] export failed: {ex.Message}");
+        }
+    }
+
+    private void BeginImport(string calendarId)
+    {
+        CloseCalMenu();
+        _importTargetCalendarId = calendarId;
+        _importStatus = null;
+    }
+
+    private void CancelImport()
+    {
+        _importTargetCalendarId = null;
+        _importStatus = null;
+    }
+
+    private async Task OnIcsFileSelected(InputFileChangeEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_importTargetCalendarId)) return;
+        var file = e.File;
+        if (file is null) return;
+
+        try
+        {
+            _importStatus = "Importing…";
+            await InvokeAsync(StateHasChanged);
+
+            await using var stream = file.OpenReadStream(maxAllowedSize: 8 * 1024 * 1024);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var text = await reader.ReadToEndAsync();
+            var result = CalendarIcs.Import(text, _importTargetCalendarId);
+
+            var imported = 0;
+            foreach (var evt in result.Events)
+            {
+                await CalendarStore.UpsertEventAsync(evt);
+                SyncBridge.ScheduleAutoSyncEventAfterLocalSave(evt.CalendarId, evt.Id);
+                imported++;
+            }
+
+            _importStatus = imported == 0
+                ? $"No events found{(result.Skipped > 0 ? $" ({result.Skipped} skipped)" : "")}."
+                : $"Imported {imported} event(s)" +
+                  (result.CalendarName is not null ? $" from “{result.CalendarName}”" : "") +
+                  (result.Skipped > 0 ? $", {result.Skipped} skipped" : "") + ".";
+
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _importStatus = $"Import failed: {ex.Message}";
+            Console.WriteLine($"[CalendarPage] import failed: {ex}");
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (_sidebarHandler is not null)
+            SidebarState.OnChanged -= _sidebarHandler;
+        if (_syncHandler is not null)
+            SyncBridge.OnCalendarsChanged -= _syncHandler;
+        return ValueTask.CompletedTask;
+    }
+}

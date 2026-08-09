@@ -23,6 +23,7 @@ public sealed class NullSyncService : ISyncService
     public bool AutoSyncChatHistory => true;
     public bool AutoSyncNotes => true;
     public bool AutoSyncGallery => true;
+    public bool AutoSyncCalendar => true;
     public bool AutoSyncBookmarks => true;
     public bool AutoSyncInstalledApps => true;
     public bool AutoSyncLocalAi => true;
@@ -46,6 +47,7 @@ public sealed class NullSyncService : ISyncService
     public event Action<string, string>? OnAlbumSyncAckReceived;
     public event Action? OnNotesChanged;
     public event Action? OnGalleryChanged;
+    public event Action? OnCalendarsChanged;
     public event Action? OnBookmarksChanged;
     public event Action? OnInstalledAppsChanged;
     public event Action? OnSettingsChanged;
@@ -61,6 +63,7 @@ public sealed class NullSyncService : ISyncService
     public Task SetAutoSyncChatHistoryAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncNotesAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncGalleryAsync(bool enabled) => Task.CompletedTask;
+    public Task SetAutoSyncCalendarAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncBookmarksAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncInstalledAppsAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncLocalAiAsync(bool enabled) => Task.CompletedTask;
@@ -88,6 +91,12 @@ public sealed class NullSyncService : ISyncService
     public Task StartWebRtcAlbumImageSyncAsync(string targetDeviceId, string albumId, string imageId) =>
         Task.CompletedTask;
 
+    public Task StartWebRtcCalendarSyncAsync(string targetDeviceId, string calendarId) =>
+        Task.CompletedTask;
+
+    public Task StartWebRtcCalendarEventSyncAsync(string targetDeviceId, string calendarId, string eventId) =>
+        Task.CompletedTask;
+
     public Task StartWebRtcBookmarkSyncAsync(string targetDeviceId, BrowserBookmark bookmark) =>
         Task.CompletedTask;
 
@@ -109,6 +118,9 @@ public sealed class NullSyncService : ISyncService
     public Task<int> SyncAllAlbumsToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
         Task.FromResult(0);
 
+    public Task<int> SyncAllCalendarsToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
+        Task.FromResult(0);
+
     public Task<int> SyncAllBookmarksToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
         Task.FromResult(0);
 
@@ -126,6 +138,10 @@ public sealed class NullSyncService : ISyncService
     public void ScheduleAutoSyncAlbumDeleteAfterLocalDelete(string albumId, DateTime deletedAt) { }
     public void ScheduleAutoSyncAlbumImageAfterLocalSave(string albumId, string imageId) { }
     public void ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(string albumId, string imageId, DateTime deletedAt) { }
+    public void ScheduleAutoSyncCalendarAfterLocalSave(string calendarId) { }
+    public void ScheduleAutoSyncCalendarDeleteAfterLocalDelete(string calendarId, DateTime deletedAt) { }
+    public void ScheduleAutoSyncEventAfterLocalSave(string calendarId, string eventId) { }
+    public void ScheduleAutoSyncEventDeleteAfterLocalDelete(string calendarId, string eventId, DateTime deletedAt) { }
     public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId) { }
     public void ScheduleAutoSyncBookmarkDeleteAfterLocalDelete(string bookmarkId, DateTime deletedAtUtc) { }
     public void ScheduleAutoSyncFolderAfterLocalSave(string folderId) { }

@@ -88,6 +88,10 @@
                         class="topbar-toggle-btn @(IsGalleryActive ? "active" : "")">
                     <i class="bi bi-images" style="font-size: 24px;"></i>
                 </button>
+                <button type="button" @onclick="ToggleCalendar" title="Calendar"
+                        class="topbar-toggle-btn @(IsCalendarActive ? "active" : "")">
+                    <i class="bi bi-calendar3" style="font-size: 24px;"></i>
+                </button>
             }
             else
             {
@@ -96,6 +100,9 @@
                 </a>
                 <a href="/gallery" title="Gallery">
                     <i class="bi bi-images" style="font-size: 24px;"></i>
+                </a>
+                <a href="/calendar" title="Calendar">
+                    <i class="bi bi-calendar3" style="font-size: 24px;"></i>
                 </a>
             }
         </div>
@@ -167,8 +174,10 @@
     private bool IsChatActive => IsOnChatPage() && ChatPanel.IsOpen;
     private bool IsNotesActive => IsOnNotesPage() && NotesPanel.IsOpen;
     private bool IsGalleryActive => IsOnGalleryPage();
+    private bool IsCalendarActive => IsOnCalendarPage();
     private bool ShowSidebarToggle =>
-        IsOnNotesPage() || IsOnGalleryPage() || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));
+        IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
+        || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));
 
     protected override void OnInitialized()
     {
@@ -206,6 +215,12 @@
             BrowserPanel.IsOpen = false;
         }
         else if (IsOnGalleryPage())
+        {
+            NotesPanel.IsOpen = false;
+            ChatPanel.IsOpen = false;
+            BrowserPanel.IsOpen = false;
+        }
+        else if (IsOnCalendarPage())
         {
             NotesPanel.IsOpen = false;
             ChatPanel.IsOpen = false;
@@ -292,6 +307,18 @@
         await SidebarState.SetCollapsedAsync(false, JS);
     }
 
+    private async Task ToggleCalendar()
+    {
+        ChatPanel.IsOpen = false;
+        BrowserPanel.IsOpen = false;
+        NotesPanel.IsOpen = false;
+
+        if (!IsOnCalendarPage())
+            Nav.NavigateTo("/calendar");
+
+        await SidebarState.SetCollapsedAsync(false, JS);
+    }
+
     private async Task ToggleBrowser()
     {
         NotesPanel.IsOpen = false;
@@ -328,6 +355,12 @@
     {
         var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
         return path.Equals("/gallery", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsOnCalendarPage()
+    {
+        var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
+        return path.Equals("/calendar", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
