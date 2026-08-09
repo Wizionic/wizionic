@@ -33,7 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="${VERSION:-0.1.9}"
+VERSION="${VERSION:-0.1.10}"
 SERVER_IP="${SERVER_IP:-bg5.local}"
 SSH_USER="${SSH_USER:-daniel}"
 OUTPUT_DIR="${OUTPUT_DIR:-./linux_publish}"

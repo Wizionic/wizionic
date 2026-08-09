@@ -453,6 +453,29 @@
                     }
                 </div>
 
+                @* Calendar *@
+                <div class="sync-category-row">
+                    <div class="sync-section-header">
+                        <h4 class="sync-category-title">Calendar</h4>
+                        @if (!SyncService.AutoSyncCalendar)
+                        {
+                            <button @onclick="SyncAllCalendars"
+                                    class="btn btn-outline-primary btn-sm"
+                                    disabled="@(!HasSyncTargets || isBulkSyncing)">
+                                @(isBulkSyncing ? "Syncing…" : "Sync All")
+                            </button>
+                        }
+                        <label class="sync-auto-sync-label ms-auto">
+                            <input type="checkbox" checked="@SyncService.AutoSyncCalendar" @onchange="ToggleAutoSyncCalendar" />
+                            Auto sync
+                        </label>
+                    </div>
+                    @if (!SyncService.AutoSyncCalendar)
+                    {
+                        <div class="sync-muted-text">Auto sync is off — use Sync All to push calendars and events over WebRTC.</div>
+                    }
+                </div>
+
                 @if (AppEnvironment.IsMaui)
                 {
                     <div class="sync-category-row">
@@ -848,6 +871,7 @@
     private async Task ToggleAutoSyncChat(ChangeEventArgs e) { var enabled = e.Value is bool b2 && b2; await SyncService.SetAutoSyncChatHistoryAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncNotes(ChangeEventArgs e) { var enabled = e.Value is bool b3 && b3; await SyncService.SetAutoSyncNotesAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncGallery(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncGalleryAsync(enabled); StateHasChanged(); }
+    private async Task ToggleAutoSyncCalendar(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncCalendarAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncBookmarks(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncBookmarksAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncApps(ChangeEventArgs e) { var enabled = e.Value is bool b && b; await SyncService.SetAutoSyncInstalledAppsAsync(enabled); StateHasChanged(); }
     private async Task ToggleAutoSyncLocalAi(ChangeEventArgs e) { await SyncService.SetAutoSyncLocalAiAsync(e.Value is bool b && b); StateHasChanged(); }
@@ -921,6 +945,22 @@
             var queued = await SyncService.SyncAllAlbumsToDevicesAsync(targets);
             var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
             statusMessage = $"Checking {queued} device(s) for albums that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
+        }
+        finally { isBulkSyncing = false; StateHasChanged(); }
+    }
+
+    private async Task SyncAllCalendars()
+    {
+        var targets = CurrentTargets();
+        if (!targets.Any()) { statusMessage = "Select at least one target device above first."; StateHasChanged(); return; }
+        isBulkSyncing = true; StateHasChanged();
+        try
+        {
+            await SyncService.EnsureConnectedAndRegisteredAsync();
+            if (!SyncService.IsConnected) { statusMessage = "Not connected to sync server. Try Refresh on the Devices section, then sync again."; return; }
+            var queued = await SyncService.SyncAllCalendarsToDevicesAsync(targets);
+            var targetNames = devices.Where(d => targets.Contains(d.DeviceId)).Select(d => d.Name).ToList();
+            statusMessage = $"Checking {queued} device(s) for calendars that need sync ({string.Join(", ", targetNames)}). Only changed items are transferred.";
         }
         finally { isBulkSyncing = false; StateHasChanged(); }
     }

@@ -240,6 +240,8 @@ public static class MauiProgram
 		services.AddScoped<INoteStore>(sp => sp.GetRequiredService<SqliteNoteStore>());
 		services.AddScoped<SqliteGalleryStore>();
 		services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<SqliteGalleryStore>());
+		services.AddScoped<SqliteCalendarStore>();
+		services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<SqliteCalendarStore>());
 		services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 		services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 		services.AddSingleton<MauiStorageQuotaService>();
@@ -253,6 +255,7 @@ public static class MauiProgram
 		services.AddSingleton<ISyncService>(sp => sp.GetRequiredService<MauiSyncService>());
 		services.AddSingleton<INotesSyncBridge>(sp => sp.GetRequiredService<MauiSyncService>());
 		services.AddSingleton<IGallerySyncBridge>(sp => sp.GetRequiredService<MauiSyncService>());
+		services.AddSingleton<ICalendarSyncBridge>(sp => sp.GetRequiredService<MauiSyncService>());
 		services.AddSingleton<MauiSidebarState>();
 		services.AddSingleton<ISidebarState>(sp => sp.GetRequiredService<MauiSidebarState>());
 		services.AddSingleton<MauiBrowserPanelState>();
@@ -325,11 +328,15 @@ public static class MauiProgram
 		services.AddSingleton<BrowserAgentToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.LemonadeToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.GalleryToolModule>();
+		services.AddSingleton<App.Shared.Services.Tools.CalendarToolModule>();
+		services.AddSingleton<App.Shared.Services.Tools.NotesToolModule>();
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<HomeAssistantToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<BrowserAgentToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.LemonadeToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.GalleryToolModule>());
+		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.CalendarToolModule>());
+		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.NotesToolModule>());
 		services.AddSingleton<IToolProvider, CompositeToolProvider>();
 		services.AddSingleton<ChatModelCatalogService>();
 		services.AddSingleton<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());

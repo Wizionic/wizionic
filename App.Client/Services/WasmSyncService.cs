@@ -54,6 +54,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string AutoSyncChatKey = "app-auto-sync-chat";
     private const string AutoSyncNotesKey = "app-auto-sync-notes";
     private const string AutoSyncGalleryKey = "app-auto-sync-gallery";
+    private const string AutoSyncCalendarKey = "app-auto-sync-calendar";
     private const string SyncToAllDevicesKey = "app-sync-to-all-devices";
     private const string AutoSyncLocalAiKey = "app-auto-sync-local-ai";
     private const string AutoSyncLemonadeKey = "app-auto-sync-lemonade";
@@ -92,6 +93,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public bool AutoSyncChatHistory { get; private set; } = true;
     public bool AutoSyncNotes { get; private set; } = true;
     public bool AutoSyncGallery { get; private set; } = true;
+    public bool AutoSyncCalendar { get; private set; } = true;
     public bool AutoSyncBookmarks => false;
     public bool AutoSyncInstalledApps => false;
     public bool AutoSyncLocalAi { get; private set; } = true;
@@ -119,6 +121,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     /// </summary>
     public event Action? OnNotesChanged;
     public event Action? OnGalleryChanged;
+    public event Action? OnCalendarsChanged;
 
     public event Action<string, string, string>? OnSyncPayloadReceived;
     public event Action<string, string, string>? OnAlbumSyncPayloadReceived;
@@ -141,6 +144,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         IConversationStore conversationStore,
         INoteStore noteStore,
         IGalleryStore galleryStore,
+        ICalendarStore calendarStore,
         ChatModelCatalogService modelCatalog,
         IKeyStore keyStore,
         ChatCompletionService chatCompletion,
@@ -174,11 +178,13 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             transportCallbacks: this,
             settingsStore: _settingsSync,
             galleryStore: _galleryStore,
-            storageQuota: null); // resolved lazily if needed; inject later if DI available at ctor
+            storageQuota: null,
+            calendarStore: calendarStore);
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
         _coordinator.OnGalleryChanged += () => OnGalleryChanged?.Invoke();
+        _coordinator.OnCalendarsChanged += () => OnCalendarsChanged?.Invoke();
         _coordinator.OnSettingsChanged += () => OnSettingsChanged?.Invoke();
         _coordinator.OnSyncPayloadReceived += (c, j, f) => OnSyncPayloadReceived?.Invoke(c, j, f);
         _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
@@ -327,6 +333,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             AutoSyncChatHistory = await LoadBoolPrefAsync(AutoSyncChatKey, defaultValue: true);
             AutoSyncNotes = await LoadBoolPrefAsync(AutoSyncNotesKey, defaultValue: true);
             AutoSyncGallery = await LoadBoolPrefAsync(AutoSyncGalleryKey, defaultValue: true);
+            AutoSyncCalendar = await LoadBoolPrefAsync(AutoSyncCalendarKey, defaultValue: true);
             AutoSyncLocalAi = await LoadBoolPrefAsync(AutoSyncLocalAiKey, defaultValue: true);
             AutoSyncLemonade = await LoadBoolPrefAsync(AutoSyncLemonadeKey, defaultValue: true);
             AutoSyncCloudProviders = await LoadBoolPrefAsync(AutoSyncCloudProvidersKey, defaultValue: true);
@@ -502,6 +509,14 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         AutoSyncGallery = enabled;
         await SetUserSettingAsync(AutoSyncGalleryKey, enabled ? "true" : "false");
+        OnChanged?.Invoke();
+        EnsureCoordinatorWired();
+    }
+
+    public async Task SetAutoSyncCalendarAsync(bool enabled)
+    {
+        AutoSyncCalendar = enabled;
+        await SetUserSettingAsync(AutoSyncCalendarKey, enabled ? "true" : "false");
         OnChanged?.Invoke();
         EnsureCoordinatorWired();
     }
@@ -783,6 +798,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.AutoSyncChatHistory = AutoSyncChatHistory;
         _coordinator.AutoSyncNotes = AutoSyncNotes;
         _coordinator.AutoSyncGallery = AutoSyncGallery;
+        _coordinator.AutoSyncCalendar = AutoSyncCalendar;
         _coordinator.AutoSyncLocalAi = AutoSyncLocalAi;
         _coordinator.AutoSyncLemonade = AutoSyncLemonade;
         _coordinator.AutoSyncCloudProviders = AutoSyncCloudProviders;
@@ -959,6 +975,48 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     {
         EnsureCoordinatorWired();
         _coordinator.ScheduleAutoSyncAlbumImageDeleteAfterLocalDelete(albumId, imageId, deletedAtUtc);
+    }
+
+    public void ScheduleAutoSyncCalendarAfterLocalSave(string calendarId)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncCalendarAfterLocalSave(calendarId);
+    }
+
+    public void ScheduleAutoSyncCalendarDeleteAfterLocalDelete(string calendarId, DateTime deletedAt)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncCalendarDeleteAfterLocalDelete(calendarId, deletedAt);
+    }
+
+    public void ScheduleAutoSyncEventAfterLocalSave(string calendarId, string eventId)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncEventAfterLocalSave(calendarId, eventId);
+    }
+
+    public void ScheduleAutoSyncEventDeleteAfterLocalDelete(string calendarId, string eventId, DateTime deletedAt)
+    {
+        EnsureCoordinatorWired();
+        _coordinator.ScheduleAutoSyncEventDeleteAfterLocalDelete(calendarId, eventId, deletedAt);
+    }
+
+    public Task StartWebRtcCalendarSyncAsync(string targetDeviceId, string calendarId)
+    {
+        EnsureCoordinatorWired();
+        return _coordinator.StartWebRtcCalendarSyncAsync(targetDeviceId, calendarId);
+    }
+
+    public Task StartWebRtcCalendarEventSyncAsync(string targetDeviceId, string calendarId, string eventId)
+    {
+        EnsureCoordinatorWired();
+        return _coordinator.StartWebRtcCalendarEventSyncAsync(targetDeviceId, calendarId, eventId);
+    }
+
+    public Task<int> SyncAllCalendarsToDevicesAsync(IEnumerable<string> targetDeviceIds)
+    {
+        EnsureCoordinatorWired();
+        return _coordinator.SyncAllCalendarsToDevicesAsync(targetDeviceIds);
     }
 
     public void ScheduleAutoSyncBookmarkAfterLocalSave(string bookmarkId) { }

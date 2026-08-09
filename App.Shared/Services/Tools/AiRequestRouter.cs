@@ -19,7 +19,7 @@ public sealed class AiRequestRouter
 
     private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Native", "Lemonade", "Gallery", "HomeAssistant", "BrowserAgent"
+        "Native", "Lemonade", "Gallery", "Calendar", "Notes", "HomeAssistant", "BrowserAgent"
     };
 
     private readonly ChatModelCatalogService _catalog;
@@ -191,6 +191,8 @@ public sealed class AiRequestRouter
         "brightness, color, turn on/off, volume, thermostat — even without a wake word. " +
         "When using HomeAssistant set target_module to \"HomeAssistant\" and include it in modules. " +
         "Lemonade: draw/generate/create images. Gallery: albums/save photos. " +
+        "Calendar: schedule/add/list/update/delete calendar events and appointments. " +
+        "Notes: create notebooks, add/append note entries, attach chat images to notes. " +
         "Native: weather, search, time, math, URLs. " +
         "BrowserAgent: control embedded browser only.";
 
