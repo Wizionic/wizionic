@@ -4,17 +4,19 @@ namespace App.Shared.Services;
 
 public sealed class ThemeService
 {
-    public const string DefaultThemeId = "system";
+    public const string DefaultThemeId = "app-light";
 
     private static readonly ThemeOption[] ThemeCatalog =
     [
         new("system",           "System default"),
-        new("app-light",   "Light"),
-        new("app-dark",    "Dark"),
+        new("app-light",        "Light"),
+        new("light-blue",       "Bluish Light"),
+        new("app-dark",         "Dark"),
+        new("dark-blue",        "Dark Blue"),
         new("bella-purple",     "Bella Purple"),
         new("catppuccin-latte", "Catppuccin Latte"),
-        new("dracula",          "Dracula"), 
-        new("github-light",          "Github Light"), 
+        new("dracula",          "Dracula"),
+        new("github-light",     "Github Light"),
         new("nord",             "Nord"),
         new("solarized-light",  "Solarized Light"),
     ];

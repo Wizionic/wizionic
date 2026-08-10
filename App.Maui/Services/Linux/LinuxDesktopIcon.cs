@@ -53,6 +53,9 @@ internal static class LinuxDesktopIcon
 		}
 	}
 
+	/// <summary>Public resolve for title-bar / header logo widgets.</summary>
+	public static string? ResolveIconPathPublic() => ResolveIconPath();
+
 	private static string? ResolveIconPath()
 	{
 		var baseDir = AppContext.BaseDirectory;

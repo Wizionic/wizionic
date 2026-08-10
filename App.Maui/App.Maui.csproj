@@ -69,12 +69,17 @@
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     </PropertyGroup>
 
+    <!-- Unpackaged Windows: embed .ico into the .exe (taskbar / Alt-Tab / Explorer). -->
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+        <ApplicationIcon>Resources\AppIcon\appicon.ico</ApplicationIcon>
+    </PropertyGroup>
+
     <ItemGroup>
         <!-- App Icon (Wizionic mascot — used for taskbar/dock/launcher) -->
         <MauiIcon Include="Resources\AppIcon\app.png" />
 
         <!-- Splash Screen -->
-        <MauiSplashScreen Include="Resources\AppIcon\app.png" Color="#E8F4FC" BaseSize="128,128" />
+        <MauiSplashScreen Include="Resources\AppIcon\app.png" Color="#000000" BaseSize="128,128" />
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
@@ -112,6 +117,9 @@
     <!-- Windows Home Server service control (optional install path). -->
     <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
         <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.8" />
+        <!-- Title-bar + runtime AppWindow.SetIcon (MauiIcon alone does not set the caption icon). -->
+        <None Include="Resources\AppIcon\appicon.ico" CopyToOutputDirectory="PreserveNewest" TargetPath="appicon.ico" />
+        <None Include="Resources\AppIcon\app.png" CopyToOutputDirectory="PreserveNewest" TargetPath="app-appicon.png" />
     </ItemGroup>
 
     <!-- Install services: Windows desktop + Linux desktop (net10.0). Exclude mobile TFMs. -->

@@ -24,9 +24,17 @@
         {
             await UiStorageNamespace.ApplyAsync(JS, Auth);
             if (AppEnvironment.IsMaui)
+            {
+                // MAUI: restore prefs (default left + all primary icons visible).
                 await NavLayout.SyncFromStorageAndApplyAsync(JS);
+            }
             else
-                await NavLayout.SetModeAsync(NavLayoutMode.Top, JS);
+            {
+                // Web/WASM: force top bar; still load icon-visibility prefs.
+                await NavLayout.SyncFromStorageAndApplyAsync(JS);
+                if (NavLayout.Mode != NavLayoutMode.Top)
+                    await NavLayout.SetModeAsync(NavLayoutMode.Top, JS);
+            }
         }
         catch
         {

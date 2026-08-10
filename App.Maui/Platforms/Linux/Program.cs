@@ -105,6 +105,26 @@ public static class Program
 		// Empty start list; minimize/maximize/close on the end (right).
 		// For left-side buttons use: "close,minimize,maximize:"
 		headerBar.DecorationLayout = ":minimize,maximize,close";
+
+		// App logo in the title bar (Adwaita does not auto-show the window icon like WinUI).
+		try
+		{
+			var iconPath = LinuxDesktopIcon.ResolveIconPathPublic();
+			if (iconPath is not null)
+			{
+				var logo = Gtk.Image.NewFromFile(iconPath);
+				logo.SetPixelSize(22);
+				logo.SetMarginStart(6);
+				logo.SetMarginEnd(4);
+				headerBar.PackStart(logo);
+				LifetimeRoots.Add(logo);
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Desktop] header logo failed: {ex.Message}");
+		}
+
 		LifetimeRoots.Add(headerBar);
 
 		var toolbarView = Adw.ToolbarView.New();
