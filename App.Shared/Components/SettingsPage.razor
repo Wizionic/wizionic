@@ -51,7 +51,7 @@
             </div>
             @if (!string.IsNullOrEmpty(loginServerMessage))
             {
-                <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(loginServerIsError ? "#c00" : "#1a7a3c");">
+                <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(loginServerIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
                     @loginServerMessage
                 </div>
             }
@@ -116,7 +116,7 @@
     <!-- About you -->
     <div class="settings-card">
         <h3 style="margin: 0 0 0.25rem;">About you</h3>
-        <p style="color: #666; font-size: 0.85em; margin: 0 0 1rem;">
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 1rem;">
             Tell Wizionic about yourself to get more personalized answers.
         </p>
 
@@ -155,7 +155,7 @@
     <!-- Memories -->
     <div class="settings-card">
         <h3 style="margin: 0 0 0.25rem;">Memories</h3>
-        <p style="color: #666; font-size: 0.85em; margin: 0 0 1rem;">
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 1rem;">
             Facts Wizionic should remember across conversations. Each memory is sent with your system prompt.
         </p>
 
@@ -207,11 +207,11 @@
         }
         else if (!string.IsNullOrWhiteSpace(memorySearch))
         {
-            <div style="color: #888; font-size: 0.9em; padding: 0.75rem 0;">No memories match your search.</div>
+            <div style="color: var(--color-text-muted); font-size: 0.9em; padding: 0.75rem 0;">No memories match your search.</div>
         }
         else
         {
-            <div style="color: #888; font-size: 0.9em; padding: 0.75rem 0;">No memories yet. Add one below.</div>
+            <div style="color: var(--color-text-muted); font-size: 0.9em; padding: 0.75rem 0;">No memories yet. Add one below.</div>
         }
 
         @if (showAddMemory)
@@ -275,7 +275,7 @@
         </div>
         @if (!string.IsNullOrEmpty(routingSaveMessage))
         {
-            <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(routingSaveIsError ? "#c00" : "#1a7a3c");">
+            <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(routingSaveIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
                 @routingSaveMessage
             </div>
         }
@@ -299,7 +299,7 @@
 
     <!-- System prompt -->
     <h3 style="margin: 1.25rem 0 0.5rem;">System prompt</h3>
-    <p style="color: #666; font-size: 0.85em; margin-bottom: 0.5rem;">
+    <p style="color: var(--color-text-muted); font-size: 0.85em; margin-bottom: 0.5rem;">
         Sent as a system message at the start of each chat request. It is not saved in conversation history or synced to other devices.
         Use <code>{{datetime}}</code> to insert the current local date and time when a message is sent.
     </p>
@@ -329,13 +329,13 @@
     <!-- Home Server status (Windows / Linux MAUI) -->
     @if (AppEnvironment.IsMaui && Homeserver.IsSupported)
     {
-        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
             <h4>Home Server</h4>
             <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
                 Optional local login server and website. Updates replace program files only —
                 your SQLite login database (stable app data path) is never overwritten.
             </p>
-            <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+            <div style="margin: 0.5rem 0; color: var(--color-text-muted); font-size: 0.95em;">
                 Status: <strong>@(homeserverStatusText ?? "…")</strong>
             </div>
             @if (!string.IsNullOrEmpty(homeserverActionMessage))
@@ -372,10 +372,10 @@
     <!-- App Updates (MAUI only) -->
     @if (AppEnvironment.IsMaui)
     {
-        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
             <h4>App Updates</h4>
 
-            <div style="margin: 0.5rem 0; color: #555; font-size: 0.95em;">
+            <div style="margin: 0.5rem 0; color: var(--color-text-muted); font-size: 0.95em;">
                 Installed version:
                 <strong>@(installedVersion ?? "unknown")</strong>
                 @if (!string.IsNullOrEmpty(latestFeedVersion))
@@ -386,7 +386,7 @@
 
             @if (updateCheckResult?.Status == UpdateCheckStatus.UpdateAvailable && updateCheckResult.Update != null)
             {
-                <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; background: var(--success, #d4edda); border: 1px solid #0a0; border-radius: 6px;">
+                <div class="cf-success-box" style="margin: 0.75rem 0; padding: 0.75rem 1rem;">
                     @if (!string.IsNullOrEmpty(updateCheckResult.Message))
                     {
                         <div>@updateCheckResult.Message</div>
@@ -413,9 +413,9 @@
             else if (hasChecked && updateCheckResult != null)
             {
                 <div style="margin: 0.75rem 0; padding: 0.75rem 1rem; border-radius: 6px;
-                            background: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "#fff8e6" : "transparent");
-                            border: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "1px solid #e6c200" : "none");
-                            color: #555;">
+                            background: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "var(--color-warning-bg, #fff8e6)" : "transparent");
+                            border: @(updateCheckResult.Status == UpdateCheckStatus.CheckFailed || updateCheckResult.Status == UpdateCheckStatus.NotInstalled ? "1px solid var(--color-warning-bdr, #e6c200)" : "none");
+                            color: var(--color-text-muted);">
                     @updateStatusMessage
                 </div>
             }

@@ -66,7 +66,7 @@
             </div>
             @if (libraryLoadError != null)
             {
-                <div style="font-size: 0.8em; color: #c00; margin-top: 0.4rem;">@libraryLoadError</div>
+                <div style="font-size: 0.8em; color: var(--cf-error-fg, #c00); margin-top: 0.4rem;">@libraryLoadError</div>
             }
             else if (!pullChoices.Any() && libraryLoaded)
             {

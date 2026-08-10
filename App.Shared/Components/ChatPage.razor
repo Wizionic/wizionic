@@ -169,7 +169,7 @@
                                 }
                                 @if (msg.Timestamp.HasValue)
                                 {
-                                    <div style="font-size: 0.6em; color: #888; text-align: right; margin-top: 2px; opacity: 0.7;">
+                                    <div style="font-size: 0.6em; color: var(--color-text-muted); text-align: right; margin-top: 2px; opacity: 0.7;">
                                         @msg.Timestamp.Value.ToLocalTime().ToString("MMM d, HH:mm")
                                     </div>
                                 }
@@ -269,7 +269,7 @@
                                     }
                                     @if (!string.IsNullOrWhiteSpace(msg.ModelUsed))
                                     {
-                                        <div class="model-label" style="font-size: 0.6em; color: #888; opacity: 0.7;">
+                                        <div class="model-label" style="font-size: 0.6em; color: var(--color-text-muted); opacity: 0.7;">
                                             via @msg.ModelUsed
                                         </div>
                                     }
@@ -777,19 +777,19 @@
     <div style="position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:51; max-width:92vw; max-height:90vh;" @onclick:stopPropagation>
         <img src="@imagePreviewUrl" alt="@imagePreviewName" style="max-width:92vw; max-height:80vh; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,.4);" />
         <div style="text-align:center; margin-top:8px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-            <button type="button" class="btn btn-outline-secondary" style="background:#fff;"
+            <button type="button" class="btn btn-outline-secondary" style="background:var(--color-bg-surface);"
                     @onclick="() => DownloadPreviewImage()">
                 <i class="bi bi-download"></i> Download
             </button>
-            <button type="button" class="btn btn-outline-secondary" style="background:#fff;"
+            <button type="button" class="btn btn-outline-secondary" style="background:var(--color-bg-surface);"
                     @onclick="() => CopyPreviewImage()">
                 <i class="bi bi-clipboard"></i> Copy
             </button>
-            <button type="button" class="btn btn-outline-secondary" style="background:#fff;"
+            <button type="button" class="btn btn-outline-secondary" style="background:var(--color-bg-surface);"
                     @onclick="OpenSaveToGalleryFromPreview">
                 <i class="bi bi-images"></i> Save to Gallery
             </button>
-            <button type="button" class="btn btn-outline-secondary" style="background:#fff;" @onclick="() => imagePreviewUrl = null">Close</button>
+            <button type="button" class="btn btn-outline-secondary" style="background:var(--color-bg-surface);" @onclick="() => imagePreviewUrl = null">Close</button>
         </div>
         @if (!string.IsNullOrEmpty(imageActionFeedback))
         {
