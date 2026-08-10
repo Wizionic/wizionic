@@ -6,7 +6,7 @@ window.appTheme = window.appTheme || {
     storagePrefix: '',
 
     // Dark themes for colorScheme hint
-    darkThemes: { 'app-dark': 1, 'dracula': 1, 'nord': 1 },
+    darkThemes: { 'app-dark': 1, 'dark-blue': 1, 'dracula': 1, 'nord': 1 },
 
     get storageKey() {
         return (this.storagePrefix || '') + this.baseStorageKey;
@@ -32,12 +32,12 @@ window.appTheme = window.appTheme || {
                 }
             }
         } catch (e) { /* private browsing */ }
-        return 'system';
+        return 'app-light';
     },
 
     saveTheme: function (theme) {
         try {
-            localStorage.setItem(this.storageKey, theme || 'system');
+            localStorage.setItem(this.storageKey, theme || 'app-light');
         } catch (e) { /* private browsing */ }
     },
 

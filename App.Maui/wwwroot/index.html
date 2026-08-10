@@ -16,7 +16,14 @@
     <script src="_content/App.Shared/js/navLayoutInterop.js"></script>
     <script src="_content/App.Shared/js/notesReorderInterop.js"></script>
     <script src="_content/App.Shared/js/galleryInterop.js"></script>
-    <script>window.appTheme.applyEarly(); window.appNavLayout && window.appNavLayout.applyEarly(); window.appTheme.initPersistentHooks();</script>
+    <script>
+        window.appTheme.applyEarly();
+        if (window.appNavLayout) {
+            window.appNavLayout.defaultMode = 'left';
+            window.appNavLayout.applyEarly();
+        }
+        window.appTheme.initPersistentHooks();
+    </script>
 </head>
 
 <body>

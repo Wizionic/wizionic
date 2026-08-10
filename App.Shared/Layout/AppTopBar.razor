@@ -65,76 +65,115 @@
             {
                 <button type="button" @onclick="ToggleChat" title="Chat"
                         class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
-                    <img src="/images/app50.png" title="Wizionic" alt="Wizionic" />
+                    <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
                 </button>
-                <button type="button" @onclick="ToggleBrowser" title="Browser"
-                        class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
-                    <i class="bi bi-globe" style="font-size: 24px;"></i>
-                </button>
+                @if (NavLayout.ShowBrowser)
+                {
+                    <button type="button" @onclick="ToggleBrowser" title="Browser"
+                            class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
+                        <i class="bi bi-browser-chrome" style="font-size: 24px;"></i>
+                    </button>
+                }
+                @if (NavLayout.ShowNotes)
+                {
+                    <button type="button" @onclick="ToggleNotes" title="Notes"
+                            class="topbar-toggle-btn @(IsNotesActive ? "active" : "")">
+                        <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+                    </button>
+                }
+                @if (NavLayout.ShowGallery)
+                {
+                    <button type="button" @onclick="ToggleGallery" title="Gallery"
+                            class="topbar-toggle-btn @(IsGalleryActive ? "active" : "")">
+                        <i class="bi bi-images" style="font-size: 24px;"></i>
+                    </button>
+                }
+                @if (NavLayout.ShowCalendar)
+                {
+                    <button type="button" @onclick="ToggleCalendar" title="Calendar"
+                            class="topbar-toggle-btn @(IsCalendarActive ? "active" : "")">
+                        <i class="bi bi-calendar3" style="font-size: 24px;"></i>
+                    </button>
+                }
             }
             else
             {
-                <a class="cf-brand" href="/chat">
-                    <img width="50" src="/images/app50.png" title="Wizionic" alt="Wizionic" />
+                <a href="/chat" title="Chat" class="@(IsChatActive ? "active" : null)">
+                    <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
                 </a>
-            }
-            @if (AppEnvironment.IsMaui)
-            {
-                <button type="button" @onclick="ToggleNotes" title="Notes"
-                        class="topbar-toggle-btn @(IsNotesActive ? "active" : "")">
-                    <i class="bi bi-journal-text" style="font-size: 24px;"></i>
-                </button>
-                <button type="button" @onclick="ToggleGallery" title="Gallery"
-                        class="topbar-toggle-btn @(IsGalleryActive ? "active" : "")">
-                    <i class="bi bi-images" style="font-size: 24px;"></i>
-                </button>
-                <button type="button" @onclick="ToggleCalendar" title="Calendar"
-                        class="topbar-toggle-btn @(IsCalendarActive ? "active" : "")">
-                    <i class="bi bi-calendar3" style="font-size: 24px;"></i>
-                </button>
-            }
-            else
-            {
-                <a href="/notes" title="Notes">
-                    <i class="bi bi-journal-text" style="font-size: 24px;"></i>
-                </a>
-                <a href="/gallery" title="Gallery">
-                    <i class="bi bi-images" style="font-size: 24px;"></i>
-                </a>
-                <a href="/calendar" title="Calendar">
-                    <i class="bi bi-calendar3" style="font-size: 24px;"></i>
-                </a>
+                @if (NavLayout.ShowNotes)
+                {
+                    <a href="/notes" title="Notes">
+                        <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+                    </a>
+                }
+                @if (NavLayout.ShowGallery)
+                {
+                    <a href="/gallery" title="Gallery">
+                        <i class="bi bi-images" style="font-size: 24px;"></i>
+                    </a>
+                }
+                @if (NavLayout.ShowCalendar)
+                {
+                    <a href="/calendar" title="Calendar">
+                        <i class="bi bi-calendar3" style="font-size: 24px;"></i>
+                    </a>
+                }
             }
         </div>
     </div>
 
     <div class="app-nav-right">
-        <div class="app-nav-secondary">
-            <a href="/lemonade" title="Lemonade (local AI)" class="app-nav-emoji-link">
-                <span aria-hidden="true" style="font-size: 1.25rem; line-height: 1.2;">🍋</span>
-            </a>
-            <a href="/local-ai" title="Ollama (local AI)" class="app-nav-emoji-link">
-                <span aria-hidden="true" style="font-size: 1.25rem; line-height: 1.2;">🦙</span>
-            </a>
-            <a href="/cloud-providers" title="Cloud Providers">
-                <i class="bi bi-cloud"></i>
-            </a>
-            @if (AppEnvironment.IsMaui)
+        @if (AppEnvironment.IsMaui)
+        {
+            <button type="button"
+                    class="topbar-toggle-btn app-nav-secondary-toggle"
+                    title="@(NavLayout.SecondaryExpanded ? "Hide settings icons" : "Show settings icons")"
+                    aria-expanded="@NavLayout.SecondaryExpanded"
+                    @onclick="ToggleSecondaryExpandedAsync">
+                @if (NavLayout.Mode == NavLayoutMode.Left)
+                {
+                    <i class="bi @(NavLayout.SecondaryExpanded ? "bi-chevron-down" : "bi-chevron-up")" style="font-size: 1.1rem;"></i>
+                }
+                else
+                {
+                    <i class="bi @(NavLayout.SecondaryExpanded ? "bi-chevron-right" : "bi-chevron-left")" style="font-size: 1.1rem;"></i>
+                }
+            </button>
+        }
+        else
+        {
+            @* WASM: AppTopBar is static — Blazor @onclick does not run; JS uses data-wasm-secondary-toggle. *@
+            <button type="button"
+                    data-wasm-secondary-toggle="true"
+                    class="topbar-toggle-btn app-nav-secondary-toggle"
+                    title="Hide settings icons"
+                    aria-expanded="true">
+                <span class="secondary-toggle-icon secondary-toggle-icon--expanded">
+                    <i class="bi bi-chevron-right" style="font-size: 1.1rem;"></i>
+                </span>
+                <span class="secondary-toggle-icon secondary-toggle-icon--collapsed" style="display:none">
+                    <i class="bi bi-chevron-left" style="font-size: 1.1rem;"></i>
+                </span>
+            </button>
+        }
+
+        @* Always render the cluster on WASM so JS can show/hide without a Blazor re-render. *@
+        @if (AppEnvironment.IsMaui)
+        {
+            @if (NavLayout.SecondaryExpanded)
             {
-                <a href="/home-assistant" title="Home Assistant">
-                    <i class="bi bi-house-gear"></i>
-                </a>
+                <div class="app-nav-secondary">
+                    @SecondarySettingsLinks
+                </div>
             }
-            <a href="/settings" title="Settings">
-                <i class="bi bi-gear"></i>
-            </a>
-            <a href="/sync" title="Devices & Sync">
-                <i class="bi bi-arrow-repeat"></i>
-            </a>
-            <a href="/tools" title="Tools (MCP Servers)">
-                <i class="bi bi-tools"></i>
-            </a>
-        </div>
+        }
+        else
+        {
+            <div class="app-nav-secondary">
+                @SecondarySettingsLinks
+            </div>
+        }
 
         <div class="app-nav-account">
             <a href="/account" title="Account / Login">
@@ -147,6 +186,7 @@
 @if (AppEnvironment.IsMaui && _showNavContextMenu)
 {
     <div class="app-nav-context-menu" style="@_navContextMenuStyle" @onclick:stopPropagation>
+        <div class="app-nav-context-menu-section">Layout</div>
         <button type="button"
                 class="app-nav-context-menu-item @(NavLayout.Mode == NavLayoutMode.Top ? "is-selected" : "")"
                 @onclick="() => SetNavLayoutAsync(NavLayoutMode.Top)">
@@ -156,6 +196,29 @@
                 class="app-nav-context-menu-item @(NavLayout.Mode == NavLayoutMode.Left ? "is-selected" : "")"
                 @onclick="() => SetNavLayoutAsync(NavLayoutMode.Left)">
             Left navigation bar
+        </button>
+
+        <div class="app-nav-context-menu-divider"></div>
+        <div class="app-nav-context-menu-section">Show app icons</div>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.ShowBrowser ? "is-selected" : "")"
+                @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Browser)">
+            Show Browser icon
+        </button>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.ShowNotes ? "is-selected" : "")"
+                @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Notes)">
+            Show Notes icon
+        </button>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.ShowGallery ? "is-selected" : "")"
+                @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Gallery)">
+            Show Gallery icon
+        </button>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.ShowCalendar ? "is-selected" : "")"
+                @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Calendar)">
+            Show Calendar icon
         </button>
     </div>
     <div class="menu-overlay" @onclick="CloseNavContextMenu"></div>
@@ -170,6 +233,34 @@
 
     private bool _showNavContextMenu;
     private string _navContextMenuStyle = "";
+
+    private RenderFragment SecondarySettingsLinks => __builder =>
+    {
+        <a href="/lemonade" title="Lemonade (local AI)" class="app-nav-emoji-link">
+            <span aria-hidden="true" style="font-size: 1.25rem; line-height: 1.2;">🍋</span>
+        </a>
+        <a href="/local-ai" title="Ollama (local AI)" class="app-nav-emoji-link">
+            <span aria-hidden="true" style="font-size: 1.25rem; line-height: 1.2;">🦙</span>
+        </a>
+        <a href="/cloud-providers" title="Cloud Providers">
+            <i class="bi bi-cloud"></i>
+        </a>
+        @if (AppEnvironment.IsMaui)
+        {
+            <a href="/home-assistant" title="Home Assistant">
+                <i class="bi bi-house-gear"></i>
+            </a>
+        }
+        <a href="/settings" title="Settings">
+            <i class="bi bi-gear"></i>
+        </a>
+        <a href="/sync" title="Devices & Sync">
+            <i class="bi bi-arrow-repeat"></i>
+        </a>
+        <a href="/tools" title="Tools (MCP Servers)">
+            <i class="bi bi-tools"></i>
+        </a>
+    };
 
     private bool IsChatActive => IsOnChatPage() && ChatPanel.IsOpen;
     private bool IsNotesActive => IsOnNotesPage() && NotesPanel.IsOpen;
@@ -261,6 +352,28 @@
         CloseNavContextMenu();
         await UiStorageNamespace.ApplyAsync(JS, Auth);
         await NavLayout.SetModeAsync(mode, JS);
+    }
+
+    private async Task TogglePrimaryIconAsync(NavPrimaryIcon icon)
+    {
+        var currentlyVisible = icon switch
+        {
+            NavPrimaryIcon.Browser => NavLayout.ShowBrowser,
+            NavPrimaryIcon.Notes => NavLayout.ShowNotes,
+            NavPrimaryIcon.Gallery => NavLayout.ShowGallery,
+            NavPrimaryIcon.Calendar => NavLayout.ShowCalendar,
+            _ => true
+        };
+
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await NavLayout.SetPrimaryIconVisibleAsync(icon, !currentlyVisible, JS);
+        // Keep menu open so the user can toggle several icons.
+    }
+
+    private async Task ToggleSecondaryExpandedAsync()
+    {
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await NavLayout.SetSecondaryExpandedAsync(!NavLayout.SecondaryExpanded, JS);
     }
 
     private async Task ToggleChat()
@@ -368,6 +481,11 @@
         try
         {
             await ThemeInterop.ApplySavedAsync(JS);
+            if (!AppEnvironment.IsMaui)
+            {
+                // Re-apply settings-cluster visibility after static bar (re)inserts.
+                await JS.InvokeVoidAsync("appNavLayout.applySecondaryFromStorage");
+            }
         }
         catch
         {
