@@ -10,7 +10,7 @@ public sealed class NavLayoutService : INavLayoutState
     private bool _showNotes = true;
     private bool _showGallery = true;
     private bool _showCalendar = true;
-    private bool _secondaryExpanded = true;
+    private bool _secondaryExpanded = false;
     private bool _initialized;
 
     public NavLayoutService()
@@ -105,7 +105,7 @@ public sealed class NavLayoutService : INavLayoutState
         {
             _mode = DefaultMode;
             _showBrowser = _showNotes = _showGallery = _showCalendar = true;
-            _secondaryExpanded = true;
+            _secondaryExpanded = false;
         }
     }
 
@@ -115,7 +115,7 @@ public sealed class NavLayoutService : INavLayoutState
         {
             _mode = defaultMode;
             _showBrowser = _showNotes = _showGallery = _showCalendar = true;
-            _secondaryExpanded = true;
+            _secondaryExpanded = false;
             return;
         }
 
