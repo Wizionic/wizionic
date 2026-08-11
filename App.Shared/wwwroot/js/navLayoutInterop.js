@@ -23,7 +23,8 @@ window.appNavLayout = window.appNavLayout || {
             showNotes: true,
             showGallery: true,
             showCalendar: true,
-            secondaryExpanded: true
+            // Settings cluster collapsed until the user expands it.
+            secondaryExpanded: false
         };
     },
 
@@ -59,7 +60,8 @@ window.appNavLayout = window.appNavLayout || {
             showNotes: raw.showNotes !== false,
             showGallery: raw.showGallery !== false,
             showCalendar: raw.showCalendar !== false,
-            secondaryExpanded: raw.secondaryExpanded !== false
+            // Default closed: only true when explicitly saved as true.
+            secondaryExpanded: raw.secondaryExpanded === true
         };
     },
 

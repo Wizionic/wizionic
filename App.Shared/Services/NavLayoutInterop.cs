@@ -56,6 +56,6 @@ internal static class NavLayoutInterop
         public bool ShowCalendar { get; set; } = true;
 
         [System.Text.Json.Serialization.JsonPropertyName("secondaryExpanded")]
-        public bool SecondaryExpanded { get; set; } = true;
+        public bool SecondaryExpanded { get; set; } = false;
     }
 }
