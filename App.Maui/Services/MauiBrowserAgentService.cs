@@ -562,6 +562,17 @@ public sealed class MauiBrowserAgentService : IBrowserAgentService, IBrowserTabM
 
     private void OnNavigating(object? sender, WebNavigatingEventArgs e)
     {
+        var url = e.Url ?? "";
+        // Custom-scheme OAuth return (legacy). Cancel so WebView does not error; surface via UrlChanged.
+        if (url.StartsWith("wizionic:", StringComparison.OrdinalIgnoreCase))
+        {
+            e.Cancel = true;
+            SetLoading(false);
+            Console.WriteLine($"[Browser] OAuth custom-scheme intercept: {url}");
+            UrlChanged?.Invoke(url);
+            return;
+        }
+
         SetLoading(true);
     }
 

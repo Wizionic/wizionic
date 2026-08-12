@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
 using App.Shared.Services;
+using App.Services.OAuth;
 
 // Windows Service / homeserver: content root must be the published app directory (not System32).
 // For `dotnet run` / `dotnet watch` from the repo, keep the project directory so relative
@@ -86,6 +87,15 @@ builder.Services.AddScoped<MagicLinkService>();
 builder.Services.AddScoped<ProviderKeyService>();
 builder.Services.AddSingleton<DevicePresenceService>();
 
+// OAuth OpenAPI connector broker (client secrets stay on the host).
+builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection(OAuthOptions.SectionName));
+builder.Services.AddSingleton<OAuthSessionStore>();
+builder.Services.AddScoped<App.Services.OAuth.OAuthAppCredentialResolver>();
+builder.Services.AddScoped<App.Services.Connectors.ConnectorCatalogService>();
+builder.Services.AddScoped<OAuthBrokerService>();
+builder.Services.AddHttpClient("oauth", c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHttpClient("connector-proxy", c => c.Timeout = TimeSpan.FromSeconds(60));
+
 // Email sending (used for real magic link delivery).
 // Brevo HTTP API is now the primary sender (SMTP is blocked by some hosts e.g. Railway).
 // The old EmailSender (SMTP/MailKit) is left in place and can be swapped back by changing the registration below.
@@ -149,6 +159,8 @@ builder.Services.AddSingleton<App.Client.Services.NotesPanelState>();
 builder.Services.AddSingleton<App.Core.UI.INotesPanelState>(sp => sp.GetRequiredService<App.Client.Services.NotesPanelState>());
 builder.Services.AddSingleton<App.Shared.Services.NavLayoutService>();
 builder.Services.AddSingleton<App.Core.UI.INavLayoutState>(sp => sp.GetRequiredService<App.Shared.Services.NavLayoutService>());
+// AppLayout → AppNavigationBootstrap injects IAppNavigation (host SSR + shared shell).
+builder.Services.AddSingleton<App.Core.UI.IAppNavigation, App.Shared.Services.AppNavigation>();
 builder.Services.AddSingleton<App.Core.Browser.IBrowserAgentService, App.Client.Services.NullBrowserAgentService>();
 builder.Services.AddSingleton<App.Core.Browser.IBrowserTabManager, App.Client.Services.NullBrowserTabManager>();
 builder.Services.AddSingleton<App.Core.Browser.IBrowserOverlaySync, App.Client.Services.NullBrowserOverlaySync>();
@@ -557,6 +569,9 @@ app.MapGet("/logout", async (HttpContext ctx) =>
 // All under /api + cookie auth. See Apis/WasmApiEndpoints.cs for the implementations.
 app.MapWasmApis();
 app.MapAiProxyApis();
+app.MapOAuthApis();
+app.MapConnectorProxyApis();
+app.MapConnectorCatalogApis();
 
 // Live device presence + future WebRTC signaling hub for authenticated WASM clients.
 // The hub itself is marked [Authorize] and relies on the AppAuth cookie

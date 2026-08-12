@@ -109,6 +109,19 @@ public sealed class NullKeyStore : IKeyStore
         Task.CompletedTask;
     public Task RemoveCustomConnectorAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
 
+    public IReadOnlyList<App.Core.Connectors.OAuthConnectorInstall> GetOAuthConnectors() =>
+        Array.Empty<App.Core.Connectors.OAuthConnectorInstall>();
+    public App.Core.Connectors.OAuthConnectorInstall? GetOAuthConnector(string connectorId) => null;
+    public App.Core.Connectors.OAuthTokenSet? GetOAuthTokens(string connectorId) => null;
+    public Task UpsertOAuthConnectorAsync(App.Core.Connectors.OAuthConnectorInstall install, CancellationToken ct = default) =>
+        Task.CompletedTask;
+    public Task SetOAuthConnectorEnabledAsync(string connectorId, bool enabled, CancellationToken ct = default) =>
+        Task.CompletedTask;
+    public Task RemoveOAuthConnectorAsync(string connectorId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReplaceOAuthConnectorsAsync(
+        IEnumerable<App.Core.Connectors.OAuthConnectorInstall> installs, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
     public string HomeAssistantBaseUrl => "";
     public string HomeAssistantToken => "";
     public string HomeAssistantAssistantName => "";

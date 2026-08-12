@@ -1,14 +1,28 @@
+using App.Core.Connectors;
+
 namespace App.Maui;
 
 public partial class MauiShell : Application
 {
-	public MauiShell()
+	private readonly OAuthReturnBridge? _oauthReturn;
+
+	// DI-preferred ctor (OAuth deep-link handoff). Parameterless fallback for tooling.
+	public MauiShell(OAuthReturnBridge? oauthReturn = null)
 	{
 #if WINDOWS
 		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
 		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
 #endif
+		_oauthReturn = oauthReturn;
 		InitializeComponent();
+	}
+
+	/// <summary>Deep link / protocol activation (e.g. wizionic://oauth?oauth_session=...).</summary>
+	protected override void OnAppLinkRequestReceived(Uri uri)
+	{
+		Console.WriteLine($"[Maui] AppLink received: {uri}");
+		_oauthReturn?.SetFromUri(uri);
+		base.OnAppLinkRequestReceived(uri);
 	}
 
 	protected override Window CreateWindow(IActivationState? activationState)

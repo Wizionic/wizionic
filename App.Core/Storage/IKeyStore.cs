@@ -1,3 +1,4 @@
+using App.Core.Connectors;
 using App.Core.Tools;
 
 namespace App.Core.Storage;
@@ -88,6 +89,16 @@ public interface IKeyStore
     Task SetMcpTokenAsync(string serverName, string token, CancellationToken ct = default);
     Task AddCustomConnectorAsync(string name, string serverUrl, CancellationToken ct = default);
     Task RemoveCustomConnectorAsync(string name, CancellationToken ct = default);
+
+    // --- OAuth OpenAPI connectors ---
+    IReadOnlyList<OAuthConnectorInstall> GetOAuthConnectors();
+    OAuthConnectorInstall? GetOAuthConnector(string connectorId);
+    OAuthTokenSet? GetOAuthTokens(string connectorId);
+    Task UpsertOAuthConnectorAsync(OAuthConnectorInstall install, CancellationToken ct = default);
+    Task SetOAuthConnectorEnabledAsync(string connectorId, bool enabled, CancellationToken ct = default);
+    Task RemoveOAuthConnectorAsync(string connectorId, CancellationToken ct = default);
+    /// <summary>Replace the full OAuth connector list (used by settings sync apply).</summary>
+    Task ReplaceOAuthConnectorsAsync(IEnumerable<OAuthConnectorInstall> installs, CancellationToken ct = default);
 
     string HomeAssistantBaseUrl { get; }
     string HomeAssistantToken { get; }

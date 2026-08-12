@@ -8,14 +8,14 @@ namespace App.Shared.Services.Mcp;
 
 /// <summary>
 /// Builds and caches AITool instances for the currently user-selected remote MCP servers (from the Tools page).
-/// 
-/// - Reads enabled server names + their tokens from WasmKeyStore.
-/// - For each, creates a McpRemoteClient pointed at the RemoteUrl (the one from the registry proxy).
-/// - Discovers the server's tools via tools/list.
-/// - Wraps each discovered tool in an McpAIFunction (so ME.AI + UseFunctionInvocation can call it).
-/// 
-/// The list is cached so GetCurrentMcpTools() is fast and synchronous (important because IToolProvider.GetTools is sync).
-/// After the user changes checkboxes or tokens on the Tools page we call RefreshFromKeyStoreAsync().
+///
+/// - Reads enabled server names + their tokens from the KeyStore.
+/// - Prefers persisted install URLs (custom / registry install snapshots).
+/// - Falls back to registry search-by-name for enabled servers without a stored URL.
+/// - Discovers tools via tools/list and wraps them in McpAIFunction.
+///
+/// The list is cached so GetCurrentMcpTools() is fast and synchronous (IToolProvider.GetTools is sync).
+/// After the user installs/disconnects or pastes a token, call RefreshFromKeyStoreAsync().
 /// </summary>
 public class McpToolSource : IMcpToolRefresher
 {
@@ -90,109 +90,97 @@ public class McpToolSource : IMcpToolRefresher
         }
 
         var newTools = new List<AITool>();
-
-        // We need the actual Remote URLs + metadata. The best source is the registry proxy
-        // (it already did the hard work of filtering to only http-remotes and picking latest).
-        List<RemoteMcpServer> registry = new();
-        try
-        {
-            registry = await _registryHttp.GetFromJsonAsync<List<RemoteMcpServer>>("/api/tools/mcp-registry") ?? new();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[McpToolSource] Could not fetch registry for discovery: {ex.Message}");
-            // Empty list → 0 MCP tools this time. User can hit "Refresh from Registry" on the Tools page
-            // (which uses a properly base-addressed HttpClient) to populate the cache.
-        }
-
         var enabledSet = new HashSet<string>(enabledNames, StringComparer.OrdinalIgnoreCase);
 
-        // 1. Registry-provided remote servers (the ones that came back from /api/tools/mcp-registry)
-        foreach (var server in registry.Where(s => enabledSet.Contains(s.Name)))
+        // Prefer persisted install URLs (custom dialog + registry installs that snapshotted the URL).
+        // These survive top-20 browse limits and work without re-fetching the whole registry catalog.
+        var customByName = _keyStore.GetCustomConnectors()
+            .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.ServerUrl))
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().ServerUrl, StringComparer.OrdinalIgnoreCase);
+
+        var connected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 1. Installed connectors with a stored URL.
+        foreach (var name in enabledSet)
         {
-            var token = _keyStore.GetMcpToken(server.Name);
-            if (server.RequiresAuth && string.IsNullOrWhiteSpace(token))
+            if (!customByName.TryGetValue(name, out var url) || string.IsNullOrWhiteSpace(url))
+                continue;
+
+            await ConnectAndAddToolsAsync(newTools, name, url, requiresAuth: false, ShortLabel(name), ct);
+            connected.Add(name);
+        }
+
+        // 2. Fallback: resolve remaining enabled names via registry search (by name).
+        foreach (var name in enabledSet.Where(n => !connected.Contains(n)))
+        {
+            RemoteMcpServer? server = null;
+            try
             {
-                // Record that we skipped it (visible in trace on first use)
-                _trace.Record(
-                    $"⚠️ Skipping MCP {server.Name} — token required but not configured");
+                var list = await _registryHttp.GetFromJsonAsync<List<RemoteMcpServer>>(
+                    $"/api/tools/mcp-registry?q={Uri.EscapeDataString(name)}&limit=10", ct) ?? new();
+                server = list.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                      ?? list.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[McpToolSource] Registry lookup for {name}: {ex.Message}");
+            }
+
+            if (server is null || string.IsNullOrWhiteSpace(server.RemoteUrl))
+            {
+                _trace.Record($"⚠️ Skipping MCP {name} — no stored URL and not found in registry");
                 continue;
             }
 
-            try
-            {
-                var client = new McpRemoteClient(server.RemoteUrl, token, _sharedHttp);
-
-                // Discovery (list tools). This is the network cost paid when user changes selection or on first chat.
-                var discovered = await client.ListToolsAsync();
-
-                var shortLabel = ShortLabel(server.Name);
-
-                foreach (var def in discovered)
-                {
-                    var aiTool = new McpAIFunction(
-                        client,
-                        _trace,
-                        def.Name,
-                        def.Description,
-                        def.InputSchema,
-                        shortLabel);
-
-                    newTools.Add(aiTool);
-                }
-
-                _trace.Record(
-                    $"🔗 Connected to MCP {shortLabel} — {discovered.Count} tool(s) available");
-            }
-            catch (Exception ex)
-            {
-                _trace.Record(
-                    $"❌ Failed to connect to MCP {server.Name}: {ex.Message}");
-            }
-        }
-
-        // 2. User-added custom connectors (from the "Custom Connector" dialog).
-        // These have their own persisted URL and are not looked up in the registry.
-        foreach (var custom in _keyStore.GetCustomConnectors())
-        {
-            if (!enabledSet.Contains(custom.Name)) continue;
-
-            var token = _keyStore.GetMcpToken(custom.Name);
-
-            try
-            {
-                var client = new McpRemoteClient(custom.ServerUrl, token, _sharedHttp);
-
-                var discovered = await client.ListToolsAsync();
-                var shortLabel = custom.Name;
-
-                foreach (var def in discovered)
-                {
-                    var aiTool = new McpAIFunction(
-                        client,
-                        _trace,
-                        def.Name,
-                        def.Description,
-                        def.InputSchema,
-                        shortLabel);
-
-                    newTools.Add(aiTool);
-                }
-
-                _trace.Record(
-                    $"🔗 Connected to custom MCP {shortLabel} — {discovered.Count} tool(s) available");
-            }
-            catch (Exception ex)
-            {
-                _trace.Record(
-                    $"❌ Failed to connect to custom MCP {custom.Name}: {ex.Message}");
-            }
+            await ConnectAndAddToolsAsync(
+                newTools, server.Name, server.RemoteUrl, server.RequiresAuth, ShortLabel(server.Name), ct);
+            connected.Add(server.Name);
         }
 
         lock (_lock)
         {
             _currentMcpTools = newTools;
             _lastEnabledSnapshot = new HashSet<string>(enabledNames, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task ConnectAndAddToolsAsync(
+        List<AITool> newTools,
+        string name,
+        string remoteUrl,
+        bool requiresAuth,
+        string shortLabel,
+        CancellationToken ct)
+    {
+        var token = _keyStore.GetMcpToken(name);
+        if (requiresAuth && string.IsNullOrWhiteSpace(token))
+        {
+            _trace.Record($"⚠️ Skipping MCP {name} — token required but not configured");
+            return;
+        }
+
+        try
+        {
+            var client = new McpRemoteClient(remoteUrl, token, _sharedHttp);
+            var discovered = await client.ListToolsAsync();
+
+            foreach (var def in discovered)
+            {
+                newTools.Add(new McpAIFunction(
+                    client,
+                    _trace,
+                    def.Name,
+                    def.Description,
+                    def.InputSchema,
+                    shortLabel));
+            }
+
+            _trace.Record($"🔗 Connected to MCP {shortLabel} — {discovered.Count} tool(s) available");
+        }
+        catch (Exception ex)
+        {
+            _trace.Record($"❌ Failed to connect to MCP {name}: {ex.Message}");
         }
     }
 
@@ -204,6 +192,13 @@ public class McpToolSource : IMcpToolRefresher
         return last.Length > 28 ? last.Substring(0, 25) + "…" : last;
     }
 
-    // Internal shape matching the registry proxy output (we only need a few fields here)
-    private record RemoteMcpServer(string Name, string Description, string RemoteUrl, string Transport, bool RequiresAuth, string? InfoUrl, string Version);
+    // Internal shape matching the registry proxy output (extra JSON fields are ignored).
+    private record RemoteMcpServer(
+        string Name,
+        string Description,
+        string RemoteUrl,
+        string Transport,
+        bool RequiresAuth,
+        string? InfoUrl,
+        string Version);
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using App.Core.Connectors;
 using App.Core.Storage;
 using App.Core.Sync;
 using App.Core.UI;
@@ -223,10 +224,28 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
 
     private string ExportTools()
     {
+        var oauth = _keys.GetOAuthConnectors()
+            .Select(c => new OAuthConnectorSyncDto(
+                c.ConnectorId,
+                c.Enabled,
+                c.ConnectedAtUtc,
+                c.AccountLabel ?? c.Tokens?.AccountLabel,
+                c.Tokens is null
+                    ? null
+                    : new OAuthTokenSyncDto(
+                        c.Tokens.AccessToken,
+                        c.Tokens.RefreshToken,
+                        c.Tokens.ExpiresAtUtc,
+                        c.Tokens.TokenType,
+                        c.Tokens.Scope,
+                        c.Tokens.AccountLabel)))
+            .ToList();
+
         var dto = new ToolsSyncDto(
             _keys.EnabledMcpServerNames.ToList(),
             _keys.GetAllMcpTokens().ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase),
-            _keys.GetCustomConnectors().ToList());
+            _keys.GetCustomConnectors().ToList(),
+            oauth);
         return JsonSerializer.Serialize(dto, JsonOpts);
     }
 
@@ -366,6 +385,37 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
                 await _keys.AddCustomConnectorAsync(c.Name, c.ServerUrl, ct);
             }
         }
+
+        // OAuth connectors: full replace when remote provides a list (LWW category apply).
+        if (dto.OAuthConnectors != null)
+        {
+            var installs = dto.OAuthConnectors
+                .Where(c => c is not null && !string.IsNullOrWhiteSpace(c.ConnectorId))
+                .Select(c =>
+                {
+                    OAuthTokenSet? tokens = null;
+                    if (c.Tokens is not null && !string.IsNullOrWhiteSpace(c.Tokens.AccessToken))
+                    {
+                        tokens = new OAuthTokenSet(
+                            c.Tokens.AccessToken,
+                            c.Tokens.RefreshToken,
+                            c.Tokens.ExpiresAtUtc,
+                            c.Tokens.TokenType,
+                            c.Tokens.Scope,
+                            c.Tokens.AccountLabel ?? c.AccountLabel);
+                    }
+
+                    return new OAuthConnectorInstall(
+                        c.ConnectorId!.Trim(),
+                        c.Enabled,
+                        tokens,
+                        c.ConnectedAtUtc,
+                        c.AccountLabel ?? tokens?.AccountLabel);
+                })
+                .ToList();
+
+            await _keys.ReplaceOAuthConnectorsAsync(installs, ct);
+        }
     }
 
     private async Task ApplySystemPromptAsync(string dataJson, CancellationToken ct)
@@ -442,7 +492,23 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
     private sealed record ToolsSyncDto(
         List<string>? EnabledServers,
         Dictionary<string, string>? Tokens,
-        List<CustomMcpConnector>? CustomConnectors);
+        List<CustomMcpConnector>? CustomConnectors,
+        List<OAuthConnectorSyncDto>? OAuthConnectors = null);
+
+    private sealed record OAuthConnectorSyncDto(
+        string? ConnectorId,
+        bool Enabled,
+        DateTimeOffset? ConnectedAtUtc,
+        string? AccountLabel,
+        OAuthTokenSyncDto? Tokens);
+
+    private sealed record OAuthTokenSyncDto(
+        string? AccessToken,
+        string? RefreshToken,
+        DateTimeOffset? ExpiresAtUtc,
+        string? TokenType,
+        string? Scope,
+        string? AccountLabel);
 
     private sealed record SystemPromptSyncDto(bool IsCustomized, string? Prompt);
 

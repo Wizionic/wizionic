@@ -1,20 +1,26 @@
+using App.Shared.Services.Connectors;
 using App.Shared.Services.Mcp;
 using Microsoft.Extensions.AI;
 
 namespace App.Shared.Services.Tools;
 
 /// <summary>
-/// Composes injectable tool modules with cached MCP tools.
+/// Composes injectable tool modules with cached MCP + OAuth OpenAPI tools.
 /// </summary>
 public sealed class CompositeToolProvider : IToolProvider
 {
     private readonly IEnumerable<IToolModule> _modules;
     private readonly McpToolSource _mcpSource;
+    private readonly OpenApiConnectorToolSource? _openApiSource;
 
-    public CompositeToolProvider(IEnumerable<IToolModule> modules, McpToolSource mcpSource)
+    public CompositeToolProvider(
+        IEnumerable<IToolModule> modules,
+        McpToolSource mcpSource,
+        OpenApiConnectorToolSource? openApiSource = null)
     {
         _modules = modules ?? throw new ArgumentNullException(nameof(modules));
         _mcpSource = mcpSource ?? throw new ArgumentNullException(nameof(mcpSource));
+        _openApiSource = openApiSource;
     }
 
     public IReadOnlyList<AITool> GetTools() => BuildToolList(null, includeMcp: true);
@@ -44,7 +50,11 @@ public sealed class CompositeToolProvider : IToolProvider
         }
 
         if (includeMcp)
+        {
             tools.AddRange(_mcpSource.GetCurrentMcpTools());
+            if (_openApiSource is not null)
+                tools.AddRange(_openApiSource.GetCurrentTools());
+        }
         return tools;
     }
 }
