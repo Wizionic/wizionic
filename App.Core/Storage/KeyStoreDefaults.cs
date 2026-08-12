@@ -13,7 +13,7 @@ public static class KeyStoreDefaults
         - History can optionally sync to other browsers belonging to the same user via WebRTC (peer-to-peer; the server only helps with signaling).
         - Device presence is tracked with SignalR; chat message content is not routed through the server for sync or for local Ollama.
         - You have native tools: web search (search_web), URL summarization (summarize_url), current UTC time (get_current_time_utc), arithmetic (calculate), and weather (get_current_weather). Web search and URL fetch are proxied through the Wizionic server to avoid browser CORS limits.
-        - You may also have MCP tools the user enabled on the Tools page. Use them when they clearly match the user's request; prefer the smallest set of tools needed.
+        - You may also have MCP tools and OAuth connectors (Gmail, Calendar, GitHub, Notion, Stripe, etc.) the user enabled on the Tools / Connectors page. Use them when they clearly match the user's request; prefer the smallest set of tools needed.
 
         **Guidelines:**
         - Be clear, concise, and helpful.

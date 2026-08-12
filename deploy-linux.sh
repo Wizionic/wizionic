@@ -33,7 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="${VERSION:-0.1.12}"
+VERSION="${VERSION:-0.1.21}"
 SERVER_IP="${SERVER_IP:-bg5.local}"
 SSH_USER="${SSH_USER:-daniel}"
 OUTPUT_DIR="${OUTPUT_DIR:-./linux_publish}"
@@ -504,24 +504,51 @@ fi
 require_cmd scp
 require_cmd ssh
 
-echo ""
-echo "Ensuring remote deploy root $REMOTE_WWWROOT (sudo may prompt)..."
-# Bootstrap parallel install tree (does not touch /var/www/chatfish). Single line for reliable ssh.
-ssh -t "${SSH_USER}@${SERVER_IP}" \
-  "sudo mkdir -p '${REMOTE_WWWROOT}/data' '${REMOTE_RELEASES}' '${REMOTE_HOMESERVER}' '${REMOTE_WWWROOT}/releases/windows' '${REMOTE_WWWROOT}/releases/homeserver/windows' && sudo chown -R '${SSH_USER}:${SSH_USER}' '${REMOTE_WWWROOT}'"
+SSH_TARGET="${SSH_USER}@${SERVER_IP}"
+# Reuse one SSH auth for all scp/ssh (type password once). Prefer keys: ssh-copy-id "$SSH_TARGET"
+SSH_CTL_DIR="${WIZIONIC_SSH_CTL_DIR:-${TMPDIR:-/tmp}/wizionic-ssh-$$}"
+mkdir -p "$SSH_CTL_DIR"
+chmod 700 "$SSH_CTL_DIR"
+SSH_CTL="$SSH_CTL_DIR/cm-%C"
+SSH_OPTS=(
+  -o "ControlMaster=auto"
+  -o "ControlPath=$SSH_CTL"
+  -o "ControlPersist=600"
+  -o "ServerAliveInterval=30"
+  -o "ServerAliveCountMax=4"
+)
 
-echo "Uploading release artifacts to ${SSH_USER}@${SERVER_IP}:${REMOTE_RELEASES}/ ..."
-scp -r "${RELEASES_DIR}/"* "${SSH_USER}@${SERVER_IP}:${REMOTE_RELEASES}/"
+cleanup_ssh_master() {
+  ssh -O exit -o "ControlPath=$SSH_CTL" "$SSH_TARGET" 2>/dev/null || true
+  rm -rf "$SSH_CTL_DIR" 2>/dev/null || true
+}
+trap cleanup_ssh_master EXIT
+
+echo ""
+echo "Opening shared SSH session to $SSH_TARGET (password / key once)..."
+# Master connection: first (and only) SSH password prompt when not using keys.
+# -M master, -N no remote cmd, -f background after auth
+ssh -MNf -o "ControlMaster=yes" -o "ControlPath=$SSH_CTL" -o "ControlPersist=600" "$SSH_TARGET"
+echo "SSH session ready — remaining scp/ssh steps reuse it."
+
+echo ""
+echo "Ensuring remote deploy root $REMOTE_WWWROOT (sudo may prompt once)..."
+# Bootstrap parallel install tree (does not touch /var/www/chatfish). Single line for reliable ssh.
+ssh -t "${SSH_OPTS[@]}" "$SSH_TARGET" \
+  "sudo -v && sudo mkdir -p '${REMOTE_WWWROOT}/data' '${REMOTE_RELEASES}' '${REMOTE_HOMESERVER}' '${REMOTE_WWWROOT}/releases/windows' '${REMOTE_WWWROOT}/releases/homeserver/windows' && sudo chown -R '${SSH_USER}:${SSH_USER}' '${REMOTE_WWWROOT}'"
+
+echo "Uploading release artifacts to ${SSH_TARGET}:${REMOTE_RELEASES}/ ..."
+scp "${SSH_OPTS[@]}" -r "${RELEASES_DIR}/"* "${SSH_TARGET}:${REMOTE_RELEASES}/"
 
 # Convenience: install.sh at site root path used by curl | bash (volume or static tree)
 echo "Publishing install.sh to site root (${REMOTE_WWWROOT}/install.sh) ..."
-scp "$RELEASES_DIR/install.sh" "${SSH_USER}@${SERVER_IP}:${REMOTE_WWWROOT}/install.sh" \
-  || scp "$RELEASES_DIR/install.sh" "${SSH_USER}@${SERVER_IP}:${REMOTE_WWWROOT}/wwwroot/install.sh" \
+scp "${SSH_OPTS[@]}" "$RELEASES_DIR/install.sh" "${SSH_TARGET}:${REMOTE_WWWROOT}/install.sh" \
+  || scp "${SSH_OPTS[@]}" "$RELEASES_DIR/install.sh" "${SSH_TARGET}:${REMOTE_WWWROOT}/wwwroot/install.sh" \
   || echo "WARNING: could not copy install.sh to site root — use $UPDATE_FEED/install.sh"
 
 if [[ -n "$HOMESERVER_ZIP_NAME" && -d "$HOMESERVER_RELEASES" ]]; then
-  echo "Uploading Home Server package to ${SSH_USER}@${SERVER_IP}:${REMOTE_HOMESERVER}/ ..."
-  scp -r "${HOMESERVER_RELEASES}/"* "${SSH_USER}@${SERVER_IP}:${REMOTE_HOMESERVER}/"
+  echo "Uploading Home Server package to ${SSH_TARGET}:${REMOTE_HOMESERVER}/ ..."
+  scp "${SSH_OPTS[@]}" -r "${HOMESERVER_RELEASES}/"* "${SSH_TARGET}:${REMOTE_HOMESERVER}/"
 fi
 
 echo ""

@@ -10,9 +10,19 @@ $REMOTE_ROOT = "/var/www/wizionic"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "0.1.12"   # bump this before each release
+$VERSION      = "0.1.21"   # bump this before each release
 $UPDATE_FEED  = "https://wizionic.com/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
+# OAuth secrets — set on the machine that runs deploy.ps1 (never commit these).
+# ASP.NET Core maps OAuth__GitHub__ClientSecret → OAuth:GitHub:ClientSecret
+$OAuthGitHubClientId     = $env:OAUTH_GITHUB_CLIENT_ID
+$OAuthGitHubClientSecret = $env:OAUTH_GITHUB_CLIENT_SECRET
+$OAuthGoogleClientId     = $env:OAUTH_GOOGLE_CLIENT_ID
+$OAuthGoogleClientSecret = $env:OAUTH_GOOGLE_CLIENT_SECRET
+$OAuthNotionClientId     = $env:OAUTH_NOTION_CLIENT_ID
+$OAuthNotionClientSecret = $env:OAUTH_NOTION_CLIENT_SECRET
+$OAuthStripeClientId     = $env:OAUTH_STRIPE_CLIENT_ID
+$OAuthStripeClientSecret = $env:OAUTH_STRIPE_CLIENT_SECRET
 
 # Ensure remote tree exists and is owned by the deploy user (idempotent; may prompt for sudo).
 # IMPORTANT: keep this as ONE line for ssh - multi-line PowerShell strings inject CRLF and break bash.
@@ -163,12 +173,26 @@ scp -r "${OUTPUT_DIR}\*" "${SSH_USER}@${SERVER_IP}:${REMOTE_ROOT}/"
 Write-Host "Instructing Remote Docker Engine to assemble and spin up..." -ForegroundColor Cyan
 
 # 6. Pass the remote commands as a single block. Does not touch the chatfish container.
+# Env vars for secrets (double-underscore = nested config in ASP.NET Core).
+# Client IDs are public-ish but we still pass them the same way for consistency.
 $RemoteCmds = "cd '$REMOTE_ROOT' && " +
               "docker build -t wizionic-app:latest . && " +
               "docker rm -f wizionic || true && " +
               "docker run -d --name wizionic -p 5100:8080 " +
               "-e ASPNETCORE_ENVIRONMENT=Production " +
               "-e BREVO_API_KEY='$WindowsBrevoKey' " +
+              "-e OAuth__GitHub__ClientId='$OAuthGitHubClientId' " +
+              "-e OAuth__GitHub__ClientSecret='$OAuthGitHubClientSecret' " +
+              "-e OAuth__GitHub__RedirectUri='https://wizionic.com/api/oauth/github/callback' " +
+              "-e OAuth__Google__ClientId='$OAuthGoogleClientId' " +
+              "-e OAuth__Google__ClientSecret='$OAuthGoogleClientSecret' " +
+              "-e OAuth__Google__RedirectUri='https://wizionic.com/api/oauth/google/callback' " +
+              "-e OAuth__Notion__ClientId='$OAuthNotionClientId' " +
+              "-e OAuth__Notion__ClientSecret='$OAuthNotionClientSecret' " +
+              "-e OAuth__Notion__RedirectUri='https://wizionic.com/api/oauth/notion/callback' " +
+              "-e OAuth__Stripe__ClientId='$OAuthStripeClientId' " +
+              "-e OAuth__Stripe__ClientSecret='$OAuthStripeClientSecret' " +
+              "-e OAuth__Stripe__RedirectUri='https://wizionic.com/api/oauth/stripe/callback' " +
               "-v ${REMOTE_ROOT}/data:/app/data " +
               "-v ${REMOTE_ROOT}/releases:/app/wwwroot/releases " +
               "--restart unless-stopped wizionic-app:latest"

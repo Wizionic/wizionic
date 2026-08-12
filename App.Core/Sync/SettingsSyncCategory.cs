@@ -35,7 +35,7 @@ public static class SettingsSyncCategory
         Lemonade => "Lemonade",
         CloudProviders => "Cloud Providers",
         HomeAssistant => "Home Assistant",
-        Tools => "Tools (MCP)",
+        Tools => "Tools (MCP + Connectors)",
         SystemPrompt => "System prompt",
         Profile => "About you",
         Memories => "Memories",

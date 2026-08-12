@@ -10,6 +10,7 @@ using App.Core.SmartHome;
 using App.Core.Storage;
 using App.Core.Sync;
 using App.Core.Chat;
+using App.Core.Connectors;
 using App.Core.Tools;
 using App.Core.UI;
 using App.Core.Update;
@@ -115,6 +116,8 @@ public static class MauiProgram
 
 		var app = builder.Build();
 		RestoreAuthCookies(app.Services);
+		// Warm OAuth interceptor so in-app browser navigations are watched before first Tools click.
+		_ = app.Services.GetService<MauiOAuthInterceptor>();
 		return app;
 	}
 #endif
@@ -321,6 +324,14 @@ public static class MauiProgram
 		services.AddSingleton<IBrowserContext>(sp => sp.GetRequiredService<MauiBrowserContext>());
 		services.AddSingleton<McpToolSource>();
 		services.AddSingleton<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
+		services.AddSingleton<OAuthReturnBridge>();
+		services.AddSingleton<App.Core.UI.IAppNavigation, App.Shared.Services.AppNavigation>();
+		services.AddSingleton<MauiOAuthInterceptor>();
+		services.AddSingleton<IUriLauncher, MauiUriLauncher>();
+		services.AddSingleton<App.Shared.Services.Connectors.ConnectorHttpExecutor>();
+		services.AddSingleton<App.Shared.Services.Connectors.OpenApiConnectorToolSource>();
+		services.AddSingleton<App.Core.Connectors.IOpenApiConnectorRefresher>(sp =>
+			sp.GetRequiredService<App.Shared.Services.Connectors.OpenApiConnectorToolSource>());
 		services.AddSingleton<App.Core.Tools.IConversationMediaBuffer, App.Shared.Services.Tools.ConversationMediaBuffer>();
 		services.AddSingleton<App.Core.Tools.IToolConversationContext, App.Shared.Services.Tools.ToolConversationContext>();
 		services.AddSingleton<NativeToolModule>();

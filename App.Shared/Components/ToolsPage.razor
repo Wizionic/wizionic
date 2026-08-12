@@ -3,157 +3,121 @@
 @inject App.Core.Sync.ISyncService SyncService
 @inject NavigationManager Nav
 @inject HttpClient Http
+@inject App.Core.Auth.IAuthService Auth
+@inject App.Core.Connectors.IUriLauncher UriLauncher
+@inject App.Core.Connectors.OAuthReturnBridge? OAuthReturn
 @inject App.Core.Storage.IMcpToolRefresher? McpToolRefresher
+@inject App.Core.Connectors.IOpenApiConnectorRefresher? OpenApiRefresher
+@using App.Core.Connectors
 @using App.Core.Sync
 @using App.Shared.Services
+@using App.Shared.Services.Connectors
+@implements IDisposable
 
-<div class="settings-content cf-tools" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
-    <h4 style="margin:0;">MCP Tools</h4>
-    <p class="text-sm" style="font-size: 0.9em;">
-        Select remote MCP servers to make available to the model during chat. Only servers that publish HTTP/SSE endpoints (streamable-http or SSE) are shown — stdio-only local servers are filtered out because a browser cannot launch them.
-    </p>
-
-    <div style="background: var(--color-bg-muted); border: 1px solid var(--color-border); padding: 0.75rem 1rem; border-radius: 6px; margin: 0.75rem 0; font-size: 0.85em; color: var(--color-text);">
-        <strong>Important notes:</strong>
-        <ul style="margin:0.4rem 0 0 1rem; padding:0;">
-            <li><strong>Authentication:</strong> Servers marked "requires token" need an API key / Bearer token. Full token management UI is planned; for now the model will be unable to use protected servers until you can supply credentials securely.</li>
-            <li><strong>Latency:</strong> Every enabled server can be invoked by the LLM. Checking many boxes may result in sequential tool calls before the final answer (you may see "reading X...", "querying Y...").</li>
-            <li><strong>Experimental:</strong> This page manages the list of candidate remote tools. Actual dynamic MCP client connection + tool exposure inside the chat loop is under development.</li>
-        </ul>
-    </div>
-
-    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem; flex-wrap:wrap;">
-        <h3 style="margin:0;">Remote MCP Tools</h3>
-        <button @onclick="RefreshRegistry" class="btn btn-outline-primary btn-sm" disabled="@isLoading">
-            @(isLoading ? "Loading..." : "Refresh from Registry")
-        </button>
-        <span class="text-muted" style="font-size:0.8em; margin-left:auto;">@enabledCount enabled</span>
-    </div>
-
-    @if (isLoading && !registryTools.Any())
-    {
-        <div class="text-muted" style="padding:1rem 0;">Loading MCP servers from registry...</div>
-    }
-    else if (!string.IsNullOrEmpty(loadError))
-    {
-        <div class="cf-dialog-error">
-            @loadError
-            <button @onclick="RefreshRegistry" class="btn btn-link" style="padding:0 0.25rem; font-size:0.9em;">Retry</button>
+<div class="settings-content cf-connectors-page">
+    <div class="cf-conn-top">
+        <div class="cf-conn-tabs">
+            <button type="button" class="cf-conn-tab" disabled title="Coming soon">Skills</button>
+            <button type="button" class="cf-conn-tab cf-conn-tab-active">Tools</button>
         </div>
-    }
-
-    @if (registryTools.Any())
-    {
-        <div style="display:flex; flex-direction:column; gap:0.5rem;">
-            @foreach (var t in registryTools)
+        <div class="cf-conn-search">
+            <span class="cf-conn-search-icon" aria-hidden="true">🔍</span>
+            <input type="search"
+                   value="@searchQuery"
+                   @oninput="OnSearchInput"
+                   placeholder="Search tools…"
+                   class="cf-conn-search-input" />
+            @if (isSearching)
             {
-                <div class="cf-tools-card">
-                    <label style="display:flex; gap:0.6rem; align-items:flex-start; cursor:pointer; margin:0;">
-                        <input type="checkbox"
-                               checked="@t.IsEnabled"
-                               @onchange="(e) => ToggleEnabled(t, e)"
-                               style="margin-top:0.2rem;" />
-
-                        <div style="flex:1; min-width:0;">
-                            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-                                <strong>@t.Name</strong>
-                                @if (!string.IsNullOrWhiteSpace(t.Version))
-                                {
-                                    <span class="cf-badge-default">v@t.Version</span>
-                                }
-                                @if (t.RequiresAuth)
-                                {
-                                    <span class="cf-badge-auth">requires token</span>
-                                }
-                                <span class="text-muted" style="font-size:0.7em; margin-left:auto;">@t.Transport</span>
-                            </div>
-
-                            @if (!string.IsNullOrWhiteSpace(t.Description))
-                            {
-                                <div class="text-sm" style="margin-top:2px; line-height:1.3;">
-                                    @t.Description
-                                </div>
-                            }
-
-                            <div class="cf-lv-row">
-                                <span class="cf-lv-label">endpoint:</span> @t.RemoteUrl
-                            </div>
-
-                            @if (t.IsEnabled)
-                            {
-                                <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
-                                    <span class="cf-xs-text">Token / Key:</span>
-                                    <input type="password"
-                                           value="@t.Token"
-                                           @oninput="@(e => UpdateAndSaveToken(t, (e as ChangeEventArgs)?.Value?.ToString() ?? ""))"
-                                           placeholder="@(t.RequiresAuth ? "Required for this server (paste your key)" : "Optional — only if this server needs auth")"
-                                           style="font-family:monospace; font-size:0.78em; flex:1; max-width:340px; padding:2px 4px;" />
-                                </div>
-                            }
-
-                            @if (!string.IsNullOrWhiteSpace(t.InfoUrl))
-                            {
-                                <div style="margin-top:2px;">
-                                    <a href="@t.InfoUrl" target="_blank" rel="noopener" class="cf-more-info">more info ↗</a>
-                                </div>
-                            }
-                        </div>
-                    </label>
-                </div>
+                <span class="cf-conn-search-busy" title="Searching registry…">…</span>
             }
         </div>
-    }
-    else if (!isLoading && string.IsNullOrEmpty(loadError) && !registryTools.Any())
+    </div>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
     {
-        <div class="text-sm" style="font-size:0.9em; padding:0.25rem 0;">No remote MCP servers found from the registry (or all were stdio-only and filtered out).</div>
+        <div class="cf-conn-banner @(statusIsError ? "cf-conn-banner-error" : "cf-conn-banner-ok")">
+            @statusMessage
+            <button type="button" class="cf-conn-banner-close" @onclick="() => statusMessage = null">✕</button>
+        </div>
     }
 
-    <!-- ==================== CUSTOM CONNECTORS SECTION ==================== -->
-    <div style="margin-top: 1.5rem;">
-        <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
-            <h3 style="margin:0; font-size:1.05rem;">Custom Connectors
-                <small class="text-muted" style="margin-left:auto;">  Add your own remote MCP servers (HTTP/SSE)</small>
-                </h3>
-
-            <div><button @onclick="OpenAddCustomDialog" class="btn btn-outline-secondary btn-sm">
-                + Add Custom Connector
-            </button></div>
+    <!-- ========== Installed ========== -->
+    <section class="cf-conn-section">
+        <div class="cf-conn-section-head">
+            <h2 class="cf-conn-section-title">Installed</h2>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="OpenAddCustomDialog">
+                + Custom MCP
+            </button>
         </div>
-
-        @if (customTools.Any())
+        @if (!FilteredInstalled.Any())
         {
-            <div style="display:flex; flex-direction:column; gap:0.5rem;">
-                @foreach (var t in customTools)
+            <p class="cf-conn-empty">No tools installed yet. Browse Discover below or search the registry.</p>
+        }
+        else
+        {
+            <div class="cf-tool-grid">
+                @foreach (var item in FilteredInstalled)
                 {
-                    <div class="cf-tools-card cf-tools-card-muted">
-                        <div style="display:flex; gap:0.5rem; align-items:flex-start;">
-                            <input type="checkbox"
-                                   checked="@t.IsEnabled"
-                                   @onchange="(e) => ToggleEnabled(t, e)"
-                                   style="margin-top:0.25rem;" />
-
-                            <div style="flex:1; min-width:0; font-size:0.92em;">
-                                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                                    <strong>@t.Name</strong>
-                                    <span class="cf-badge-custom">CUSTOM</span>
-                                    <button @onclick="() => RequestRemoveCustom(t)"
-                                            class="cf-remove-btn"
-                                            title="Remove this custom connector">✕</button>
+                    <div class="cf-tool-card">
+                        <div class="cf-tool-card-main cf-tool-card-main-static">
+                            @RenderToolIcon(item.IconText, item.IconBackground, item.IconImageUrl)
+                            <div class="cf-tool-card-body">
+                                <div class="cf-tool-card-title-row">
+                                    <span class="cf-tool-card-title">@item.DisplayName</span>
+                                    @if (item.Kind == ConnectorKind.OpenApiOAuth)
+                                    {
+                                        <span class="cf-tool-kind">OAuth</span>
+                                    }
+                                    else if (item.IsCustomMcp)
+                                    {
+                                        <span class="cf-tool-kind">Custom</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="cf-tool-kind">MCP</span>
+                                    }
+                                    @if (!item.Enabled)
+                                    {
+                                        <span class="cf-conn-card-badge">Disabled</span>
+                                    }
                                 </div>
-
-                                <div class="cf-lv-row" style="font-size:0.72em; margin-top:1px;">
-                                    <span class="cf-lv-label">url:</span> @t.RemoteUrl
-                                </div>
-
-                                @if (t.IsEnabled)
+                                @if (!string.IsNullOrWhiteSpace(item.Description))
                                 {
-                                    <div style="margin-top:5px; display:flex; gap:6px; align-items:center;">
-                                        <span class="cf-xs-text" style="font-size:0.7em;">Token / Key:</span>
-                                        <input type="password"
-                                               value="@t.Token"
-                                               @oninput="@(e => UpdateAndSaveToken(t, (e as ChangeEventArgs)?.Value?.ToString() ?? ""))"
-                                               placeholder="Paste token if the server requires auth"
-                                               style="font-family:monospace; font-size:0.75em; flex:1; max-width:320px; padding:2px 4px;" />
+                                    <div class="cf-tool-card-desc">@item.Description</div>
+                                }
+                                <div class="cf-tool-card-meta">
+                                    @if (!string.IsNullOrWhiteSpace(item.Publisher))
+                                    {
+                                        <span class="cf-tool-by">By @item.Publisher</span>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(item.Subtitle))
+                                    {
+                                        <span class="cf-tool-by">@item.Subtitle</span>
+                                    }
+                                    <span class="cf-conn-status">@(item.Enabled ? "Connected" : "Off")</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cf-tool-card-actions">
+                            <div class="cf-conn-menu-wrap">
+                                <button type="button"
+                                        class="cf-conn-menu-btn"
+                                        @onclick="() => ToggleMenu(item.Id)"
+                                        title="Options">⋮</button>
+                                @if (openMenuId == item.Id)
+                                {
+                                    <div class="cf-conn-menu">
+                                        @if (item.Kind == ConnectorKind.Mcp)
+                                        {
+                                            <button type="button" @onclick="() => OpenMcpTokenEditor(item)">Token…</button>
+                                        }
+                                        <button type="button" @onclick="() => ToggleInstalledEnabled(item)">
+                                            @(item.Enabled ? "Disable" : "Enable")
+                                        </button>
+                                        <button type="button" class="cf-conn-menu-danger" @onclick="() => Disconnect(item)">
+                                            Disconnect
+                                        </button>
                                     </div>
                                 }
                             </div>
@@ -162,19 +126,142 @@
                 }
             </div>
         }
-        else
+    </section>
+
+    <!-- ========== Discover ========== -->
+    <section class="cf-conn-section">
+        <div class="cf-conn-section-head">
+            <h2 class="cf-conn-section-title">
+                @(string.IsNullOrWhiteSpace(searchQuery) ? "Discover" : "Search results")
+            </h2>
+            <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => RefreshDiscoverAsync()" disabled="@(isLoading || isSearching)">
+                @(isLoading || isSearching ? "Loading…" : "Refresh")
+            </button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(loadError))
         {
-            <div class="text-sm" style="padding:0.25rem 0;">
-                No custom connectors yet. Click <strong>Add Custom Connector</strong> above to connect to your own MCP server.
+            <div class="cf-dialog-error">
+                @loadError
+                <button @onclick="() => RefreshDiscoverAsync()" class="btn btn-link" style="padding:0 0.25rem; font-size:0.9em;">Retry</button>
             </div>
         }
-    </div>
 
-    <div style="margin-top: 1.5rem; display:flex; gap:0.5rem; align-items:center;">
+        @if ((isLoading || isSearching) && !discoverOAuth.Any() && !registryTools.Any())
+        {
+            <div class="text-muted" style="padding:0.5rem 0;">Loading tools…</div>
+        }
+        else if (!FilteredDiscoverOAuth.Any() && !FilteredDiscoverMcp.Any())
+        {
+            <p class="cf-conn-empty">
+                @if (!string.IsNullOrWhiteSpace(searchQuery))
+                {
+                    <text>No remote-capable tools match “@searchQuery”. Try another query.</text>
+                }
+                else if (!string.IsNullOrEmpty(catalogLoadError))
+                {
+                    <text>Could not load catalog (@catalogLoadError).</text>
+                }
+                else
+                {
+                    <text>No tools to discover right now. Add OAuth connectors in the server database, or search the MCP registry.</text>
+                }
+            </p>
+        }
+        else
+        {
+            <div class="cf-tool-grid">
+                @foreach (var entry in FilteredDiscoverOAuth)
+                {
+                    var installed = IsOAuthInstalled(entry.ConnectorId);
+                    <div class="cf-tool-card">
+                        <button type="button"
+                                class="cf-tool-card-main"
+                                @onclick="() => OpenOAuthDetails(entry)"
+                                title="Details — @entry.DisplayName">
+                            @RenderToolIcon(entry.IconText, entry.IconBackground, entry.IconImageUrl)
+                            <div class="cf-tool-card-body">
+                                <div class="cf-tool-card-title-row">
+                                    <span class="cf-tool-card-title">@entry.DisplayName</span>
+                                    <span class="cf-tool-kind">OAuth</span>
+                                    @if (installed)
+                                    {
+                                        <span class="cf-conn-card-badge">Installed</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(entry.Description))
+                                {
+                                    <div class="cf-tool-card-desc">@entry.Description</div>
+                                }
+                                <div class="cf-tool-card-meta">
+                                    <span class="cf-tool-by">By Wizionic</span>
+                                </div>
+                            </div>
+                        </button>
+                        <div class="cf-tool-card-actions">
+                            @if (installed)
+                            {
+                                <button type="button" class="btn btn-outline-secondary btn-sm"
+                                        @onclick="() => ToggleMenu(OAuthMenuId(entry.ConnectorId))">
+                                    Manage
+                                </button>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-primary btn-sm"
+                                        @onclick="() => OnFeaturedOAuthClick(entry)">
+                                    Connect
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @foreach (var mcp in FilteredDiscoverMcp)
+                {
+                    <div class="cf-tool-card">
+                        <button type="button"
+                                class="cf-tool-card-main"
+                                @onclick="() => OpenMcpDetails(mcp)"
+                                title="Details — @mcp.DisplayTitle">
+                            @RenderToolIcon("🔌", "var(--color-bg-muted, #f3f4f6)", mcp.IconUrl)
+                            <div class="cf-tool-card-body">
+                                <div class="cf-tool-card-title-row">
+                                    <span class="cf-tool-card-title">@mcp.DisplayTitle</span>
+                                    <span class="cf-tool-kind">MCP</span>
+                                    @if (mcp.RequiresAuth)
+                                    {
+                                        <span class="cf-badge-auth">token</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(mcp.Description))
+                                {
+                                    <div class="cf-tool-card-desc">@mcp.Description</div>
+                                }
+                                <div class="cf-tool-card-meta">
+                                    @if (!string.IsNullOrWhiteSpace(mcp.Publisher))
+                                    {
+                                        <span class="cf-tool-by">By @mcp.Publisher</span>
+                                    }
+                                </div>
+                            </div>
+                        </button>
+                        <div class="cf-tool-card-actions">
+                            <button type="button" class="btn btn-primary btn-sm"
+                                    @onclick="() => InstallMcpAsync(mcp)">
+                                Install
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <div style="margin-top: 1.5rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
         <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
-        <small class="text-muted">Selections (including customs) are saved automatically in your browser.</small>
+        <small class="text-muted">MCP list from the official registry · install config stays on this device · tools sync with Devices &amp; Sync.</small>
     </div>
-
 </div>
 
 <ConfirmDialog IsVisible="@(!string.IsNullOrEmpty(removeCustomName))"
@@ -184,48 +271,125 @@
                OnConfirm="ConfirmRemoveCustom"
                OnCancel="() => removeCustomName = null" />
 
-<!-- Simple Custom Connector Dialog -->
 @if (showAddCustomDialog)
 {
-    <div @onclick="CloseCustomDialog"
-         style="position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:10000; display:flex; align-items:center; justify-content:center;">
-        <div @onclick:stopPropagation
-             style="background:var(--color-bg-surface); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.15); width:100%; max-width:420px; margin:1rem; padding:1.25rem 1.5rem; font-size:0.95rem;">
-
-            <div style="font-size:1.15rem; font-weight:600; margin-bottom:0.15rem;">Custom Connector</div>
+    <div @onclick="CloseCustomDialog" class="cf-conn-modal-backdrop">
+        <div @onclick:stopPropagation class="cf-conn-modal">
+            <div class="cf-conn-modal-title">Custom MCP connector</div>
             <div class="text-muted" style="font-size:0.85rem; margin-bottom:1rem;">
-                Enter a custom name and an MCP server URL
+                Enter a name and an MCP server URL (HTTP/SSE)
             </div>
-
             <div style="margin-bottom:0.75rem;">
-                <label style="display:block; font-size:0.8rem; color:var(--cf-text-muted); margin-bottom:3px;">Name</label>
-                <input type="text" @bind="newCustomName" placeholder="My Connector"
-                       class="cf-dialog-input" />
+                <label class="cf-conn-label">Name</label>
+                <input type="text" @bind="newCustomName" placeholder="My Connector" class="cf-dialog-input" />
             </div>
-
             <div style="margin-bottom:1rem;">
-                <label style="display:block; font-size:0.8rem; color:var(--cf-text-muted); margin-bottom:3px;">Server URL</label>
-                <input type="text" @bind="newCustomUrl" placeholder="https://mcp.example.com/sse or https://.../mcp"
-                       class="cf-dialog-input" />
+                <label class="cf-conn-label">Server URL</label>
+                <input type="text" @bind="newCustomUrl" placeholder="https://mcp.example.com/sse" class="cf-dialog-input" />
             </div>
-
             @if (!string.IsNullOrEmpty(customDialogError))
             {
-                <div class="cf-dialog-error">
-                    @customDialogError
-                </div>
+                <div class="cf-dialog-error">@customDialogError</div>
             }
+            <div style="display:flex; justify-content:space-between;">
+                <button @onclick="CloseCustomDialog" class="btn btn-outline-secondary">Cancel</button>
+                <button @onclick="AddCustomConnector" class="btn btn-primary">Add Connector</button>
+            </div>
+        </div>
+    </div>
+}
 
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem;">
-                <button @onclick="CloseCustomDialog"
-                        class="btn btn-outline-secondary"
-                        style="padding:6px 16px; font-size:0.9rem;">Cancel</button>
+@if (tokenEditor is not null)
+{
+    <div @onclick="() => tokenEditor = null" class="cf-conn-modal-backdrop">
+        <div @onclick:stopPropagation class="cf-conn-modal">
+            <div class="cf-conn-modal-title">MCP token — @tokenEditor.DisplayName</div>
+            <input type="password"
+                   @bind="tokenEditorValue"
+                   class="cf-dialog-input"
+                   placeholder="Paste bearer token / API key" />
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem;">
+                <button class="btn btn-outline-secondary" @onclick="() => tokenEditor = null">Cancel</button>
+                <button class="btn btn-primary" @onclick="SaveTokenEditor">Save</button>
+            </div>
+        </div>
+    </div>
+}
 
-                <button @onclick="AddCustomConnector"
-                        class="btn btn-primary"
-                        style="padding:6px 18px; font-size:0.9rem; background:var(--primary-blue); border-color:var(--primary-blue); color:var(--color-text-inverse);">
-                    Add Connector
-                </button>
+@if (detailsMcp is not null)
+{
+    <div @onclick="() => detailsMcp = null" class="cf-conn-modal-backdrop">
+        <div @onclick:stopPropagation class="cf-conn-modal cf-tool-details-modal">
+            <div class="cf-tool-details-head">
+                @RenderToolIcon("🔌", "var(--color-bg-muted, #f3f4f6)", detailsMcp.IconUrl)
+                <div>
+                    <div class="cf-conn-modal-title" style="margin-bottom:0.15rem;">@detailsMcp.DisplayTitle</div>
+                    @if (!string.IsNullOrWhiteSpace(detailsMcp.Publisher))
+                    {
+                        <div class="cf-tool-by">By @detailsMcp.Publisher</div>
+                    }
+                </div>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(detailsMcp.Description))
+            {
+                <p class="cf-tool-details-desc">@detailsMcp.Description</p>
+            }
+            <dl class="cf-tool-details-dl">
+                <div><dt>Registry id</dt><dd><code>@detailsMcp.Name</code></dd></div>
+                <div><dt>Transport</dt><dd>@detailsMcp.Transport</dd></div>
+                @if (!string.IsNullOrWhiteSpace(detailsMcp.Version))
+                {
+                    <div><dt>Version</dt><dd>@detailsMcp.Version</dd></div>
+                }
+                @if (!string.IsNullOrWhiteSpace(detailsMcp.RemoteUrl))
+                {
+                    <div><dt>Endpoint</dt><dd class="cf-tool-details-url">@detailsMcp.RemoteUrl</dd></div>
+                }
+                @if (detailsMcp.RequiresAuth)
+                {
+                    <div><dt>Auth</dt><dd>Bearer token required after install</dd></div>
+                }
+            </dl>
+            <div style="display:flex; justify-content:space-between; gap:0.5rem; margin-top:1.1rem; flex-wrap:wrap;">
+                <div style="display:flex; gap:0.5rem;">
+                    @if (!string.IsNullOrWhiteSpace(detailsMcp.InfoUrl))
+                    {
+                        <a class="btn btn-outline-secondary btn-sm" href="@detailsMcp.InfoUrl" target="_blank" rel="noopener">Docs / site</a>
+                    }
+                </div>
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="() => detailsMcp = null">Close</button>
+                    @if (!detailsMcp.IsEnabled)
+                    {
+                        <button type="button" class="btn btn-primary" @onclick="() => InstallMcpFromDetailsAsync()">Install</button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (detailsOAuth is not null)
+{
+    <div @onclick="() => detailsOAuth = null" class="cf-conn-modal-backdrop">
+        <div @onclick:stopPropagation class="cf-conn-modal cf-tool-details-modal">
+            <div class="cf-tool-details-head">
+                @RenderToolIcon(detailsOAuth.IconText, detailsOAuth.IconBackground, detailsOAuth.IconImageUrl)
+                <div>
+                    <div class="cf-conn-modal-title" style="margin-bottom:0.15rem;">@detailsOAuth.DisplayName</div>
+                    <div class="cf-tool-by">By Wizionic · OAuth</div>
+                </div>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(detailsOAuth.Description))
+            {
+                <p class="cf-tool-details-desc">@detailsOAuth.Description</p>
+            }
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.1rem;">
+                <button type="button" class="btn btn-outline-secondary" @onclick="() => detailsOAuth = null">Close</button>
+                @if (!IsOAuthInstalled(detailsOAuth.ConnectorId))
+                {
+                    <button type="button" class="btn btn-primary" @onclick="() => ConnectOAuthFromDetailsAsync()">Connect</button>
+                }
             </div>
         </div>
     </div>
@@ -234,34 +398,600 @@
 @code {
     private List<ManagedMcpTool> registryTools = new();
     private List<ManagedMcpTool> customTools = new();
-    private bool isLoading = false;
-    private string? loadError = null;
+    private bool isLoading;
+    private bool isSearching;
+    private string? loadError;
+    private string searchQuery = "";
+    private string? openMenuId;
+    private string? statusMessage;
+    private bool statusIsError;
+    private string? removeCustomName;
 
-    private int enabledCount => registryTools.Count(t => t.IsEnabled) + customTools.Count(t => t.IsEnabled);
-
-    // --- Custom Connector dialog state ---
-    private bool showAddCustomDialog = false;
+    private bool showAddCustomDialog;
     private string newCustomName = "";
     private string newCustomUrl = "";
     private string customDialogError = "";
 
-    protected override async Task OnInitializedAsync()
+    private InstalledItem? tokenEditor;
+    private string tokenEditorValue = "";
+    private ManagedMcpTool? detailsMcp;
+    private CatalogItem? detailsOAuth;
+
+    private Dictionary<string, bool> oauthProviderReady = new(StringComparer.OrdinalIgnoreCase);
+    private List<CatalogItem> allCatalog = new();
+    private string? catalogLoadError;
+
+    private CancellationTokenSource? _searchCts;
+    private int _searchGeneration;
+
+    private IEnumerable<CatalogItem> discoverOAuth =>
+        allCatalog
+            .OrderByDescending(c => c.Featured)
+            .ThenBy(c => c.SortOrder)
+            .ThenBy(c => c.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<CatalogItem> FilteredDiscoverOAuth
     {
-        await KeyStore.LoadAsync();
-        await RefreshRegistry();
-        LoadCustomsFromStore();
+        get
+        {
+            var q = searchQuery?.Trim() ?? "";
+            var items = discoverOAuth.AsEnumerable();
+            if (!string.IsNullOrEmpty(q))
+            {
+                items = items.Where(e =>
+                    e.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (e.Description?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    e.ConnectorId.Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+            // Hide already-installed OAuth from Discover (they live under Installed).
+            return items.Where(e => !IsOAuthInstalled(e.ConnectorId));
+        }
     }
 
-    private async Task RefreshRegistry()
+    private IEnumerable<ManagedMcpTool> FilteredDiscoverMcp =>
+        registryTools.Where(t => !t.IsEnabled);
+
+    private IEnumerable<InstalledItem> FilteredInstalled
     {
-        isLoading = true;
+        get
+        {
+            var items = BuildInstalled();
+            var q = searchQuery?.Trim() ?? "";
+            if (string.IsNullOrEmpty(q))
+                return items;
+            return items.Where(i =>
+                i.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (i.Description?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Publisher?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Subtitle?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (OAuthReturn is not null)
+            OAuthReturn.Changed += OnOAuthReturnBridgeChanged;
+
+        await KeyStore.LoadAsync();
+        await LoadCatalogAsync();
+        await LoadOAuthStatusAsync();
+        LoadCustomsFromStore();
+        await RefreshDiscoverAsync();
+        ApplyPendingOAuthStatus();
+        await HandleOAuthReturnAsync();
+        await RefreshOpenApiToolsAsync();
+    }
+
+    public void Dispose()
+    {
+        if (OAuthReturn is not null)
+            OAuthReturn.Changed -= OnOAuthReturnBridgeChanged;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+    }
+
+    private async Task LoadCatalogAsync()
+    {
+        catalogLoadError = null;
+        try
+        {
+            // Source of truth: SQLite Connectors table via host API. Empty DB ⇒ no OAuth entries.
+            var list = await Http.GetFromJsonAsync<List<CatalogItem>>("/api/connectors/catalog");
+            allCatalog = list ?? new();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Tools] Catalog load failed: {ex.Message}");
+            catalogLoadError = "could not load catalog from server";
+            allCatalog = new();
+        }
+    }
+
+    private void ApplyPendingOAuthStatus()
+    {
+        var status = OAuthReturn?.TakeStatus();
+        if (status is null) return;
+        statusMessage = status.Value.Message;
+        statusIsError = status.Value.IsError;
+    }
+
+    private void OnOAuthReturnBridgeChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            ApplyPendingOAuthStatus();
+            await HandleOAuthReturnAsync();
+            StateHasChanged();
+        });
+
+    private async Task LoadOAuthStatusAsync()
+    {
+        try
+        {
+            var status = await Http.GetFromJsonAsync<Dictionary<string, bool>>("/api/oauth/status");
+            if (status is not null)
+                oauthProviderReady = new Dictionary<string, bool>(status, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // Host may not expose status during partial deploys
+        }
+    }
+
+    private async Task HandleOAuthReturnAsync()
+    {
+        var queryString = OAuthReturn?.TakePendingQuery();
+        if (string.IsNullOrWhiteSpace(queryString))
+            queryString = Nav.ToAbsoluteUri(Nav.Uri).Query;
+
+        var query = ParseQuery(queryString ?? "");
+
+        if (query.TryGetValue("oauth_error", out var err) && !string.IsNullOrWhiteSpace(err))
+        {
+            statusMessage = Uri.UnescapeDataString(err);
+            statusIsError = true;
+            ClearOAuthQuery();
+            return;
+        }
+
+        if (!query.TryGetValue("oauth_session", out var sessionId) || string.IsNullOrWhiteSpace(sessionId))
+            return;
+
+        try
+        {
+            var sessionUrl = $"/api/oauth/session/{Uri.EscapeDataString(sessionId)}";
+            var session = await Http.GetFromJsonAsync<OAuthSessionDto>(sessionUrl);
+            if (session is null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                statusMessage = "OAuth session expired. Please try connecting again.";
+                statusIsError = true;
+            }
+            else
+            {
+                var connectorId = !string.IsNullOrWhiteSpace(session.ConnectorId)
+                    ? session.ConnectorId
+                    : (query.GetValueOrDefault("oauth_connector") ?? "");
+
+                var tokens = new OAuthTokenSet(
+                    session.AccessToken,
+                    session.RefreshToken,
+                    session.ExpiresAtUtc,
+                    session.TokenType,
+                    session.Scope,
+                    session.AccountLabel);
+
+                await KeyStore.UpsertOAuthConnectorAsync(new OAuthConnectorInstall(
+                    connectorId,
+                    Enabled: true,
+                    Tokens: tokens,
+                    ConnectedAtUtc: DateTimeOffset.UtcNow,
+                    AccountLabel: session.AccountLabel));
+
+                await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+                await RefreshOpenApiToolsAsync();
+
+                statusMessage = $"Connected {ConnectorCatalog.DisplayNameFor(connectorId)}"
+                    + (string.IsNullOrWhiteSpace(session.AccountLabel) ? "" : $" ({session.AccountLabel})");
+                statusIsError = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Could not complete OAuth: {ex.Message}";
+            statusIsError = true;
+        }
+
+        ClearOAuthQuery();
+    }
+
+    private void ClearOAuthQuery()
+    {
+        try
+        {
+            var abs = Nav.ToAbsoluteUri(Nav.Uri);
+            if (abs.Scheme is "http" or "https"
+                && abs.AbsolutePath.Contains("tools", StringComparison.OrdinalIgnoreCase)
+                && abs.Query.Contains("oauth_", StringComparison.OrdinalIgnoreCase))
+            {
+                Nav.NavigateTo("/tools", forceLoad: false, replace: true);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static Dictionary<string, string> ParseQuery(string query)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(query)) return dict;
+        var q = query.StartsWith('?') ? query[1..] : query;
+        foreach (var part in q.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = part.IndexOf('=');
+            if (eq <= 0) continue;
+            var key = Uri.UnescapeDataString(part[..eq]);
+            var val = Uri.UnescapeDataString(part[(eq + 1)..]);
+            dict[key] = val;
+        }
+        return dict;
+    }
+
+    private List<InstalledItem> BuildInstalled()
+    {
+        var list = new List<InstalledItem>();
+
+        foreach (var o in KeyStore.GetOAuthConnectors().Where(c => c.Tokens is not null))
+        {
+            var cat = allCatalog.FirstOrDefault(c =>
+                c.ConnectorId.Equals(o.ConnectorId, StringComparison.OrdinalIgnoreCase));
+            list.Add(new InstalledItem
+            {
+                Id = "oauth:" + o.ConnectorId,
+                ConnectorId = o.ConnectorId,
+                DisplayName = cat?.DisplayName ?? ConnectorCatalog.DisplayNameFor(o.ConnectorId),
+                Description = cat?.Description,
+                Subtitle = o.AccountLabel ?? o.Tokens?.AccountLabel,
+                Publisher = null,
+                IconText = cat?.IconText ?? "⬡",
+                IconBackground = cat?.IconBackground ?? "#6b7280",
+                IconImageUrl = cat?.IconImageUrl,
+                Kind = ConnectorKind.OpenApiOAuth,
+                Enabled = o.Enabled,
+                McpName = null
+            });
+        }
+
+        // Enabled MCP from registry list + custom installs (with stored URL).
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in registryTools.Where(x => x.IsEnabled).Concat(customTools.Where(x => x.IsEnabled)))
+        {
+            if (!seen.Add(t.Name)) continue;
+            list.Add(new InstalledItem
+            {
+                Id = "mcp:" + t.Name,
+                ConnectorId = t.Name,
+                DisplayName = t.DisplayTitle,
+                Description = t.Description,
+                Subtitle = t.IsCustom ? "Custom MCP" : "MCP",
+                Publisher = t.Publisher,
+                IconText = "🔌",
+                IconBackground = "var(--color-bg-muted, #f3f4f6)",
+                IconImageUrl = t.IconUrl,
+                Kind = ConnectorKind.Mcp,
+                Enabled = true,
+                McpName = t.Name,
+                IsCustomMcp = t.IsCustom
+            });
+        }
+
+        // Enabled names that are not in either list (e.g. after search changed) — still show them.
+        foreach (var name in KeyStore.EnabledMcpServerNames)
+        {
+            if (!seen.Add(name)) continue;
+            var token = KeyStore.GetMcpToken(name);
+            var custom = KeyStore.GetCustomConnectors()
+                .FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            list.Add(new InstalledItem
+            {
+                Id = "mcp:" + name,
+                ConnectorId = name,
+                DisplayName = ShortMcpName(name),
+                Description = null,
+                Subtitle = custom is not null ? "MCP" : "MCP",
+                IconText = "🔌",
+                IconBackground = "var(--color-bg-muted, #f3f4f6)",
+                Kind = ConnectorKind.Mcp,
+                Enabled = true,
+                McpName = name,
+                IsCustomMcp = custom is not null && registryTools.All(r => !r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            });
+        }
+
+        return list.OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private bool IsOAuthInstalled(string id) =>
+        KeyStore.GetOAuthConnector(id)?.Tokens is not null;
+
+    private async Task OnFeaturedOAuthClick(CatalogItem entry)
+    {
+        openMenuId = null;
+        if (IsOAuthInstalled(entry.ConnectorId))
+        {
+            openMenuId = "oauth:" + entry.ConnectorId;
+            return;
+        }
+
+        var provider = entry.OAuthProviderId ?? entry.ConnectorId;
+        if (oauthProviderReady.TryGetValue(provider, out var ready) && !ready)
+        {
+            statusMessage =
+                $"OAuth for {entry.DisplayName} is not configured. " +
+                $"Insert a row into OAuthProviders (ProviderId='{provider}') or set OAuth__{provider}__* env vars.";
+            statusIsError = true;
+            return;
+        }
+
+        var server = (Auth.ServerBaseUrl ?? "").TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(server))
+        {
+            try { server = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority); }
+            catch { server = ""; }
+        }
+        if (string.IsNullOrWhiteSpace(server))
+        {
+            statusMessage = "No App Server URL configured. Set AppServer:BaseUrl (MAUI) or open the web app on the host.";
+            statusIsError = true;
+            return;
+        }
+
+        var returnUrl = AppEnvironment.IsMaui
+            ? $"{server}/api/oauth/done"
+            : server;
+
+        var startUrl =
+            $"{server}/api/oauth/{Uri.EscapeDataString(provider)}/start" +
+            $"?connector={Uri.EscapeDataString(entry.ConnectorId)}" +
+            $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+
+        statusMessage = AppEnvironment.IsMaui
+            ? $"Opening {entry.DisplayName} sign-in in the browser panel… (you’ll return here when done)."
+            : $"Redirecting to {entry.DisplayName}…";
+        statusIsError = false;
+        StateHasChanged();
+
+        await UriLauncher.OpenAsync(startUrl);
+    }
+
+    private RenderFragment RenderToolIcon(string? iconText, string? iconBackground, string? iconImageUrl) => builder =>
+    {
+        var fallback = string.IsNullOrWhiteSpace(iconText) ? "◇" : iconText;
+        var bg = string.IsNullOrWhiteSpace(iconBackground)
+            ? "var(--color-bg-muted, #f3f4f6)"
+            : iconBackground;
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "cf-conn-icon cf-tool-icon");
+        builder.AddAttribute(2, "style",
+            "background:" + bg + ";color:var(--color-text-muted,#6b7280);position:relative;overflow:hidden;");
+
+        // Always render a glyph fallback so a broken remote icon never shows the browser "missing image" box.
+        builder.OpenElement(3, "span");
+        builder.AddAttribute(4, "class", "cf-tool-icon-fallback");
+        builder.AddAttribute(5, "aria-hidden", "true");
+        builder.AddContent(6, fallback);
+        builder.CloseElement();
+
+        if (!string.IsNullOrWhiteSpace(iconImageUrl))
+        {
+            builder.OpenElement(7, "img");
+            builder.AddAttribute(8, "class", "cf-tool-icon-img");
+            builder.AddAttribute(9, "src", iconImageUrl);
+            builder.AddAttribute(10, "alt", "");
+            builder.AddAttribute(11, "loading", "lazy");
+            // Hide broken image; leave the soft glyph underneath.
+            builder.AddAttribute(12, "onerror",
+                "this.classList.add('is-broken');this.removeAttribute('src');");
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    private void OpenMcpDetails(ManagedMcpTool mcp)
+    {
+        openMenuId = null;
+        detailsOAuth = null;
+        detailsMcp = mcp;
+    }
+
+    private void OpenOAuthDetails(CatalogItem entry)
+    {
+        openMenuId = null;
+        detailsMcp = null;
+        detailsOAuth = entry;
+    }
+
+    private async Task InstallMcpFromDetailsAsync()
+    {
+        if (detailsMcp is null) return;
+        var mcp = detailsMcp;
+        detailsMcp = null;
+        await InstallMcpAsync(mcp);
+    }
+
+    private async Task ConnectOAuthFromDetailsAsync()
+    {
+        if (detailsOAuth is null) return;
+        var entry = detailsOAuth;
+        detailsOAuth = null;
+        await OnFeaturedOAuthClick(entry);
+    }
+
+    /// <summary>Only called from the explicit Install button (or details modal Install).</summary>
+    private async Task InstallMcpAsync(ManagedMcpTool mcp)
+    {
+        openMenuId = null;
+        if (mcp.IsEnabled)
+        {
+            statusMessage = $"{mcp.DisplayTitle} is already installed.";
+            statusIsError = false;
+            return;
+        }
+
+        mcp.IsEnabled = true;
+        // Snapshot URL at install so chat tools work even when this server leaves the browse list.
+        if (!string.IsNullOrWhiteSpace(mcp.RemoteUrl))
+        {
+            var existing = KeyStore.GetCustomConnectors()
+                .Any(c => c.Name.Equals(mcp.Name, StringComparison.OrdinalIgnoreCase));
+            if (!existing)
+                await KeyStore.AddCustomConnectorAsync(mcp.Name, mcp.RemoteUrl);
+        }
+        await KeyStore.SetMcpServerEnabledAsync(mcp.Name, true);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+        await RefreshMcpToolsAsync();
+        LoadCustomsFromStore();
+        statusMessage = $"Installed {mcp.DisplayTitle}";
+        statusIsError = false;
+        if (mcp.RequiresAuth)
+        {
+            OpenMcpTokenEditor(new InstalledItem
+            {
+                Id = "mcp:" + mcp.Name,
+                DisplayName = mcp.DisplayTitle,
+                McpName = mcp.Name,
+                Kind = ConnectorKind.Mcp
+            });
+        }
+        StateHasChanged();
+    }
+
+    private void ToggleMenu(string id) =>
+        openMenuId = openMenuId == id ? null : id;
+
+    private static string OAuthMenuId(string connectorId) => "oauth:" + connectorId;
+
+    private async Task ToggleInstalledEnabled(InstalledItem item)
+    {
+        openMenuId = null;
+        if (item.Kind == ConnectorKind.OpenApiOAuth)
+        {
+            await KeyStore.SetOAuthConnectorEnabledAsync(item.ConnectorId, !item.Enabled);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+            await RefreshOpenApiToolsAsync();
+        }
+        else if (!string.IsNullOrEmpty(item.McpName))
+        {
+            await KeyStore.SetMcpServerEnabledAsync(item.McpName, !item.Enabled);
+            var tool = registryTools.Concat(customTools).FirstOrDefault(t => t.Name == item.McpName);
+            if (tool is not null) tool.IsEnabled = !item.Enabled;
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+            await RefreshMcpToolsAsync();
+        }
+        StateHasChanged();
+    }
+
+    private async Task Disconnect(InstalledItem item)
+    {
+        openMenuId = null;
+        if (item.Kind == ConnectorKind.OpenApiOAuth)
+        {
+            await KeyStore.RemoveOAuthConnectorAsync(item.ConnectorId);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+            await RefreshOpenApiToolsAsync();
+            statusMessage = $"Disconnected {item.DisplayName}";
+            statusIsError = false;
+        }
+        else if (!string.IsNullOrEmpty(item.McpName))
+        {
+            await KeyStore.SetMcpServerEnabledAsync(item.McpName, false);
+            await KeyStore.SetMcpTokenAsync(item.McpName, "");
+            var tool = registryTools.Concat(customTools).FirstOrDefault(t => t.Name == item.McpName);
+            if (tool is not null)
+            {
+                tool.IsEnabled = false;
+                tool.Token = "";
+            }
+            // Remove stored URL snapshot (registry install or user custom).
+            await KeyStore.RemoveCustomConnectorAsync(item.McpName);
+            LoadCustomsFromStore();
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+            await RefreshMcpToolsAsync();
+            statusMessage = $"Disconnected {item.DisplayName}";
+            statusIsError = false;
+        }
+        StateHasChanged();
+    }
+
+    private void OpenMcpTokenEditor(InstalledItem item)
+    {
+        openMenuId = null;
+        tokenEditor = item;
+        var tool = registryTools.Concat(customTools).FirstOrDefault(t => t.Name == item.McpName);
+        tokenEditorValue = tool?.Token ?? KeyStore.GetMcpToken(item.McpName ?? "");
+    }
+
+    private async Task SaveTokenEditor()
+    {
+        if (tokenEditor?.McpName is null) return;
+        await KeyStore.SetMcpTokenAsync(tokenEditor.McpName, tokenEditorValue ?? "");
+        var tool = registryTools.Concat(customTools).FirstOrDefault(t => t.Name == tokenEditor.McpName);
+        if (tool is not null) tool.Token = tokenEditorValue ?? "";
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+        await RefreshMcpToolsAsync();
+        tokenEditor = null;
+        statusMessage = "Token saved";
+        statusIsError = false;
+    }
+
+    private static string ShortMcpName(string fullName)
+    {
+        if (string.IsNullOrWhiteSpace(fullName)) return "MCP";
+        var last = fullName.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? fullName;
+        return last.Length > 32 ? last[..29] + "…" : last;
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchQuery = e.Value?.ToString() ?? "";
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        var cts = _searchCts;
+        var gen = ++_searchGeneration;
+
+        try
+        {
+            await Task.Delay(320, cts.Token);
+            if (gen != _searchGeneration) return;
+            await RefreshDiscoverAsync(cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            // superseded by a newer keystroke
+        }
+    }
+
+    private async Task RefreshDiscoverAsync(CancellationToken ct = default)
+    {
+        var q = searchQuery?.Trim() ?? "";
+        if (string.IsNullOrEmpty(q))
+            isLoading = true;
+        else
+            isSearching = true;
         loadError = null;
         StateHasChanged();
 
         try
         {
-            // Go through our own backend proxy (avoids CORS + gives us filtered data).
-            var list = await Http.GetFromJsonAsync<List<RemoteMcpServer>>("/api/tools/mcp-registry");
+            var url = string.IsNullOrEmpty(q)
+                ? "/api/tools/mcp-registry?limit=20"
+                : $"/api/tools/mcp-registry?q={Uri.EscapeDataString(q)}&limit=30";
+
+            var list = await Http.GetFromJsonAsync<List<RemoteMcpServer>>(url, ct);
+            ct.ThrowIfCancellationRequested();
 
             var enabled = KeyStore.EnabledMcpServerNames;
 
@@ -269,7 +999,10 @@
                 .Select(s => new ManagedMcpTool
                 {
                     Name = s.Name,
+                    Title = s.Title,
                     Description = s.Description,
+                    Publisher = s.Publisher,
+                    IconUrl = s.IconUrl,
                     RemoteUrl = s.RemoteUrl,
                     Transport = s.Transport,
                     RequiresAuth = s.RequiresAuth,
@@ -279,23 +1012,28 @@
                     Token = KeyStore.GetMcpToken(s.Name),
                     IsCustom = false
                 })
-                .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // Kick off MCP tool discovery in the background so chat immediately sees fresh tools
+            // Keep enabled state in sync for any still-listed tools
+            foreach (var t in registryTools)
+                t.IsEnabled = enabled.Contains(t.Name);
+
             _ = RefreshMcpToolsAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             loadError = $"Could not load registry: {ex.Message}";
-            Console.WriteLine($"[Tools] Registry fetch error: {ex}");
-            // Keep whatever we had (or empty)
             if (!registryTools.Any())
                 registryTools = new();
         }
         finally
         {
             isLoading = false;
+            isSearching = false;
             StateHasChanged();
         }
     }
@@ -303,53 +1041,25 @@
     private void LoadCustomsFromStore()
     {
         var enabled = KeyStore.EnabledMcpServerNames;
-        var customs = KeyStore.GetCustomConnectors();
+        var registryNames = new HashSet<string>(
+            registryTools.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
 
-        customTools = customs
+        customTools = KeyStore.GetCustomConnectors()
             .Select(c => new ManagedMcpTool
             {
                 Name = c.Name,
-                Description = "Custom MCP connector",
+                Title = ShortMcpName(c.Name),
+                Description = registryNames.Contains(c.Name) ? "" : "Custom MCP connector",
                 RemoteUrl = c.ServerUrl,
                 Transport = "custom",
-                RequiresAuth = false,   // customs always show token field when enabled
-                InfoUrl = null,
-                Version = "",
+                RequiresAuth = false,
                 IsEnabled = enabled.Contains(c.Name),
                 Token = KeyStore.GetMcpToken(c.Name),
-                IsCustom = true
+                // True only when not also a known registry server (user-typed URL).
+                IsCustom = !registryNames.Contains(c.Name)
             })
             .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
-
-        StateHasChanged();
-    }
-
-    private async Task ToggleEnabled(ManagedMcpTool tool, ChangeEventArgs e)
-    {
-        bool newValue = e.Value is bool b && b;
-        tool.IsEnabled = newValue;
-
-        await KeyStore.SetMcpServerEnabledAsync( tool.Name, newValue);
-        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
-
-        // Rebuild the MCP AITool list for the chat loop
-        await RefreshMcpToolsAsync();
-
-        StateHasChanged();
-    }
-
-    private async Task UpdateAndSaveToken(ManagedMcpTool tool, string newToken)
-    {
-        tool.Token = newToken ?? "";
-        await KeyStore.SetMcpTokenAsync( tool.Name, tool.Token);
-        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
-
-        // If this server is enabled, refresh the callable tools so the new token is used on next chat turn
-        if (tool.IsEnabled)
-        {
-            await RefreshMcpToolsAsync();
-        }
     }
 
     private void OpenAddCustomDialog()
@@ -358,81 +1068,61 @@
         newCustomUrl = "";
         customDialogError = "";
         showAddCustomDialog = true;
-        StateHasChanged();
     }
 
     private void CloseCustomDialog()
     {
         showAddCustomDialog = false;
         customDialogError = "";
-        StateHasChanged();
     }
 
     private async Task AddCustomConnector()
     {
         customDialogError = "";
-
         var name = (newCustomName ?? "").Trim();
         var url = (newCustomUrl ?? "").Trim();
 
         if (string.IsNullOrWhiteSpace(name))
         {
-            customDialogError = "Please enter a name for the connector.";
+            customDialogError = "Please enter a name.";
             return;
         }
-        if (string.IsNullOrWhiteSpace(url) || !(url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+        if (string.IsNullOrWhiteSpace(url) ||
+            !(url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+              url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
         {
-            customDialogError = "Please enter a valid HTTP or HTTPS Server URL.";
+            customDialogError = "Please enter a valid HTTP or HTTPS URL.";
             return;
         }
 
-        // Prevent duplicate names (across registry + existing customs)
-        var allKnownNames = new HashSet<string>(registryTools.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
+        var allKnown = new HashSet<string>(registryTools.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
         foreach (var c in KeyStore.GetCustomConnectors())
-            allKnownNames.Add(c.Name);
-
-        if (allKnownNames.Contains(name))
+            allKnown.Add(c.Name);
+        if (allKnown.Contains(name))
         {
-            customDialogError = "A connector with this name already exists (registry or custom).";
+            customDialogError = "A connector with this name already exists.";
             return;
         }
 
-        await KeyStore.AddCustomConnectorAsync( name, url);
-
-        // Auto-enable the new custom so it is immediately available for chat
-        await KeyStore.SetMcpServerEnabledAsync( name, true);
-
-        // Refresh the in-memory custom list for display
+        await KeyStore.AddCustomConnectorAsync(name, url);
+        await KeyStore.SetMcpServerEnabledAsync(name, true);
         LoadCustomsFromStore();
-
-        // Tell the chat tool system about the new connector
         await RefreshMcpToolsAsync();
-
-        // Close and reset dialog
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
         showAddCustomDialog = false;
-        newCustomName = "";
-        newCustomUrl = "";
-        customDialogError = "";
-        StateHasChanged();
-    }
-
-    private string? removeCustomName;
-
-    private void RequestRemoveCustom(ManagedMcpTool tool)
-    {
-        if (!tool.IsCustom) return;
-        removeCustomName = tool.Name;
+        statusMessage = $"Added {name}";
+        statusIsError = false;
     }
 
     private async Task ConfirmRemoveCustom()
     {
         if (string.IsNullOrEmpty(removeCustomName)) return;
-
         await KeyStore.RemoveCustomConnectorAsync(removeCustomName);
+        await KeyStore.SetMcpServerEnabledAsync(removeCustomName, false);
         removeCustomName = null;
         LoadCustomsFromStore();
         await RefreshMcpToolsAsync();
-        StateHasChanged();
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
     }
 
     private async Task RefreshMcpToolsAsync()
@@ -441,7 +1131,12 @@
             await McpToolRefresher.RefreshFromKeyStoreAsync();
     }
 
-    // Matches the shape returned by our /api/tools/mcp-registry proxy.
+    private async Task RefreshOpenApiToolsAsync()
+    {
+        if (OpenApiRefresher is not null)
+            await OpenApiRefresher.RefreshFromKeyStoreAsync();
+    }
+
     private record RemoteMcpServer(
         string Name,
         string Description,
@@ -449,21 +1144,75 @@
         string Transport,
         bool RequiresAuth,
         string? InfoUrl,
-        string Version
-    );
+        string Version,
+        string? Title = null,
+        string? Publisher = null,
+        string? IconUrl = null,
+        DateTimeOffset? UpdatedAt = null);
 
-    // Local mutable view model for the checkbox list (IsEnabled drives the UI + persistence).
     private class ManagedMcpTool
     {
-        public string Name { get; set; } = string.Empty;
-        public string Description { get; set; } = string.Empty;
-        public string RemoteUrl { get; set; } = string.Empty;
-        public string Transport { get; set; } = string.Empty;
+        public string Name { get; set; } = "";
+        public string? Title { get; set; }
+        public string Description { get; set; } = "";
+        public string? Publisher { get; set; }
+        public string? IconUrl { get; set; }
+        public string RemoteUrl { get; set; } = "";
+        public string Transport { get; set; } = "";
         public bool RequiresAuth { get; set; }
         public string? InfoUrl { get; set; }
-        public string Version { get; set; } = string.Empty;
+        public string Version { get; set; } = "";
         public bool IsEnabled { get; set; }
-        public string Token { get; set; } = string.Empty;
+        public string Token { get; set; } = "";
         public bool IsCustom { get; set; }
+
+        public string DisplayTitle =>
+            !string.IsNullOrWhiteSpace(Title) ? Title! : ShortMcpName(Name);
+    }
+
+    private sealed class InstalledItem
+    {
+        public string Id { get; set; } = "";
+        public string ConnectorId { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string? Description { get; set; }
+        public string? Subtitle { get; set; }
+        public string? Publisher { get; set; }
+        public string IconText { get; set; } = "⬡";
+        public string IconBackground { get; set; } = "#6b7280";
+        public string? IconImageUrl { get; set; }
+        public ConnectorKind Kind { get; set; }
+        public bool Enabled { get; set; }
+        public string? McpName { get; set; }
+        public bool IsCustomMcp { get; set; }
+    }
+
+    /// <summary>Matches GET /api/connectors/catalog JSON (camelCase).</summary>
+    private sealed class CatalogItem
+    {
+        public string ConnectorId { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string? Description { get; set; }
+        public int Kind { get; set; }
+        public string? OAuthProviderId { get; set; }
+        public string[]? Scopes { get; set; }
+        public string? DocsUrl { get; set; }
+        public bool Featured { get; set; }
+        public int SortOrder { get; set; }
+        public string IconText { get; set; } = "?";
+        public string IconBackground { get; set; } = "#6b7280";
+        public string? IconImageUrl { get; set; }
+    }
+
+    private sealed class OAuthSessionDto
+    {
+        public string ConnectorId { get; set; } = "";
+        public string Provider { get; set; } = "";
+        public string AccessToken { get; set; } = "";
+        public string? RefreshToken { get; set; }
+        public DateTimeOffset? ExpiresAtUtc { get; set; }
+        public string? TokenType { get; set; }
+        public string? Scope { get; set; }
+        public string? AccountLabel { get; set; }
     }
 }
