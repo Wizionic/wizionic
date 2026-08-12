@@ -13,7 +13,12 @@
       prior project layout) would otherwise be compiled and cause CS0579 duplicate assembly
       attributes and CS0101 duplicate generated types.
     -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
+    <!--
+      Also exclude local publish/deploy artifact folders. Without this, publishing into a
+      folder under the repo root re-includes that output on the next publish and nests
+      recursively until Windows MAX_PATH is exceeded.
+    -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**;**/publish_output/**;**/maui_publish/**;**/maui_releases/**;**/homeserver_publish_win/**;**/homeserver_releases_win/**;**/homeserver_publish_linux/**;**/homeserver_releases_linux/**;**/linux_publish/**;**/linux_releases/**;**/artifacts/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

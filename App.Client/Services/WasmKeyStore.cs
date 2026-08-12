@@ -1,9 +1,11 @@
 using App.Core.Auth;
+using App.Core.Connectors;
 using App.Core.Lemonade;
 using App.Core.Ollama;
 using App.Core.SmartHome;
 using App.Core.Storage;
 using App.Core.Tools;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -23,15 +25,18 @@ public class WasmKeyStore : IKeyStore
     private const string McpEnabledKey = "wasm-mcp-enabled-servers";
     private const string McpTokensKey = "wasm-mcp-tokens";
     private const string McpCustomConnectorsKey = "wasm-mcp-custom-connectors";
+    private const string OAuthConnectorsKey = "wasm-oauth-connectors";
     private const string LastSelectedModelKey = "wasm-last-selected-model";
     private const string ToolRoutingKey = "wasm-tool-routing";
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
     private const string HomeAssistantConfigKey = "wasm-home-assistant-config";
+    private const string EncPrefix = "enc:";
 
     private readonly IJSRuntime _js;
     private readonly IAuthService _auth;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     private Dictionary<string, string> _providerKeys = new();
     private string _lastSelectedModel = "";
@@ -46,12 +51,14 @@ public class WasmKeyStore : IKeyStore
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
+    private List<OAuthConnectorInstall> _oauthConnectors = new();
     private HomeAssistantConfig _homeAssistantConfig = new();
 
-    public WasmKeyStore(IJSRuntime js, IAuthService auth)
+    public WasmKeyStore(IJSRuntime js, IAuthService auth, IServiceScopeFactory scopeFactory)
     {
         _js = js;
         _auth = auth;
+        _scopeFactory = scopeFactory;
         _auth.OnChanged += () => _ = LoadAsync();
     }
 
@@ -102,6 +109,10 @@ public class WasmKeyStore : IKeyStore
             if (loaded != null)
                 _customMcpConnectors = loaded;
         }
+
+        var oauthJson = await GetItemAsync(OAuthConnectorsKey, ct);
+        if (!string.IsNullOrEmpty(oauthJson))
+            _oauthConnectors = await DeserializeOAuthConnectorsAsync(oauthJson, ct);
 
         _lastSelectedModel = await GetItemAsync(LastSelectedModelKey, ct) ?? "";
 
@@ -164,6 +175,7 @@ public class WasmKeyStore : IKeyStore
         _enabledMcpServers = new();
         _mcpTokens = new();
         _customMcpConnectors = new();
+        _oauthConnectors = new();
         _homeAssistantConfig = new();
     }
 
@@ -1012,6 +1024,203 @@ public class WasmKeyStore : IKeyStore
     {
         var json = JsonSerializer.Serialize(_mcpTokens);
         await SetItemAsync(McpTokensKey, json, ct);
+    }
+
+    public IReadOnlyList<OAuthConnectorInstall> GetOAuthConnectors() =>
+        _oauthConnectors.OrderBy(c => c.ConnectorId, StringComparer.OrdinalIgnoreCase).ToList();
+
+    public OAuthConnectorInstall? GetOAuthConnector(string connectorId)
+    {
+        if (string.IsNullOrWhiteSpace(connectorId)) return null;
+        return _oauthConnectors.FirstOrDefault(c =>
+            c.ConnectorId.Equals(connectorId.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    public OAuthTokenSet? GetOAuthTokens(string connectorId) =>
+        GetOAuthConnector(connectorId)?.Tokens;
+
+    public async Task UpsertOAuthConnectorAsync(OAuthConnectorInstall install, CancellationToken ct = default)
+    {
+        if (install is null || string.IsNullOrWhiteSpace(install.ConnectorId))
+            return;
+
+        var id = install.ConnectorId.Trim();
+        var label = install.AccountLabel
+            ?? install.Tokens?.AccountLabel;
+        var normalized = install with
+        {
+            ConnectorId = id,
+            AccountLabel = string.IsNullOrWhiteSpace(label) ? null : label.Trim()
+        };
+
+        _oauthConnectors.RemoveAll(c => c.ConnectorId.Equals(id, StringComparison.OrdinalIgnoreCase));
+        _oauthConnectors.Add(normalized);
+        await SaveOAuthConnectorsAsync(ct);
+    }
+
+    public async Task SetOAuthConnectorEnabledAsync(string connectorId, bool enabled, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(connectorId)) return;
+        var id = connectorId.Trim();
+        var idx = _oauthConnectors.FindIndex(c => c.ConnectorId.Equals(id, StringComparison.OrdinalIgnoreCase));
+        if (idx < 0) return;
+        _oauthConnectors[idx] = _oauthConnectors[idx] with { Enabled = enabled };
+        await SaveOAuthConnectorsAsync(ct);
+    }
+
+    public async Task RemoveOAuthConnectorAsync(string connectorId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(connectorId)) return;
+        var removed = _oauthConnectors.RemoveAll(c =>
+            c.ConnectorId.Equals(connectorId.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (removed > 0)
+            await SaveOAuthConnectorsAsync(ct);
+    }
+
+    public async Task ReplaceOAuthConnectorsAsync(IEnumerable<OAuthConnectorInstall> installs, CancellationToken ct = default)
+    {
+        _oauthConnectors = (installs ?? Array.Empty<OAuthConnectorInstall>())
+            .Where(i => i is not null && !string.IsNullOrWhiteSpace(i.ConnectorId))
+            .Select(i =>
+            {
+                var label = i.AccountLabel ?? i.Tokens?.AccountLabel;
+                return i with
+                {
+                    ConnectorId = i.ConnectorId.Trim(),
+                    AccountLabel = string.IsNullOrWhiteSpace(label) ? null : label.Trim()
+                };
+            })
+            .GroupBy(i => i.ConnectorId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
+        await SaveOAuthConnectorsAsync(ct);
+    }
+
+    private async Task SaveOAuthConnectorsAsync(CancellationToken ct)
+    {
+        var stored = new List<OAuthConnectorStoredDto>();
+        foreach (var install in _oauthConnectors)
+        {
+            string? tokensField = null;
+            if (install.Tokens is not null)
+            {
+                var plain = JsonSerializer.Serialize(install.Tokens);
+                tokensField = await EncryptSecretAsync(plain, ct);
+            }
+
+            stored.Add(new OAuthConnectorStoredDto
+            {
+                ConnectorId = install.ConnectorId,
+                Enabled = install.Enabled,
+                ConnectedAtUtc = install.ConnectedAtUtc,
+                AccountLabel = install.AccountLabel ?? install.Tokens?.AccountLabel,
+                Tokens = tokensField
+            });
+        }
+
+        await SetItemAsync(OAuthConnectorsKey, JsonSerializer.Serialize(stored), ct);
+    }
+
+    private async Task<List<OAuthConnectorInstall>> DeserializeOAuthConnectorsAsync(string json, CancellationToken ct)
+    {
+        try
+        {
+            var stored = JsonSerializer.Deserialize<List<OAuthConnectorStoredDto>>(json);
+            if (stored is null) return new();
+
+            var result = new List<OAuthConnectorInstall>();
+            foreach (var s in stored)
+            {
+                if (string.IsNullOrWhiteSpace(s.ConnectorId)) continue;
+                OAuthTokenSet? tokens = null;
+                if (!string.IsNullOrWhiteSpace(s.Tokens))
+                {
+                    var plain = await DecryptSecretAsync(s.Tokens, ct);
+                    if (!string.IsNullOrWhiteSpace(plain))
+                    {
+                        try
+                        {
+                            tokens = JsonSerializer.Deserialize<OAuthTokenSet>(plain);
+                        }
+                        catch { /* ignore bad token blob */ }
+                    }
+                }
+
+                var label = s.AccountLabel ?? tokens?.AccountLabel;
+                result.Add(new OAuthConnectorInstall(
+                    s.ConnectorId.Trim(),
+                    s.Enabled,
+                    tokens,
+                    s.ConnectedAtUtc,
+                    string.IsNullOrWhiteSpace(label) ? null : label.Trim()));
+            }
+
+            return result;
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    private async Task<string> EncryptSecretAsync(string plaintext, CancellationToken ct)
+    {
+        var key = _auth.LocalEncryptionKeyB64;
+        if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(plaintext))
+            return plaintext;
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var crypto = scope.ServiceProvider.GetService<ICryptoService>();
+            if (crypto is null) return plaintext;
+            var cipher = await crypto.EncryptAsync(key, plaintext, ct);
+            if (string.IsNullOrEmpty(cipher) || cipher == plaintext)
+                return plaintext;
+            return EncPrefix + cipher;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmKeyStore] OAuth encrypt failed, storing plaintext: {ex.Message}");
+            return plaintext;
+        }
+    }
+
+    private async Task<string> DecryptSecretAsync(string stored, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(stored))
+            return stored;
+
+        if (!stored.StartsWith(EncPrefix, StringComparison.Ordinal))
+            return stored;
+
+        var cipher = stored[EncPrefix.Length..];
+        var key = _auth.LocalEncryptionKeyB64;
+        if (string.IsNullOrEmpty(key))
+            return stored; // cannot decrypt yet
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var crypto = scope.ServiceProvider.GetService<ICryptoService>();
+            if (crypto is null) return stored;
+            return await crypto.DecryptAsync(key, cipher, ct);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WasmKeyStore] OAuth decrypt failed: {ex.Message}");
+            return stored;
+        }
+    }
+
+    private sealed class OAuthConnectorStoredDto
+    {
+        public string ConnectorId { get; set; } = "";
+        public bool Enabled { get; set; }
+        public DateTimeOffset? ConnectedAtUtc { get; set; }
+        public string? AccountLabel { get; set; }
+        /// <summary>Plain JSON of OAuthTokenSet, or enc: + AES-GCM ciphertext.</summary>
+        public string? Tokens { get; set; }
     }
 
     public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";

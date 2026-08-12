@@ -299,65 +299,59 @@ public static class WasmApiEndpoints
             return await App.Services.Tools.AppTools.GetCurrentWeather(req.Latitude, req.Longitude, req.Units ?? "celsius", req.ForecastDays ?? 0);
         });
 
-        // Public MCP registry proxy + filter.
-        // - Fetches from the official unauthenticated registry.
-        // - Filters to ONLY servers that expose streamable-http or sse remotes (no stdio-only entries, since a web client cannot launch local processes).
-        // - Deduplicates by server name, preferring the latest published version.
-        // - Returns a small clean list the WASM Tools page can render with checkboxes.
-        // Client (browser) calls this instead of hitting the registry directly to avoid CORS.
-        toolsGroup.MapGet("/mcp-registry", async () =>
+        // Public MCP registry proxy + filter (official registry.modelcontextprotocol.io).
+        // - Browse: version=latest, over-fetch until ~limit remote-capable servers (default 20).
+        // - Search: passes search= upstream so the full registry is searched (not a client filter).
+        // - Maps title, icons, publisher for GitHub-style cards. No SQLite catalog for browse results.
+        // - Filters to streamable-http / sse / http only (web/WASM cannot launch stdio packages).
+        toolsGroup.MapGet("/mcp-registry", async (HttpRequest httpRequest) =>
         {
             try
             {
-                using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-                // Use a slightly higher limit to get a good selection after filtering + dedup.
-                var raw = await hc.GetFromJsonAsync<RegistryResponse>("https://registry.modelcontextprotocol.io/v0/servers?limit=50");
+                // Read query explicitly (q or search) — avoids subtle minimal-API binding quirks.
+                var search = (httpRequest.Query["q"].FirstOrDefault()
+                              ?? httpRequest.Query["search"].FirstOrDefault()
+                              ?? "").Trim();
+                var limitRaw = httpRequest.Query["limit"].FirstOrDefault();
+                var want = 20;
+                if (int.TryParse(limitRaw, out var parsedLimit))
+                    want = Math.Clamp(parsedLimit, 1, 100);
+
+                using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                var jsonOpts = new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
 
                 var results = new List<RemoteMcpServer>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string? cursor = null;
+                // Over-fetch: many registry rows are stdio-only and get filtered out.
+                var pageSize = string.IsNullOrEmpty(search)
+                    ? Math.Min(100, Math.Max(want * 5, 50))
+                    : Math.Min(100, Math.Max(want * 3, 40));
+                var maxPages = string.IsNullOrEmpty(search) ? 6 : 8;
 
-                if (raw?.Servers != null)
+                for (var page = 0; page < maxPages && results.Count < want; page++)
                 {
-                    // Group by canonical name, pick best (latest) entry per name.
-                    var bestPerName = raw.Servers
-                        .Where(e => e?.Server != null && !string.IsNullOrWhiteSpace(e.Server.Name))
-                        .GroupBy(e => e.Server!.Name, StringComparer.OrdinalIgnoreCase)
-                        .Select(g =>
-                        {
-                            // Prefer entries explicitly marked isLatest, then highest version string (lexical is often fine for semver here).
-                            return g.OrderByDescending(x => IsLatest(x))
-                                    .ThenByDescending(x => x.Server!.Version ?? "")
-                                    .First();
-                        });
+                    var url = BuildRegistryListUrl(search, pageSize, cursor);
+                    var body = await FetchRegistryPageAsync(hc, url);
+                    if (body is null)
+                        break;
 
-                    foreach (var entry in bestPerName)
-                    {
-                        var sv = entry.Server!;
-                        // Only keep servers that publish at least one web-callable remote transport.
-                        var remote = sv.Remotes?.FirstOrDefault(r =>
-                            !string.IsNullOrWhiteSpace(r?.Url) &&
-                            (string.Equals(r.Type, "streamable-http", StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(r.Type, "sse", StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(r.Type, "http", StringComparison.OrdinalIgnoreCase)));
+                    var raw = System.Text.Json.JsonSerializer.Deserialize<RegistryResponse>(body, jsonOpts);
+                    if (raw?.Servers == null || raw.Servers.Count == 0)
+                        break;
 
-                        if (remote == null) continue;
-
-                        bool requiresAuth = remote.Headers?.Any(h => h is { IsRequired: true }) ?? false;
-
-                        string? infoUrl = !string.IsNullOrWhiteSpace(sv.WebsiteUrl) ? sv.WebsiteUrl :
-                                          (sv.Repository?.Url);
-
-                        results.Add(new RemoteMcpServer(
-                            Name: sv.Name,
-                            Description: sv.Description ?? sv.Title ?? "",
-                            RemoteUrl: remote.Url!,
-                            Transport: remote.Type ?? "remote",
-                            RequiresAuth: requiresAuth,
-                            InfoUrl: infoUrl,
-                            Version: sv.Version ?? ""
-                        ));
-                    }
+                    AppendMapped(raw, results, seen, want);
+                    cursor = raw.Metadata?.NextCursor;
+                    if (string.IsNullOrWhiteSpace(cursor))
+                        break;
                 }
 
+                // Helpful for debugging whether the running host applied search.
+                httpRequest.HttpContext.Response.Headers["X-Mcp-Registry-Q"] = search;
+                httpRequest.HttpContext.Response.Headers["X-Mcp-Registry-Count"] = results.Count.ToString();
                 return Results.Ok(results);
             }
             catch (Exception ex)
@@ -365,10 +359,20 @@ public static class WasmApiEndpoints
                 return Results.Problem(detail: ex.Message, title: "Failed to fetch MCP registry");
             }
 
-            static bool IsLatest(RegistryEntry e)
+            static void AppendMapped(
+                RegistryResponse raw,
+                List<RemoteMcpServer> results,
+                HashSet<string> seen,
+                int want)
             {
-                // The key in _meta contains slashes; our DTO maps it via JsonPropertyName.
-                return e?._meta?.Official?.IsLatest ?? false;
+                foreach (var entry in raw.Servers)
+                {
+                    if (results.Count >= want) break;
+                    var mapped = MapRegistryEntry(entry);
+                    if (mapped is null) continue;
+                    if (!seen.Add(mapped.Name)) continue;
+                    results.Add(mapped);
+                }
             }
         });
 
@@ -392,6 +396,7 @@ public static class WasmApiEndpoints
     /// <summary>
     /// Clean, filtered representation of a remote-capable MCP server for the Tools UI.
     /// Only entries that have usable HTTP/SSE remotes are returned (stdio-only servers are dropped server-side).
+    /// Browse/search metadata is never persisted — only install-time config lives in the client KeyStore.
     /// </summary>
     public record RemoteMcpServer(
         string Name,
@@ -400,7 +405,11 @@ public static class WasmApiEndpoints
         string Transport,
         bool RequiresAuth,
         string? InfoUrl,
-        string Version
+        string Version,
+        string? Title = null,
+        string? Publisher = null,
+        string? IconUrl = null,
+        DateTimeOffset? UpdatedAt = null
     );
 
     // --- Raw registry deserialization shapes (match https://registry.modelcontextprotocol.io/v0/servers) ---
@@ -408,7 +417,13 @@ public static class WasmApiEndpoints
     public class RegistryResponse
     {
         public List<RegistryEntry> Servers { get; set; } = new();
-        public object? Metadata { get; set; }
+        public RegistryListMetadata? Metadata { get; set; }
+    }
+
+    public class RegistryListMetadata
+    {
+        public string? NextCursor { get; set; }
+        public int? Count { get; set; }
     }
 
     public class RegistryEntry
@@ -429,12 +444,21 @@ public static class WasmApiEndpoints
 
         public RegistryRepository? Repository { get; set; }
         public List<RegistryRemote>? Remotes { get; set; }
+        public List<RegistryIcon>? Icons { get; set; }
         // packages (stdio etc.) are intentionally ignored for the web client list
     }
 
     public class RegistryRepository
     {
         public string? Url { get; set; }
+        public string? Source { get; set; }
+    }
+
+    public class RegistryIcon
+    {
+        public string? Src { get; set; }
+        public string? MimeType { get; set; }
+        public string? Theme { get; set; }
     }
 
     public class RegistryRemote
@@ -461,5 +485,194 @@ public static class WasmApiEndpoints
     public class OfficialMeta
     {
         public bool IsLatest { get; set; }
+        public string? Status { get; set; }
+        public DateTimeOffset? PublishedAt { get; set; }
+        public DateTimeOffset? UpdatedAt { get; set; }
+    }
+
+    private static string BuildRegistryListUrl(string search, int pageSize, string? cursor)
+    {
+        // Prefer v0.1 (API freeze); v0 remains compatible for the same list shape.
+        var qs = new List<string>
+        {
+            $"limit={pageSize}",
+            "version=latest"
+        };
+        if (!string.IsNullOrEmpty(search))
+            qs.Add("search=" + Uri.EscapeDataString(search));
+        if (!string.IsNullOrWhiteSpace(cursor))
+            qs.Add("cursor=" + Uri.EscapeDataString(cursor));
+
+        return "https://registry.modelcontextprotocol.io/v0.1/servers?" + string.Join("&", qs);
+    }
+
+    private static async Task<string?> FetchRegistryPageAsync(HttpClient hc, string v01Url)
+    {
+        try
+        {
+            using var resp = await hc.GetAsync(v01Url);
+            if (resp.IsSuccessStatusCode)
+                return await resp.Content.ReadAsStringAsync();
+        }
+        catch
+        {
+            // try v0 below
+        }
+
+        try
+        {
+            var v0Url = v01Url.Replace("/v0.1/", "/v0/", StringComparison.Ordinal);
+            using var resp = await hc.GetAsync(v0Url);
+            if (resp.IsSuccessStatusCode)
+                return await resp.Content.ReadAsStringAsync();
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return null;
+    }
+
+    private static RemoteMcpServer? MapRegistryEntry(RegistryEntry? entry)
+    {
+        var sv = entry?.Server;
+        if (sv is null || string.IsNullOrWhiteSpace(sv.Name))
+            return null;
+
+        // Prefer active/latest; still allow unknown status.
+        var official = entry?._meta?.Official;
+        if (official is { Status: not null } &&
+            !string.Equals(official.Status, "active", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(official.Status, "deprecated", StringComparison.OrdinalIgnoreCase))
+        {
+            // skip deleted / disabled
+            if (string.Equals(official.Status, "deleted", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(official.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                return null;
+        }
+
+        var remote = sv.Remotes?.FirstOrDefault(r =>
+            !string.IsNullOrWhiteSpace(r?.Url) &&
+            (string.Equals(r.Type, "streamable-http", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(r.Type, "sse", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(r.Type, "http", StringComparison.OrdinalIgnoreCase)));
+
+        if (remote == null)
+            return null;
+
+        bool requiresAuth = remote.Headers?.Any(h => h is { IsRequired: true }) ?? false;
+
+        string? infoUrl = !string.IsNullOrWhiteSpace(sv.WebsiteUrl) ? sv.WebsiteUrl :
+                          sv.Repository?.Url;
+
+        var title = !string.IsNullOrWhiteSpace(sv.Title)
+            ? sv.Title!
+            : ShortRegistryTitle(sv.Name);
+
+        return new RemoteMcpServer(
+            Name: sv.Name,
+            Description: sv.Description ?? sv.Title ?? "",
+            RemoteUrl: remote.Url!,
+            Transport: remote.Type ?? "remote",
+            RequiresAuth: requiresAuth,
+            InfoUrl: infoUrl,
+            Version: sv.Version ?? "",
+            Title: title,
+            Publisher: DerivePublisher(sv.Name, sv.Repository?.Url),
+            IconUrl: ResolveIconUrl(sv.Icons, sv.Repository?.Url, sv.WebsiteUrl, remote.Url),
+            UpdatedAt: official?.UpdatedAt ?? official?.PublishedAt
+        );
+    }
+
+    private static string ShortRegistryTitle(string fullName)
+    {
+        if (string.IsNullOrWhiteSpace(fullName)) return "MCP";
+        var last = fullName.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? fullName;
+        return last.Length > 48 ? last[..45] + "…" : last;
+    }
+
+    /// <summary>
+    /// "By …" publisher: reverse-DNS namespace before '/', else GitHub owner from repo URL.
+    /// </summary>
+    private static string? DerivePublisher(string name, string? repositoryUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(name) && name.Contains('/'))
+        {
+            var ns = name.Split('/', 2)[0].Trim();
+            if (!string.IsNullOrEmpty(ns))
+            {
+                // com.github.user → user; io.modelcontextprotocol → modelcontextprotocol
+                var parts = ns.Split('.', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2)
+                {
+                    // Prefer last meaningful label (skip common TLDs/prefixes when multi-part)
+                    var last = parts[^1];
+                    if (parts.Length >= 3 && parts[0] is "com" or "io" or "org" or "ai" or "net")
+                        return parts[^1];
+                    if (parts.Length == 2)
+                        return parts[1]; // ai.smithery → smithery
+                    return last;
+                }
+                return ns;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(repositoryUrl) &&
+            Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var uri) &&
+            uri.Host.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var segs = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segs.Length >= 1)
+                return segs[0];
+        }
+
+        return null;
+    }
+
+    private static string? ResolveIconUrl(
+        List<RegistryIcon>? icons,
+        string? repositoryUrl,
+        string? websiteUrl,
+        string? remoteUrl)
+    {
+        if (icons != null)
+        {
+            foreach (var icon in icons)
+            {
+                var src = icon?.Src?.Trim();
+                if (string.IsNullOrEmpty(src)) continue;
+                if (src.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    return src;
+            }
+        }
+
+        // GitHub org/user avatar fallback (no local icon storage).
+        if (!string.IsNullOrWhiteSpace(repositoryUrl) &&
+            Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var repoUri) &&
+            repoUri.Host.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var segs = repoUri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segs.Length >= 1)
+                return $"https://github.com/{segs[0]}.png?size=64";
+        }
+
+        // Website / remote host favicon via Google s2 (HTTPS, no storage).
+        var hostCandidate = FirstHttpHost(websiteUrl) ?? FirstHttpHost(remoteUrl) ?? FirstHttpHost(repositoryUrl);
+        if (!string.IsNullOrEmpty(hostCandidate))
+            return $"https://www.google.com/s2/favicons?domain={Uri.EscapeDataString(hostCandidate)}&sz=64";
+
+        return null;
+    }
+
+    private static string? FirstHttpHost(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+        if (uri.Scheme is not ("http" or "https")) return null;
+        if (string.IsNullOrWhiteSpace(uri.Host)) return null;
+        // Skip placeholder hosts in templated MCP URLs
+        if (uri.Host.Contains('{') || uri.Host.Contains('}')) return null;
+        return uri.Host;
     }
 }

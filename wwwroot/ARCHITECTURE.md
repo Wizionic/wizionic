@@ -8,11 +8,12 @@
 
 ## Core Values
 
-- **Privacy-first** — Chat history and notes live in the browser (IndexedDB), encrypted at rest. The server does not store conversation content for the WASM path.
+- **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. The server does not store conversation or personal content for WASM/MAUI paths.
 - **Local AI** — **Ollama** and **AMD Lemonade Server** on the user's machine are first-class providers (chat, multimodal, and Lemonade-specific modalities). A logged-in device can relay chat AI to other devices over WebRTC.
 - **Login is optional** — Guests can chat and take notes immediately. Email + magic link is only needed for cross-device sync and encrypted key distribution.
-- **Minimal server footprint** — Server handles auth, signaling, tool proxies (CORS), and CORS-restricted AI proxies. Heavy lifting runs in the browser.
-- **Tool-rich agents** — Built-in web search / URL summarization plus user-selected MCP servers, wired through `Microsoft.Extensions.AI` function calling. On MAUI, modular tools also control Home Assistant devices and an embedded browser.
+- **Minimal server footprint** — Server handles auth, signaling, tool proxies (CORS), CORS-restricted AI proxies, OAuth broker for connectors, and optional Home Server install. Heavy lifting runs on the client.
+- **Tool-rich agents** — Native app tools (Notes, Gallery, Calendar, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, plus MAUI Home Assistant and embedded browser — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.
+- **Local-first sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR is presence + signaling only.
 - **Low-cost cloud** — Favor free or inexpensive models (proxied providers in `appsettings`, user API keys in browser storage).
 
 ---
@@ -60,8 +61,9 @@
 - On login, `WasmGuestDataMigrationService` re-encrypts guest IndexedDB data into the authenticated namespace.
 
 ### At-rest encryption
-- All conversation and note **content blobs** are AES-256-GCM encrypted before IndexedDB write (`WasmCryptoService` + JS `encryptLocalData` / `decryptLocalData` in `App.razor`).
-- Metadata (titles, dates, sync flags) is cleartext for fast sidebar listing.
+- Conversation, note, gallery image, and calendar event **content blobs** are AES-256-GCM encrypted before local write (`WasmCryptoService` + JS helpers on WASM; native crypto on MAUI).
+- Metadata (titles, dates, album/calendar names, sync flags) is cleartext for fast listing.
+- User OAuth access tokens and MCP tokens live in `IKeyStore` (encrypted when signed in), not in the central server DB.
 
 ---
 
@@ -76,8 +78,10 @@ ChatCompletionService.CompleteAsync()  (Shared)
         ├── Build history from IConversationStore (decrypted messages)
         ├── Prepend system prompt (profile settings from IKeyStore)
         ├── Trim history to context window (reserve room for reply); track stats
-        ├── If model supports tools → PureChat vs utility tools (see Tool routing)
+        ├── If model supports tools → CompositeRequestRouter (Rules / AI / Hybrid)
         │       ├── Native tools (search_web, summarize_url, get_time, …) via /api/tools/*
+        │       ├── Notes / Gallery / Calendar tool modules (local stores)
+        │       ├── OAuth OpenAPI connector tools (when installed)
         │       ├── MCP tools from McpToolSource
         │       └── Lemonade client tools (image/STT/TTS) when configured
         └── ChatModelCatalogService.GetChatClientForModel()
@@ -94,9 +98,47 @@ Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore save
         └── If authenticated + auto-sync on → ISyncService queues WebRTC sync
 ```
 
-**Notes:** Parallel store (`INoteStore`) with Quill HTML entries. Messages can be added from chat via "Add to notes". Context compact (toolbar button) summarizes older turns to free window space. **AI tools:** `NotesToolModule` (`list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry`) routed when chat implies notebook/note intent (`ContextualRequestRouter.MessageSuggestsNotesTools`). Entries store HTML-friendly text; optional chat images attach via `IConversationMediaBuffer` (`generation_id` / latest), same buffer as Gallery. Password-protected notebooks are blocked until unlocked in the Notes UI. Auto-sync after local save via `INotesSyncBridge`.
+**Context compact:** Toolbar button summarizes older turns to free window space without clearing the chat.
 
-**Calendar:** Local-first multi-calendar UI (`CalendarPage.razor`, route `/calendar`) modeled after Google Calendar. RFC 5545–aligned `CalendarEvent` / `LocalCalendar` models; `ICalendarStore` (WASM IndexedDB + MAUI SQLite). Meta listing is cleartext for grid performance; full event JSON is AES-GCM encrypted. Sidebar: mini-month, My calendars (color + visibility layering), Workflows placeholder. Views: Day / Week / Month (default) / Year. **iCalendar:** `CalendarIcs` (Ical.Net 5) — export/import `.ics` per calendar, RRULE presets on create/edit, occurrence expansion for visible ranges. **WebRTC sync:** `SyncItemKind.Calendar` / `CalendarEvent`, auto-sync toggle on Devices & Sync, manifest delta exchange like Gallery albums/images (`CalendarMetaSyncPayload` / `CalendarEventSyncPayload`). **AI tools:** `CalendarToolModule` (`list_calendars`, `list_events`, `add_calendar_event`, `update_calendar_event`, `delete_calendar_event`) routed when chat implies schedule/calendar intent (`ContextualRequestRouter.MessageSuggestsCalendarTools`). Event field `WorkflowId` (`X-WIZIONIC-WORKFLOW`) is the hook for future workflow triggers. No server-side calendar storage.
+### Notes (local notebooks + AI tools)
+
+| Piece | Detail |
+|-------|--------|
+| **UI** | `NotesPage.razor` (`/notes`) — notebooks, Quill HTML entries, floating add |
+| **Store** | `INoteStore` — WASM IndexedDB / MAUI SQLite; bodies AES-GCM encrypted; titles cleartext |
+| **Chat handoff** | “Add to notes” from chat; optional images via `IConversationMediaBuffer` |
+| **AI tools** | `NotesToolModule`: `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry` |
+| **Routing** | Attached when `ContextualRequestRouter.MessageSuggestsNotesTools` (or AI router picks `Notes`) |
+| **Protection** | Password-protected notebooks blocked for tools until unlocked in the UI |
+| **Sync** | Auto-sync after local save via `INotesSyncBridge`; merge via `NoteSyncMerger` (entry LWW) |
+
+### Gallery (albums + AI tools)
+
+| Piece | Detail |
+|-------|--------|
+| **UI** | `GalleryPage.razor` (`/gallery`) — albums, grid, lightbox, password-protect album, reorder |
+| **Store** | `IGalleryStore` — album meta + encrypted image bytes; thumbs for grid; short-lived display URLs for lightbox (avoid multi-MB data URLs in Blazor) |
+| **Chat handoff** | Lemonade/chat-generated images can be saved into albums; `IConversationMediaBuffer` + `IGalleryChatHandoff` |
+| **AI tools** | `GalleryToolModule`: `list_gallery_albums`, `list_recent_chat_images`, `save_to_gallery` |
+| **Routing** | Gallery intent heuristics, or image generate + “save to gallery” paths; often co-attached with Lemonade |
+| **Sync** | `SyncItemKind.Album` (meta only) + `AlbumImage` (per-image); `GallerySyncMerger` / bridges |
+| **Quota** | `IStorageQuotaService` + `SumStoredImageBytesAsync` (meta size sum) |
+
+No server-side gallery storage.
+
+### Calendar (local multi-calendar + AI tools)
+
+| Piece | Detail |
+|-------|--------|
+| **UI** | `CalendarPage.razor` (`/calendar`) — Google Calendar–style Day / Week / Month / Year; mini-month sidebar; color + visibility layers |
+| **Models** | RFC 5545–aligned `LocalCalendar` / `CalendarEvent`; `WorkflowId` (`X-WIZIONIC-WORKFLOW`) reserved for future workflow triggers |
+| **Store** | `ICalendarStore` — meta cleartext for grid; full event JSON AES-GCM encrypted |
+| **iCalendar** | `CalendarIcs` (Ical.Net) — export/import `.ics`, RRULE presets, occurrence expansion for visible ranges |
+| **AI tools** | `CalendarToolModule`: `list_calendars`, `list_events`, `add_calendar_event`, `update_calendar_event`, `delete_calendar_event` |
+| **Routing** | `MessageSuggestsCalendarTools` or AI router module `Calendar` |
+| **Sync** | `SyncItemKind.Calendar` / `CalendarEvent`; `CalendarMetaSyncPayload` / `CalendarEventSyncPayload` |
+
+No server-side calendar storage.
 
 ---
 
@@ -190,13 +232,21 @@ Collapsible “Model reasoning / tool calls / stats” includes a compact line f
 - **ctx used/limit (pct%)** — context window fill (server usage or estimate)  
 - **trimmed N** — older history messages dropped for this request  
 
-### PureChat tool routing (TTFT / quality)
+### Tool routing modes (Rules / AI / Hybrid)
 
-Dumping every tool schema into a small local model inflates prefill and can degrade answer quality. Strategy in `ChatCompletionService` + `ContextualRequestRouter.MessageSuggestsUtilityTools`:
+Dumping every tool schema into a small local model inflates prefill and can degrade answer quality. Wizionic attaches **only the modules needed for the turn**.
 
-- **Default pure chat** — no Native/MCP tools for general questions (matches Lemonade’s “chat only” feel).
-- **Utility intent** — attach Native tools when the user clearly wants search, weather, time, math, or URLs.
-- HA / Browser / session routes still force their module tools when applicable.
+| Mode (`ToolRoutingMode` in `IKeyStore`) | Behavior |
+|----------------------------------------|----------|
+| **Rules** (default) | `ContextualRequestRouter` heuristics only — wake word / HA session stickiness, browser panel, Notes/Gallery/Calendar/image/utility keywords. Zero router model cost. |
+| **AI** | `AiRequestRouter` asks a configured **routing model** (`ToolRoutingModelId`, e.g. a small Lemonade/Ollama chat model) to return JSON module names. No tools on the router call. Falls back to rules on timeout / parse failure. HA session stickiness is **off** so weather after lights still reclassifies. |
+| **Hybrid** | Rules first; if the route is “strong” (HA wake word, browser panel, clear Lemonade image intent) keep it. Otherwise call the AI router (covers PureChat, Gallery-only, multi-intent). Without a routing model configured, Hybrid/AI degrade to Rules. |
+
+`CompositeRequestRouter` is the app-wide `IRequestRouter`. `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
+
+Known module names for the AI router: `Native`, `Lemonade`, `Gallery`, `Calendar`, `Notes`, `HomeAssistant`, `BrowserAgent` (plus MCP tools when utility/MCP path is open).
+
+**Configure:** Settings / chat tool-routing UI → mode + catalog model id. Stored in `WasmKeyStore` / `SqliteKeyStore` and can sync under **Tools** / related settings categories.
 
 ### Context window UI & compact
 
@@ -263,21 +313,58 @@ Is selected model vision-capable?
 
 ## Tool Use
 
-Tools are composed by `CompositeToolProvider` from injectable **`IToolModule`** implementations plus cached MCP tools. Each module exposes `ModuleName`, `IsAvailable`, and a list of `AITool` functions via `Microsoft.Extensions.AI`.
+Tools are composed by `CompositeToolProvider` from injectable **`IToolModule`** implementations plus cached MCP / OpenAPI connector tools. Each module exposes `ModuleName`, `IsAvailable`, and a list of `AITool` functions via `Microsoft.Extensions.AI`.
 
 | Module | Tools | Where it runs | Availability |
 |--------|-------|---------------|--------------|
-| **Native** (`NativeToolModule`) | `search_web`, `summarize_url`, `get_time`, `calculate`, `get_current_weather` | Server via `POST /api/tools/*` | Always (attached only when utility intent / forced route — see PureChat) |
-| **HomeAssistant** (`HomeAssistantToolModule`) | `ListEntities`, `ListLights`, `ControlLight`, `ControlMediaPlayer`, `GetEntityState`, `CallService`, `ListServices`, `ProcessConversation` | MAUI → direct LAN HTTP to Home Assistant | MAUI only, when HA configured |
-| **BrowserAgent** (`BrowserAgentToolModule`) | `navigate_to`, `get_page_content`, `click_element`, `fill_field` | MAUI → native WebView JS eval | MAUI only, when browser panel open |
+| **Native** (`NativeToolModule`) | `search_web`, `summarize_url`, `get_time`, `calculate`, `get_current_weather` | Host via `POST /api/tools/*` | When utility intent / AI router attaches `Native` |
+| **Notes** (`NotesToolModule`) | `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry` | Client → `INoteStore` | Always registered; attached on notes intent |
+| **Gallery** (`GalleryToolModule`) | `list_gallery_albums`, `list_recent_chat_images`, `save_to_gallery` | Client → `IGalleryStore` | Always registered; attached on gallery/image-save intent |
+| **Calendar** (`CalendarToolModule`) | `list_calendars`, `list_events`, `add_calendar_event`, `update_calendar_event`, `delete_calendar_event` | Client → `ICalendarStore` | Always registered; attached on calendar intent |
 | **Lemonade** (`LemonadeToolModule`) | Image generate/edit, STT, TTS helpers | Client → Lemonade base URL | When Lemonade models/services are configured; off for Omni turns |
-| **MCP servers** (`McpToolSource`) | User-enabled remote tools | Client calls MCP HTTP directly | When servers enabled |
+| **OpenAPI OAuth connectors** (`OpenApiConnectorToolSource`) | Curated tools per installed connector (Gmail, GitHub, …) | Client → host `/api/connectors/*` proxy with user tokens | When user has connected OAuth connectors |
+| **MCP servers** (`McpToolSource`) | User-enabled remote MCP tools | Client → MCP HTTP/SSE remote URL | When servers installed + enabled (+ token if required) |
+| **HomeAssistant** (`HomeAssistantToolModule`) | `ListEntities`, `ListLights`, `ControlLight`, … | MAUI → direct LAN HTTP to HA | MAUI only, when HA configured |
+| **BrowserAgent** (`BrowserAgentToolModule`) | `navigate_to`, `get_page_content`, `click_element`, `fill_field` | MAUI → native WebView JS eval | MAUI only, when browser panel open |
 
-**Routing:** Before each completion, `ContextualRequestRouter` classifies the last user message and may narrow the tool set to a single module (see [Home Assistant](#home-assistant-maui) and [Embedded Browser](#embedded-browser-maui)). `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
+**Routing:** Before each completion, `CompositeRequestRouter` (Rules / AI / Hybrid — see [Tool routing modes](#tool-routing-modes-rules--ai--hybrid)) classifies the last user message and narrows the tool set. HA and Browser still force module tools when their panel/wake-word routes apply.
 
-On WASM, `HomeAssistantToolModule` and `BrowserAgentToolModule` are not registered; `NullSmartHomeService` and null browser services satisfy the Core interfaces but expose no agentic tools.
+On WASM, `HomeAssistantToolModule` and `BrowserAgentToolModule` are not registered; null services satisfy Core interfaces but expose no agentic tools.
 
 Tool execution traces are shown in the chat UI (`ToolExecutionTrace`). Models that support function calling get an automatic multi-turn tool loop via `UseFunctionInvocation`.
+
+---
+
+## Tools page, MCP registry & OAuth connectors
+
+**UI:** `ToolsPage.razor` (`/tools`) — single **Tools** experience:
+
+1. **Installed** — OAuth connectors with tokens + enabled MCP (and custom MCP URLs).
+2. **Discover** — two-column cards: uninstalled OAuth catalog rows + remote-capable MCP from the official registry. Search is **server-side** (not a client filter of 20 rows). Card body opens details; only **Install** / **Connect** performs the action.
+
+### Official MCP registry (discovery only)
+
+| Piece | Detail |
+|-------|--------|
+| Upstream | `https://registry.modelcontextprotocol.io` (`/v0.1/servers`, fallback `/v0`) |
+| Host proxy | `GET /api/tools/mcp-registry?q=&limit=` in `WasmApiEndpoints` (CORS-safe for WASM) |
+| Default browse | ~20 **remote-capable** servers (`streamable-http` / `sse` / `http` only — no stdio packages for browser/WASM) |
+| Search | Upstream `search=` across the full registry; still filtered to remotes |
+| Card fields | Title, description, publisher (namespace / GitHub), icon URL (registry `icons[]`, GitHub avatar, or favicon) |
+| Persistence | **None** for browse/search. On install: enable flag + optional token + **URL snapshot** in KeyStore (custom-connector path) so tools work offline from the top-20 list |
+
+### OAuth OpenAPI connectors (host broker)
+
+| Piece | Detail |
+|-------|--------|
+| **Catalog** | SQLite `Connectors` table → `GET /api/connectors/catalog` (DB-only; empty table ⇒ no OAuth tiles) |
+| **App credentials** | SQLite `OAuthProviders` (`ClientId` / protected secret) or env fallbacks |
+| **Flow** | Host OAuth broker (`OAuthEndpoints`) + PKCE/session handoff; user tokens land in **client KeyStore** only |
+| **MAUI** | In-app browser / URI launcher + `MauiOAuthInterceptor`; `IAppNavigation` returns to Tools after connect |
+| **Proxy** | `ConnectorProxyEndpoints` + `OpenApiConnectorToolSource` — curated OpenAPI tools executed with the stored access token |
+| **Sync** | Installed connector config + tokens travel in settings category **Tools** (encrypted local storage → WebRTC) |
+
+**Key files:** `ToolsPage.razor`, `WasmApiEndpoints` (mcp-registry), `Apis/OAuthEndpoints.cs`, `ConnectorCatalogEndpoints.cs`, `ConnectorProxyEndpoints.cs`, `OpenApiConnectorToolSource`, `McpToolSource`, `Data/Connector.cs`, `Data/OAuthProvider.cs`
 
 ---
 
@@ -632,20 +719,51 @@ CSS variables live in `App.Shared/wwwroot/css/app.css` (theme blocks keyed by `d
 
 ## Cross-Device Sync (SignalR + WebRTC)
 
-Sync requires **email login** on both devices. The server **never** stores or relays chat/note payloads—only auth, presence, and small WebRTC signaling messages.
+Sync requires **email login** on both devices. The server **never** stores or relays chat/note/gallery/calendar payloads—only auth, presence, and small WebRTC signaling messages.
 
 ### Phase 1 — Presence (SignalR)
-1. Authenticated WASM client connects to `/sync-hub` (`SyncHub`, `[Authorize]`).
+1. Authenticated client connects to `/sync-hub` (`SyncHub`, `[Authorize]`).
 2. Client calls `RegisterDevice(deviceId, deviceName)`; server tracks connections in `DevicePresenceService` (in-memory).
 3. Hub broadcasts `DevicesUpdated` to the user's group `user:{userId}`.
-4. **Sync.razor** shows online devices, rename, AI-server selection, auto-sync toggles.
+4. **`SyncPresencePage.razor`** (`/sync`) — online devices, rename, AI-server selection, per-kind auto-sync toggles (chats, notes, gallery, calendar, settings, …).
 
 ### Phase 2 — Data sync (WebRTC DataChannel)
-1. Initiator (`WasmSyncService`) opens a WebRTC peer connection; **offer/answer/ICE** exchanged via SignalR hub methods (`WebRtcSignaling`).
-2. JS helpers in `Components/App.razor` (`webrtcCreatePeerConnection`, `webrtcSendData`, etc.) manage `RTCPeerConnection` + `RTCDataChannel`.
-3. **Manifest exchange** first: both sides send fingerprints of conversations/notes (`SyncFingerprint`); only changed items are transferred.
-4. Encrypted content never touches the server—payloads are JSON over the DataChannel (`sync-data`, `note-sync-data`, chunked for large blobs).
-5. Receiver decrypts with the shared per-user key and writes to IndexedDB; UI refreshes via `OnConversationsChanged` / `OnNotesChanged`.
+1. Initiator (`WasmSyncService` / `MauiSyncService` + `WebRtcSyncCoordinator`) opens a WebRTC peer connection; **offer/answer/ICE** via SignalR.
+2. WASM: JS `RTCPeerConnection` helpers; MAUI: SIPSorcery WebRTC.
+3. **Manifest exchange** first: both sides send fingerprints (`SyncFingerprint`); only changed items transfer.
+4. Encrypted content never touches the central server—JSON over the DataChannel (chunked for large blobs).
+5. Receiver decrypts with the shared per-user key and writes to local stores; UI refreshes via store change events.
+
+### Sync item kinds (`SyncItemKind`)
+
+| Kind | Payload | Notes |
+|------|---------|--------|
+| `Conversation` | Encrypted chat | Password-protect flag syncs; bodies remain client-encrypted |
+| `Note` | Notebook + entries | Entry-level merge (`NoteSyncMerger`) |
+| `Album` | Gallery album meta | Title, protection, image id set — **no** image bytes |
+| `AlbumImage` | Single gallery image | Create/update/delete; size-sensitive |
+| `Calendar` | Calendar meta | Name, color, visibility |
+| `CalendarEvent` | Single event | Create/update/delete |
+| `Settings` | Settings category blob | See categories below; login server URL is **never** synced |
+| `Bookmark` / `BookmarkFolder` / `SidebarApp` | Browser chrome (MAUI) | Desktop browser store |
+
+### Settings sync categories (`SettingsSyncCategory`)
+
+Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
+
+| Category id | Contents |
+|-------------|----------|
+| `local-ai` | Ollama URL, models, vision proxy, tool-routing mode/model |
+| `lemonade` | Lemonade URL, key, modality defaults, models |
+| `cloud-providers` | User API keys (encrypted at rest on each device) |
+| `home-assistant` | HA URL/token/assistant name (desktop) |
+| `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens |
+| `system-prompt` | Custom system prompt |
+| `profile` | About-you profile fields |
+| `memories` | User memory list |
+| `appearance` | Theme + nav layout preferences |
+
+After local saves, `SettingsSyncHooks.AfterLocalSaveAsync` touches category timestamps so peers pick up deltas.
 
 ### Note conflict handling
 Notes are notebooks of entries (`ItemId`, `ModifiedAt`, HTML body). Incoming note payloads are **not** whole-notebook overwrites:
@@ -653,22 +771,37 @@ Notes are notebooks of entries (`ItemId`, `ModifiedAt`, HTML body). Incoming not
 1. `NoteSyncMerger` unions local + remote entries by `ItemId`.
 2. When the same entry exists on both sides, **last-write-wins** uses the newer of `ModifiedAt` / `DeletedAt` / `Timestamp`.
 3. Local-only and remote-only entries are both kept; local order is preserved and remote-only entries are appended.
-4. If the merge still differs from what the peer sent (local kept unique or newer entries), auto-sync **pushes the merged notebook back** so peers converge.
-5. Peer ack fingerprints only skip re-sending identical content — they are not the conflict rule.
-6. Open editors fold the draft into memory and re-merge on `OnNotesChanged` so unsaved typing is not wiped by a remote apply.
+4. If the merge still differs from what the peer sent, auto-sync **pushes the merged notebook back** so peers converge.
+5. Open editors fold the draft into memory and re-merge on `OnNotesChanged` so unsaved typing is not wiped by a remote apply.
 
-Same-entry concurrent HTML edits can still lose one body (LWW by time). Full 3-way HTML merge / conflict clones are future work.
+Same-entry concurrent HTML edits can still lose one body (LWW by time). Gallery/calendar use their own accept/merge helpers (`GallerySyncMerger`, `CalendarSyncMerger`).
 
 ### AI relay (WebRTC)
-A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`app-ai-proxy`) to the peer running local models (`WasmChatCompletionService` on the server device).
+A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`app-ai-proxy`) to the peer running local models.
 
 ### Architecture diagram
 
 ![Cross-device sync: SignalR for signaling, WebRTC for encrypted data](/images/SyncArchitecture.png)
 
-**Signaling path:** Browser A ↔ SignalR `/sync-hub` ↔ Browser B  
-**Data path:** Browser A ↔ WebRTC DataChannel ↔ Browser B (encrypted JSON)  
-**Server sees:** cookies, device IDs, SDP/ICE blobs—not chat content.
+**Signaling path:** Device A ↔ SignalR `/sync-hub` ↔ Device B  
+**Data path:** Device A ↔ WebRTC DataChannel ↔ Device B (encrypted JSON)  
+**Server sees:** cookies, device IDs, SDP/ICE blobs—not chat, notes, gallery, or calendar content.
+
+---
+
+## Setup wizard (MAUI onboarding)
+
+Optional first-run (and re-run from Settings) wizard on **desktop MAUI** (`SetupWizard.razor`, `ISetupWizardHost`):
+
+| Step | Install service | Default port / role |
+|------|-----------------|---------------------|
+| **Home Server** | `IHomeserverInstallService` | Login website + auth host on this PC (default **`http://localhost:5150`** when installed as a service; separate SQLite DB). Dev `dotnet run` of the host project often uses **`http://localhost:5136`** (`launchSettings`) — point the app’s Login server URL at whichever is actually listening. |
+| **Lemonade** | `ILemonadeInstallService` | Local multimodal AI (default **13305**) |
+| **Ollama** | `IOllamaInstallService` | Local model runner (**11434**) |
+
+Installs prefer OS services (Windows Service / systemd) when supported. Admin account creation is separate from the wizard. After install, Local AI / Login server settings are updated so the desktop client talks to localhost backends.
+
+**Key files:** `SetupWizard.razor`, `App.Core/Homeserver/*`, `App.Core/Lemonade/ILemonadeInstallService`, `App.Core/Ollama/IOllamaInstallService`, platform install implementations under `App.Maui`.
 
 ---
 
@@ -679,8 +812,12 @@ A phone/tablet without Ollama can designate another online device as **AI server
 | `Users` | Email, magic-link token, `LocalEncryptionKey` (protected) |
 | `UserProviderKeys` | Optional server-stored provider API keys (importable to WASM) |
 | `DataProtectionKeys` | ASP.NET key ring for encrypting secrets at rest |
+| `OAuthProviders` | App-level OAuth ClientId/secret (github, google, …) for the host broker |
+| `Connectors` | Marketplace catalog for OAuth/OpenAPI tiles (name, icon, scopes, featured) |
 
-**Not stored:** WASM conversation history, note bodies, or sync payloads.
+**Not stored on the central server:** WASM/MAUI conversation history, note bodies, gallery bytes, calendar events, user OAuth access tokens, or WebRTC sync payloads. Those stay on devices (KeyStore / IndexedDB / SQLite).
+
+A **Home Server** install uses its own DB path (not overwritten by desktop app updates).
 
 ---
 
@@ -698,10 +835,14 @@ A phone/tablet without Ollama can designate another online device as **AI server
  
  | File | Description |
  |------|-------------|
- | `Apis/WasmApiEndpoints.cs` | `/api/auth/*`, `/api/user/encryption-key`, `/api/keys`, `/api/tools/*` |
+ | `Apis/WasmApiEndpoints.cs` | `/api/auth/*`, `/api/user/encryption-key`, `/api/keys`, `/api/tools/*` (incl. mcp-registry) |
  | `Apis/AiProxyEndpoints.cs` | `/api/proxy/providers`, `/api/proxy/chat` for CORS-restricted models |
+ | `Apis/OAuthEndpoints.cs` | Host OAuth broker start/callback/session handoff |
+ | `Apis/ConnectorCatalogEndpoints.cs` | Public connector marketplace catalog from SQLite |
+ | `Apis/ConnectorProxyEndpoints.cs` | Authenticated OpenAPI tool proxy using user tokens |
  | `Services/MagicLinkService.cs` | Create/validate magic-link tokens |
  | `Data/AppDbContext.cs` | EF Core context for server DB |
+ | `Data/OAuthProvider.cs` / `Data/Connector.cs` | OAuth app credentials + catalog rows |
  
  ### Sync & presence
  
@@ -709,19 +850,24 @@ A phone/tablet without Ollama can designate another online device as **AI server
  |------|-------------|
  | `Apis/SyncHub.cs` | SignalR hub: device registration, WebRTC signaling relay |
  | `Services/DevicePresenceService.cs` | In-memory online device registry per user |
+ | `App.Core/Sync/WebRtcSyncCoordinator.cs` | Manifest/delta sync for chats, notes, gallery, calendar, settings |
+ | `App.Shared/Services/SettingsSyncStore.cs` | Export/apply settings categories over WebRTC |
  
  ### Shared UI (`App.Shared`)
  
  | File | Route (approx) | Description |
  |------|---------------|-------------|
- | `Components/LoginPage.razor` | `/` | Landing, magic-link login, guest continue |
+ | `Components/LoginPage.razor` | `/` | Landing, magic-link login, guest continue, login server URL |
  | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, streaming, Lemonade image/STT/TTS, context compact, password-protect chats |
  | `Components/NotesPage.razor` | `/notes` | Notebooks, Quill entries, floating add button |
- | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets, auto-sync, AI server pick |
- | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults |
+ | `Components/GalleryPage.razor` | `/gallery` | Albums, grid, lightbox, password-protect, save-from-chat |
+ | `Components/CalendarPage.razor` | `/calendar` | Multi-calendar Day/Week/Month/Year, ICS import/export |
+ | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets (incl. gallery/calendar/settings), AI server pick |
+ | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults, tool routing model |
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
- | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences |
- | `Components/ToolsPage.razor` | `/tools` | Enable MCP servers and tokens |
+ | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences, setup wizard entry |
+ | `Components/ToolsPage.razor` | `/tools` | Installed + Discover (OAuth catalog + MCP registry), install/connect |
+ | `Components/SetupWizard.razor` | (overlay) | MAUI: optional Home Server / Lemonade / Ollama install |
  | `Components/HomeAssistantPage.razor` | `/home-assistant` | HA URL, token, wake word, device list (MAUI) |
  | `Components/EmbeddedBrowser.razor` | (in `/chat` split) | Embedded browser chrome, PWA toolbar (MAUI) |
  | `Components/ThemeBootstrap.razor` | (layout) | Applies saved theme on load |
@@ -732,16 +878,23 @@ A phone/tablet without Ollama can designate another online device as **AI server
  
  | File | Description |
  |------|-------------|
- | `Services/ChatCompletionService.cs` | Core completion loop, streaming, PureChat tools, context trim, vision proxy |
+ | `Services/ChatCompletionService.cs` | Core completion loop, streaming, tool routing, context trim, vision proxy |
  | `Services/ChatModelCatalogService.cs` | Manage available AI models (Ollama, Lemonade, proxied, user keys) |
  | `Services/Lemonade/LemonadeImageService.cs` | Lemonade image generate / edit / upscale |
  | `Services/Lemonade/LemonadeSpeechService.cs` | Lemonade STT + TTS |
  | `Services/Lemonade/OmniMediaExtractor.cs` | Extract data-URI media from Omni replies |
  | `Services/Mcp/McpToolSource.cs` | Discover and cache MCP tools from enabled servers |
- | `Services/Tools/NativeToolModule.cs` | Server-proxied built-in tools (`search_web`, weather, etc.) |
+ | `Services/Connectors/OpenApiConnectorToolSource.cs` | Curated OpenAPI tools for installed OAuth connectors |
+ | `Services/Tools/NativeToolModule.cs` | Host-proxied built-in tools (`search_web`, weather, etc.) |
+ | `Services/Tools/NotesToolModule.cs` | Notebook AI tools |
+ | `Services/Tools/GalleryToolModule.cs` | Gallery AI tools |
+ | `Services/Tools/CalendarToolModule.cs` | Calendar AI tools |
  | `Services/Tools/LemonadeToolModule.cs` | Client-side Lemonade modality tools for ME.AI |
- | `Services/Tools/CompositeToolProvider.cs` | Composes `IToolModule` + MCP tools |
- | `Services/Tools/ContextualRequestRouter.cs` | Wake-word / session / browser-panel / utility-tool heuristics |
+ | `Services/Tools/CompositeToolProvider.cs` | Composes `IToolModule` + MCP + connectors |
+ | `Services/Tools/CompositeRequestRouter.cs` | Rules / AI / Hybrid entry point |
+ | `Services/Tools/ContextualRequestRouter.cs` | Keyword / wake-word / panel heuristics |
+ | `Services/Tools/AiRequestRouter.cs` | Small-model module classifier |
+ | `Services/SettingsSyncStore.cs` | Settings category export/import for WebRTC |
  
  ### Business Contracts (`App.Core`)
  
@@ -749,17 +902,24 @@ A phone/tablet without Ollama can designate another online device as **AI server
  |------|-------------|
  | `Storage/IConversationStore.cs` | Chat history persistence + optional password-protect flag |
  | `Storage/INoteStore.cs` | Notes persistence + password-protect flag |
+ | `Storage/IGalleryStore.cs` | Albums, thumbs, encrypted images, display URLs |
+ | `Storage/ICalendarStore.cs` | Calendars + events |
  | `Storage/ICryptoService.cs` | Interface for AES-GCM encryption/decryption |
- | `Storage/IKeyStore.cs` | Settings, Ollama/Lemonade config, API keys |
+ | `Storage/IKeyStore.cs` | Settings, Ollama/Lemonade, API keys, MCP, OAuth installs, tool routing |
  | `Chat/IChatCompletionService.cs` | Completion contract + `ChatCompletionStats` |
  | `Chat/ChatModelInfo.cs` | Catalog entry (tools, vision, context, Omni, image flags) |
+ | `Tools/ToolRoutingMode.cs` | Rules / Ai / Hybrid |
  | `Lemonade/LemonadeModelCatalogResolver.cs` | Lemonade `/v1/models` → settings |
  | `Ollama/OllamaCapabilitiesResolver.cs` | Ollama show + OpenAI-compat fallback |
  | `Sync/ISyncService.cs` | Interface for cross-device synchronization |
+ | `Sync/SyncItemKind.cs` | Conversation, Note, Album, Calendar, Settings, … |
+ | `Sync/SettingsSyncCategory.cs` | Stable settings blob ids |
+ | `Homeserver/IHomeserverInstallService.cs` | Desktop Home Server install |
  | `SmartHome/ISmartHomeService.cs` | Home Assistant REST client contract |
  | `Browser/IBrowserAgentService.cs` | Embedded WebView navigation & script eval |
  | `Browser/IBrowserContext.cs` | Agent tool bridge for browser control |
  | `Tools/IRoutingSessionStore.cs` | Per-conversation HA follow-up session (15 min TTL) |
+ | `UI/IAppNavigation.cs` | Cross-page navigation (e.g. OAuth return → Tools) |
  
  ### Client Implementations (WASM vs MAUI)
  
@@ -767,10 +927,13 @@ A phone/tablet without Ollama can designate another online device as **AI server
  |---------|-------------------------------------------|------------------------------------------|
  | **Conversations** | `Services/WasmConversationStore.cs` (IndexedDB) | `Services/SqliteConversationStore.cs` (SQLite) |
  | **Notes** | `Services/WasmNoteStore.cs` (IndexedDB) | `Services/SqliteNoteStore.cs` (SQLite) |
+ | **Gallery** | WASM gallery store (IndexedDB + JS encrypt/thumbs) | SQLite gallery store |
+ | **Calendar** | WASM calendar store (IndexedDB) | SQLite calendar store |
  | **Encryption** | `Services/WasmCryptoService.cs` (WebCrypto JS) | `Services/MauiCryptoService.cs` (Native .NET) |
- | **Sync** | `Services/WasmSyncService.cs` | `Services/MauiSyncService.cs` |
+ | **Sync** | `Services/WasmSyncService.cs` | `Services/MauiSyncService.cs` (SIPSorcery) |
  | **Keys/Settings** | `Services/WasmKeyStore.cs` (localStorage) | `Services/SqliteKeyStore.cs` (SQLite) |
  | **Home Assistant** | `NullSmartHomeService` (no-op) | `Services/HomeAssistantService.cs` |
+ | **OAuth / URI** | Browser navigation | `MauiUriLauncher`, `MauiOAuthInterceptor` |
  | **Embedded browser** | Null browser services (`NullBrowserAgentService`, etc.) | **Windows:** `MauiBrowserAgentService`, `BrowserOverlayService`, WebView2. **Linux:** `LinuxBrowserAgentService`, `LinuxBrowserHost`, WebKitGTK. Shared: `SqliteBrowserStore`, `MauiPwaDetector`. |
 
 
@@ -780,19 +943,24 @@ A phone/tablet without Ollama can designate another online device as **AI server
  
  1. Read this doc and skim `wwwroot/ROADMAP.md` for direction (not current state).
  2. For **chat/AI** changes → `ChatPage.razor`, `ChatCompletionService` (Shared), `ChatModelCatalogService`.
- 3. For **Lemonade (image / STT / TTS / Omni)** → `LocalAiPage.razor`, `LemonadeImageService`, `LemonadeSpeechService`, `OmniMediaExtractor`, `LemonadeToolModule`, `LemonadeModelCatalogResolver`.
- 4. For **streaming / stats / context compact** → `ChatCompletionService`, `ChatCompletionStats`, `ChatPage.razor` context button.
- 5. For **storage/privacy** → `IConversationStore`/`INoteStore` (Core) and the respective implementations in `App.Client` or `App.Maui` (incl. password-protect flags + sync null-safe payloads).
- 6. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
- 7. For **sync** → `ISyncService` (Core), `SyncPresencePage.razor`, and platform implementations of `ISyncService`.
- 8. For **new API endpoints** → `WasmApiEndpoints.cs` or `AiProxyEndpoints.cs`; register in host `Program.cs`.
- 9. For **tools/MCP** → `NativeToolModule`, `CompositeToolProvider`, `McpToolSource`, `ToolsPage.razor`.
- 10. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `ContextualRequestRouter`, `ChatCompletionService`.
- 11. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
- 12. For **embedded browser / shell (Linux)** → `Platforms/Linux/Program.cs`, `Services/Linux/*`, `WebKit.BlazorWebView.GirCore`, `MauiProgram.CreateLinuxServiceProvider`, section [Linux Desktop](#linux-desktop-maui-project-net100).
- 13. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
+ 3. For **tool routing (Rules / AI / Hybrid)** → `CompositeRequestRouter`, `AiRequestRouter`, `ContextualRequestRouter`, `IKeyStore.ToolRoutingMode` / `ToolRoutingModelId`.
+ 4. For **Lemonade (image / STT / TTS / Omni)** → `LocalAiPage.razor`, `LemonadeImageService`, `LemonadeSpeechService`, `OmniMediaExtractor`, `LemonadeToolModule`, `LemonadeModelCatalogResolver`.
+ 5. For **streaming / stats / context compact** → `ChatCompletionService`, `ChatCompletionStats`, `ChatPage.razor` context button.
+ 6. For **Notes** → `NotesPage.razor`, `INoteStore`, `NotesToolModule`, `NoteSyncMerger` / `INotesSyncBridge`.
+ 7. For **Gallery** → `GalleryPage.razor`, `IGalleryStore`, `GalleryToolModule`, `IConversationMediaBuffer`, gallery sync kinds.
+ 8. For **Calendar** → `CalendarPage.razor`, `ICalendarStore`, `CalendarToolModule`, `CalendarIcs`, calendar sync kinds.
+ 9. For **storage/privacy** → Core store interfaces + `App.Client` / `App.Maui` implementations (encryption + password-protect flags).
+ 10. For **vision proxy / model routing** → `LocalAiPage.razor`, `ChatCompletionService`, `WasmKeyStore`/`SqliteKeyStore`.
+ 11. For **sync (content + settings)** → `ISyncService`, `WebRtcSyncCoordinator`, `SettingsSyncStore`, `SyncPresencePage.razor`, platform sync services.
+ 12. For **new API endpoints** → `WasmApiEndpoints.cs`, `AiProxyEndpoints.cs`, OAuth/connector APIs; register in host `Program.cs`.
+ 13. For **tools / MCP / OAuth connectors** → `ToolsPage.razor`, `McpToolSource`, `OpenApiConnectorToolSource`, `CompositeToolProvider`, OAuth broker endpoints, SQLite `Connectors` / `OAuthProviders`.
+ 14. For **setup wizard / Home Server / local installers** → `SetupWizard.razor`, `IHomeserverInstallService`, Lemonade/Ollama install services (MAUI).
+ 15. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, routers, `ChatCompletionService`.
+ 16. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
+ 17. For **embedded browser / shell (Linux)** → `Platforms/Linux/Program.cs`, `Services/Linux/*`, `WebKit.BlazorWebView.GirCore`, `MauiProgram.CreateLinuxServiceProvider`, section [Linux Desktop](#linux-desktop-maui-project-net100).
+ 18. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
 
 
 ---
 
-*Last updated: July 2026 — AMD Lemonade integration (dual local AI, image/edit/upscale, STT/TTS, Omni, streaming + stats, PureChat tools, context compact); password-protect chats/notes sync fix; staged chat load; WASM local-storage architecture; MAUI Windows Home Assistant & WebView2 browser; Linux desktop (GirCore Adwaita + WebKitGTK); themes and PWA toolbar.*
+*Last updated: August 2026 — Gallery + Calendar (UI, encrypted stores, AI tool modules, WebRTC sync); Notes/Gallery/Calendar as native AI tools; Rules/AI/Hybrid tool router (`CompositeRequestRouter`); settings sync categories (Local AI, Lemonade, cloud keys, HA, tools/MCP/OAuth, profile, memories, appearance); Tools page marketplace (official MCP registry search + DB OAuth catalog, host OAuth broker); MAUI setup wizard (Home Server / Lemonade / Ollama); prior Lemonade dual local AI, HA, embedded browser (Windows WebView2 + Linux GirCore), themes.*

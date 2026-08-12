@@ -1,0 +1,21 @@
+@using App.Core.UI
+@using App.Shared.Services
+@inject NavigationManager Nav
+@inject IAppNavigation AppNav
+@implements IDisposable
+
+@* Attaches Blazor NavigationManager so singleton services (OAuth, etc.) can navigate. *@
+
+@code {
+    protected override void OnInitialized()
+    {
+        if (AppNav is AppNavigation concrete)
+            concrete.Attach(Nav);
+    }
+
+    public void Dispose()
+    {
+        if (AppNav is AppNavigation concrete)
+            concrete.Detach(Nav);
+    }
+}

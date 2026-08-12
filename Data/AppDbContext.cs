@@ -12,6 +12,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<UserProviderKey> ProviderKeys => Set<UserProviderKey>();
+    public DbSet<OAuthProvider> OAuthProviders => Set<OAuthProvider>();
+    public DbSet<Connector> Connectors => Set<Connector>();
 
     /// <summary>
     /// ASP.NET DataProtection stores its key rings (XML) here. The table is created by a migration.
@@ -40,5 +42,16 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         modelBuilder.Entity<UserProviderKey>()
             .HasIndex(k => new { k.UserId, k.ProviderId })
             .IsUnique();
+
+        modelBuilder.Entity<OAuthProvider>()
+            .HasIndex(p => p.ProviderId)
+            .IsUnique();
+
+        modelBuilder.Entity<Connector>()
+            .HasIndex(c => c.ConnectorId)
+            .IsUnique();
+
+        modelBuilder.Entity<Connector>()
+            .HasIndex(c => new { c.Featured, c.SortOrder });
     }
 }

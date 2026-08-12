@@ -104,6 +104,13 @@ builder.Services.AddSingleton<ISmartHomeService, NullSmartHomeService>();
 builder.Services.AddSingleton<IBrowserContext, NullBrowserContext>();
 builder.Services.AddScoped<McpToolSource>();
 builder.Services.AddScoped<IMcpToolRefresher>(sp => sp.GetRequiredService<McpToolSource>());
+builder.Services.AddSingleton<App.Core.Connectors.OAuthReturnBridge>();
+builder.Services.AddSingleton<App.Core.UI.IAppNavigation, App.Shared.Services.AppNavigation>();
+builder.Services.AddScoped<App.Core.Connectors.IUriLauncher, App.Shared.Services.Connectors.NavigationUriLauncher>();
+builder.Services.AddScoped<App.Shared.Services.Connectors.ConnectorHttpExecutor>();
+builder.Services.AddScoped<App.Shared.Services.Connectors.OpenApiConnectorToolSource>();
+builder.Services.AddScoped<App.Core.Connectors.IOpenApiConnectorRefresher>(sp =>
+    sp.GetRequiredService<App.Shared.Services.Connectors.OpenApiConnectorToolSource>());
 builder.Services.AddSingleton<App.Core.Tools.IConversationMediaBuffer, App.Shared.Services.Tools.ConversationMediaBuffer>();
 builder.Services.AddScoped<App.Core.Tools.IToolConversationContext, App.Shared.Services.Tools.ToolConversationContext>();
 builder.Services.AddScoped<NativeToolModule>();
