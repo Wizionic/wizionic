@@ -44,6 +44,14 @@ window.getChatTextareaValue = function (el) {
     return (el && typeof el.value === 'string') ? el.value : '';
 };
 
+window.setChatTextareaValue = function (el, value) {
+    if (!el) return;
+    el.value = value == null ? '' : String(value);
+    try {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch (_) { /* ignore */ }
+};
+
 window.resetChatTextarea = function (el) {
     if (!el) return;
     el.value = '';
@@ -54,6 +62,8 @@ window.setupChatEnterToSend = function (textareaEl) {
     textareaEl.__appEnterBound = true;
     textareaEl.addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter' && !ev.shiftKey) {
+            // Slash skill menu open — Blazor handles Enter (pick suggestion).
+            if (document.querySelector('.chat-slash-menu')) return;
             ev.preventDefault();
             const btn = document.getElementById('chat-send-btn');
             if (btn) btn.click();

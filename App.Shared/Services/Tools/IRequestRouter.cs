@@ -17,8 +17,10 @@ public record RequestRoute(
     string? TargetModule = null,
     bool IncludeMcp = false,
     string? Reason = null,
-    /// <summary>Trace label: Rules, AI, Hybrid→Rules, Hybrid→AI, etc.</summary>
-    string? Source = null)
+    /// <summary>Trace label: Rules, AI, Hybrid→Rules, Hybrid→AI, Skill, etc.</summary>
+    string? Source = null,
+    /// <summary>When set, chat injects that skill's SKILL.md body as system instructions.</summary>
+    string? SkillId = null)
 {
     public static readonly IReadOnlyList<string> EmptyModules = Array.Empty<string>();
 
@@ -30,22 +32,24 @@ public record RequestRoute(
         string reason,
         string? targetModule = null,
         bool includeMcp = false,
-        string source = "Rules")
+        string source = "Rules",
+        string? skillId = null)
     {
         var list = modules
             .Where(m => !string.IsNullOrWhiteSpace(m))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         return new RequestRoute(
-            list.Count == 0 ? RouteType.StandardChat : RouteType.ToolAssistedChat,
+            list.Count == 0 && skillId is null ? RouteType.StandardChat : RouteType.ToolAssistedChat,
             list,
             targetModule,
             includeMcp,
             reason,
-            source);
+            source,
+            skillId);
     }
 
-    public bool HasTools => Modules.Count > 0;
+    public bool HasTools => Modules.Count > 0 || !string.IsNullOrWhiteSpace(SkillId);
 }
 
 /// <summary>

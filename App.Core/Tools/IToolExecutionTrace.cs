@@ -8,4 +8,7 @@ public interface IToolExecutionTrace
     void Clear();
     void Record(string message);
     IReadOnlyList<string> GetCurrentTrace();
+
+    /// <summary>Raised after each <see cref="Record"/> / <see cref="Clear"/> (UI live logs).</summary>
+    event Action? Changed;
 }
