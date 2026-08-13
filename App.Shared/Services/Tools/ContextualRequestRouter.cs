@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using App.Core.Skills;
 using App.Core.Storage;
 using App.Core.Tools;
 using App.Core.UI;
@@ -6,7 +7,7 @@ using App.Core.UI;
 namespace App.Shared.Services.Tools;
 
 /// <summary>
-/// Rule-based tool router: wake word, browser panel, session, and keyword heuristics.
+/// Rule-based tool router: wake word, browser panel, session, skill slash commands, and keyword heuristics.
 /// Zero model cost. Used alone (Rules mode) or as the Hybrid fast path / AI fallback.
 /// </summary>
 public sealed class ContextualRequestRouter : IRequestRouter
@@ -16,15 +17,18 @@ public sealed class ContextualRequestRouter : IRequestRouter
     private readonly IKeyStore _keyStore;
     private readonly IRoutingSessionStore _sessions;
     private readonly IBrowserPanelState _browserPanel;
+    private readonly ISkillStore? _skills;
 
     public ContextualRequestRouter(
         IKeyStore keyStore,
         IRoutingSessionStore sessions,
-        IBrowserPanelState browserPanel)
+        IBrowserPanelState browserPanel,
+        ISkillStore? skills = null)
     {
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _browserPanel = browserPanel ?? throw new ArgumentNullException(nameof(browserPanel));
+        _skills = skills;
     }
 
     public Task<RequestRoute> ClassifyRequestAsync(
@@ -58,6 +62,11 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
         if (string.IsNullOrWhiteSpace(message))
             return RequestRoute.PureChat("empty message", "Rules");
+
+        // Explicit skill invoke: /skill-name or "run skill skill-name"
+        var skillRoute = TryMatchSkillCommand(message, available);
+        if (skillRoute is not null)
+            return skillRoute;
 
         // Hard routes: HA wake-word; optional active session (Rules mode only)
         if (Has("HomeAssistant"))
@@ -173,6 +182,97 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
     public static bool ShouldEnforceBrowserTools(RequestRoute? route) =>
         route?.TargetModule == "BrowserAgent";
+
+    private RequestRoute? TryMatchSkillCommand(string message, HashSet<string> available)
+    {
+        if (_skills is null) return null;
+        var skillName = ExtractSkillNameFromMessage(message);
+        if (string.IsNullOrEmpty(skillName)) return null;
+
+        var rec = ResolveSkillRecord(skillName);
+        if (rec is null || !rec.Enabled) return null;
+
+        try
+        {
+            var doc = SkillMarkdown.Parse(rec.Markdown);
+            var res = SkillToolResolver.Resolve(doc.AllowedTools);
+            // Prefer available modules, but keep skill-declared modules so HA etc. still attach when registered.
+            var modules = res.Modules.Where(available.Contains).ToList();
+            if (modules.Count == 0)
+                modules = res.Modules.ToList();
+            return RequestRoute.WithModules(
+                modules,
+                reason: "skill /" + doc.Name,
+                includeMcp: res.IncludeMcp,
+                source: "Rules",
+                skillId: rec.Id);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Accepts: /random-house-lights, /skill random-house-lights, /skill-random-house-lights,
+    /// run skill random-house-lights (optional trailing args ignored for match).
+    /// </summary>
+    public static string? ExtractSkillNameFromMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return null;
+        var m = message.Trim();
+
+        if (m.StartsWith('/'))
+        {
+            var rest = m[1..].Trim();
+            // /skill name  or  /skill-name  or  /name
+            if (rest.StartsWith("skill ", StringComparison.OrdinalIgnoreCase))
+            {
+                var after = rest["skill ".Length..].Trim();
+                var token = after.Split(new[] { ' ', '\t', '\n' }, 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                return string.IsNullOrWhiteSpace(token) ? null : SkillMarkdown.NormalizeName(token);
+            }
+
+            var slashToken = rest.Split(new[] { ' ', '\t', '\n' }, 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(slashToken)) return null;
+            slashToken = SkillMarkdown.NormalizeName(slashToken);
+            // /skill-random-house-lights → try full then strip skill- prefix
+            return slashToken;
+        }
+
+        var run = Regex.Match(m, @"^\s*run\s+skill\s+([a-zA-Z0-9][a-zA-Z0-9\-_]*)\b", RegexOptions.IgnoreCase);
+        if (run.Success)
+            return SkillMarkdown.NormalizeName(run.Groups[1].Value);
+
+        return null;
+    }
+
+    private SkillRecord? ResolveSkillRecord(string skillName)
+    {
+        if (_skills is null || string.IsNullOrWhiteSpace(skillName)) return null;
+
+        // Exact
+        var rec = _skills.Get(skillName);
+        if (rec is not null) return rec;
+
+        // /skill-foo when skill id is foo
+        if (skillName.StartsWith("skill-", StringComparison.OrdinalIgnoreCase) && skillName.Length > 6)
+        {
+            rec = _skills.Get(skillName["skill-".Length..]);
+            if (rec is not null) return rec;
+        }
+
+        // Prefix / contains match against enabled skills (unique hit only)
+        var enabled = _skills.List().Where(s => s.Enabled).ToList();
+        var hits = enabled.Where(s =>
+            s.Name.Equals(skillName, StringComparison.OrdinalIgnoreCase) ||
+            s.Id.Equals(skillName, StringComparison.OrdinalIgnoreCase) ||
+            s.Name.StartsWith(skillName, StringComparison.OrdinalIgnoreCase) ||
+            skillName.EndsWith(s.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (hits.Count == 1) return hits[0];
+
+        return null;
+    }
 
     /// <summary>
     /// Heuristic: general knowledge chat should NOT get tools (matches Lemonade pure-chat quality).

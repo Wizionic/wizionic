@@ -1,0 +1,785 @@
+@using App.Core.Skills
+@using App.Core.Sync
+@using App.Core.Storage
+@using App.Shared.Services
+@using App.Shared.Services.Skills
+@inject ISkillStore SkillStore
+@inject ISkillRunner SkillRunner
+@inject ISkillRunLogStore RunLogs
+@inject IKeyStore KeyStore
+@inject ChatModelCatalogService ModelCatalog
+@inject ISettingsSyncStore? SettingsSync
+@inject ISyncService? SyncService
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+@implements IDisposable
+
+<div class="cf-skills-panel">
+    <div class="cf-skills-toolbar">
+        <button type="button" class="btn btn-primary btn-sm" @onclick="OpenCreate">+ Create skill</button>
+        <label class="btn btn-outline-secondary btn-sm" style="margin:0;cursor:pointer;">
+            Upload .md
+            <InputFile OnChange="OnUpload" accept=".md,.markdown,text/markdown,text/plain" style="display:none;" />
+        </label>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ImportExamples" disabled="@busy">
+            Import examples
+        </button>
+        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="Refresh" disabled="@busy">
+            @(busy ? "…" : "Refresh")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(banner))
+    {
+        <div class="cf-conn-banner @(bannerError ? "cf-conn-banner-error" : "cf-conn-banner-ok")">
+            @banner
+            <button type="button" class="cf-conn-banner-close" @onclick="() => banner = null">✕</button>
+        </div>
+    }
+
+    @if (!skills.Any())
+    {
+        <p class="cf-conn-empty">
+            No skills yet. Create one, upload a <code>SKILL.md</code>, or import built-in examples
+            (image, HA lights, stock snapshot, GitHub, calendar planning, research URL, …).
+        </p>
+    }
+    else
+    {
+        <div class="cf-tool-grid">
+            @foreach (var s in skills)
+            {
+                var doc = TryParse(s.Markdown);
+                <div class="cf-tool-card">
+                    <div class="cf-tool-card-main cf-tool-card-main-static">
+                        <span class="cf-conn-icon cf-tool-icon" style="background:var(--color-bg-muted,#f3f4f6);color:var(--color-text-muted);">⚡</span>
+                        <div class="cf-tool-card-body">
+                            <div class="cf-tool-card-title-row">
+                                <span class="cf-tool-card-title">@(doc?.Name ?? s.Name)</span>
+                                <span class="cf-tool-kind">Skill</span>
+                                @if (!s.Enabled)
+                                {
+                                    <span class="cf-conn-card-badge">Disabled</span>
+                                }
+                            </div>
+                            <div class="cf-tool-card-desc">@(doc?.Description ?? "—")</div>
+                            <div class="cf-tool-card-meta">
+                                @if (!string.IsNullOrWhiteSpace(doc?.Author))
+                                {
+                                    <span class="cf-tool-by">By @doc.Author</span>
+                                }
+                                @if (doc?.Tags.Count > 0)
+                                {
+                                    <span class="cf-tool-by">@string.Join(", ", doc.Tags)</span>
+                                }
+                                <span class="text-muted" style="font-size:0.72rem;">/@((doc?.Name ?? s.Name))</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cf-tool-card-actions">
+                        <button type="button" class="btn btn-primary btn-sm" @onclick="() => OpenRun(s)">Run</button>
+                        <div class="cf-conn-menu-wrap">
+                            <button type="button" class="cf-conn-menu-btn" title="Options"
+                                    @onclick="() => ToggleSkillMenu(s.Id)">⋮</button>
+                            @if (openMenuId == s.Id)
+                            {
+                                <div class="cf-conn-menu">
+                                    <button type="button" @onclick="() => { openMenuId = null; OpenEdit(s); }">Edit</button>
+                                    <button type="button" @onclick="async () => { openMenuId = null; await Export(s); }">Export</button>
+                                    <button type="button" @onclick="async () => { openMenuId = null; await ToggleEnabled(s); }">
+                                        @(s.Enabled ? "Disable" : "Enable")
+                                    </button>
+                                    <button type="button" class="cf-conn-menu-danger" @onclick="async () => { openMenuId = null; await Delete(s); }">Delete</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (recentRuns.Any())
+    {
+        <section class="cf-conn-section" style="margin-top:1.5rem;">
+            <div class="cf-conn-section-head">
+                <h3 class="cf-conn-section-title" style="font-size:0.98rem;">Recent runs</h3>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearRunHistory">Clear</button>
+            </div>
+            <div class="cf-skill-run-history">
+                @foreach (var log in recentRuns)
+                {
+                    <button type="button" class="cf-skill-run-history-item" @onclick="() => ShowPastRun(log)">
+                        <span class="cf-skill-run-history-name">@log.SkillName</span>
+                        <span class="cf-skill-run-history-meta">
+                            @(log.Success ? "OK" : "Failed") · @log.ModelId · @log.DurationSeconds.ToString("0.0")s
+                            · @log.StartedAtUtc.ToLocalTime().ToString("g")
+                        </span>
+                    </button>
+                }
+            </div>
+        </section>
+    }
+</div>
+
+@* ===== Creator / Editor modal ===== *@
+@if (editorOpen)
+{
+    <div class="cf-conn-modal-backdrop"
+         @onmousedown="() => _backdropArmed = true"
+         @onclick="OnEditorBackdropClick">
+        <div class="cf-conn-modal cf-skill-editor-modal cf-skill-resizable"
+             @onmousedown="DisarmBackdrop"
+             @onmousedown:stopPropagation="true"
+             @onclick:stopPropagation="true">
+            <div class="cf-conn-modal-title">@(editingId is null ? "Create skill" : "Edit skill")</div>
+            <div class="cf-skill-editor-tabs">
+                <button type="button" class="cf-conn-tab @(editorTab == 0 ? "cf-conn-tab-active" : "")" @onclick="() => editorTab = 0">Form</button>
+                <button type="button" class="cf-conn-tab @(editorTab == 1 ? "cf-conn-tab-active" : "")" @onclick="() => SwitchToRaw()">Raw SKILL.md</button>
+            </div>
+
+            @if (editorTab == 0)
+            {
+                <div class="cf-skill-form">
+                    <label class="cf-conn-label">Name (lowercase, hyphens)</label>
+                    <input class="cf-dialog-input" @bind="fName" @bind:event="oninput" placeholder="my-skill-name" />
+                    <label class="cf-conn-label">Description (what + when to use)</label>
+                    <textarea class="cf-dialog-input cf-skill-textarea" rows="3" @bind="fDescription"></textarea>
+                    <div class="cf-skill-form-row">
+                        <div>
+                            <label class="cf-conn-label">Author</label>
+                            <input class="cf-dialog-input" @bind="fAuthor" />
+                        </div>
+                        <div>
+                            <label class="cf-conn-label">Version</label>
+                            <input class="cf-dialog-input" @bind="fVersion" />
+                        </div>
+                    </div>
+                    <label class="cf-conn-label">Tags (comma-separated)</label>
+                    <input class="cf-dialog-input" @bind="fTags" placeholder="gallery, notes" />
+                    <label class="cf-conn-label">License</label>
+                    <input class="cf-dialog-input" @bind="fLicense" placeholder="MIT" />
+                    <label class="cf-conn-label">Compatibility</label>
+                    <input class="cf-dialog-input" @bind="fCompatibility" />
+                    <label class="cf-conn-label">Trigger phrases</label>
+                    <input class="cf-dialog-input" @bind="fTriggers" placeholder="inspiration, party lights" />
+                    <label class="cf-conn-label">Allowed tools</label>
+                    <div class="cf-skill-tool-picks">
+                        @foreach (var g in SkillToolResolver.Catalog.GroupBy(c => c.Group))
+                        {
+                            <div class="cf-skill-tool-group">
+                                <div class="cf-skill-tool-group-title">@g.Key</div>
+                                @foreach (var t in g)
+                                {
+                                    var on = selectedTools.Contains(t.Token);
+                                    <label class="cf-skill-tool-check">
+                                        <input type="checkbox" checked="@on" @onchange="e => ToggleTool(t.Token, e)" />
+                                        <span>@t.Label</span>
+                                    </label>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <label class="cf-conn-label">Purpose</label>
+                    <textarea class="cf-dialog-input cf-skill-textarea" rows="2" @bind="fPurpose"></textarea>
+                    <label class="cf-conn-label">Steps</label>
+                    <textarea class="cf-dialog-input cf-skill-textarea" rows="5" @bind="fSteps" placeholder="1. …&#10;2. …"></textarea>
+                    <label class="cf-conn-label">Examples</label>
+                    <textarea class="cf-dialog-input cf-skill-textarea" rows="2" @bind="fExamples"></textarea>
+                    <label class="cf-conn-label">Notes</label>
+                    <textarea class="cf-dialog-input cf-skill-textarea" rows="2" @bind="fNotes"></textarea>
+                </div>
+            }
+            else
+            {
+                <label class="cf-conn-label">Raw SKILL.md (official Agent Skills format)</label>
+                <textarea class="cf-dialog-input cf-skill-raw" rows="18" @bind="rawMarkdown" spellcheck="false"></textarea>
+            }
+
+            @if (!string.IsNullOrEmpty(editorError))
+            {
+                <div class="cf-dialog-error">@editorError</div>
+            }
+
+            <div style="display:flex;justify-content:space-between;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+                <button type="button" class="btn btn-outline-secondary" @onclick="CloseEditor">Cancel</button>
+                <div style="display:flex;gap:0.5rem;">
+                    @if (editorTab == 0)
+                    {
+                        <button type="button" class="btn btn-outline-primary" @onclick="PreviewToRaw">Preview raw</button>
+                    }
+                    <button type="button" class="btn btn-primary" @onclick="SaveEditor" disabled="@busy">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ===== Run modal ===== *@
+@if (runRecord is not null)
+{
+    <div class="cf-conn-modal-backdrop"
+         @onmousedown="() => _backdropArmed = true"
+         @onclick="OnRunBackdropClick">
+        <div class="cf-conn-modal cf-skill-run-modal cf-skill-resizable"
+             @onmousedown="DisarmBackdrop"
+             @onmousedown:stopPropagation="true"
+             @onclick:stopPropagation="true">
+            <div class="cf-conn-modal-title">
+                Run skill — @runRecord.Name
+                @if (!string.IsNullOrEmpty(runModelId))
+                {
+                    <span class="cf-skill-run-model"> · @runModelId</span>
+                }
+            </div>
+            @if (!busy && string.IsNullOrEmpty(runResult) && runLogLines.Count == 0)
+            {
+                <p class="text-muted" style="font-size:0.88rem;">
+                    Model: <strong>@(runModelId ?? KeyStore.LastSelectedModel ?? "none")</strong>
+                    · tools from skill <code>allowed-tools</code>.
+                </p>
+                <div class="cf-skill-model-row">
+                    @if (!modelPickerOpen)
+                    {
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="OpenModelPicker" disabled="@modelsLoading">
+                            @(modelsLoading ? "Loading models…" : "Choose different model…")
+                        </button>
+                    }
+                    else
+                    {
+                        <label class="cf-conn-label" style="margin:0;">Model</label>
+                        <select class="cf-dialog-input" style="max-width:100%;" @bind="runModelId">
+                            @if (!string.IsNullOrEmpty(runModelId) && modelOptions.All(m => m != runModelId))
+                            {
+                                <option value="@runModelId">@runModelId</option>
+                            }
+                            @foreach (var m in modelOptions)
+                            {
+                                <option value="@m">@m</option>
+                            }
+                        </select>
+                    }
+                </div>
+                <label class="cf-conn-label">Run message (optional override)</label>
+                <textarea class="cf-dialog-input cf-skill-textarea" rows="2" @bind="runUserMessage"
+                          placeholder="Execute this skill now…"></textarea>
+                <label class="cf-conn-label">Instruction override (optional)</label>
+                <textarea class="cf-dialog-input cf-skill-textarea" rows="3" @bind="runBodyOverride"></textarea>
+            }
+
+            <div class="cf-skill-live-log-head">
+                <span>Activity log</span>
+                @if (busy)
+                {
+                    <span class="cf-skill-live-badge">Running…</span>
+                }
+            </div>
+            <div class="cf-skill-live-log" @ref="runLogEl">
+                @if (runLogLines.Count == 0 && !busy)
+                {
+                    <div class="text-muted" style="font-size:0.85rem;">Start the skill to see steps, tools, and model activity.</div>
+                }
+                @foreach (var line in runLogLines)
+                {
+                    <div class="cf-skill-live-log-line">@line</div>
+                }
+                @if (!string.IsNullOrEmpty(runPartial))
+                {
+                    <div class="cf-skill-live-log-partial">@runPartial</div>
+                }
+            </div>
+
+            @if (!string.IsNullOrEmpty(runError))
+            {
+                <div class="cf-dialog-error">@runError</div>
+            }
+            @if (!string.IsNullOrEmpty(runResult))
+            {
+                <label class="cf-conn-label" style="margin-top:0.65rem;">Result</label>
+                <div class="cf-skill-run-result">@runResult</div>
+            }
+            <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;">
+                <button type="button" class="btn btn-outline-secondary" @onclick="() => runRecord = null" disabled="@busy">Close</button>
+                @if (!busy)
+                {
+                    <button type="button" class="btn btn-primary" @onclick="ExecuteRun">
+                        @(string.IsNullOrEmpty(runResult) ? "Run skill" : "Run again")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<SkillRecord> skills = new();
+    private bool busy;
+    private string? banner;
+    private bool bannerError;
+
+    private bool editorOpen;
+    private int editorTab;
+    private string? editingId;
+    private string? editorError;
+    private string rawMarkdown = "";
+
+    private string fName = "";
+    private string fDescription = "";
+    private string fAuthor = "";
+    private string fVersion = "1.0";
+    private string fTags = "";
+    private string fLicense = "MIT";
+    private string fCompatibility = "Wizionic; Agent Skills open standard";
+    private string fTriggers = "";
+    private string fPurpose = "";
+    private string fSteps = "";
+    private string fExamples = "";
+    private string fNotes = "";
+    private HashSet<string> selectedTools = new(StringComparer.OrdinalIgnoreCase);
+    private string? openMenuId;
+    private bool _backdropArmed;
+
+    private SkillRecord? runRecord;
+    private string runUserMessage = "";
+    private string runBodyOverride = "";
+    private string? runError;
+    private string? runResult;
+    private string? runModelId;
+    private string runPartial = "";
+    private List<string> runLogLines = new();
+    private List<SkillRunLog> recentRuns = new();
+    private ElementReference runLogEl;
+    private bool modelPickerOpen;
+    private bool modelsLoading;
+    private List<string> modelOptions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        SkillStore.Changed += OnStoreChanged;
+        RunLogs.Changed += OnRunLogsChanged;
+        await Refresh();
+        await RunLogs.LoadAsync();
+        recentRuns = RunLogs.ListRecent().ToList();
+    }
+
+    public void Dispose()
+    {
+        SkillStore.Changed -= OnStoreChanged;
+        RunLogs.Changed -= OnRunLogsChanged;
+    }
+
+    private void OnStoreChanged() => _ = InvokeAsync(async () =>
+    {
+        await Refresh();
+        StateHasChanged();
+    });
+
+    private void OnRunLogsChanged() => _ = InvokeAsync(() =>
+    {
+        recentRuns = RunLogs.ListRecent().ToList();
+        StateHasChanged();
+    });
+
+    private void ToggleSkillMenu(string id) =>
+        openMenuId = openMenuId == id ? null : id;
+
+    private async Task Refresh()
+    {
+        busy = true;
+        try
+        {
+            await SkillStore.LoadAsync();
+            skills = SkillStore.List().ToList();
+            await RunLogs.LoadAsync();
+            recentRuns = RunLogs.ListRecent().ToList();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ClearRunHistory()
+    {
+        await RunLogs.ClearAsync();
+        recentRuns = new();
+    }
+
+    private void ShowPastRun(SkillRunLog log)
+    {
+        runRecord = skills.FirstOrDefault(s => s.Id == log.SkillId || s.Name == log.SkillName)
+            ?? new SkillRecord { Id = log.SkillId, Name = log.SkillName, Markdown = "" };
+        runModelId = log.ModelId;
+        runLogLines = log.LogLines?.ToList() ?? new();
+        runResult = log.ResultText;
+        runError = log.Error;
+        runPartial = "";
+        busy = false;
+    }
+
+    private void DisarmBackdrop() => _backdropArmed = false;
+
+    private void OnEditorBackdropClick()
+    {
+        if (_backdropArmed)
+            CloseEditor();
+        _backdropArmed = false;
+    }
+
+    private void OnRunBackdropClick()
+    {
+        if (_backdropArmed && !busy)
+            runRecord = null;
+        _backdropArmed = false;
+    }
+
+    private async Task OpenModelPicker()
+    {
+        modelsLoading = true;
+        modelPickerOpen = true;
+        StateHasChanged();
+        try
+        {
+            // Use cached catalog first (fast); only refresh if empty.
+            var list = ModelCatalog.GetAvailableModels();
+            if (list.Count == 0)
+            {
+                try { await ModelCatalog.RefreshAsync(); }
+                catch { /* offline */ }
+                list = ModelCatalog.GetAvailableModels();
+            }
+            modelOptions = list
+                .Select(m => m.Id)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (string.IsNullOrWhiteSpace(runModelId))
+                runModelId = KeyStore.LastSelectedModel ?? modelOptions.FirstOrDefault();
+        }
+        finally
+        {
+            modelsLoading = false;
+        }
+    }
+
+    private static SkillDocument? TryParse(string md)
+    {
+        try { return SkillMarkdown.Parse(md); }
+        catch { return null; }
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        editorError = null;
+        editorTab = 0;
+        fName = "";
+        fDescription = "";
+        fAuthor = "";
+        fVersion = "1.0";
+        fTags = "";
+        fLicense = "MIT";
+        fCompatibility = "Wizionic; Agent Skills open standard";
+        fTriggers = "";
+        fPurpose = "";
+        fSteps = "";
+        fExamples = "";
+        fNotes = "";
+        selectedTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Native" };
+        rawMarkdown = "";
+        editorOpen = true;
+    }
+
+    private void OpenEdit(SkillRecord s)
+    {
+        editingId = s.Id;
+        editorError = null;
+        editorTab = 0;
+        var doc = SkillMarkdown.Parse(s.Markdown);
+        fName = doc.Name;
+        fDescription = doc.Description;
+        fAuthor = doc.Author ?? "";
+        fVersion = doc.Version ?? "1.0";
+        fTags = string.Join(", ", doc.Tags);
+        fLicense = doc.License ?? "";
+        fCompatibility = doc.Compatibility ?? "";
+        fTriggers = doc.TriggerPhrases ?? "";
+        selectedTools = new HashSet<string>(doc.AllowedToolTokens, StringComparer.OrdinalIgnoreCase);
+        // Split body sections best-effort
+        fPurpose = ExtractSection(doc.BodyMarkdown, "Purpose");
+        fSteps = ExtractSection(doc.BodyMarkdown, "Steps");
+        fExamples = ExtractSection(doc.BodyMarkdown, "Examples");
+        fNotes = ExtractSection(doc.BodyMarkdown, "Notes");
+        if (string.IsNullOrWhiteSpace(fSteps) && string.IsNullOrWhiteSpace(fPurpose))
+            fSteps = doc.BodyMarkdown;
+        rawMarkdown = s.Markdown;
+        editorOpen = true;
+    }
+
+    private static string ExtractSection(string body, string heading)
+    {
+        if (string.IsNullOrEmpty(body)) return "";
+        var marker = "## " + heading;
+        var idx = body.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return "";
+        var start = idx + marker.Length;
+        var next = body.IndexOf("\n## ", start, StringComparison.Ordinal);
+        var slice = next < 0 ? body[start..] : body[start..next];
+        return slice.Trim().TrimStart('\n', '\r', ' ', '#');
+    }
+
+    private void CloseEditor()
+    {
+        editorOpen = false;
+        editorError = null;
+    }
+
+    private void ToggleTool(string token, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        if (on) selectedTools.Add(token);
+        else selectedTools.Remove(token);
+    }
+
+    private void SwitchToRaw()
+    {
+        if (editorTab == 0)
+            rawMarkdown = SkillMarkdown.Serialize(BuildDocFromForm());
+        editorTab = 1;
+    }
+
+    private void PreviewToRaw()
+    {
+        rawMarkdown = SkillMarkdown.Serialize(BuildDocFromForm());
+        editorTab = 1;
+    }
+
+    private SkillDocument BuildDocFromForm() =>
+        SkillMarkdown.FromForm(
+            fName, fDescription, fLicense, fCompatibility, fAuthor, fVersion, fTags,
+            string.Join(' ', selectedTools.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)),
+            fTriggers, fPurpose, fSteps, fExamples, fNotes);
+
+    private async Task SaveEditor()
+    {
+        editorError = null;
+        try
+        {
+            string markdown;
+            SkillDocument doc;
+            if (editorTab == 1)
+            {
+                markdown = rawMarkdown ?? "";
+                doc = SkillMarkdown.Parse(markdown);
+            }
+            else
+            {
+                doc = BuildDocFromForm();
+                markdown = SkillMarkdown.Serialize(doc);
+            }
+
+            var v = SkillMarkdown.Validate(doc);
+            if (!v.IsValid)
+            {
+                editorError = string.Join(" ", v.Errors);
+                return;
+            }
+
+            var rec = new SkillRecord
+            {
+                Id = editingId ?? doc.Name,
+                Name = doc.Name,
+                Markdown = markdown,
+                Enabled = true,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            await SkillStore.UpsertAsync(rec);
+            await AfterSkillsChanged();
+            editorOpen = false;
+            banner = $"Saved skill {doc.Name}";
+            bannerError = false;
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            editorError = ex.Message;
+        }
+    }
+
+    private async Task OnUpload(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            if (file is null) return;
+            await using var stream = file.OpenReadStream(maxAllowedSize: 512_000);
+            using var reader = new StreamReader(stream);
+            var text = await reader.ReadToEndAsync();
+            var doc = SkillMarkdown.Parse(text);
+            var v = SkillMarkdown.Validate(doc);
+            if (!v.IsValid)
+            {
+                banner = "Upload failed: " + string.Join(" ", v.Errors);
+                bannerError = true;
+                return;
+            }
+            await SkillStore.UpsertAsync(new SkillRecord
+            {
+                Id = doc.Name,
+                Name = doc.Name,
+                Markdown = text.Contains("---") ? text : SkillMarkdown.Serialize(doc),
+                Enabled = true
+            });
+            await AfterSkillsChanged();
+            banner = $"Imported {doc.Name}";
+            bannerError = false;
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            banner = "Upload failed: " + ex.Message;
+            bannerError = true;
+        }
+    }
+
+    private async Task ImportExamples()
+    {
+        busy = true;
+        try
+        {
+            foreach (var ex in SkillSeedCatalog.CreateExamples())
+                await SkillStore.UpsertAsync(ex);
+            await AfterSkillsChanged();
+            banner = "Imported example skills";
+            bannerError = false;
+            await Refresh();
+        }
+        finally { busy = false; }
+    }
+
+    private async Task ToggleEnabled(SkillRecord s)
+    {
+        s.Enabled = !s.Enabled;
+        s.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        await SkillStore.UpsertAsync(s);
+        await AfterSkillsChanged();
+        await Refresh();
+    }
+
+    private async Task Delete(SkillRecord s)
+    {
+        await SkillStore.DeleteAsync(s.Id);
+        await AfterSkillsChanged();
+        banner = $"Deleted {s.Name}";
+        bannerError = false;
+        await Refresh();
+    }
+
+    private async Task Export(SkillRecord s)
+    {
+        try
+        {
+            var name = (s.Name ?? "skill") + ".md";
+            var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(s.Markdown ?? ""));
+            await Js.InvokeVoidAsync("eval",
+                $"(function(){{var a=document.createElement('a');a.href='data:text/markdown;base64,{b64}';a.download='{name.Replace("'", "")}';document.body.appendChild(a);a.click();a.remove();}})()");
+            banner = $"Exported {name}";
+            bannerError = false;
+        }
+        catch
+        {
+            banner = "Could not download — open Edit → Raw and copy the file.";
+            bannerError = true;
+        }
+    }
+
+    private void OpenRun(SkillRecord s)
+    {
+        openMenuId = null;
+        runRecord = s;
+        runUserMessage = "";
+        runBodyOverride = "";
+        runError = null;
+        runResult = null;
+        runPartial = "";
+        runLogLines = new();
+        runModelId = KeyStore.LastSelectedModel;
+        modelPickerOpen = false;
+        modelOptions = new();
+    }
+
+    private async Task ExecuteRun()
+    {
+        if (runRecord is null) return;
+        busy = true;
+        runError = null;
+        runResult = null;
+        runPartial = "";
+        runLogLines = new();
+        if (string.IsNullOrWhiteSpace(runModelId))
+            runModelId = KeyStore.LastSelectedModel;
+        StateHasChanged();
+        try
+        {
+            var result = await SkillRunner.RunAsync(new SkillRunRequest
+            {
+                SkillId = runRecord.Id,
+                ModelId = runModelId,
+                UserMessageOverride = string.IsNullOrWhiteSpace(runUserMessage) ? null : runUserMessage,
+                BodyOverride = string.IsNullOrWhiteSpace(runBodyOverride) ? null : runBodyOverride,
+                OnLog = lines =>
+                {
+                    _ = InvokeAsync(() =>
+                    {
+                        runLogLines = lines.ToList();
+                        StateHasChanged();
+                    });
+                },
+                OnPartialText = async text =>
+                {
+                    await InvokeAsync(() =>
+                    {
+                        runPartial = text;
+                        StateHasChanged();
+                    });
+                }
+            });
+
+            runModelId = result.ModelId ?? runModelId;
+            if (result.Log?.LogLines is { Count: > 0 })
+                runLogLines = result.Log.LogLines.ToList();
+            else if (!string.IsNullOrWhiteSpace(result.ToolTrace))
+                runLogLines = result.ToolTrace.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+            if (!result.Success)
+            {
+                runError = result.Error ?? "Skill failed.";
+                if (!string.IsNullOrWhiteSpace(result.Text))
+                    runResult = result.Text;
+            }
+            else
+            {
+                runResult = result.Text ?? "Done.";
+                banner = $"Skill {runRecord.Name} finished · {runModelId}";
+                bannerError = false;
+            }
+            recentRuns = RunLogs.ListRecent().ToList();
+        }
+        catch (Exception ex)
+        {
+            runError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task AfterSkillsChanged()
+    {
+        if (SettingsSync is not null && SyncService is not null)
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Skills);
+    }
+}

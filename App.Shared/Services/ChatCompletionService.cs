@@ -156,35 +156,74 @@ public sealed class ChatCompletionService : IChatCompletionService
 
             if (supportsTools)
             {
-                var activeModules = _toolProvider.GetActiveModules();
-                var route = await _router.ClassifyRequestAsync(
-                    lastUserMessage, activeModules, conversationId, ct);
-                _currentRoute = route;
-
-                // All tool-set decisions live in IRequestRouter (rules / AI / hybrid).
-                _currentTools = route.HasTools
-                    ? _toolProvider.GetToolsForModules(route.Modules, includeMcp: route.IncludeMcp)
-                    : [];
-
-                var src = string.IsNullOrWhiteSpace(route.Source) ? "Rules" : route.Source;
-                var reason = string.IsNullOrWhiteSpace(route.Reason) ? "" : $" ({route.Reason})";
-                if (route.HasTools)
+                var skillCtx = App.Shared.Services.Skills.SkillExecutionContext.Current;
+                RequestRoute route;
+                if (skillCtx is not null)
                 {
-                    var modList = string.Join("+", route.Modules);
-                    _trace.Record(
-                        route.TargetModule != null
-                            ? $"🧭 Route: {src} → {route.Type} → {route.TargetModule} [{modList}]{reason}"
-                            : $"🧭 Route: {src} → {route.Type} → {modList}{reason}");
+                    // Forced skill run: bypass PureChat router; use skill modules + instructions.
+                    route = RequestRoute.WithModules(
+                        skillCtx.Modules,
+                        reason: "skill " + skillCtx.SkillName,
+                        targetModule: null,
+                        includeMcp: skillCtx.IncludeMcp,
+                        source: "Skill");
+                    _currentRoute = route;
+                    _currentTools = _toolProvider.GetToolsForModules(skillCtx.Modules, includeMcp: skillCtx.IncludeMcp);
+                    _trace.Record($"🧭 Route: Skill → {skillCtx.SkillName} [{string.Join("+", skillCtx.Modules)}] mcp={skillCtx.IncludeMcp}");
+                    AppendSystemInstruction(chatHistory, skillCtx.SystemInstructions);
                 }
                 else
                 {
-                    _trace.Record($"🧭 Route: {src} → PureChat{reason}");
-                }
+                    var activeModules = _toolProvider.GetActiveModules();
+                    route = await _router.ClassifyRequestAsync(
+                        lastUserMessage, activeModules, conversationId, ct);
+                    _currentRoute = route;
 
-                if (route.TargetModule == "HomeAssistant"
-                    && route.Reason?.Contains("active session", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    _trace.Record("🧭 Session: continuing active Home Assistant conversation (rules stickiness)");
+                    // All tool-set decisions live in IRequestRouter (rules / AI / hybrid).
+                    _currentTools = route.HasTools
+                        ? _toolProvider.GetToolsForModules(route.Modules, includeMcp: route.IncludeMcp)
+                        : [];
+
+                    var src = string.IsNullOrWhiteSpace(route.Source) ? "Rules" : route.Source;
+                    var reason = string.IsNullOrWhiteSpace(route.Reason) ? "" : $" ({route.Reason})";
+                    if (route.HasTools)
+                    {
+                        var modList = string.Join("+", route.Modules);
+                        _trace.Record(
+                            route.TargetModule != null
+                                ? $"🧭 Route: {src} → {route.Type} → {route.TargetModule} [{modList}]{reason}"
+                                : $"🧭 Route: {src} → {route.Type} → {modList}{reason}");
+                    }
+                    else
+                    {
+                        _trace.Record($"🧭 Route: {src} → PureChat{reason}");
+                    }
+
+                    if (route.TargetModule == "HomeAssistant"
+                        && route.Reason?.Contains("active session", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        _trace.Record("🧭 Session: continuing active Home Assistant conversation (rules stickiness)");
+                    }
+
+                    // Slash skill: same full instruction block as SkillRunner (not a thin wrapper).
+                    if (!string.IsNullOrWhiteSpace(route.SkillId) &&
+                        _services.GetService(typeof(App.Core.Skills.ISkillStore)) is App.Core.Skills.ISkillStore skillStore)
+                    {
+                        var rec = skillStore.Get(route.SkillId);
+                        if (rec is not null)
+                        {
+                            try
+                            {
+                                var doc = App.Core.Skills.SkillMarkdown.Parse(rec.Markdown);
+                                var res = App.Core.Skills.SkillToolResolver.Resolve(doc.AllowedTools);
+                                var skillSys = BuildChatSkillSystemPrompt(doc, res, modelId);
+                                AppendSystemInstruction(chatHistory, skillSys);
+                                _trace.Record($"🎯 Skill instructions injected: {doc.Name} · model {modelId}");
+                                _trace.Record($"🔧 Skill modules: [{string.Join(", ", res.Modules)}] mcp={res.IncludeMcp}");
+                            }
+                            catch { /* ignore parse */ }
+                        }
+                    }
                 }
 
                 var toolNames = _currentTools.OfType<AIFunction>().Select(f => f.Name).ToList();
@@ -902,6 +941,29 @@ public sealed class ChatCompletionService : IChatCompletionService
             - Do NOT only use SearchWeb for a navigation request — call NavigateTo first.
             After NavigateTo succeeds, confirm the destination briefly. Use GetPageContent when asked about the page.
             """;
+    }
+
+    private static string BuildChatSkillSystemPrompt(
+        App.Core.Skills.SkillDocument doc,
+        App.Core.Skills.SkillToolResolver.Resolution resolution,
+        string modelId)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"You are executing the Agent Skill `{doc.Name}`.");
+        sb.AppendLine($"Active model: {modelId}");
+        sb.AppendLine("Follow the skill instructions exactly. Prefer real tool calls over claiming success without tools.");
+        sb.AppendLine("As you work, use tools for each concrete step (gallery, notes, calendar, HA, MCP, etc.).");
+        sb.AppendLine("Do not invent a different interpretation of the user message — the skill definition is authoritative.");
+        sb.AppendLine($"Skill description: {doc.Description}");
+        if (resolution.Modules.Count > 0)
+            sb.AppendLine("Preferred tool modules: " + string.Join(", ", resolution.Modules));
+        if (resolution.IncludeMcp)
+            sb.AppendLine("MCP and OAuth connector tools may also be available.");
+        sb.AppendLine();
+        sb.AppendLine("## Skill instructions");
+        sb.AppendLine();
+        sb.Append((doc.BodyMarkdown ?? "").Trim());
+        return sb.ToString();
     }
 
     private static string BuildBrowserToolEnforcementPrompt() =>

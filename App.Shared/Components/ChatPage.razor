@@ -9,6 +9,7 @@
 @using App.Core.Storage
 @using App.Core.Sync
 @using App.Core.Tools
+@using App.Core.Skills
 @using App.Core.UI
 @using App.Core.Browser
 @using App.Shared.Services
@@ -38,6 +39,7 @@
 @inject IStorageQuotaService StorageQuota
 @inject ISidebarState SidebarState
 @inject IBrowserPanelState BrowserPanel
+@inject ISkillStore SkillStore
 @inject IChatPanelState ChatPanel
 
 <WasmSidebarSync />
@@ -325,11 +327,32 @@
                             </div>
                         }
 
+                        @if (_slashSuggestions.Count > 0)
+                        {
+                            <div class="chat-slash-menu" role="listbox">
+                                <div class="chat-slash-menu-title">Skills</div>
+                                @for (var i = 0; i < _slashSuggestions.Count; i++)
+                                {
+                                    var s = _slashSuggestions[i];
+                                    var idx = i;
+                                    <button type="button"
+                                            class="chat-slash-item @(_slashHighlight == idx ? "is-active" : "")"
+                                            @onclick="() => ApplySlashSkill(s.Name)"
+                                            @onmouseenter="() => _slashHighlight = idx">
+                                        <span class="chat-slash-cmd">/@s.Name</span>
+                                        <span class="chat-slash-desc">@s.Description</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+
                         <textarea @ref="messageTextarea"
                                   id="chat-message-input"
                                   placeholder="@ChatPlaceholder"
                                   class="message-input"
-                                  rows="3"></textarea>
+                                  rows="3"
+                                  @oninput="OnChatComposerInput"
+                                  @onkeydown="OnChatComposerKeyDown"></textarea>
 
                         @if (IsImageGenerationModel)
                         {
@@ -1178,6 +1201,14 @@
     private bool _hasRendered = false;
     private bool _pendingScroll = false;
 
+    private sealed class SlashSkillItem
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+    }
+    private List<SlashSkillItem> _slashSuggestions = new();
+    private int _slashHighlight;
+
     private DotNetObjectReference<object>? dotNetRef;
 
     List<ChatMessage> messages = new();
@@ -1334,6 +1365,7 @@
 
         // Phase 1 — local only (fast): paint titles + model list before network/sync.
         await KeyStore.LoadAsync();
+        try { await SkillStore.LoadAsync(); } catch { /* optional */ }
         await AuthService.LoadAsync();
         if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
             currentUser = AuthService.Email;
@@ -2279,11 +2311,118 @@
         try { _sendCts?.Cancel(); } catch { }
     }
 
+    private async Task OnChatComposerInput(ChangeEventArgs e)
+    {
+        string text;
+        try { text = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
+        catch { text = e.Value?.ToString() ?? ""; }
+        UpdateSlashSuggestions(text ?? "");
+    }
+
+    private async Task OnChatComposerKeyDown(KeyboardEventArgs e)
+    {
+        if (_slashSuggestions.Count == 0) return;
+
+        if (e.Key == "ArrowDown")
+        {
+            _slashHighlight = (_slashHighlight + 1) % _slashSuggestions.Count;
+            StateHasChanged();
+        }
+        else if (e.Key == "ArrowUp")
+        {
+            _slashHighlight = (_slashHighlight - 1 + _slashSuggestions.Count) % _slashSuggestions.Count;
+            StateHasChanged();
+        }
+        else if (e.Key is "Enter" or "Tab")
+        {
+            if (_slashHighlight >= 0 && _slashHighlight < _slashSuggestions.Count)
+            {
+                await ApplySlashSkill(_slashSuggestions[_slashHighlight].Name);
+            }
+        }
+        else if (e.Key == "Escape")
+        {
+            _slashSuggestions = new();
+            StateHasChanged();
+        }
+    }
+
+    private void UpdateSlashSuggestions(string text)
+    {
+        text ??= "";
+        // Only when composing a slash command at start of input
+        if (!text.StartsWith('/') || text.Contains('\n'))
+        {
+            if (_slashSuggestions.Count > 0)
+            {
+                _slashSuggestions = new();
+                StateHasChanged();
+            }
+            return;
+        }
+
+        var rest = text[1..];
+        // /skill foo  → filter foo; /skill-foo → filter skill-foo / foo; /foo → filter foo
+        string filter;
+        if (rest.StartsWith("skill ", StringComparison.OrdinalIgnoreCase))
+            filter = rest["skill ".Length..].Trim();
+        else
+            filter = rest.Trim();
+
+        filter = filter.TrimStart('/');
+        var filterNorm = SkillMarkdown.NormalizeName(filter);
+
+        IEnumerable<SkillRecord> skills;
+        try { skills = SkillStore.List().Where(s => s.Enabled); }
+        catch { skills = Array.Empty<SkillRecord>(); }
+
+        var items = new List<SlashSkillItem>();
+        foreach (var s in skills)
+        {
+            var name = s.Name ?? "";
+            if (!string.IsNullOrEmpty(filterNorm) &&
+                !name.Contains(filterNorm, StringComparison.OrdinalIgnoreCase) &&
+                !("skill-" + name).Contains(filterNorm, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string desc = "";
+            try
+            {
+                var doc = SkillMarkdown.Parse(s.Markdown);
+                desc = doc.Description ?? "";
+                if (desc.Length > 90) desc = desc[..87] + "…";
+            }
+            catch { /* ignore */ }
+
+            items.Add(new SlashSkillItem { Name = name, Description = desc });
+            if (items.Count >= 8) break;
+        }
+
+        _slashSuggestions = items.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        _slashHighlight = 0;
+        StateHasChanged();
+    }
+
+    private async Task ApplySlashSkill(string skillName)
+    {
+        var cmd = "/" + skillName;
+        try { await JS.InvokeVoidAsync("setChatTextareaValue", messageTextarea, cmd); }
+        catch
+        {
+            try { await JS.InvokeVoidAsync("eval", $"document.getElementById('chat-message-input').value = {System.Text.Json.JsonSerializer.Serialize(cmd)}"); }
+            catch { /* ignore */ }
+        }
+        _slashSuggestions = new();
+        StateHasChanged();
+    }
+
     async Task Send()
     {
         string currentMessage = "";
         try { currentMessage = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
         catch { /* ignore */ }
+
+        _slashSuggestions = new();
 
         if (isSending || (string.IsNullOrWhiteSpace(currentMessage) && !pendingFiles.Any()))
             return;
