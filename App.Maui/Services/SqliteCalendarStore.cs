@@ -66,7 +66,7 @@ public class SqliteCalendarStore : ICalendarStore
             ct);
     }
 
-    public async Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default)
+    public async Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default, bool isWorkflowCalendar = false)
     {
         var ns = GetPrefix();
         var now = DateTime.UtcNow;
@@ -75,7 +75,50 @@ public class SqliteCalendarStore : ICalendarStore
         var fp = SyncFingerprint.ForCalendar(id, name, color, true, description, now.Ticks);
         await _db.UpsertCalendarMetaAsync(new SqliteHistoryDatabase.CalendarMetaRow(
             CalKey(ns, id), id, ns, name, color, now.ToString("o"),
-            _auth.IsAuthenticated, fp, null, description, null, true, sort, false), ct);
+            _auth.IsAuthenticated, fp, null, description, null, true, sort, isWorkflowCalendar), ct);
+    }
+
+    public async Task<string> EnsureWorkflowCalendarAsync(CancellationToken ct = default)
+    {
+        var list = await LoadCalendarsAsync(ct);
+        var existing = list.FirstOrDefault(c => c.IsWorkflowCalendar
+            || c.Id.Equals(CalendarConstants.WorkflowCalendarId, StringComparison.OrdinalIgnoreCase)
+            || c.Name.Equals(CalendarConstants.WorkflowCalendarName, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            if (!existing.IsWorkflowCalendar)
+            {
+                var ns = GetPrefix();
+                var row = await _db.GetCalendarMetaByIdAsync(ns, existing.Id, ct);
+                if (row is not null && string.IsNullOrEmpty(row.DeletedAt))
+                {
+                    var now = DateTime.UtcNow;
+                    var fp = SyncFingerprint.ForCalendar(
+                        existing.Id, CalendarConstants.WorkflowCalendarName, CalendarConstants.WorkflowCalendarColor,
+                        existing.IsVisible, "AI skill schedules (Wizionic workflows)", now.Ticks);
+                    await _db.UpsertCalendarMetaAsync(row with
+                    {
+                        Name = CalendarConstants.WorkflowCalendarName,
+                        Color = CalendarConstants.WorkflowCalendarColor,
+                        Description = "AI skill schedules (Wizionic workflows)",
+                        IsWorkflowCalendar = true,
+                        LastUpdated = now.ToString("o"),
+                        ContentFingerprint = fp
+                    }, ct);
+                }
+            }
+            return existing.Id;
+        }
+
+        var id = CalendarConstants.WorkflowCalendarId;
+        await CreateCalendarAsync(
+            id,
+            CalendarConstants.WorkflowCalendarName,
+            CalendarConstants.WorkflowCalendarColor,
+            "AI skill schedules (Wizionic workflows)",
+            ct,
+            isWorkflowCalendar: true);
+        return id;
     }
 
     public async Task UpdateCalendarAsync(string id, string name, string color, bool isVisible, string? description = null, CancellationToken ct = default)

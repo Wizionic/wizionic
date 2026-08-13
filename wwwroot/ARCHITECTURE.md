@@ -347,19 +347,34 @@ Reusable procedural knowledge for the chat agent, stored **locally** as portable
 | **UI** | Tools page → **Skills** tab (`SkillsPanel.razor`): list, create (form), raw editor, upload `.md`, export, run modal, import examples |
 | **Run** | `ISkillRunner` forces modules from `allowed-tools` via `SkillToolResolver`, injects skill body as system instructions, reuses `ChatCompletionService` + function invocation |
 | **Chat** | Type `/skill-name` or `run skill skill-name` — `ContextualRequestRouter` attaches skill tools + body |
+| **Run log** | `ISkillRunLogStore` — source (`manual` / `chat` / `workflow`), model id, tool trace, result |
 | **Sync** | Settings category `skills` (WebRTC) |
-| **Examples** | `positive-inspiration-image` (Lemonade + Gallery + Notes), `random-house-lights` (Home Assistant) |
+| **Examples** | Image, HA lights, stock, GitHub, calendar planning, research URL |
 
-**Key files:** `App.Core/Skills/*`, `App.Shared/Services/Skills/*`, `SkillsPanel.razor`, `ChatCompletionService` skill context, `SettingsSyncCategory.Skills`
+### Workflows (trigger layer above skills)
+
+Thin custom YAML **`wizionic.workflow/v1`** (not a full CNCF Open Workflow engine): cron/manual triggers, preferred/fallback model, `execute_skill`, projection onto the **Workflows** calendar (`IsWorkflowCalendar` + `WorkflowId`).
+
+| Piece | Detail |
+|-------|--------|
+| **Store** | `IWorkflowStore` (local preferences) |
+| **Runtime** | `IWorkflowOrchestrator` → model resolve → `ISkillRunner` with `Source=workflow` |
+| **UI** | Tools → **Workflows** tab (form editor + raw YAML); Calendar sidebar + schedule dialog |
+| **Due runs** | Best-effort while app is open: `WorkflowDueBootstrap` ticks every ~1 min (`ProjectCalendarsAsync` + `ProcessDueAsync`); also on Calendar open / Workflows refresh |
+| **Calendar edit** | Workflow occurrences open a **schedule** dialog (start + repeat only), not the full event form |
+| **Sync** | Settings category `workflows` (WebRTC) — YAML library + enabled flags + last-run metadata |
+
+**Key files:** `App.Core/Skills/*`, `App.Core/Workflows/*`, `App.Shared/Services/Skills/*`, `App.Shared/Services/Workflows/*`, `SkillsPanel.razor`, `WorkflowsPanel.razor`, `WorkflowDueBootstrap.razor`
 
 ---
 
 ## Tools page, MCP registry & OAuth connectors
 
-**UI:** `ToolsPage.razor` (`/tools`) — single **Tools** experience:
+**UI:** `ToolsPage.razor` (`/tools`) — tabs **Tools → Skills → Workflows** (hierarchy):
 
-1. **Installed** — OAuth connectors with tokens + enabled MCP (and custom MCP URLs).
-2. **Discover** — two-column cards: uninstalled OAuth catalog rows + remote-capable MCP from the official registry. Search is **server-side** (not a client filter of 20 rows). Card body opens details; only **Install** / **Connect** performs the action.
+1. **Built-in** — compact chips for always-on app tools (web search, notes, gallery, calendar, …); no install/toggle UI yet.
+2. **Installed** — OAuth connectors with tokens + enabled MCP (and custom MCP URLs).
+3. **Discover** — two-column cards: uninstalled OAuth catalog rows + remote-capable MCP from the official registry. Search is **server-side** (not a client filter of 20 rows). Card body opens details; only **Install** / **Connect** performs the action.
 
 ### Official MCP registry (discovery only)
 
@@ -777,7 +792,8 @@ Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
 | `cloud-providers` | User API keys (encrypted at rest on each device) |
 | `home-assistant` | HA URL/token/assistant name (desktop) |
 | `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens |
-| `skills` | User SKILL.md library (markdown + enabled flags) |
+| `skills` | User SKILL.md library (markdown + enabled flags); auto-sync toggle on Sync page |
+| `workflows` | Workflow YAML library (`wizionic.workflow/v1`) + enabled/last-run; auto-sync toggle on Sync page |
 | `system-prompt` | Custom system prompt |
 | `profile` | About-you profile fields |
 | `memories` | User memory list |

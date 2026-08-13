@@ -112,7 +112,7 @@ public class WasmCalendarStore : ICalendarStore
             ct);
     }
 
-    public async Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default)
+    public async Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default, bool isWorkflowCalendar = false)
     {
         var ns = GetPrefix();
         var now = DateTime.UtcNow;
@@ -134,9 +134,53 @@ public class WasmCalendarStore : ICalendarStore
             timeZone: null,
             isVisible: true,
             sortOrder: sort,
-            isWorkflowCalendar: false);
+            isWorkflowCalendar: isWorkflowCalendar);
 
         await _js.InvokeVoidAsync("idbPutCalendarMeta", meta);
+    }
+
+    public async Task<string> EnsureWorkflowCalendarAsync(CancellationToken ct = default)
+    {
+        var list = await LoadCalendarsAsync(ct);
+        var existing = list.FirstOrDefault(c => c.IsWorkflowCalendar
+            || c.Id.Equals(CalendarConstants.WorkflowCalendarId, StringComparison.OrdinalIgnoreCase)
+            || c.Name.Equals(CalendarConstants.WorkflowCalendarName, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            // Promote legacy rows that match by name/id but lack the workflow flag.
+            if (!existing.IsWorkflowCalendar)
+            {
+                var meta = await GetCalMetaAsync(existing.Id);
+                if (meta is not null && string.IsNullOrEmpty(meta.deletedAt))
+                {
+                    var now = DateTime.UtcNow;
+                    var fp = SyncFingerprint.ForCalendar(
+                        existing.Id, CalendarConstants.WorkflowCalendarName, CalendarConstants.WorkflowCalendarColor,
+                        existing.IsVisible, "AI skill schedules (Wizionic workflows)", now.Ticks);
+                    var fixedMeta = meta with
+                    {
+                        name = CalendarConstants.WorkflowCalendarName,
+                        color = CalendarConstants.WorkflowCalendarColor,
+                        description = "AI skill schedules (Wizionic workflows)",
+                        isWorkflowCalendar = true,
+                        lastUpdated = now.ToString("o"),
+                        contentFingerprint = fp
+                    };
+                    await _js.InvokeVoidAsync("idbPutCalendarMeta", fixedMeta);
+                }
+            }
+            return existing.Id;
+        }
+
+        var id = CalendarConstants.WorkflowCalendarId;
+        await CreateCalendarAsync(
+            id,
+            CalendarConstants.WorkflowCalendarName,
+            CalendarConstants.WorkflowCalendarColor,
+            description: "AI skill schedules (Wizionic workflows)",
+            ct: ct,
+            isWorkflowCalendar: true);
+        return id;
     }
 
     public async Task UpdateCalendarAsync(string id, string name, string color, bool isVisible, string? description = null, CancellationToken ct = default)

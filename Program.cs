@@ -238,6 +238,10 @@ builder.Services.AddSingleton<App.Core.Skills.ISkillRunLogStore>(
     _ => App.Shared.Services.Skills.NullSkillRunLogStore.Instance);
 builder.Services.AddSingleton<App.Core.Skills.ISkillRunner>(
     _ => App.Shared.Services.Skills.NullSkillRunner.Instance);
+builder.Services.AddSingleton<App.Core.Workflows.IWorkflowStore>(
+    _ => App.Shared.Services.Workflows.NullWorkflowStore.Instance);
+builder.Services.AddSingleton<App.Core.Workflows.IWorkflowOrchestrator>(
+    _ => App.Shared.Services.Workflows.NullWorkflowOrchestrator.Instance);
 
 builder.Services.AddAuthentication("AppAuth")
     .AddCookie("AppAuth", options =>

@@ -253,6 +253,8 @@ public static class MauiProgram
 		services.AddSingleton<App.Core.Skills.ISkillStore, App.Shared.Services.Skills.PreferencesSkillStore>();
 		services.AddSingleton<App.Core.Skills.ISkillRunLogStore, App.Shared.Services.Skills.SkillRunLogStore>();
 		services.AddSingleton<App.Core.Skills.ISkillRunner, App.Shared.Services.Skills.SkillRunner>();
+		services.AddSingleton<App.Core.Workflows.IWorkflowStore, App.Shared.Services.Workflows.PreferencesWorkflowStore>();
+		services.AddSingleton<App.Core.Workflows.IWorkflowOrchestrator, App.Shared.Services.Workflows.WorkflowOrchestrator>();
 		services.AddSingleton<SettingsSyncStore>();
 		services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
 		services.AddSingleton<SipsorceryWebRtcTransport>();

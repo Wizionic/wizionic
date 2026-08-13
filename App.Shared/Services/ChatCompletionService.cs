@@ -17,6 +17,7 @@ using StoreChatMessage = App.Core.Storage.ChatMessage;
 
 using App.Core.Browser;
 using App.Core.Chat;
+using App.Core.Skills;
 using App.Core.SmartHome;
 using App.Core.Tools;
 using App.Core.UI;
@@ -506,6 +507,10 @@ public sealed class ChatCompletionService : IChatCompletionService
                         ContextUsed: contextUsed > 0 ? contextUsed : null,
                         MessagesTrimmed: messagesTrimmed);
 
+                    // Chat /skill path: persist run history on Skills page (same store as manual/workflow).
+                    await TryLogChatSkillRunAsync(
+                        modelId, text, toolTrace, cancelled, wallStart, ct);
+
                     return new ChatCompletionResult(text, toolTrace, null, resultAttachments, stats);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -941,6 +946,50 @@ public sealed class ChatCompletionService : IChatCompletionService
             - Do NOT only use SearchWeb for a navigation request — call NavigateTo first.
             After NavigateTo succeeds, confirm the destination briefly. Use GetPageContent when asked about the page.
             """;
+    }
+
+    private async Task TryLogChatSkillRunAsync(
+        string modelId,
+        string text,
+        string toolTrace,
+        bool cancelled,
+        DateTime wallStart,
+        CancellationToken ct)
+    {
+        var skillId = _currentRoute?.SkillId;
+        if (string.IsNullOrWhiteSpace(skillId)) return;
+        // Avoid double-log when SkillRunner already owns the ambient skill context.
+        if (App.Shared.Services.Skills.SkillExecutionContext.Current is not null) return;
+
+        try
+        {
+            var logs = _services.GetService(typeof(ISkillRunLogStore)) as ISkillRunLogStore;
+            if (logs is null) return;
+            var store = _services.GetService(typeof(ISkillStore)) as ISkillStore;
+            var rec = store?.Get(skillId);
+            var name = rec?.Name ?? skillId;
+            var log = new SkillRunLog
+            {
+                SkillId = skillId,
+                SkillName = name,
+                ModelId = modelId,
+                Source = SkillRunSource.Chat,
+                TriggerDetail = "chat",
+                StartedAtUtc = new DateTimeOffset(wallStart, TimeSpan.Zero),
+                EndedAtUtc = DateTimeOffset.UtcNow,
+                Success = !cancelled && !string.IsNullOrWhiteSpace(text),
+                Error = cancelled ? "cancelled" : null,
+                ResultText = text,
+                LogLines = string.IsNullOrWhiteSpace(toolTrace)
+                    ? new List<string>()
+                    : toolTrace.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList()
+            };
+            await logs.AddAsync(log, ct);
+        }
+        catch
+        {
+            // non-fatal
+        }
     }
 
     private static string BuildChatSkillSystemPrompt(

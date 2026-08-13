@@ -70,6 +70,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     public bool AutoSyncProfile { get; set; }
     public bool AutoSyncMemories { get; set; }
     public bool AutoSyncAppearance { get; set; }
+    public bool AutoSyncSkills { get; set; }
+    public bool AutoSyncWorkflows { get; set; }
     public IReadOnlyCollection<string> SyncTargetDeviceIds { get; set; } = Array.Empty<string>();
     public Func<string, bool>? IsSelf { get; set; }
     /// <summary>This device's sync id — used for deterministic WebRTC glare (perfect negotiation).</summary>
@@ -809,6 +811,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         SettingsSyncCategory.Profile => AutoSyncProfile,
         SettingsSyncCategory.Memories => AutoSyncMemories,
         SettingsSyncCategory.Appearance => AutoSyncAppearance,
+        SettingsSyncCategory.Skills => AutoSyncSkills,
+        SettingsSyncCategory.Workflows => AutoSyncWorkflows,
         _ => false
     };
 
@@ -2058,7 +2062,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         var includeAlbums = AutoSyncGallery && _galleryStore != null;
         var anySettingsAuto = AutoSyncLocalAi || AutoSyncLemonade || AutoSyncCloudProviders
             || AutoSyncHomeAssistant || AutoSyncTools || AutoSyncSystemPrompt
-            || AutoSyncProfile || AutoSyncMemories || AutoSyncAppearance;
+            || AutoSyncProfile || AutoSyncMemories || AutoSyncAppearance
+            || AutoSyncSkills || AutoSyncWorkflows;
 
         if (!AutoSyncChatHistory && !AutoSyncNotes && !includeAlbums && !includeBookmarks && !includeApps && !anySettingsAuto)
             return;

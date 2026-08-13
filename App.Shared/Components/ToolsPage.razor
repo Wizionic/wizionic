@@ -17,10 +17,12 @@
 <div class="settings-content cf-connectors-page">
     <div class="cf-conn-top">
         <div class="cf-conn-tabs">
-            <button type="button" class="cf-conn-tab @(activeTab == "skills" ? "cf-conn-tab-active" : "")"
-                    @onclick="ShowSkillsTab">Skills</button>
             <button type="button" class="cf-conn-tab @(activeTab == "tools" ? "cf-conn-tab-active" : "")"
                     @onclick="ShowToolsTab">Tools</button>
+            <button type="button" class="cf-conn-tab @(activeTab == "skills" ? "cf-conn-tab-active" : "")"
+                    @onclick="ShowSkillsTab">Skills</button>
+            <button type="button" class="cf-conn-tab @(activeTab == "workflows" ? "cf-conn-tab-active" : "")"
+                    @onclick="ShowWorkflowsTab">Workflows</button>
         </div>
         @if (activeTab == "tools")
         {
@@ -57,8 +59,35 @@
             <SkillsPanel />
         </section>
     }
+    else if (activeTab == "workflows")
+    {
+        <section class="cf-conn-section">
+            <h2 class="cf-conn-section-title">Workflows</h2>
+            <p class="text-muted" style="font-size:0.88rem;margin:-0.35rem 0 0.85rem;">
+                Schedule skills with model routing. Runs show on the Workflows calendar and in Skills → Recent runs.
+            </p>
+            <WorkflowsPanel />
+        </section>
+    }
     else
     {
+
+    <!-- ========== Built-in (always available) ========== -->
+    <section class="cf-conn-section cf-builtin-section">
+        <div class="cf-conn-section-head">
+            <h2 class="cf-conn-section-title">Built-in</h2>
+            <span class="cf-builtin-hint">Always available to chat · no install</span>
+        </div>
+        <div class="cf-builtin-chips">
+            @foreach (var t in BuiltinTools)
+            {
+                <span class="cf-builtin-chip" title="@t.Detail">
+                    <span class="cf-builtin-chip-icon" aria-hidden="true">@t.Icon</span>
+                    <span class="cf-builtin-chip-label">@t.Label</span>
+                </span>
+            }
+        </div>
+    </section>
 
     <!-- ========== Installed ========== -->
     <section class="cf-conn-section">
@@ -416,9 +445,37 @@
 }
 
 @code {
-    private string activeTab = "skills";
+    private string activeTab = "tools";
     private void ShowSkillsTab() => activeTab = "skills";
+    private void ShowWorkflowsTab() => activeTab = "workflows";
     private void ShowToolsTab() => activeTab = "tools";
+
+    /// <summary>Compact list of always-on app tool modules (no enable/disable UI yet).</summary>
+    private static IReadOnlyList<BuiltinToolChip> BuiltinToolsBase { get; } =
+    [
+        new("🔎", "Web search", "DuckDuckGo search_web — current facts, news, prices"),
+        new("📖", "Summarize URL", "summarize_url — fetch and summarize any page"),
+        new("🌤", "Weather", "get_current_weather"),
+        new("🕒", "Time", "get_time / UTC clock"),
+        new("∑", "Calculator", "calculate — arithmetic"),
+        new("📓", "Notes", "Notebooks and entries"),
+        new("🖼", "Gallery", "Albums and chat images"),
+        new("📅", "Calendar", "Calendars and events"),
+        new("🍋", "Lemonade", "Local image / speech tools when Lemonade is configured"),
+    ];
+
+    private static IReadOnlyList<BuiltinToolChip> BuiltinToolsMauiOnly { get; } =
+    [
+        new("🌐", "Web browser", "Embedded browser agent (desktop app)"),
+        new("🏠", "Home Assistant", "Control HA devices (desktop app)"),
+    ];
+
+    private IEnumerable<BuiltinToolChip> BuiltinTools =>
+        AppEnvironment.IsMaui
+            ? BuiltinToolsBase.Concat(BuiltinToolsMauiOnly)
+            : BuiltinToolsBase;
+
+    private sealed record BuiltinToolChip(string Icon, string Label, string Detail);
     private List<ManagedMcpTool> registryTools = new();
     private List<ManagedMcpTool> customTools = new();
     private bool isLoading;
@@ -506,10 +563,14 @@
                 if (eq <= 0) continue;
                 var key = Uri.UnescapeDataString(part[..eq]);
                 var val = Uri.UnescapeDataString(part[(eq + 1)..]);
-                if (key.Equals("tab", StringComparison.OrdinalIgnoreCase) &&
-                    val.Equals("tools", StringComparison.OrdinalIgnoreCase))
+                if (key.Equals("tab", StringComparison.OrdinalIgnoreCase))
                 {
-                    activeTab = "tools";
+                    if (val.Equals("tools", StringComparison.OrdinalIgnoreCase))
+                        activeTab = "tools";
+                    else if (val.Equals("workflows", StringComparison.OrdinalIgnoreCase))
+                        activeTab = "workflows";
+                    else if (val.Equals("skills", StringComparison.OrdinalIgnoreCase))
+                        activeTab = "skills";
                     break;
                 }
             }
