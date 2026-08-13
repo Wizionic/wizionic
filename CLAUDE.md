@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Stack: .NET 10 · Blazor Web App (Auto) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI · Ollama
 
-Full architecture is documented in `wwwroot/ARCHITECTURE.md`. The product roadmap is in `wwwroot/ROADMAP.md`.
+Full architecture is documented in `ARCHITECTURE.md` (repo root; not served publicly). The product roadmap is in `wwwroot/ROADMAP.md`.
 
 ## Key Commands
 
@@ -53,7 +53,7 @@ App/
 ├── Apis/                        # API endpoint groups (WasmApiEndpoints, AiProxyEndpoints, SyncHub)
 ├── Data/                        # EF Core entities + AppDbContext (Users, UserProviderKeys, DataProtectionKeys)
 ├── Services/                    # Server-only services (email, key protection, AI proxy)
-└── Pages/                       # Server-rendered pages (Roadmap, Architecture, Styleguide)
+└── Pages/                       # Optional server-rendered pages (e.g. Roadmap)
 ```
 
 ### Project Sharing Model

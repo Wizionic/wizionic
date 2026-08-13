@@ -12,12 +12,15 @@ dotnet publish App.Maui/ -f net10.0-windows10.0.19041.0 -r win-x64 --self-contai
 
 ## Architecture (key facts)
 
+Full write-up: [`ARCHITECTURE.md`](ARCHITECTURE.md) (repo root; not a public site page).
+
 - **Three targets from one codebase**: Host (`App.csproj`), WASM (`App.Client/`), MAUI (`App.Maui/`)
 - **Shared layers**: `App.Core/` (interfaces/DTOs, no platform code), `App.Shared/` (Razor components + shared services)
 - **Local-first**: Chat history and note bodies are AES-256-GCM encrypted on the client. Only auth metadata/signaling touches the server. Never add server-side chat storage for WASM/MAUI targets.
 - **Storage isolation**: Guest mode uses `wasmchat-` prefix in IndexedDB; authenticated mode uses `u-{userId}-`. Migration handled by `WasmGuestDataMigrationService`.
 - **AI routing**: Ollama → direct to localhost; cloud models → proxied via `/api/proxy/chat` with server-side keys; user-keyed models called directly from client.
 - **Sync**: SignalR hub (`/sync-hub`) for presence + WebRTC signaling only (never data payloads). WebRTC DataChannel carries encrypted JSON. MAUI uses SIPSorcery; WASM uses native `RTCPeerConnection` via JS interop.
+- **Workflows**: Device-local schedules (not synced); **Skills** + installed **Tools** do sync.
 
 ## Directory map
 

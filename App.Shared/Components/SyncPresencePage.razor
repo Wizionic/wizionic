@@ -572,7 +572,6 @@
                 }
                 @SettingsSection("Tools (MCP + Connectors)", SettingsSyncCategory.Tools, SyncService.AutoSyncTools, ToggleAutoSyncTools)
                 @SettingsSection("Skills (SKILL.md)", SettingsSyncCategory.Skills, SyncService.AutoSyncSkills, ToggleAutoSyncSkills)
-                @SettingsSection("Workflows", SettingsSyncCategory.Workflows, SyncService.AutoSyncWorkflows, ToggleAutoSyncWorkflows)
                 @SettingsSection("System prompt", SettingsSyncCategory.SystemPrompt, SyncService.AutoSyncSystemPrompt, ToggleAutoSyncSystemPrompt)
                 @SettingsSection("About you", SettingsSyncCategory.Profile, SyncService.AutoSyncProfile, ToggleAutoSyncProfile)
                 @SettingsSection("Memories", SettingsSyncCategory.Memories, SyncService.AutoSyncMemories, ToggleAutoSyncMemories)
@@ -882,7 +881,6 @@
     private async Task ToggleAutoSyncHomeAssistant(ChangeEventArgs e) { await SyncService.SetAutoSyncHomeAssistantAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncTools(ChangeEventArgs e) { await SyncService.SetAutoSyncToolsAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncSkills(ChangeEventArgs e) { await SyncService.SetAutoSyncSkillsAsync(e.Value is bool b && b); StateHasChanged(); }
-    private async Task ToggleAutoSyncWorkflows(ChangeEventArgs e) { await SyncService.SetAutoSyncWorkflowsAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncSystemPrompt(ChangeEventArgs e) { await SyncService.SetAutoSyncSystemPromptAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncProfile(ChangeEventArgs e) { await SyncService.SetAutoSyncProfileAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncMemories(ChangeEventArgs e) { await SyncService.SetAutoSyncMemoriesAsync(e.Value is bool b && b); StateHasChanged(); }

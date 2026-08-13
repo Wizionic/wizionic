@@ -71,7 +71,6 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     public bool AutoSyncMemories { get; set; }
     public bool AutoSyncAppearance { get; set; }
     public bool AutoSyncSkills { get; set; }
-    public bool AutoSyncWorkflows { get; set; }
     public IReadOnlyCollection<string> SyncTargetDeviceIds { get; set; } = Array.Empty<string>();
     public Func<string, bool>? IsSelf { get; set; }
     /// <summary>This device's sync id — used for deterministic WebRTC glare (perfect negotiation).</summary>
@@ -681,9 +680,20 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         List<SyncManifestEntry>? calendarEvents = null;
         if (includeCalendars && _calendarStore != null)
         {
-            calendars = await _calendarStore.LoadCalendarManifestEntriesAsync(backfillMissingFingerprints: true);
-            calendarEvents = await _calendarStore.LoadEventManifestEntriesAsync(backfillMissingFingerprints: true);
-            SyncDebugLog.Info($"BuildLocalManifest calendars={calendars.Count} calendarEvents={calendarEvents.Count}");
+            // Workflows calendar + WorkflowId events are device-local (schedules must not fan out).
+            var workflowCalIds = await GetWorkflowCalendarIdsAsync();
+            calendars = (await _calendarStore.LoadCalendarManifestEntriesAsync(backfillMissingFingerprints: true))
+                .Where(e => !IsWorkflowCalendarId(e.Id, workflowCalIds))
+                .ToList();
+            var rawEvents = await _calendarStore.LoadEventManifestEntriesAsync(backfillMissingFingerprints: true);
+            calendarEvents = new List<SyncManifestEntry>(rawEvents.Count);
+            foreach (var entry in rawEvents)
+            {
+                if (await IsWorkflowScopedEventAsync(entry.Id, workflowCalIds))
+                    continue;
+                calendarEvents.Add(entry);
+            }
+            SyncDebugLog.Info($"BuildLocalManifest calendars={calendars.Count} calendarEvents={calendarEvents.Count} (workflow excluded)");
         }
 
         return new SyncManifestOffer(convos, notes, bookmarks, folders, apps, albums, albumImages, calendars, calendarEvents);
@@ -812,7 +822,6 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         SettingsSyncCategory.Memories => AutoSyncMemories,
         SettingsSyncCategory.Appearance => AutoSyncAppearance,
         SettingsSyncCategory.Skills => AutoSyncSkills,
-        SettingsSyncCategory.Workflows => AutoSyncWorkflows,
         _ => false
     };
 
@@ -2063,7 +2072,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         var anySettingsAuto = AutoSyncLocalAi || AutoSyncLemonade || AutoSyncCloudProviders
             || AutoSyncHomeAssistant || AutoSyncTools || AutoSyncSystemPrompt
             || AutoSyncProfile || AutoSyncMemories || AutoSyncAppearance
-            || AutoSyncSkills || AutoSyncWorkflows;
+            || AutoSyncSkills;
 
         if (!AutoSyncChatHistory && !AutoSyncNotes && !includeAlbums && !includeBookmarks && !includeApps && !anySettingsAuto)
             return;
@@ -3138,9 +3147,16 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         var remoteCalendarEvents = offer.CalendarEvents ?? [];
         if (_calendarStore != null)
         {
+            var workflowCalIds = await GetWorkflowCalendarIdsAsync();
             var localCals = await _calendarStore.LoadCalendarManifestEntriesAsync(backfillMissingFingerprints: true);
             foreach (var remote in remoteCalendars)
             {
+                // Never request/apply Workflows system calendar from peers.
+                if (IsWorkflowCalendarId(remote.Id, workflowCalIds))
+                {
+                    upToDateCalendars++;
+                    continue;
+                }
                 var local = localCals.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
                 if (remote.IsDeleted)
                 {
@@ -3164,6 +3180,11 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             var localEvents = await _calendarStore.LoadEventManifestEntriesAsync(backfillMissingFingerprints: true);
             foreach (var remote in remoteCalendarEvents)
             {
+                if (await IsWorkflowScopedEventAsync(remote.Id, workflowCalIds))
+                {
+                    upToDateCalendarEvents++;
+                    continue;
+                }
                 var local = localEvents.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
                 if (remote.IsDeleted)
                 {
