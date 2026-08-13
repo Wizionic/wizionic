@@ -1,0 +1,675 @@
+@using App.Core.Skills
+@using App.Core.Storage
+@using App.Core.Sync
+@using App.Core.Workflows
+@using App.Shared.Services
+@using App.Shared.Services.Workflows
+@inject IWorkflowStore WorkflowStore
+@inject IWorkflowOrchestrator Orchestrator
+@inject ISkillStore SkillStore
+@inject IKeyStore KeyStore
+@inject ISettingsSyncStore? SettingsSync
+@inject ISyncService? SyncService
+@implements IDisposable
+
+<div class="cf-skills-panel">
+    <div class="cf-skills-toolbar">
+        <button type="button" class="btn btn-primary btn-sm" @onclick="OpenCreate">+ New workflow</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ImportSamples" disabled="@busy">Import samples</button>
+        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="RefreshAll" disabled="@busy">
+            @(busy ? "…" : "Refresh + project calendar")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(banner))
+    {
+        <div class="cf-conn-banner @(bannerError ? "cf-conn-banner-error" : "cf-conn-banner-ok")">
+            @banner
+            <button type="button" class="cf-conn-banner-close" @onclick="() => banner = null">✕</button>
+        </div>
+    }
+
+    <p class="text-muted" style="font-size:0.85rem;margin:0 0 0.75rem;">
+        Workflows schedule skills (cron) and can pick models. Scheduled runs appear on the <strong>Workflows</strong> calendar.
+        Format: <code>wizionic.workflow/v1</code> (not full CNCF OWS).
+    </p>
+
+    @if (!workflows.Any())
+    {
+        <p class="cf-conn-empty">No workflows yet. Create one or import samples.</p>
+    }
+    else
+    {
+        <div class="cf-tool-grid">
+            @foreach (var w in workflows)
+            {
+                var doc = SafeParse(w.Yaml);
+                <div class="cf-tool-card">
+                    <div class="cf-tool-card-main cf-tool-card-main-static">
+                        <span class="cf-conn-icon cf-tool-icon" style="background:#7c3aed;color:#fff;">⏱</span>
+                        <div class="cf-tool-card-body">
+                            <div class="cf-tool-card-title-row">
+                                <span class="cf-tool-card-title">@w.Name</span>
+                                <span class="cf-tool-kind">Workflow</span>
+                                @if (!w.Enabled)
+                                {
+                                    <span class="cf-conn-card-badge">Off</span>
+                                }
+                            </div>
+                            <div class="cf-tool-card-desc">
+                                skill <code>@(doc?.ExecuteSkill.Id ?? "?")</code>
+                                · @(doc?.Trigger.Type ?? "manual")
+                                @if (!string.IsNullOrWhiteSpace(doc?.Trigger.Expression))
+                                {
+                                    <text> <code>@doc.Trigger.Expression</code></text>
+                                }
+                            </div>
+                            <div class="cf-tool-card-meta">
+                                @if (!string.IsNullOrWhiteSpace(doc?.Orchestrator.PreferredModel))
+                                {
+                                    <span class="cf-tool-by">Model @doc.Orchestrator.PreferredModel</span>
+                                }
+                                @if (w.LastRunAtUtc is not null)
+                                {
+                                    <span class="text-muted" style="font-size:0.72rem;">Last: @w.LastRunStatus · @w.LastRunAtUtc.Value.ToLocalTime().ToString("g")</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cf-tool-card-actions">
+                        <button type="button" class="btn btn-primary btn-sm" @onclick="() => RunNow(w)" disabled="@busy">Run</button>
+                        <div class="cf-conn-menu-wrap">
+                            <button type="button" class="cf-conn-menu-btn" @onclick="() => ToggleMenu(w.Id)">⋮</button>
+                            @if (openMenuId == w.Id)
+                            {
+                                <div class="cf-conn-menu">
+                                    <button type="button" @onclick="() => { openMenuId = null; OpenEdit(w); }">Edit</button>
+                                    <button type="button" @onclick="async () => { openMenuId = null; await ToggleEnabled(w); }">
+                                        @(w.Enabled ? "Disable" : "Enable")
+                                    </button>
+                                    <button type="button" class="cf-conn-menu-danger" @onclick="async () => { openMenuId = null; await Delete(w); }">Delete</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (editorOpen)
+{
+    <div class="cf-conn-modal-backdrop" @onmousedown="() => _armed = true" @onclick="OnBackdrop">
+        <div class="cf-conn-modal cf-skill-editor-modal cf-skill-resizable"
+             @onmousedown="() => _armed = false" @onmousedown:stopPropagation="true" @onclick:stopPropagation="true">
+            <div class="cf-conn-modal-title">@(editingId is null ? "New workflow" : "Edit workflow")</div>
+
+            <div class="cf-skill-editor-tabs">
+                <button type="button" class="cf-conn-tab @(editorTab == 0 ? "cf-conn-tab-active" : "")"
+                        @onclick="() => editorTab = 0">Form</button>
+                <button type="button" class="cf-conn-tab @(editorTab == 1 ? "cf-conn-tab-active" : "")"
+                        @onclick="SwitchToRaw">Raw YAML</button>
+            </div>
+
+            @if (editorTab == 0)
+            {
+                <div class="cf-skill-form">
+                    <div class="cf-skill-form-row">
+                        <div>
+                            <label class="cf-conn-label">Id (lowercase, hyphens)</label>
+                            <input class="cf-dialog-input" @bind="fId" @bind:event="oninput" placeholder="nightly-inspiration" />
+                        </div>
+                        <div>
+                            <label class="cf-conn-label">Display name</label>
+                            <input class="cf-dialog-input" @bind="fName" @bind:event="oninput" placeholder="Nightly inspiration" />
+                        </div>
+                    </div>
+
+                    <label class="cf-skill-tool-check" style="margin-top:0.65rem;">
+                        <input type="checkbox" @bind="fEnabled" />
+                        <span>Enabled</span>
+                    </label>
+
+                    <label class="cf-conn-label">Skill to run</label>
+                    @if (skillOptions.Count > 0)
+                    {
+                        <select class="cf-dialog-input" @bind="fSkillId">
+                            @foreach (var s in skillOptions)
+                            {
+                                <option value="@s">@s</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input class="cf-dialog-input" @bind="fSkillId" @bind:event="oninput" placeholder="skill-name" />
+                        <p class="text-muted" style="font-size:0.78rem;margin:0.25rem 0 0;">No skills installed yet — type a skill id, or create one under the Skills tab.</p>
+                    }
+
+                    <label class="cf-conn-label">Run message (optional)</label>
+                    <input class="cf-dialog-input" @bind="fUserMessage" placeholder="Nightly run" />
+
+                    <label class="cf-conn-label">When to run</label>
+                    <select class="cf-dialog-input" @bind="fTriggerMode" @bind:after="OnTriggerModeChanged">
+                        <option value="manual">Manual only (Run button)</option>
+                        <option value="schedule">On a schedule</option>
+                    </select>
+
+                    @if (fTriggerMode == "schedule")
+                    {
+                        <div class="cf-skill-form-row">
+                            <div>
+                                <label class="cf-conn-label">Start</label>
+                                <input class="cf-dialog-input" type="datetime-local"
+                                       value="@fStartStr"
+                                       @onchange="OnStartChanged" />
+                            </div>
+                            <div>
+                                <label class="cf-conn-label">Repeat</label>
+                                <select class="cf-dialog-input" @bind="fRepeatPreset" @bind:after="OnRepeatChanged">
+                                    <option value="none">Does not repeat (once)</option>
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="weekdays">Every weekday</option>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="yearly">Annually</option>
+                                    <option value="custom">Custom cron…</option>
+                                </select>
+                            </div>
+                        </div>
+                        @if (fRepeatPreset == "custom")
+                        {
+                            <label class="cf-conn-label">Cron expression (min hour dom mon dow)</label>
+                            <input class="cf-dialog-input" @bind="fCronExpression" placeholder="0 9 * * *" spellcheck="false" />
+                            <p class="text-muted" style="font-size:0.75rem;margin:0.2rem 0 0;">Local device time. Example: <code>0 9 * * *</code> = every day at 09:00.</p>
+                        }
+                        else
+                        {
+                            <p class="text-muted" style="font-size:0.75rem;margin:0.35rem 0 0;">
+                                @ScheduleHint()
+                            </p>
+                        }
+                    }
+
+                    <div class="cf-skill-form-row">
+                        <div>
+                            <label class="cf-conn-label">Preferred model</label>
+                            <input class="cf-dialog-input" @bind="fPreferredModel" placeholder="@(KeyStore.LastSelectedModel ?? "lemonade/…")" />
+                        </div>
+                        <div>
+                            <label class="cf-conn-label">Fallback model</label>
+                            <input class="cf-dialog-input" @bind="fFallbackModel" placeholder="optional" />
+                        </div>
+                    </div>
+
+                    <label class="cf-conn-label">Model strategy</label>
+                    <select class="cf-dialog-input" @bind="fStrategy">
+                        <option value="fallback_chain">Fallback chain (preferred → fallback → last chat)</option>
+                        <option value="fixed">Fixed (preferred only, then last chat)</option>
+                    </select>
+
+                    <label class="cf-skill-tool-check" style="margin-top:0.75rem;">
+                        <input type="checkbox" @bind="fProjectCalendar" />
+                        <span>Show on Workflows calendar</span>
+                    </label>
+
+                    @if (fProjectCalendar)
+                    {
+                        <div class="cf-skill-form-row">
+                            <div>
+                                <label class="cf-conn-label">Calendar title</label>
+                                <input class="cf-dialog-input" @bind="fCalendarTitle" placeholder="@(string.IsNullOrWhiteSpace(fName) ? "Workflow" : fName)" />
+                            </div>
+                            <div>
+                                <label class="cf-conn-label">Color</label>
+                                <input class="cf-dialog-input" type="color" @bind="fCalendarColor" style="height:2.4rem;padding:0.2rem;" />
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <label class="cf-conn-label">Raw YAML (<code>wizionic.workflow/v1</code>)</label>
+                <textarea class="cf-dialog-input cf-skill-raw" rows="18" @bind="yamlText" spellcheck="false"></textarea>
+            }
+
+            @if (!string.IsNullOrEmpty(editorError))
+            {
+                <div class="cf-dialog-error">@editorError</div>
+            }
+
+            <div style="display:flex;justify-content:space-between;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+                <button type="button" class="btn btn-outline-secondary" @onclick="CloseEditor">Cancel</button>
+                <div style="display:flex;gap:0.5rem;">
+                    @if (editorTab == 0)
+                    {
+                        <button type="button" class="btn btn-outline-primary" @onclick="PreviewToRaw">Preview raw</button>
+                    }
+                    <button type="button" class="btn btn-primary" @onclick="Save" disabled="@busy">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<WorkflowRecord> workflows = new();
+    private List<string> skillOptions = new();
+    private bool busy;
+    private string? banner;
+    private bool bannerError;
+    private string? openMenuId;
+    private bool editorOpen;
+    private int editorTab;
+    private string? editingId;
+    private string yamlText = "";
+    private string? editorError;
+    private bool _armed;
+
+    // Form fields
+    private string fId = "";
+    private string fName = "";
+    private bool fEnabled = true;
+    private string fSkillId = "";
+    private string fUserMessage = "";
+    private string fTriggerMode = "manual"; // manual | schedule
+    private DateTime fStartLocal = DateTime.Now.Date.AddHours(9);
+    private string fStartStr = DateTime.Now.Date.AddHours(9).ToString("yyyy-MM-ddTHH:mm");
+    private string fRepeatPreset = "daily";
+    private string fCronExpression = "0 9 * * *";
+    private string fPreferredModel = "";
+    private string fFallbackModel = "";
+    private string fStrategy = "fallback_chain";
+    private bool fProjectCalendar = true;
+    private string fCalendarTitle = "";
+    private string fCalendarColor = "#7c3aed";
+
+    private void SetStartLocal(DateTime local)
+    {
+        fStartLocal = DateTime.SpecifyKind(local, DateTimeKind.Local);
+        fStartStr = fStartLocal.ToString("yyyy-MM-ddTHH:mm");
+    }
+
+    private void OnStartChanged(ChangeEventArgs e)
+    {
+        var s = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(s)) return;
+        if (DateTime.TryParse(s, out var dt))
+            SetStartLocal(dt);
+        else
+            fStartStr = s;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkflowStore.Changed += OnChanged;
+        await SkillStore.LoadAsync();
+        skillOptions = SkillStore.List().Select(s => s.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        await RefreshAll();
+    }
+
+    public void Dispose() => WorkflowStore.Changed -= OnChanged;
+
+    private void OnChanged() => _ = InvokeAsync(async () =>
+    {
+        await WorkflowStore.LoadAsync();
+        workflows = WorkflowStore.List().ToList();
+        StateHasChanged();
+    });
+
+    private void ToggleMenu(string id) => openMenuId = openMenuId == id ? null : id;
+
+    private async Task RefreshAll()
+    {
+        busy = true;
+        try
+        {
+            await WorkflowStore.LoadAsync();
+            workflows = WorkflowStore.List().ToList();
+            await SkillStore.LoadAsync();
+            skillOptions = SkillStore.List().Select(s => s.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+            try { await Orchestrator.ProjectCalendarsAsync(); }
+            catch { /* calendar optional on host */ }
+            try { await Orchestrator.ProcessDueAsync(); }
+            catch { /* ignore */ }
+        }
+        finally { busy = false; }
+    }
+
+    private static WorkflowDocument? SafeParse(string yaml)
+    {
+        try { return WorkflowMarkdown.Parse(yaml); }
+        catch { return null; }
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        editorError = null;
+        editorTab = 0;
+        var skill = skillOptions.FirstOrDefault() ?? "positive-inspiration-image";
+        var model = KeyStore.LastSelectedModel ?? "";
+        fId = "my-workflow";
+        fName = "My workflow";
+        fEnabled = true;
+        fSkillId = skill;
+        fUserMessage = "Scheduled workflow run";
+        fTriggerMode = "schedule";
+        SetStartLocal(DateTime.Now.Date.AddHours(9));
+        fRepeatPreset = "daily";
+        fCronExpression = "0 9 * * *";
+        fPreferredModel = model;
+        fFallbackModel = model;
+        fStrategy = "fallback_chain";
+        fProjectCalendar = true;
+        fCalendarTitle = "My workflow";
+        fCalendarColor = "#7c3aed";
+        yamlText = WorkflowMarkdown.Serialize(BuildDocFromForm());
+        editorOpen = true;
+    }
+
+    private void OpenEdit(WorkflowRecord w)
+    {
+        editingId = w.Id;
+        editorError = null;
+        editorTab = 0;
+        yamlText = w.Yaml;
+        LoadFormFromDoc(SafeParse(w.Yaml) ?? new WorkflowDocument { Id = w.Id, Name = w.Name });
+        // Ensure skill is in dropdown even if disabled/missing from list
+        if (!string.IsNullOrWhiteSpace(fSkillId) && !skillOptions.Contains(fSkillId, StringComparer.OrdinalIgnoreCase))
+            skillOptions = skillOptions.Append(fSkillId).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        editorOpen = true;
+    }
+
+    private void LoadFormFromDoc(WorkflowDocument doc)
+    {
+        fId = doc.Id ?? "";
+        fName = string.IsNullOrWhiteSpace(doc.Name) ? doc.Id ?? "" : doc.Name;
+        fEnabled = doc.Enabled;
+        fSkillId = doc.ExecuteSkill.Id ?? "";
+        fUserMessage = doc.ExecuteSkill.UserMessage ?? "";
+        fPreferredModel = doc.Orchestrator.PreferredModel ?? "";
+        fFallbackModel = doc.Orchestrator.FallbackModel ?? "";
+        fStrategy = string.IsNullOrWhiteSpace(doc.Orchestrator.Strategy) ? "fallback_chain" : doc.Orchestrator.Strategy!;
+        fProjectCalendar = doc.Calendar.Project;
+        fCalendarTitle = doc.Calendar.Title ?? "";
+        fCalendarColor = string.IsNullOrWhiteSpace(doc.Calendar.Color) ? "#7c3aed" : doc.Calendar.Color;
+
+        var t = (doc.Trigger.Type ?? "manual").ToLowerInvariant();
+        if (t is "manual")
+        {
+            fTriggerMode = "manual";
+            SetStartLocal(DateTime.Now.Date.AddHours(9));
+            fRepeatPreset = "daily";
+            fCronExpression = "0 9 * * *";
+        }
+        else
+        {
+            fTriggerMode = "schedule";
+            fRepeatPreset = CronExpression.ToRepeatPreset(doc.Trigger.Type, doc.Trigger.Expression, DateTime.Now);
+            if (fRepeatPreset == "custom")
+            {
+                fCronExpression = doc.Trigger.Expression ?? "0 9 * * *";
+                SetStartLocal(TryExtractStartFromCron(doc.Trigger.Expression) ?? DateTime.Now.Date.AddHours(9));
+            }
+            else if (t == "once" && CronExpression.TryParseOnceLocal(doc.Trigger.Expression, out var onceLocal))
+            {
+                SetStartLocal(onceLocal);
+                fRepeatPreset = "none";
+            }
+            else
+            {
+                SetStartLocal(TryExtractStartFromCron(doc.Trigger.Expression) ?? DateTime.Now.Date.AddHours(9));
+                fCronExpression = doc.Trigger.Expression ?? "0 9 * * *";
+            }
+        }
+    }
+
+    private static DateTime? TryExtractStartFromCron(string? expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression)) return null;
+        var p = expression.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (p.Length != 5) return null;
+        if (!int.TryParse(p[0], out var minute) || !int.TryParse(p[1], out var hour))
+            return null;
+        if (minute is < 0 or > 59 || hour is < 0 or > 23) return null;
+        var now = DateTime.Now;
+        return new DateTime(now.Year, now.Month, now.Day, hour, minute, 0, DateTimeKind.Local);
+    }
+
+    private void OnTriggerModeChanged() { /* re-render for conditional fields */ }
+
+    private void OnRepeatChanged()
+    {
+        if (fRepeatPreset == "custom" && string.IsNullOrWhiteSpace(fCronExpression))
+            fCronExpression = "0 9 * * *";
+    }
+
+    private string ScheduleHint()
+    {
+        try
+        {
+            var (type, expr) = CronExpression.FromStartAndRepeat(fStartLocal, fRepeatPreset);
+            return type == "once"
+                ? $"Fires once at {fStartLocal:g} (local)."
+                : $"Cron: {expr} (local device time).";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private WorkflowDocument BuildDocFromForm()
+    {
+        var id = WorkflowMarkdown.NormalizeId(fId);
+        if (string.IsNullOrEmpty(id))
+            id = WorkflowMarkdown.NormalizeId(fName);
+
+        string triggerType;
+        string? expression;
+        if (fTriggerMode == "manual")
+        {
+            triggerType = "manual";
+            expression = null;
+        }
+        else if (fRepeatPreset == "custom")
+        {
+            triggerType = "cron";
+            expression = (fCronExpression ?? "").Trim();
+        }
+        else
+        {
+            var pair = CronExpression.FromStartAndRepeat(fStartLocal, fRepeatPreset);
+            triggerType = pair.Type;
+            expression = pair.Expression;
+        }
+
+        var name = string.IsNullOrWhiteSpace(fName) ? id : fName.Trim();
+        var calTitle = string.IsNullOrWhiteSpace(fCalendarTitle) ? name : fCalendarTitle.Trim();
+
+        return new WorkflowDocument
+        {
+            Schema = WorkflowMarkdown.SchemaId,
+            Id = id,
+            Name = name,
+            Enabled = fEnabled,
+            Trigger = new WorkflowTrigger
+            {
+                Type = triggerType,
+                Expression = expression,
+                Timezone = "local"
+            },
+            Orchestrator = new WorkflowOrchestration
+            {
+                Strategy = string.IsNullOrWhiteSpace(fStrategy) ? "fallback_chain" : fStrategy,
+                PreferredModel = string.IsNullOrWhiteSpace(fPreferredModel) ? null : fPreferredModel.Trim(),
+                FallbackModel = string.IsNullOrWhiteSpace(fFallbackModel) ? null : fFallbackModel.Trim()
+            },
+            ExecuteSkill = new WorkflowExecuteSkill
+            {
+                Id = (fSkillId ?? "").Trim(),
+                UserMessage = string.IsNullOrWhiteSpace(fUserMessage) ? null : fUserMessage.Trim()
+            },
+            Calendar = new WorkflowCalendarProjection
+            {
+                Project = fProjectCalendar,
+                Title = calTitle,
+                Color = string.IsNullOrWhiteSpace(fCalendarColor) ? "#7c3aed" : fCalendarColor
+            }
+        };
+    }
+
+    private void SwitchToRaw()
+    {
+        if (editorTab == 0)
+            yamlText = WorkflowMarkdown.Serialize(BuildDocFromForm());
+        editorTab = 1;
+    }
+
+    private void PreviewToRaw()
+    {
+        yamlText = WorkflowMarkdown.Serialize(BuildDocFromForm());
+        editorTab = 1;
+    }
+
+    private void CloseEditor()
+    {
+        editorOpen = false;
+        editorError = null;
+    }
+
+    private void OnBackdrop()
+    {
+        if (_armed) CloseEditor();
+        _armed = false;
+    }
+
+    private async Task Save()
+    {
+        editorError = null;
+        try
+        {
+            WorkflowDocument doc;
+            string yaml;
+            if (editorTab == 1)
+            {
+                doc = WorkflowMarkdown.Parse(yamlText);
+                yaml = WorkflowMarkdown.Serialize(doc); // normalize
+            }
+            else
+            {
+                doc = BuildDocFromForm();
+                yaml = WorkflowMarkdown.Serialize(doc);
+            }
+
+            doc.Id = WorkflowMarkdown.NormalizeId(doc.Id);
+            var err = WorkflowMarkdown.Validate(doc);
+            if (err is not null) { editorError = err; return; }
+
+            // Preserve last-run metadata when editing
+            DateTimeOffset? lastRun = null;
+            string? lastStatus = null;
+            if (!string.IsNullOrEmpty(editingId))
+            {
+                var existing = WorkflowStore.Get(editingId);
+                lastRun = existing?.LastRunAtUtc;
+                lastStatus = existing?.LastRunStatus;
+            }
+
+            await WorkflowStore.UpsertAsync(new WorkflowRecord
+            {
+                Id = doc.Id,
+                Name = doc.Name,
+                Yaml = yaml,
+                Enabled = doc.Enabled,
+                LastRunAtUtc = lastRun,
+                LastRunStatus = lastStatus
+            });
+            await AfterWorkflowsChanged();
+            editorOpen = false;
+            banner = $"Saved workflow {doc.Id}";
+            bannerError = false;
+            await RefreshAll();
+        }
+        catch (Exception ex)
+        {
+            editorError = ex.Message;
+        }
+    }
+
+    private async Task ToggleEnabled(WorkflowRecord w)
+    {
+        w.Enabled = !w.Enabled;
+        try
+        {
+            var doc = WorkflowMarkdown.Parse(w.Yaml);
+            doc.Enabled = w.Enabled;
+            w.Yaml = WorkflowMarkdown.Serialize(doc);
+        }
+        catch { /* keep raw */ }
+        await WorkflowStore.UpsertAsync(w);
+        await AfterWorkflowsChanged();
+        await RefreshAll();
+    }
+
+    private async Task Delete(WorkflowRecord w)
+    {
+        await WorkflowStore.DeleteAsync(w.Id);
+        await AfterWorkflowsChanged();
+        banner = $"Deleted {w.Name}";
+        bannerError = false;
+        await RefreshAll();
+    }
+
+    private async Task RunNow(WorkflowRecord w)
+    {
+        busy = true;
+        banner = null;
+        try
+        {
+            var result = await Orchestrator.RunAsync(w.Id);
+            if (result.Success)
+            {
+                banner = $"Workflow ran · model {result.ModelId} · check Skills → Recent runs (source Workflow)";
+                bannerError = false;
+            }
+            else
+            {
+                banner = result.Error ?? "Workflow failed";
+                bannerError = true;
+            }
+            await WorkflowStore.LoadAsync();
+            workflows = WorkflowStore.List().ToList();
+        }
+        catch (Exception ex)
+        {
+            banner = ex.Message;
+            bannerError = true;
+        }
+        finally { busy = false; }
+    }
+
+    private async Task ImportSamples()
+    {
+        busy = true;
+        try
+        {
+            foreach (var s in WorkflowSeedCatalog.CreateSamples(KeyStore.LastSelectedModel))
+                await WorkflowStore.UpsertAsync(s);
+            await AfterWorkflowsChanged();
+            banner = "Imported sample workflows";
+            bannerError = false;
+            await RefreshAll();
+        }
+        finally { busy = false; }
+    }
+
+    private async Task AfterWorkflowsChanged()
+    {
+        if (SettingsSync is not null && SyncService is not null)
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Workflows);
+    }
+}

@@ -1,5 +1,13 @@
 namespace App.Core.Skills;
 
+/// <summary>How a skill run was started (shown on Skills page history).</summary>
+public static class SkillRunSource
+{
+    public const string Manual = "manual";
+    public const string Chat = "chat";
+    public const string Workflow = "workflow";
+}
+
 /// <summary>One completed (or failed) skill execution for history UI.</summary>
 public sealed class SkillRunLog
 {
@@ -8,6 +16,11 @@ public sealed class SkillRunLog
     public string SkillName { get; set; } = "";
     /// <summary>Catalog model id that ran the skill (e.g. lemonade/…, ollama/…).</summary>
     public string ModelId { get; set; } = "";
+    /// <summary><see cref="SkillRunSource"/> value: manual | chat | workflow.</summary>
+    public string Source { get; set; } = SkillRunSource.Manual;
+    public string? WorkflowId { get; set; }
+    public string? WorkflowName { get; set; }
+    public string? TriggerDetail { get; set; }
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset EndedAtUtc { get; set; }
     public bool Success { get; set; }

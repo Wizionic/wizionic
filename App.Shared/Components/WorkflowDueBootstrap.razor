@@ -1,0 +1,50 @@
+@using App.Core.Workflows
+@inject IWorkflowOrchestrator? Orchestrator
+@implements IAsyncDisposable
+
+@* Invisible host: while the app is open, project workflow calendars and fire due cron/once runs. *@
+@code {
+    private CancellationTokenSource? _cts;
+    private Task? _loop;
+
+    protected override void OnInitialized()
+    {
+        if (Orchestrator is null) return;
+        _cts = new CancellationTokenSource();
+        _loop = RunLoopAsync(_cts.Token);
+    }
+
+    private async Task RunLoopAsync(CancellationToken ct)
+    {
+        // Initial pass shortly after UI is up
+        try { await Task.Delay(TimeSpan.FromSeconds(8), ct); }
+        catch (OperationCanceledException) { return; }
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Orchestrator!.ProjectCalendarsAsync(ct);
+                await Orchestrator.ProcessDueAsync(ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WorkflowDue] tick failed: {ex.Message}");
+            }
+
+            try { await Task.Delay(TimeSpan.FromMinutes(1), ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { _cts?.Cancel(); } catch { /* ignore */ }
+        if (_loop is not null)
+        {
+            try { await _loop; } catch { /* ignore */ }
+        }
+        _cts?.Dispose();
+    }
+}

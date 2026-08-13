@@ -34,6 +34,8 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     bool AutoSyncProfile { get; }
     bool AutoSyncMemories { get; }
     bool AutoSyncAppearance { get; }
+    bool AutoSyncSkills { get; }
+    bool AutoSyncWorkflows { get; }
 
     /// <summary>
     /// Explicit per-device targets when <see cref="SyncToAllDevices"/> is false.
@@ -76,6 +78,8 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     Task SetAutoSyncProfileAsync(bool enabled);
     Task SetAutoSyncMemoriesAsync(bool enabled);
     Task SetAutoSyncAppearanceAsync(bool enabled);
+    Task SetAutoSyncSkillsAsync(bool enabled);
+    Task SetAutoSyncWorkflowsAsync(bool enabled);
 
     Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages);
 

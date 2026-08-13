@@ -15,8 +15,11 @@ public sealed class NullCalendarStore : ICalendarStore
 
     public Task EnsureDefaultCalendarAsync(CancellationToken ct = default) => Task.CompletedTask;
 
-    public Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default) =>
+    public Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default, bool isWorkflowCalendar = false) =>
         Task.CompletedTask;
+
+    public Task<string> EnsureWorkflowCalendarAsync(CancellationToken ct = default) =>
+        Task.FromResult(CalendarConstants.WorkflowCalendarId);
 
     public Task UpdateCalendarAsync(string id, string name, string color, bool isVisible, string? description = null, CancellationToken ct = default) =>
         Task.CompletedTask;

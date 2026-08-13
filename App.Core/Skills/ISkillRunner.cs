@@ -14,6 +14,12 @@ public sealed class SkillRunRequest
     public Dictionary<string, string>? Parameters { get; set; }
     public string? BodyOverride { get; set; }
 
+    /// <summary><see cref="SkillRunSource"/> — manual | chat | workflow.</summary>
+    public string Source { get; set; } = SkillRunSource.Manual;
+    public string? WorkflowId { get; set; }
+    public string? WorkflowName { get; set; }
+    public string? TriggerDetail { get; set; }
+
     /// <summary>Invoked on the UI thread path with the full live log so far (tool traces).</summary>
     public Action<IReadOnlyList<string>>? OnLog { get; set; }
 

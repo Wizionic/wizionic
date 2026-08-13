@@ -1,6 +1,7 @@
 @implements IAsyncDisposable
 @using App.Core.Auth
 @using App.Core.Storage
+@using App.Core.Sync
 @using App.Core.UI
 @using App.Shared.Services
 @using Microsoft.AspNetCore.Components.Forms
@@ -12,6 +13,10 @@
 @inject IAuthService AuthService
 @inject ICalendarSyncBridge SyncBridge
 @inject ISidebarState SidebarState
+@inject App.Core.Workflows.IWorkflowOrchestrator? WorkflowOrchestrator
+@inject App.Core.Workflows.IWorkflowStore? WorkflowStore
+@inject ISettingsSyncStore? SettingsSync
+@inject ISyncService? SyncService
 
 <WasmSidebarSync />
 
@@ -96,7 +101,26 @@
                 <div class="cal-section-header">
                     <h4>Workflows</h4>
                 </div>
-                <div class="cal-empty-hint">Coming soon — AI workflows will appear here.</div>
+                @foreach (var cal in _calendars.Where(c => c.IsWorkflowCalendar).OrderBy(c => c.Name))
+                {
+                    <div class="cal-list-item">
+                        <label class="cal-list-label" title="@cal.Name">
+                            <input type="checkbox" checked="@cal.IsVisible" @onchange="e => ToggleCalendarVisible(cal.Id, e)" />
+                            <span class="cal-color-swatch" style="background:@cal.Color"></span>
+                            <span class="cal-list-name">@cal.Name</span>
+                        </label>
+                    </div>
+                }
+                @if (!_calendars.Any(c => c.IsWorkflowCalendar))
+                {
+                    <div class="cal-empty-hint">No Workflows calendar yet — open Skills &amp; Tools → Workflows to project schedules.</div>
+                }
+                else
+                {
+                    <div class="cal-empty-hint" style="margin-top:0.35rem;">
+                        Manage schedules under <a href="/tools?tab=workflows">Workflows</a>.
+                    </div>
+                }
             </div>
         </div>
     </div>
@@ -318,6 +342,53 @@
     </main>
 </div>
 
+@* Edit workflow schedule (from Workflows calendar) — start + repeat only *@
+@if (_showWorkflowDialog)
+{
+    <div class="cal-modal-overlay" @onclick="CloseWorkflowDialog">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3>Edit workflow schedule</h3>
+            <p class="cal-empty-hint" style="margin-top:0;">
+                Runs skill <code>@(_wfSkillId ?? "…")</code>
+                @if (!string.IsNullOrEmpty(_wfWorkflowId))
+                {
+                    <text> · workflow <code>@_wfWorkflowId</code></text>
+                }
+            </p>
+            <label>Title
+                <input type="text" @bind="_wfTitle" placeholder="Workflow title" />
+            </label>
+            <label>Start
+                <input type="datetime-local" value="@_wfStartStr" @onchange="OnWfStartChanged" />
+            </label>
+            <label>Repeat
+                <select @bind="_wfRepeatPreset">
+                    <option value="none">Does not repeat (once)</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="weekdays">Every Weekday</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Annually</option>
+                </select>
+            </label>
+            <div class="cal-empty-hint">
+                Calendar is fixed to <strong>Workflows</strong>. All-day, end time, and location do not apply.
+                Full YAML (models, skill id) is under <a href="/tools?tab=workflows">Skills &amp; Tools → Workflows</a>.
+            </div>
+            @if (!string.IsNullOrEmpty(_wfError))
+            {
+                <div class="cal-empty-hint" style="color:var(--cf-error-fg,#b91c1c);">@_wfError</div>
+            }
+            <div class="cal-modal-actions">
+                <button type="button" class="cal-btn danger" @onclick="DisableWorkflowFromCalendar" disabled="@_wfBusy">Remove schedule</button>
+                <div style="flex:1;"></div>
+                <button type="button" class="cal-btn" @onclick="CloseWorkflowDialog">Cancel</button>
+                <button type="button" class="cal-btn primary" @onclick="SaveWorkflowSchedule" disabled="@_wfBusy">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
 @* Create / edit event dialog *@
 @if (_showEventDialog)
 {
@@ -354,7 +425,7 @@
             </div>
             <label>Calendar
                 <select @bind="_formCalendarId">
-                    @foreach (var c in _calendars.Where(x => !x.IsWorkflowCalendar))
+                    @foreach (var c in _calendars.Where(x => !x.IsWorkflowCalendar).OrderBy(x => x.SortOrder).ThenBy(x => x.Name))
                     {
                         <option value="@c.Id">@c.Name</option>
                     }
@@ -505,6 +576,16 @@
     private string _formLocation = "";
     private string _formDescription = "";
     private string _formCalendarId = "";
+
+    // Workflow schedule dialog (Workflows calendar only)
+    private bool _showWorkflowDialog;
+    private string? _wfWorkflowId;
+    private string? _wfSkillId;
+    private string _wfTitle = "";
+    private string _wfStartStr = "";
+    private string _wfRepeatPreset = "none";
+    private string? _wfError;
+    private bool _wfBusy;
     private bool _formAllDay;
     /// <summary>HTML date / datetime-local value strings (avoids DateTime bind format wipe).</summary>
     private string _formStartStr = "";
@@ -568,6 +649,15 @@
         try
         {
             await CalendarStore.EnsureDefaultCalendarAsync();
+            // Always have a dedicated Workflows calendar for skill schedules.
+            try { await CalendarStore.EnsureWorkflowCalendarAsync(); }
+            catch (Exception wex) { Console.WriteLine($"[CalendarPage] EnsureWorkflowCalendar: {wex.Message}"); }
+            // Project + fire due workflows while the calendar is open (best-effort).
+            if (WorkflowOrchestrator is not null)
+            {
+                try { await WorkflowOrchestrator.ProjectCalendarsAsync(); } catch { /* ignore */ }
+                try { await WorkflowOrchestrator.ProcessDueAsync(); } catch { /* ignore */ }
+            }
             _calendars = await CalendarStore.LoadCalendarsAsync() ?? new List<LocalCalendar>();
             _colorByCal = _calendars
                 .GroupBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
@@ -1013,6 +1103,7 @@
         _formCustomRRule = null;
         SetFormTimesFromLocal(startLocal, endLocal, allDay);
         _formCalendarId = _calendars.FirstOrDefault(c => c.IsVisible && !c.IsWorkflowCalendar)?.Id
+                          ?? _calendars.FirstOrDefault(c => !c.IsWorkflowCalendar)?.Id
                           ?? _calendars.FirstOrDefault()?.Id
                           ?? "";
         _showEventDialog = true;
@@ -1022,6 +1113,15 @@
     {
         var evt = await CalendarStore.LoadEventAsync(eventId);
         if (evt is null) return;
+
+        var isWorkflowCal = _calendars.Any(c =>
+            c.IsWorkflowCalendar && c.Id.Equals(evt.CalendarId, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(evt.WorkflowId) || isWorkflowCal)
+        {
+            await OpenWorkflowScheduleDialog(evt);
+            return;
+        }
+
         _editingEventId = evt.Id;
         _formSummary = evt.Summary;
         _formLocation = evt.Location ?? "";
@@ -1034,9 +1134,183 @@
             endLocal = endLocal.AddDays(-1);
         SetFormTimesFromLocal(startLocal, endLocal, evt.IsAllDay);
         _formCalendarId = evt.CalendarId;
+        if (!_calendars.Any(c => c.Id.Equals(_formCalendarId, StringComparison.OrdinalIgnoreCase) && !c.IsWorkflowCalendar))
+        {
+            _formCalendarId = _calendars.FirstOrDefault(c => !c.IsWorkflowCalendar)?.Id ?? evt.CalendarId;
+        }
         SetRepeatPresetFromRRule(evt.RRule, startLocal);
         _showEventDialog = true;
         StateHasChanged();
+    }
+
+    private async Task OpenWorkflowScheduleDialog(CalendarEvent evt)
+    {
+        _wfError = null;
+        _wfBusy = false;
+        _wfWorkflowId = evt.WorkflowId;
+        _wfTitle = evt.Summary ?? "";
+        var startLocal = evt.StartUtc.ToLocalTime();
+        _wfStartStr = startLocal.ToString("yyyy-MM-ddTHH:mm");
+        _wfRepeatPreset = "none";
+        _wfSkillId = null;
+
+        if (WorkflowStore is not null && !string.IsNullOrWhiteSpace(evt.WorkflowId))
+        {
+            try
+            {
+                await WorkflowStore.LoadAsync();
+                var rec = WorkflowStore.Get(evt.WorkflowId);
+                if (rec is not null)
+                {
+                    var doc = App.Core.Workflows.WorkflowMarkdown.Parse(rec.Yaml);
+                    _wfSkillId = doc.ExecuteSkill.Id;
+                    if (!string.IsNullOrWhiteSpace(doc.Name))
+                        _wfTitle = doc.Name;
+                    else if (!string.IsNullOrWhiteSpace(doc.Calendar.Title))
+                        _wfTitle = doc.Calendar.Title!;
+                    _wfRepeatPreset = App.Core.Workflows.CronExpression.ToRepeatPreset(
+                        doc.Trigger.Type, doc.Trigger.Expression, startLocal);
+                    // Prefer next projected start from cron if once/cron encodes time
+                    if (string.Equals(doc.Trigger.Type, "once", StringComparison.OrdinalIgnoreCase)
+                        && App.Core.Workflows.CronExpression.TryParseOnceLocal(doc.Trigger.Expression, out var onceLocal))
+                    {
+                        _wfStartStr = onceLocal.ToString("yyyy-MM-ddTHH:mm");
+                    }
+                    else if (string.Equals(doc.Trigger.Type, "cron", StringComparison.OrdinalIgnoreCase)
+                             && !string.IsNullOrWhiteSpace(doc.Trigger.Expression)
+                             && App.Core.Workflows.CronExpression.TryGetNext(doc.Trigger.Expression!, DateTime.Now.AddMinutes(-1), out var next))
+                    {
+                        // Keep the occurrence's date if weekly etc., but use workflow's hour/minute
+                        _wfStartStr = next.ToString("yyyy-MM-ddTHH:mm");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _wfError = ex.Message;
+            }
+        }
+
+        _showWorkflowDialog = true;
+        StateHasChanged();
+    }
+
+    private void CloseWorkflowDialog()
+    {
+        _showWorkflowDialog = false;
+        _wfError = null;
+    }
+
+    private void OnWfStartChanged(ChangeEventArgs e) =>
+        _wfStartStr = e.Value?.ToString() ?? "";
+
+    private async Task SaveWorkflowSchedule()
+    {
+        if (WorkflowStore is null || string.IsNullOrWhiteSpace(_wfWorkflowId))
+        {
+            _wfError = "Workflow store unavailable.";
+            return;
+        }
+        if (!TryParseFormDateTime(_wfStartStr, allDay: false, out var startLocal))
+        {
+            _wfError = "Enter a valid start date and time.";
+            return;
+        }
+
+        _wfBusy = true;
+        _wfError = null;
+        try
+        {
+            await WorkflowStore.LoadAsync();
+            var rec = WorkflowStore.Get(_wfWorkflowId);
+            if (rec is null)
+            {
+                _wfError = $"Workflow '{_wfWorkflowId}' not found. Edit it under Skills & Tools → Workflows.";
+                return;
+            }
+
+            var doc = App.Core.Workflows.WorkflowMarkdown.Parse(rec.Yaml);
+            var (type, expr) = App.Core.Workflows.CronExpression.FromStartAndRepeat(startLocal, _wfRepeatPreset);
+            doc.Trigger.Type = type;
+            doc.Trigger.Expression = expr;
+            doc.Trigger.Timezone = "local";
+            if (!string.IsNullOrWhiteSpace(_wfTitle))
+            {
+                doc.Name = _wfTitle.Trim();
+                doc.Calendar.Title = _wfTitle.Trim();
+            }
+            doc.Calendar.Project = true;
+            doc.Enabled = true;
+
+            var err = App.Core.Workflows.WorkflowMarkdown.Validate(doc);
+            if (err is not null)
+            {
+                _wfError = err;
+                return;
+            }
+
+            rec.Name = doc.Name;
+            rec.Yaml = App.Core.Workflows.WorkflowMarkdown.Serialize(doc);
+            rec.Enabled = true;
+            await WorkflowStore.UpsertAsync(rec);
+            await AfterWorkflowsChanged();
+
+            if (WorkflowOrchestrator is not null)
+                await WorkflowOrchestrator.ProjectCalendarsAsync();
+
+            _showWorkflowDialog = false;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _wfError = ex.Message;
+        }
+        finally
+        {
+            _wfBusy = false;
+        }
+    }
+
+    private async Task DisableWorkflowFromCalendar()
+    {
+        if (WorkflowStore is null || string.IsNullOrWhiteSpace(_wfWorkflowId))
+        {
+            CloseWorkflowDialog();
+            return;
+        }
+        _wfBusy = true;
+        try
+        {
+            await WorkflowStore.LoadAsync();
+            var rec = WorkflowStore.Get(_wfWorkflowId);
+            if (rec is not null)
+            {
+                var doc = App.Core.Workflows.WorkflowMarkdown.Parse(rec.Yaml);
+                doc.Calendar.Project = false;
+                // Keep definition but stop projecting; optional: set enabled false
+                rec.Yaml = App.Core.Workflows.WorkflowMarkdown.Serialize(doc);
+                await WorkflowStore.UpsertAsync(rec);
+                await AfterWorkflowsChanged();
+            }
+            if (WorkflowOrchestrator is not null)
+                await WorkflowOrchestrator.ProjectCalendarsAsync();
+            _showWorkflowDialog = false;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _wfError = ex.Message;
+        }
+        finally
+        {
+            _wfBusy = false;
+        }
+    }
+
+    private async Task AfterWorkflowsChanged()
+    {
+        if (SettingsSync is not null && SyncService is not null)
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Workflows);
     }
 
     private void SetRepeatPresetFromRRule(string? rrule, DateTime startLocal)

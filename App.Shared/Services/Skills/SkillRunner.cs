@@ -96,7 +96,11 @@ public sealed class SkillRunner : ISkillRunner
         void OnTraceChanged() => PushLog();
         _trace.Changed += OnTraceChanged;
 
+        var source = string.IsNullOrWhiteSpace(request.Source) ? SkillRunSource.Manual : request.Source.Trim();
         _trace.Record($"🎯 Skill run: {doc.Name}");
+        _trace.Record($"📥 Source: {source}"
+            + (string.IsNullOrWhiteSpace(request.WorkflowId) ? "" : $" · workflow={request.WorkflowId}")
+            + (string.IsNullOrWhiteSpace(request.TriggerDetail) ? "" : $" · {request.TriggerDetail}"));
         _trace.Record($"🤖 Model: {modelId}");
         _trace.Record($"🔧 Modules: [{string.Join(", ", modules)}] · MCP={resolution.IncludeMcp}");
         _trace.Record("📜 Loading skill instructions…");
@@ -148,6 +152,10 @@ public sealed class SkillRunner : ISkillRunner
                 SkillId = record.Id,
                 SkillName = doc.Name,
                 ModelId = modelId,
+                Source = source,
+                WorkflowId = request.WorkflowId,
+                WorkflowName = request.WorkflowName,
+                TriggerDetail = request.TriggerDetail,
                 StartedAtUtc = started,
                 EndedAtUtc = ended,
                 Success = string.IsNullOrWhiteSpace(result.Error),
@@ -163,7 +171,7 @@ public sealed class SkillRunner : ISkillRunner
             }
 
             _trace.Record(log.Success
-                ? $"✅ Skill finished in {log.DurationSeconds:0.0}s · model {modelId}"
+                ? $"✅ Skill finished in {log.DurationSeconds:0.0}s · model {modelId} · source={source}"
                 : $"❌ Skill failed · model {modelId}: {result.Error}");
             PushLog();
 
@@ -187,6 +195,10 @@ public sealed class SkillRunner : ISkillRunner
                 SkillId = record.Id,
                 SkillName = doc.Name,
                 ModelId = modelId,
+                Source = source,
+                WorkflowId = request.WorkflowId,
+                WorkflowName = request.WorkflowName,
+                TriggerDetail = request.TriggerDetail,
                 StartedAtUtc = started,
                 EndedAtUtc = DateTimeOffset.UtcNow,
                 Success = false,
