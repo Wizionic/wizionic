@@ -15,16 +15,20 @@ public sealed class ToolExecutionTrace : IToolExecutionTrace
     private readonly object _gate = new();
     private List<string> _steps = [];
 
+    public event Action? Changed;
+
     public void Clear()
     {
         lock (_gate)
             _steps = [];
+        Changed?.Invoke();
     }
 
     public void Record(string message)
     {
         lock (_gate)
             _steps.Add($"[{DateTime.UtcNow:HH:mm:ss.fff}] {message}");
+        Changed?.Invoke();
     }
 
     public IReadOnlyList<string> GetCurrentTrace()

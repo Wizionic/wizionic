@@ -1,5 +1,6 @@
 using System.Text.Json;
 using App.Core.Connectors;
+using App.Core.Skills;
 using App.Core.Storage;
 using App.Core.Sync;
 using App.Core.UI;
@@ -26,6 +27,7 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
     private readonly ThemeService? _theme;
     private readonly INavLayoutState? _navLayout;
     private readonly IJSRuntime? _js;
+    private readonly ISkillStore? _skills;
 
     public event Action? OnSettingsChanged;
 
@@ -34,13 +36,15 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         ISyncPreferencesStore prefs,
         ThemeService? theme = null,
         INavLayoutState? navLayout = null,
-        IJSRuntime? js = null)
+        IJSRuntime? js = null,
+        ISkillStore? skills = null)
     {
         _keys = keys;
         _prefs = prefs;
         _theme = theme;
         _navLayout = navLayout;
         _js = js;
+        _skills = skills;
     }
 
     public async Task TouchCategoryAsync(string category, CancellationToken ct = default)
@@ -94,6 +98,7 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             SettingsSyncCategory.Profile => ExportProfile(),
             SettingsSyncCategory.Memories => ExportMemories(),
             SettingsSyncCategory.Appearance => await ExportAppearanceAsync(ct),
+            SettingsSyncCategory.Skills => await ExportSkillsAsync(ct),
             _ => null
         };
 
@@ -165,6 +170,9 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
                 break;
             case SettingsSyncCategory.Appearance:
                 await ApplyAppearanceAsync(payload.DataJson, ct);
+                break;
+            case SettingsSyncCategory.Skills:
+                await ApplySkillsAsync(payload.DataJson, ct);
                 break;
             default:
                 return;
@@ -266,6 +274,35 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
     private string ExportMemories()
     {
         return JsonSerializer.Serialize(_keys.GetMemories().ToList(), JsonOpts);
+    }
+
+    private async Task<string?> ExportSkillsAsync(CancellationToken ct)
+    {
+        if (_skills is null) return null;
+        await _skills.LoadAsync(ct);
+        var list = _skills.List()
+            .Select(s => new SkillSyncDto(s.Id, s.Name, s.Markdown, s.Enabled, s.UpdatedAtUtc))
+            .ToList();
+        return JsonSerializer.Serialize(list, JsonOpts);
+    }
+
+    private async Task ApplySkillsAsync(string dataJson, CancellationToken ct)
+    {
+        if (_skills is null) return;
+        var list = JsonSerializer.Deserialize<List<SkillSyncDto>>(dataJson, JsonOpts);
+        if (list is null) return;
+        var records = list
+            .Where(s => !string.IsNullOrWhiteSpace(s.Markdown))
+            .Select(s => new SkillRecord
+            {
+                Id = string.IsNullOrWhiteSpace(s.Id) ? (s.Name ?? "") : s.Id!,
+                Name = s.Name ?? "",
+                Markdown = s.Markdown!,
+                Enabled = s.Enabled,
+                UpdatedAtUtc = s.UpdatedAtUtc ?? DateTimeOffset.UtcNow
+            })
+            .ToList();
+        await _skills.ReplaceAllAsync(records, ct);
     }
 
     private async Task<string> ExportAppearanceAsync(CancellationToken ct)
@@ -513,4 +550,11 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
     private sealed record SystemPromptSyncDto(bool IsCustomized, string? Prompt);
 
     private sealed record AppearanceSyncDto(string Theme, string NavLayout);
+
+    private sealed record SkillSyncDto(
+        string? Id,
+        string? Name,
+        string? Markdown,
+        bool Enabled,
+        DateTimeOffset? UpdatedAtUtc);
 }

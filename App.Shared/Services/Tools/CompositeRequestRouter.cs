@@ -42,6 +42,10 @@ public sealed class CompositeRequestRouter : IRequestRouter
         var rulesRoute = _rules.ClassifyRules(
             message, activeModules, conversationId, useSessionStickiness: useStickiness);
 
+        // Explicit skill invoke (/name, /skill name, run skill …) always wins over AI router.
+        if (!string.IsNullOrWhiteSpace(rulesRoute.SkillId))
+            return rulesRoute with { Source = mode == ToolRoutingMode.Rules ? "Rules" : $"{mode}→Skill" };
+
         if (mode == ToolRoutingMode.Rules)
             return rulesRoute;
 
@@ -62,6 +66,10 @@ public sealed class CompositeRequestRouter : IRequestRouter
     /// </summary>
     internal static bool IsStrongRulesRoute(RequestRoute route)
     {
+        // Explicit skill slash / run skill …
+        if (!string.IsNullOrWhiteSpace(route.SkillId))
+            return true;
+
         // Wake word or browser panel (not sticky session — stickiness disabled for Hybrid).
         if (route.TargetModule is "HomeAssistant" or "BrowserAgent")
             return true;

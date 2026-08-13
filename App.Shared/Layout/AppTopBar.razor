@@ -67,6 +67,10 @@
                         class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
                     <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
                 </button>
+                <a href="/tools?tab=skills" title="Skills and Tools"
+                   class="topbar-toggle-btn @(IsToolsActive ? "active" : null)">
+                    <i class="bi bi-tools" style="font-size: 24px;"></i>
+                </a>
                 @if (NavLayout.ShowBrowser)
                 {
                     <button type="button" @onclick="ToggleBrowser" title="Browser"
@@ -100,6 +104,9 @@
             {
                 <a href="/chat" title="Chat" class="@(IsChatActive ? "active" : null)">
                     <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
+                </a>
+                <a href="/tools?tab=skills" title="Skills and Tools" class="@(IsToolsActive ? "active" : null)">
+                    <i class="bi bi-tools" style="font-size: 24px;"></i>
                 </a>
                 @if (NavLayout.ShowNotes)
                 {
@@ -259,15 +266,24 @@
         <a href="/sync" title="Devices & Sync">
             <i class="bi bi-arrow-repeat"></i>
         </a>
-        <a href="/tools" title="Tools (MCP Servers)">
-            <i class="bi bi-tools"></i>
-        </a>
     };
 
     private bool IsChatActive => IsOnChatPage() && ChatPanel.IsOpen;
     private bool IsNotesActive => IsOnNotesPage() && NotesPanel.IsOpen;
     private bool IsGalleryActive => IsOnGalleryPage();
     private bool IsCalendarActive => IsOnCalendarPage();
+    private bool IsToolsActive
+    {
+        get
+        {
+            try
+            {
+                var path = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
+                return path.Equals("/tools", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+    }
     private bool ShowSidebarToggle =>
         IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
         || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));

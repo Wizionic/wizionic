@@ -17,21 +17,26 @@
 <div class="settings-content cf-connectors-page">
     <div class="cf-conn-top">
         <div class="cf-conn-tabs">
-            <button type="button" class="cf-conn-tab" disabled title="Coming soon">Skills</button>
-            <button type="button" class="cf-conn-tab cf-conn-tab-active">Tools</button>
+            <button type="button" class="cf-conn-tab @(activeTab == "skills" ? "cf-conn-tab-active" : "")"
+                    @onclick="ShowSkillsTab">Skills</button>
+            <button type="button" class="cf-conn-tab @(activeTab == "tools" ? "cf-conn-tab-active" : "")"
+                    @onclick="ShowToolsTab">Tools</button>
         </div>
-        <div class="cf-conn-search">
-            <span class="cf-conn-search-icon" aria-hidden="true">🔍</span>
-            <input type="search"
-                   value="@searchQuery"
-                   @oninput="OnSearchInput"
-                   placeholder="Search tools…"
-                   class="cf-conn-search-input" />
-            @if (isSearching)
-            {
-                <span class="cf-conn-search-busy" title="Searching registry…">…</span>
-            }
-        </div>
+        @if (activeTab == "tools")
+        {
+            <div class="cf-conn-search">
+                <span class="cf-conn-search-icon" aria-hidden="true">🔍</span>
+                <input type="search"
+                       value="@searchQuery"
+                       @oninput="OnSearchInput"
+                       placeholder="Search tools…"
+                       class="cf-conn-search-input" />
+                @if (isSearching)
+                {
+                    <span class="cf-conn-search-busy" title="Searching registry…">…</span>
+                }
+            </div>
+        }
     </div>
 
     @if (!string.IsNullOrEmpty(statusMessage))
@@ -41,6 +46,19 @@
             <button type="button" class="cf-conn-banner-close" @onclick="() => statusMessage = null">✕</button>
         </div>
     }
+
+    @if (activeTab == "skills")
+    {
+        <section class="cf-conn-section">
+            <h2 class="cf-conn-section-title">Skills</h2>
+            <p class="text-muted" style="font-size:0.88rem;margin:-0.35rem 0 0.85rem;">
+                Reusable SKILL.md procedures (Agent Skills open standard). Run from here or type <code>/skill-name</code> in chat.
+            </p>
+            <SkillsPanel />
+        </section>
+    }
+    else
+    {
 
     <!-- ========== Installed ========== -->
     <section class="cf-conn-section">
@@ -262,6 +280,8 @@
         <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
         <small class="text-muted">MCP list from the official registry · install config stays on this device · tools sync with Devices &amp; Sync.</small>
     </div>
+
+    } @* end tools tab *@
 </div>
 
 <ConfirmDialog IsVisible="@(!string.IsNullOrEmpty(removeCustomName))"
@@ -396,6 +416,9 @@
 }
 
 @code {
+    private string activeTab = "skills";
+    private void ShowSkillsTab() => activeTab = "skills";
+    private void ShowToolsTab() => activeTab = "tools";
     private List<ManagedMcpTool> registryTools = new();
     private List<ManagedMcpTool> customTools = new();
     private bool isLoading;
@@ -471,6 +494,27 @@
     {
         if (OAuthReturn is not null)
             OAuthReturn.Changed += OnOAuthReturnBridgeChanged;
+
+        // Default to Skills; allow ?tab=tools or ?tab=skills
+        try
+        {
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            var q = uri.Query.TrimStart('?');
+            foreach (var part in q.Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                var key = Uri.UnescapeDataString(part[..eq]);
+                var val = Uri.UnescapeDataString(part[(eq + 1)..]);
+                if (key.Equals("tab", StringComparison.OrdinalIgnoreCase) &&
+                    val.Equals("tools", StringComparison.OrdinalIgnoreCase))
+                {
+                    activeTab = "tools";
+                    break;
+                }
+            }
+        }
+        catch { /* keep default skills */ }
 
         await KeyStore.LoadAsync();
         await LoadCatalogAsync();

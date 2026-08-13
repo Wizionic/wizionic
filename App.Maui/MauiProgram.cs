@@ -250,6 +250,9 @@ public static class MauiProgram
 		services.AddSingleton<MauiStorageQuotaService>();
 		services.AddSingleton<IStorageQuotaService>(sp => sp.GetRequiredService<MauiStorageQuotaService>());
 		services.AddSingleton<ISyncPreferencesStore, SqliteSyncPreferencesStore>();
+		services.AddSingleton<App.Core.Skills.ISkillStore, App.Shared.Services.Skills.PreferencesSkillStore>();
+		services.AddSingleton<App.Core.Skills.ISkillRunLogStore, App.Shared.Services.Skills.SkillRunLogStore>();
+		services.AddSingleton<App.Core.Skills.ISkillRunner, App.Shared.Services.Skills.SkillRunner>();
 		services.AddSingleton<SettingsSyncStore>();
 		services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
 		services.AddSingleton<SipsorceryWebRtcTransport>();

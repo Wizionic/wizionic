@@ -335,6 +335,25 @@ Tool execution traces are shown in the chat UI (`ToolExecutionTrace`). Models th
 
 ---
 
+## Agent Skills (SKILL.md)
+
+Reusable procedural knowledge for the chat agent, stored **locally** as portable [Agent Skills](https://agentskills.io/specification) documents (`SKILL.md`).
+
+| Piece | Detail |
+|-------|--------|
+| **Format** | Official frontmatter: `name`, `description`, optional `license`, `compatibility`, `metadata`, `allowed-tools` + freeform markdown body |
+| **Extensions** | `author` / `version` / `tags` / `trigger-phrases` / `input-schema` live under `metadata` (portable) |
+| **Store** | `ISkillStore` → preferences-backed JSON (WASM/MAUI); **not** on the central server DB |
+| **UI** | Tools page → **Skills** tab (`SkillsPanel.razor`): list, create (form), raw editor, upload `.md`, export, run modal, import examples |
+| **Run** | `ISkillRunner` forces modules from `allowed-tools` via `SkillToolResolver`, injects skill body as system instructions, reuses `ChatCompletionService` + function invocation |
+| **Chat** | Type `/skill-name` or `run skill skill-name` — `ContextualRequestRouter` attaches skill tools + body |
+| **Sync** | Settings category `skills` (WebRTC) |
+| **Examples** | `positive-inspiration-image` (Lemonade + Gallery + Notes), `random-house-lights` (Home Assistant) |
+
+**Key files:** `App.Core/Skills/*`, `App.Shared/Services/Skills/*`, `SkillsPanel.razor`, `ChatCompletionService` skill context, `SettingsSyncCategory.Skills`
+
+---
+
 ## Tools page, MCP registry & OAuth connectors
 
 **UI:** `ToolsPage.razor` (`/tools`) — single **Tools** experience:
@@ -758,6 +777,7 @@ Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
 | `cloud-providers` | User API keys (encrypted at rest on each device) |
 | `home-assistant` | HA URL/token/assistant name (desktop) |
 | `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens |
+| `skills` | User SKILL.md library (markdown + enabled flags) |
 | `system-prompt` | Custom system prompt |
 | `profile` | About-you profile fields |
 | `memories` | User memory list |
@@ -866,7 +886,8 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
  | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults, tool routing model |
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
  | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences, setup wizard entry |
- | `Components/ToolsPage.razor` | `/tools` | Installed + Discover (OAuth catalog + MCP registry), install/connect |
+ | `Components/ToolsPage.razor` | `/tools` | Tabs: Skills (SKILL.md) + Tools (OAuth catalog + MCP registry) |
+ | `Components/SkillsPanel.razor` | (in `/tools`) | Create/upload/edit/run Agent Skills |
  | `Components/SetupWizard.razor` | (overlay) | MAUI: optional Home Server / Lemonade / Ollama install |
  | `Components/HomeAssistantPage.razor` | `/home-assistant` | HA URL, token, wake word, device list (MAUI) |
  | `Components/EmbeddedBrowser.razor` | (in `/chat` split) | Embedded browser chrome, PWA toolbar (MAUI) |
@@ -954,6 +975,7 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
  11. For **sync (content + settings)** → `ISyncService`, `WebRtcSyncCoordinator`, `SettingsSyncStore`, `SyncPresencePage.razor`, platform sync services.
  12. For **new API endpoints** → `WasmApiEndpoints.cs`, `AiProxyEndpoints.cs`, OAuth/connector APIs; register in host `Program.cs`.
  13. For **tools / MCP / OAuth connectors** → `ToolsPage.razor`, `McpToolSource`, `OpenApiConnectorToolSource`, `CompositeToolProvider`, OAuth broker endpoints, SQLite `Connectors` / `OAuthProviders`.
+ 13b. For **Agent Skills (SKILL.md)** → `App.Core/Skills/*`, `SkillRunner`, `SkillsPanel.razor`, `ISkillStore`, settings sync category `skills`.
  14. For **setup wizard / Home Server / local installers** → `SetupWizard.razor`, `IHomeserverInstallService`, Lemonade/Ollama install services (MAUI).
  15. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, routers, `ChatCompletionService`.
  16. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
@@ -963,4 +985,4 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
 
 ---
 
-*Last updated: August 2026 — Gallery + Calendar (UI, encrypted stores, AI tool modules, WebRTC sync); Notes/Gallery/Calendar as native AI tools; Rules/AI/Hybrid tool router (`CompositeRequestRouter`); settings sync categories (Local AI, Lemonade, cloud keys, HA, tools/MCP/OAuth, profile, memories, appearance); Tools page marketplace (official MCP registry search + DB OAuth catalog, host OAuth broker); MAUI setup wizard (Home Server / Lemonade / Ollama); prior Lemonade dual local AI, HA, embedded browser (Windows WebView2 + Linux GirCore), themes.*
+*Last updated: August 2026 — Agent Skills (SKILL.md open standard: create/upload/edit/run, allowed-tools → Gallery/Notes/Calendar/HA/MCP, chat `/skill-name`, settings sync); Gallery + Calendar; Rules/AI/Hybrid tool router; Tools marketplace (MCP registry + OAuth catalog); setup wizard; Lemonade dual local AI; HA; embedded browser; themes.*
