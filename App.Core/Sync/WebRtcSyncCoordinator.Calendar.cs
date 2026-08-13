@@ -11,6 +11,52 @@ public sealed partial class WebRtcSyncCoordinator
     public Task StartWebRtcCalendarEventSyncAsync(string targetDeviceId, string calendarId, string eventId) =>
         EnqueueCalendarEventSyncAsync(targetDeviceId, calendarId, eventId);
 
+    /// <summary>Ids of Workflows system calendars — never transferred over WebRTC.</summary>
+    private async Task<HashSet<string>> GetWorkflowCalendarIdsAsync()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            CalendarConstants.WorkflowCalendarId
+        };
+        if (_calendarStore is null) return set;
+        try
+        {
+            foreach (var c in await _calendarStore.LoadCalendarsAsync())
+            {
+                if (c.IsWorkflowCalendar)
+                    set.Add(c.Id);
+            }
+        }
+        catch
+        {
+            // best-effort
+        }
+        return set;
+    }
+
+    private static bool IsWorkflowCalendarId(string? calendarId, HashSet<string> workflowCalIds) =>
+        !string.IsNullOrWhiteSpace(calendarId)
+        && (workflowCalIds.Contains(calendarId)
+            || string.Equals(calendarId, CalendarConstants.WorkflowCalendarId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(calendarId, CalendarConstants.WorkflowCalendarName, StringComparison.OrdinalIgnoreCase));
+
+    private async Task<bool> IsWorkflowScopedEventAsync(string eventId, HashSet<string>? workflowCalIds = null)
+    {
+        if (_calendarStore is null || string.IsNullOrWhiteSpace(eventId)) return false;
+        try
+        {
+            var evt = await _calendarStore.LoadEventAsync(eventId);
+            if (evt is null) return false;
+            if (!string.IsNullOrWhiteSpace(evt.WorkflowId)) return true;
+            workflowCalIds ??= await GetWorkflowCalendarIdsAsync();
+            return IsWorkflowCalendarId(evt.CalendarId, workflowCalIds);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task EnqueueCalendarMetaSyncAsync(string targetDeviceId, string calendarId)
     {
         if (string.IsNullOrEmpty(targetDeviceId) || _calendarStore == null)
@@ -25,6 +71,13 @@ public sealed partial class WebRtcSyncCoordinator
         var cal = index.FirstOrDefault(c => string.Equals(c.Id, calendarId, StringComparison.OrdinalIgnoreCase));
         if (cal is null)
             return;
+
+        // Device-local: Workflows calendar is never pushed to peers.
+        if (cal.IsWorkflowCalendar || IsWorkflowCalendarId(cal.Id, await GetWorkflowCalendarIdsAsync()))
+        {
+            SyncDebugLog.Info($"Skipping workflow calendar sync for {calendarId}");
+            return;
+        }
 
         var dataJson = CalendarMetaSyncPayload.Serialize(
             cal.Id, cal.Name, cal.Color, cal.IsVisible, cal.Description, cal.LastUpdated.Ticks, cal.IsWorkflowCalendar);
@@ -71,6 +124,15 @@ public sealed partial class WebRtcSyncCoordinator
         if (evt is null)
             return;
 
+        // Device-local: workflow projections / WorkflowId events never leave this device.
+        if (!string.IsNullOrWhiteSpace(evt.WorkflowId)
+            || IsWorkflowCalendarId(evt.CalendarId, await GetWorkflowCalendarIdsAsync())
+            || IsWorkflowCalendarId(calendarId, await GetWorkflowCalendarIdsAsync()))
+        {
+            SyncDebugLog.Info($"Skipping workflow calendar event sync for {calendarId}/{eventId}");
+            return;
+        }
+
         if (evt.DeletedAt.HasValue)
         {
             await EnqueueCalendarEventDeleteAsync(targetDeviceId, calendarId, eventId, evt.DeletedAt.Value);
@@ -115,12 +177,17 @@ public sealed partial class WebRtcSyncCoordinator
     {
         if (!AutoSyncCalendar || _calendarStore == null || SyncTargetDeviceIds.Count == 0)
             return;
+        if (IsWorkflowCalendarId(calendarId, new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { CalendarConstants.WorkflowCalendarId }))
+            return;
 
         _ = DebouncedAutoSyncAsync($"calendar:{calendarId}", async () =>
         {
             if (EnsureConnectedAsync != null)
                 await EnsureConnectedAsync();
             if (!_isHubConnected() || _calendarStore == null)
+                return;
+            if (IsWorkflowCalendarId(calendarId, await GetWorkflowCalendarIdsAsync()))
                 return;
 
             var manifest = await _calendarStore.LoadCalendarManifestEntriesAsync();
@@ -168,6 +235,8 @@ public sealed partial class WebRtcSyncCoordinator
             if (EnsureConnectedAsync != null)
                 await EnsureConnectedAsync();
             if (!_isHubConnected() || _calendarStore == null)
+                return;
+            if (await IsWorkflowScopedEventAsync(eventId) || IsWorkflowCalendarId(calendarId, await GetWorkflowCalendarIdsAsync()))
                 return;
 
             var evt = await _calendarStore.LoadEventAsync(eventId);
@@ -315,6 +384,12 @@ public sealed partial class WebRtcSyncCoordinator
             if (meta == null || string.IsNullOrEmpty(meta.CalendarId))
                 return;
 
+            if (meta.IsWorkflowCalendar || IsWorkflowCalendarId(meta.CalendarId, await GetWorkflowCalendarIdsAsync()))
+            {
+                SyncDebugLog.Info($"Ignoring remote workflow calendar meta {meta.CalendarId}");
+                return;
+            }
+
             if (!await _calendarStore.ShouldAcceptIncomingCalendarAsync(meta.CalendarId, meta.LastUpdatedTicks))
             {
                 SyncDebugLog.Info($"Ignoring stale calendar meta {meta.CalendarId}");
@@ -342,6 +417,13 @@ public sealed partial class WebRtcSyncCoordinator
                 return;
 
             var evt = payload.Event with { CalendarId = payload.CalendarId };
+            if (!string.IsNullOrWhiteSpace(evt.WorkflowId)
+                || IsWorkflowCalendarId(evt.CalendarId, await GetWorkflowCalendarIdsAsync()))
+            {
+                SyncDebugLog.Info($"Ignoring remote workflow calendar event {evt.Id}");
+                return;
+            }
+
             if (!await _calendarStore.ShouldAcceptIncomingEventAsync(evt.Id, evt))
             {
                 SyncDebugLog.Info($"Ignoring stale calendar event {evt.Id}");
@@ -366,6 +448,11 @@ public sealed partial class WebRtcSyncCoordinator
             var payload = DeleteSyncPayload.Deserialize(json);
             if (payload == null || string.IsNullOrEmpty(payload.Id))
                 return;
+            if (IsWorkflowCalendarId(payload.Id, await GetWorkflowCalendarIdsAsync()))
+            {
+                SyncDebugLog.Info($"Ignoring remote delete of workflow calendar {payload.Id}");
+                return;
+            }
             if (await _calendarStore.TryApplyRemoteCalendarDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
                 OnCalendarsChanged?.Invoke();
@@ -388,8 +475,20 @@ public sealed partial class WebRtcSyncCoordinator
                 return;
 
             var eventId = payload.Id;
-            if (CalendarEventSyncPayload.TrySplitCompositeId(payload.Id, out _, out var splitId))
+            if (CalendarEventSyncPayload.TrySplitCompositeId(payload.Id, out var calId, out var splitId))
+            {
                 eventId = splitId;
+                if (IsWorkflowCalendarId(calId, await GetWorkflowCalendarIdsAsync()))
+                {
+                    SyncDebugLog.Info($"Ignoring remote delete of workflow calendar event {eventId}");
+                    return;
+                }
+            }
+            if (await IsWorkflowScopedEventAsync(eventId))
+            {
+                SyncDebugLog.Info($"Ignoring remote delete of workflow calendar event {eventId}");
+                return;
+            }
 
             if (await _calendarStore.TryApplyRemoteEventDeleteAsync(eventId, payload.DeletedAtTicks))
             {

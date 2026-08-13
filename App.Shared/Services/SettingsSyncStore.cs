@@ -4,7 +4,6 @@ using App.Core.Skills;
 using App.Core.Storage;
 using App.Core.Sync;
 using App.Core.UI;
-using App.Core.Workflows;
 using Microsoft.JSInterop;
 
 namespace App.Shared.Services;
@@ -29,7 +28,6 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
     private readonly INavLayoutState? _navLayout;
     private readonly IJSRuntime? _js;
     private readonly ISkillStore? _skills;
-    private readonly IWorkflowStore? _workflows;
 
     public event Action? OnSettingsChanged;
 
@@ -39,8 +37,7 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         ThemeService? theme = null,
         INavLayoutState? navLayout = null,
         IJSRuntime? js = null,
-        ISkillStore? skills = null,
-        IWorkflowStore? workflows = null)
+        ISkillStore? skills = null)
     {
         _keys = keys;
         _prefs = prefs;
@@ -48,7 +45,6 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         _navLayout = navLayout;
         _js = js;
         _skills = skills;
-        _workflows = workflows;
     }
 
     public async Task TouchCategoryAsync(string category, CancellationToken ct = default)
@@ -103,7 +99,6 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             SettingsSyncCategory.Memories => ExportMemories(),
             SettingsSyncCategory.Appearance => await ExportAppearanceAsync(ct),
             SettingsSyncCategory.Skills => await ExportSkillsAsync(ct),
-            SettingsSyncCategory.Workflows => await ExportWorkflowsAsync(ct),
             _ => null
         };
 
@@ -178,9 +173,6 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
                 break;
             case SettingsSyncCategory.Skills:
                 await ApplySkillsAsync(payload.DataJson, ct);
-                break;
-            case SettingsSyncCategory.Workflows:
-                await ApplyWorkflowsAsync(payload.DataJson, ct);
                 break;
             default:
                 return;
@@ -311,44 +303,6 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             })
             .ToList();
         await _skills.ReplaceAllAsync(records, ct);
-    }
-
-    private async Task<string?> ExportWorkflowsAsync(CancellationToken ct)
-    {
-        if (_workflows is null) return null;
-        await _workflows.LoadAsync(ct);
-        var list = _workflows.List()
-            .Select(w => new WorkflowSyncDto(
-                w.Id,
-                w.Name,
-                w.Yaml,
-                w.Enabled,
-                w.UpdatedAtUtc,
-                w.LastRunAtUtc,
-                w.LastRunStatus))
-            .ToList();
-        return JsonSerializer.Serialize(list, JsonOpts);
-    }
-
-    private async Task ApplyWorkflowsAsync(string dataJson, CancellationToken ct)
-    {
-        if (_workflows is null) return;
-        var list = JsonSerializer.Deserialize<List<WorkflowSyncDto>>(dataJson, JsonOpts);
-        if (list is null) return;
-        var records = list
-            .Where(w => !string.IsNullOrWhiteSpace(w.Yaml))
-            .Select(w => new WorkflowRecord
-            {
-                Id = string.IsNullOrWhiteSpace(w.Id) ? (w.Name ?? "") : w.Id!,
-                Name = w.Name ?? "",
-                Yaml = w.Yaml!,
-                Enabled = w.Enabled,
-                UpdatedAtUtc = w.UpdatedAtUtc ?? DateTimeOffset.UtcNow,
-                LastRunAtUtc = w.LastRunAtUtc,
-                LastRunStatus = w.LastRunStatus
-            })
-            .ToList();
-        await _workflows.ReplaceAllAsync(records, ct);
     }
 
     private async Task<string> ExportAppearanceAsync(CancellationToken ct)
@@ -603,13 +557,4 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         string? Markdown,
         bool Enabled,
         DateTimeOffset? UpdatedAtUtc);
-
-    private sealed record WorkflowSyncDto(
-        string? Id,
-        string? Name,
-        string? Yaml,
-        bool Enabled,
-        DateTimeOffset? UpdatedAtUtc,
-        DateTimeOffset? LastRunAtUtc,
-        string? LastRunStatus);
 }
