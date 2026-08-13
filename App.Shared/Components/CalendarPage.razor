@@ -1,7 +1,6 @@
 @implements IAsyncDisposable
 @using App.Core.Auth
 @using App.Core.Storage
-@using App.Core.Sync
 @using App.Core.UI
 @using App.Shared.Services
 @using Microsoft.AspNetCore.Components.Forms
@@ -15,8 +14,6 @@
 @inject ISidebarState SidebarState
 @inject App.Core.Workflows.IWorkflowOrchestrator? WorkflowOrchestrator
 @inject App.Core.Workflows.IWorkflowStore? WorkflowStore
-@inject ISettingsSyncStore? SettingsSync
-@inject ISyncService? SyncService
 
 <WasmSidebarSync />
 
@@ -1253,7 +1250,6 @@
             rec.Yaml = App.Core.Workflows.WorkflowMarkdown.Serialize(doc);
             rec.Enabled = true;
             await WorkflowStore.UpsertAsync(rec);
-            await AfterWorkflowsChanged();
 
             if (WorkflowOrchestrator is not null)
                 await WorkflowOrchestrator.ProjectCalendarsAsync();
@@ -1290,7 +1286,6 @@
                 // Keep definition but stop projecting; optional: set enabled false
                 rec.Yaml = App.Core.Workflows.WorkflowMarkdown.Serialize(doc);
                 await WorkflowStore.UpsertAsync(rec);
-                await AfterWorkflowsChanged();
             }
             if (WorkflowOrchestrator is not null)
                 await WorkflowOrchestrator.ProjectCalendarsAsync();
@@ -1305,12 +1300,6 @@
         {
             _wfBusy = false;
         }
-    }
-
-    private async Task AfterWorkflowsChanged()
-    {
-        if (SettingsSync is not null && SyncService is not null)
-            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Workflows);
     }
 
     private void SetRepeatPresetFromRRule(string? rrule, DateTime startLocal)

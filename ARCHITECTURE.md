@@ -1,6 +1,6 @@
 # Wizionic Architecture
 
-**Purpose:** Quick reference for humans and AI agents working on this codebase. Describes what exists today (not the future roadmap). For planned work see [ROADMAP.md](/roadmap).
+**Purpose:** Developer / agent reference for this codebase (what exists today). 
 
 **Stack:** .NET 10 · Blazor Web App (Auto: server shell + Interactive WebAssembly) · Blazor Hybrid (MAUI Windows/mobile) · Linux desktop (GirCore Adwaita + WebKit) · SQLite · SignalR · WebRTC · Microsoft.Extensions.AI · WebView2 (Windows browser) / WebKitGTK (Linux browser)
 
@@ -9,40 +9,39 @@
 ## Core Values
 
 - **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. The server does not store conversation or personal content for WASM/MAUI paths.
-- **Local AI** — **Ollama** and **AMD Lemonade Server** on the user's machine are first-class providers (chat, multimodal, and Lemonade-specific modalities). A logged-in device can relay chat AI to other devices over WebRTC.
-- **Login is optional** — Guests can chat and take notes immediately. Email + magic link is only needed for cross-device sync and encrypted key distribution.
-- **Minimal server footprint** — Server handles auth, signaling, tool proxies (CORS), CORS-restricted AI proxies, OAuth broker for connectors, and optional Home Server install. Heavy lifting runs on the client.
+- **Local AI** — **AMD Lemonade Server** and **Ollama** on the user's machine are first-class providers (chat, multimodal, and Lemonade-specific modalities). A logged-in device can relay chat AI to other devices over WebRTC.
+- **Minimal server footprint** — Wizionic.com Server handles auth, signaling, tool proxies (CORS), CORS-restricted AI proxies, OAuth broker for connectors, and optional Home Server install. Heavy lifting runs on the client.
 - **Tool-rich agents** — Native app tools (Notes, Gallery, Calendar, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, plus MAUI Home Assistant and embedded browser — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.
 - **Local-first sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR is presence + signaling only.
-- **Low-cost cloud** — Favor free or inexpensive models (proxied providers in `appsettings`, user API keys in browser storage).
 
 ---
 
 ## Solution Layout
- 
- ```
- App/
- ├── App.csproj          # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite, auth
- ├── App.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
- ├── App.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)
- ├── App.Client/         # WASM Implementation: Browser-specific implementations (IndexedDB, JS Crypto)
- ├── App.Maui/           # Desktop/mobile clients: MAUI (Win/iOS/Android) + Linux desktop (net10.0)
- ├── Components/                 # Server shell for Blazor Web App (App.razor, Routes.razor)
- ├── Apis/                       # Host API endpoints (WasmApiEndpoints, SyncHub, etc.)
- ├── Data/                       # Server-side EF Core entities + AppDbContext
- ├── Services/                   # Server-only services: email, key protection, AI proxy
- ├── Pages/                      # Server-rendered pages (Roadmap, Architecture)
- └── wwwroot/                    # Static assets and documentation
- ```
- 
- ### Project Sharing Model: WASM vs desktop clients
- 
- | Layer | Shared? | Role |
- |-------|---------|------|
- | **`App.Core`** | ✅ Yes | Defines the "what": Interfaces (`IConversationStore`, `ISyncService`) and DTOs. No platform-specific code. |
- | **`App.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to WASM & desktop. |
- | **`App.Client`** | ❌ No | WASM-specific: Implements Core interfaces using browser APIs (IndexedDB, WebCrypto). |
- | **`App.Maui`** | ❌ No | Native desktop/mobile: SQLite storage, SIPSorcery WebRTC, platform browser hosts. **Windows/mobile** = MAUI Blazor Hybrid + WebView2; **Linux** = GirCore Adwaita + WebKit (not full MAUI). |
+
+```
+App/
+├── ARCHITECTURE.md     # This file (repo root; not published)
+├── App.csproj          # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite, auth
+├── App.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
+├── App.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)
+├── App.Client/         # WASM Implementation: Browser-specific implementations (IndexedDB, JS Crypto)
+├── App.Maui/           # Desktop/mobile clients: MAUI (Win/iOS/Android) + Linux desktop (net10.0)
+├── Components/         # Server shell for Blazor Web App (App.razor, Routes.razor)
+├── Apis/               # Host API endpoints (WasmApiEndpoints, SyncHub, etc.)
+├── Data/               # Server-side EF Core entities + AppDbContext
+├── Services/           # Server-only services: email, key protection, AI proxy
+├── Pages/              # Optional server-rendered pages (e.g. Roadmap)
+└── wwwroot/            # Static assets; product roadmap markdown
+```
+
+### Project Sharing Model: WASM vs desktop clients
+
+| Layer | Shared? | Role |
+|-------|---------|------|
+| **`App.Core`** | ✅ Yes | Defines the "what": Interfaces (`IConversationStore`, `ISyncService`) and DTOs. No platform-specific code. |
+| **`App.Shared`** | ✅ Yes | Defines the "how it looks": Razor components (`ChatPage`, `NotesPage`), Layouts, and logic common to WASM & desktop. |
+| **`App.Client`** | ❌ No | WASM-specific: Implements Core interfaces using browser APIs (IndexedDB, WebCrypto). |
+| **`App.Maui`** | ❌ No | Native desktop/mobile: SQLite storage, SIPSorcery WebRTC, platform browser hosts. **Windows/mobile** = MAUI Blazor Hybrid + WebView2; **Linux** = GirCore Adwaita + WebKit (not full MAUI). |
 
 
 ---
@@ -136,7 +135,7 @@ No server-side gallery storage.
 | **iCalendar** | `CalendarIcs` (Ical.Net) — export/import `.ics`, RRULE presets, occurrence expansion for visible ranges |
 | **AI tools** | `CalendarToolModule`: `list_calendars`, `list_events`, `add_calendar_event`, `update_calendar_event`, `delete_calendar_event` |
 | **Routing** | `MessageSuggestsCalendarTools` or AI router module `Calendar` |
-| **Sync** | `SyncItemKind.Calendar` / `CalendarEvent`; `CalendarMetaSyncPayload` / `CalendarEventSyncPayload` |
+| **Sync** | `SyncItemKind.Calendar` / `CalendarEvent`; `CalendarMetaSyncPayload` / `CalendarEventSyncPayload`. **Excluded:** Workflows system calendar (`IsWorkflowCalendar` / id `wizionic-workflows`) and any event with `WorkflowId` (device-local schedules only) |
 
 No server-side calendar storage.
 
@@ -242,11 +241,36 @@ Dumping every tool schema into a small local model inflates prefill and can degr
 | **AI** | `AiRequestRouter` asks a configured **routing model** (`ToolRoutingModelId`, e.g. a small Lemonade/Ollama chat model) to return JSON module names. No tools on the router call. Falls back to rules on timeout / parse failure. HA session stickiness is **off** so weather after lights still reclassifies. |
 | **Hybrid** | Rules first; if the route is “strong” (HA wake word, browser panel, clear Lemonade image intent) keep it. Otherwise call the AI router (covers PureChat, Gallery-only, multi-intent). Without a routing model configured, Hybrid/AI degrade to Rules. |
 
+```mermaid
+flowchart TD
+  Msg["Last user message"] --> Comp["CompositeRequestRouter"]
+  Comp --> Mode{"ToolRoutingMode"}
+
+  Mode -->|Rules| Rules["ContextualRequestRouter<br/>keywords · wake word · panel state"]
+  Mode -->|AI| AI["AiRequestRouter<br/>small routing model → JSON modules"]
+  Mode -->|Hybrid| Strong{"Rules 'strong' match?<br/>HA wake · browser open · clear image intent"}
+
+  Strong -->|yes| Rules
+  Strong -->|no| AI
+  AI -->|timeout / parse fail| Rules
+
+  Rules --> Route["RequestRoute<br/>module list · optional skill id"]
+  AI --> Route
+
+  Route --> Skill{"Skill route?<br/>/skill-name or run skill …"}
+  Skill -->|yes| Force["Force allowed-tools modules<br/>+ inject SKILL.md body"]
+  Skill -->|no| Pick["Attach AITools for selected modules<br/>+ MCP/OAuth when open"]
+
+  Force --> Chat["ChatCompletionService<br/>UseFunctionInvocation loop"]
+  Pick --> Chat
+  Chat --> Trace["Tool trace: 🧭 Route …"]
+```
+
 `CompositeRequestRouter` is the app-wide `IRequestRouter`. `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
 
 Known module names for the AI router: `Native`, `Lemonade`, `Gallery`, `Calendar`, `Notes`, `HomeAssistant`, `BrowserAgent` (plus MCP tools when utility/MCP path is open).
 
-**Configure:** Settings / chat tool-routing UI → mode + catalog model id. Stored in `WasmKeyStore` / `SqliteKeyStore` and can sync under **Tools** / related settings categories.
+**Configure:** Settings / chat tool-routing UI → mode + catalog model id. Stored in `WasmKeyStore` / `SqliteKeyStore` and can sync under settings categories (e.g. local-ai / related prefs).
 
 ### Context window UI & compact
 
@@ -362,7 +386,57 @@ Thin custom YAML **`wizionic.workflow/v1`** (not a full CNCF Open Workflow engin
 | **UI** | Tools → **Workflows** tab (form editor + raw YAML); Calendar sidebar + schedule dialog |
 | **Due runs** | Best-effort while app is open: `WorkflowDueBootstrap` ticks every ~1 min (`ProjectCalendarsAsync` + `ProcessDueAsync`); also on Calendar open / Workflows refresh |
 | **Calendar edit** | Workflow occurrences open a **schedule** dialog (start + repeat only), not the full event form |
-| **Sync** | Settings category `workflows` (WebRTC) — YAML library + enabled flags + last-run metadata |
+| **Sync** | **Device-local only** — workflow definitions are **not** a WebRTC settings category; the Workflows calendar (`IsWorkflowCalendar`) and events with `WorkflowId` are **excluded** from calendar sync so the same schedule does not fire on every device |
+
+### Orchestration: Workflows → Skills → Tools
+
+```mermaid
+flowchart TB
+  subgraph triggers["Triggers (this device only)"]
+    Cron["Cron / once schedule"]
+    Manual["Run now · Workflows UI"]
+    Tick["WorkflowDueBootstrap<br/>~1 min while app open"]
+    ChatSkill["Chat /skill-name"]
+    RunDlg["Skills Run dialog"]
+  end
+
+  subgraph defs["Local definitions"]
+    WF["IWorkflowStore<br/>wizionic.workflow/v1 YAML"]
+    SK["ISkillStore<br/>SKILL.md"]
+  end
+
+  subgraph runtime["Runtime"]
+    Orch["WorkflowOrchestrator<br/>preferred → fallback model"]
+    Runner["ISkillRunner"]
+    CCS["ChatCompletionService"]
+    Router["CompositeRequestRouter<br/>Rules / AI / Hybrid"]
+    Modules["IToolModule tools<br/>Native · Notes · Gallery · Calendar · …"]
+    MCP["MCP + OAuth connectors"]
+  end
+
+  subgraph side["Side effects"]
+    Cal["Workflows calendar projection<br/>IsWorkflowCalendar · WorkflowId"]
+    Log["ISkillRunLogStore<br/>source: manual | chat | workflow"]
+  end
+
+  Cron --> Tick
+  Tick --> Orch
+  Manual --> Orch
+  WF --> Orch
+  Orch -->|"execute_skill + model"| Runner
+  ChatSkill --> Runner
+  RunDlg --> Runner
+  SK --> Runner
+  Runner -->|"force modules from allowed-tools"| Modules
+  Runner --> CCS
+  CCS --> Router
+  Router --> Modules
+  Router --> MCP
+  Orch --> Cal
+  Runner --> Log
+```
+
+**Hierarchy (product UI):** Tools (built-in + installed) → Skills (procedures over tools) → Workflows (schedules that call one skill). Skills **do** sync across devices; workflows **do not**.
 
 **Key files:** `App.Core/Skills/*`, `App.Core/Workflows/*`, `App.Shared/Services/Skills/*`, `App.Shared/Services/Workflows/*`, `SkillsPanel.razor`, `WorkflowsPanel.razor`, `WorkflowDueBootstrap.razor`
 
@@ -755,6 +829,88 @@ CSS variables live in `App.Shared/wwwroot/css/app.css` (theme blocks keyed by `d
 
 Sync requires **email login** on both devices. The server **never** stores or relays chat/note/gallery/calendar payloads—only auth, presence, and small WebRTC signaling messages.
 
+### How SignalR and WebRTC work together
+
+Two planes, one product story:
+
+| Plane | Transport | Role |
+|-------|-----------|------|
+| **Control / presence** | SignalR hub `/sync-hub` | Who is online, rename, AI-server pick, **WebRTC offer / answer / ICE only** |
+| **Data** | WebRTC DataChannel (P2P) | Encrypted item payloads (chat, notes, gallery, calendar, settings, …) |
+
+```mermaid
+flowchart TB
+  subgraph deviceA["1 — Device A"]
+    direction TB
+    AUI["Sync UI / stores"] --> ASvc["WasmSyncService / MauiSyncService"]
+    ASvc --> ACoord["WebRtcSyncCoordinator"]
+  end
+
+  subgraph server["2 — Wizionic Home Server"]
+    direction TB
+    Hub["SignalR SyncHub — /sync-hub"]
+    Pres["DevicePresenceService — in-memory"]
+    Hub --- Pres
+  end
+
+  subgraph deviceB["3 — Device B"]
+    direction TB
+    BCoord["WebRtcSyncCoordinator"] --> BSvc["WasmSyncService / MauiSyncService"]
+    BSvc --> BStore["IndexedDB / SQLite — encrypted at rest"]
+  end
+
+  %% Vertical stack order (presence + signaling via hub)
+  ACoord -->|"presence · RegisterDevice"| Hub
+  Hub -->|"DevicesUpdated"| BCoord
+  ACoord <-->|"SDP offer / answer / ICE only"| Hub
+  Hub <-->|"forward signaling"| BCoord
+
+  %% P2P data path — skips the server entirely
+  ACoord ==>|"DataChannel P2P: encrypted JSON<br/>never touches SyncHub"| BCoord
+
+  style Hub fill:#334155,stroke:#94a3b8,color:#f8fafc
+  style Pres fill:#334155,stroke:#94a3b8,color:#f8fafc
+```
+
+**Rule of thumb:** if it is SDP, ICE, or “device X is online,” it may touch SignalR. If it is a notebook body, chat message, image, or calendar event, it must stay on the **DataChannel** between the two clients.
+
+### Sequence: connect peers, then sync one item
+
+Example uses a **note**; chats, gallery images, calendar events, and settings blobs use the same pattern with different message types (`sync-data`, `note-sync-data`, `calendar-event-sync-data`, `settings-sync-data`, …).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Device A sender
+    participant H as SignalR SyncHub
+    participant B as Device B receiver
+
+    Note over A,B: Both logged in and registered on /sync-hub
+
+    rect rgb(40, 50, 65)
+        Note over A,H,B: Signaling only (server may see these)
+        A->>H: WebRTC offer
+        H->>B: Forward offer
+        B->>H: WebRTC answer
+        H->>A: Forward answer
+        A->>H: ICE candidates
+        H->>B: Forward ICE
+        B->>H: ICE candidates
+        H->>A: Forward ICE
+    end
+
+    Note over A,B: Peer connection + DataChannel open (P2P)
+
+    rect rgb(35, 55, 45)
+        Note over A,B: Data never goes through SyncHub
+        A->>B: manifest offer fingerprints
+        B->>A: manifest response needed item ids
+        A->>B: note-sync-data encrypted payload
+        B->>B: Decrypt merge save local store
+        B->>A: note-sync-ack
+    end
+```
+
 ### Phase 1 — Presence (SignalR)
 1. Authenticated client connects to `/sync-hub` (`SyncHub`, `[Authorize]`).
 2. Client calls `RegisterDevice(deviceId, deviceName)`; server tracks connections in `DevicePresenceService` (in-memory).
@@ -791,9 +947,8 @@ Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
 | `lemonade` | Lemonade URL, key, modality defaults, models |
 | `cloud-providers` | User API keys (encrypted at rest on each device) |
 | `home-assistant` | HA URL/token/assistant name (desktop) |
-| `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens |
+| `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens (auto-sync toggle on Sync page) |
 | `skills` | User SKILL.md library (markdown + enabled flags); auto-sync toggle on Sync page |
-| `workflows` | Workflow YAML library (`wizionic.workflow/v1`) + enabled/last-run; auto-sync toggle on Sync page |
 | `system-prompt` | Custom system prompt |
 | `profile` | About-you profile fields |
 | `memories` | User memory list |
@@ -813,15 +968,15 @@ Notes are notebooks of entries (`ItemId`, `ModifiedAt`, HTML body). Incoming not
 Same-entry concurrent HTML edits can still lose one body (LWW by time). Gallery/calendar use their own accept/merge helpers (`GallerySyncMerger`, `CalendarSyncMerger`).
 
 ### AI relay (WebRTC)
-A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`app-ai-proxy`) to the peer running local models.
+A phone/tablet without Ollama can designate another online device as **AI server**. Chat completions for that client are sent over a dedicated DataChannel (`app-ai-proxy`) to the peer running local models (same P2P idea as item sync; still not stored on the hub).
 
-### Architecture diagram
+### What syncs vs what stays local
 
-![Cross-device sync: SignalR for signaling, WebRTC for encrypted data](/images/SyncArchitecture.png)
-
-**Signaling path:** Device A ↔ SignalR `/sync-hub` ↔ Device B  
-**Data path:** Device A ↔ WebRTC DataChannel ↔ Device B (encrypted JSON)  
-**Server sees:** cookies, device IDs, SDP/ICE blobs—not chat, notes, gallery, or calendar content.
+| Syncs over WebRTC (settings or item kinds) | Stays device-local |
+|--------------------------------------------|--------------------|
+| Chats, notes, gallery, normal calendars | **Workflow** definitions (`IWorkflowStore`) |
+| Settings: tools, skills, local-ai, … | **Workflows** calendar + events with `WorkflowId` |
+| Browser bookmarks/apps (MAUI) | Login server URL (never a settings category) |
 
 ---
 
@@ -1001,4 +1156,4 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
 
 ---
 
-*Last updated: August 2026 — Agent Skills (SKILL.md open standard: create/upload/edit/run, allowed-tools → Gallery/Notes/Calendar/HA/MCP, chat `/skill-name`, settings sync); Gallery + Calendar; Rules/AI/Hybrid tool router; Tools marketplace (MCP registry + OAuth catalog); setup wizard; Lemonade dual local AI; HA; embedded browser; themes.*
+*Last updated: August 2026 — ARCHITECTURE.md at repo root (not public wwwroot); mermaid sync + workflow orchestration + Rules/AI/Hybrid diagrams; Agent Skills + device-local Workflows; Tools marketplace; Gallery/Calendar; Lemonade dual local AI; HA; embedded browser.*

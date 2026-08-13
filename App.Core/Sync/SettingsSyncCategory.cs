@@ -3,6 +3,7 @@ namespace App.Core.Sync;
 /// <summary>
 /// Stable category ids for settings blobs transferred over WebRTC.
 /// Login server / auth config is intentionally never a category.
+/// Workflows are device-local and are not a settings sync category.
 /// </summary>
 public static class SettingsSyncCategory
 {
@@ -16,7 +17,6 @@ public static class SettingsSyncCategory
     public const string Memories = "memories";
     public const string Appearance = "appearance";
     public const string Skills = "skills";
-    public const string Workflows = "workflows";
 
     public static readonly string[] All =
     [
@@ -29,8 +29,7 @@ public static class SettingsSyncCategory
         Profile,
         Memories,
         Appearance,
-        Skills,
-        Workflows
+        Skills
     ];
 
     public static string DisplayName(string category) => category switch
@@ -45,7 +44,6 @@ public static class SettingsSyncCategory
         Memories => "Memories",
         Appearance => "Appearance",
         Skills => "Skills (SKILL.md)",
-        Workflows => "Workflows",
         _ => category
     };
 }

@@ -36,7 +36,6 @@ public sealed class NullSyncService : ISyncService
     public bool AutoSyncMemories => true;
     public bool AutoSyncAppearance => true;
     public bool AutoSyncSkills => true;
-    public bool AutoSyncWorkflows => true;
     public IReadOnlyCollection<string> SyncTargetDeviceIds { get; } = Array.Empty<string>();
 
     public event Action? OnChanged;
@@ -78,7 +77,6 @@ public sealed class NullSyncService : ISyncService
     public Task SetAutoSyncMemoriesAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncAppearanceAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncSkillsAsync(bool enabled) => Task.CompletedTask;
-    public Task SetAutoSyncWorkflowsAsync(bool enabled) => Task.CompletedTask;
 
     public Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages) =>
         Task.CompletedTask;

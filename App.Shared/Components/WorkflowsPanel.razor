@@ -1,15 +1,11 @@
 @using App.Core.Skills
 @using App.Core.Storage
-@using App.Core.Sync
 @using App.Core.Workflows
-@using App.Shared.Services
 @using App.Shared.Services.Workflows
 @inject IWorkflowStore WorkflowStore
 @inject IWorkflowOrchestrator Orchestrator
 @inject ISkillStore SkillStore
 @inject IKeyStore KeyStore
-@inject ISettingsSyncStore? SettingsSync
-@inject ISyncService? SyncService
 @implements IDisposable
 
 <div class="cf-skills-panel">
@@ -32,6 +28,7 @@
     <p class="text-muted" style="font-size:0.85rem;margin:0 0 0.75rem;">
         Workflows schedule skills (cron) and can pick models. Scheduled runs appear on the <strong>Workflows</strong> calendar.
         Format: <code>wizionic.workflow/v1</code> (not full CNCF OWS).
+        <strong>Device-local only</strong> — schedules and the Workflows calendar do not sync to other devices (so the same job does not fire twice).
     </p>
 
     @if (!workflows.Any())
@@ -588,7 +585,6 @@
                 LastRunAtUtc = lastRun,
                 LastRunStatus = lastStatus
             });
-            await AfterWorkflowsChanged();
             editorOpen = false;
             banner = $"Saved workflow {doc.Id}";
             bannerError = false;
@@ -611,14 +607,12 @@
         }
         catch { /* keep raw */ }
         await WorkflowStore.UpsertAsync(w);
-        await AfterWorkflowsChanged();
         await RefreshAll();
     }
 
     private async Task Delete(WorkflowRecord w)
     {
         await WorkflowStore.DeleteAsync(w.Id);
-        await AfterWorkflowsChanged();
         banner = $"Deleted {w.Name}";
         bannerError = false;
         await RefreshAll();
@@ -659,17 +653,10 @@
         {
             foreach (var s in WorkflowSeedCatalog.CreateSamples(KeyStore.LastSelectedModel))
                 await WorkflowStore.UpsertAsync(s);
-            await AfterWorkflowsChanged();
             banner = "Imported sample workflows";
             bannerError = false;
             await RefreshAll();
         }
         finally { busy = false; }
-    }
-
-    private async Task AfterWorkflowsChanged()
-    {
-        if (SettingsSync is not null && SyncService is not null)
-            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Workflows);
     }
 }
