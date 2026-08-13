@@ -5485,6 +5485,48 @@ body .message-bot,
 }
 
 /* GitHub MCP–style tool cards (icon + title + description + By line) */
+/* Built-in tools strip (Tools page) — compact, no install actions */
+.cf-builtin-section {
+  margin-bottom: 1rem;
+}
+.cf-builtin-section .cf-conn-section-head {
+  margin-bottom: 0.45rem;
+}
+.cf-builtin-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+  font-weight: 400;
+}
+.cf-builtin-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.4rem;
+  margin-top: 0;
+}
+.cf-builtin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.55rem 0.28rem 0.4rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 999px;
+  background: var(--color-bg-muted, #f3f4f6);
+  font-size: 0.78rem;
+  line-height: 1.2;
+  color: var(--color-text, #111827);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+.cf-builtin-chip-icon {
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.9;
+}
+.cf-builtin-chip-label {
+  font-weight: 500;
+}
+
 .cf-tool-list {
   display: flex;
   flex-direction: column;
@@ -5812,6 +5854,27 @@ body .message-bot,
   line-height: 1.45;
   background: var(--color-bg-surface, #fff);
 }
+.cf-skill-run-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.65rem;
+}
+.cf-skill-filter-chip {
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-bg-surface, #fff);
+  color: var(--color-text-muted, #6b7280);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.cf-skill-filter-chip.is-active {
+  border-color: var(--color-primary, #6d28d9);
+  color: var(--color-primary, #6d28d9);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-primary, #6d28d9) 8%, white);
+}
 .cf-skill-run-history {
   display: flex;
   flex-direction: column;
@@ -5837,6 +5900,20 @@ body .message-bot,
 .cf-skill-run-history-name {
   font-weight: 600;
   font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.cf-skill-source-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--color-text-muted, #6b7280);
 }
 .cf-skill-run-history-meta {
   font-size: 0.75rem;

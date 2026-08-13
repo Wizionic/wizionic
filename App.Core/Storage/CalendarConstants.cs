@@ -5,6 +5,11 @@ public static class CalendarConstants
 {
     public const string DefaultCalendarName = "Personal";
 
+    /// <summary>System calendar for AI workflow schedule projection.</summary>
+    public const string WorkflowCalendarName = "Workflows";
+    public const string WorkflowCalendarColor = "#7c3aed";
+    public const string WorkflowCalendarId = "wizionic-workflows";
+
     /// <summary>Google-calendar-like purple accent used for the default calendar.</summary>
     public const string DefaultCalendarColor = "#8E24AA";
 

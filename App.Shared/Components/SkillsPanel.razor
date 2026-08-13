@@ -99,21 +99,42 @@
         </div>
     }
 
-    @if (recentRuns.Any())
+    @if (allRecentRuns.Any())
     {
         <section class="cf-conn-section" style="margin-top:1.5rem;">
             <div class="cf-conn-section-head">
                 <h3 class="cf-conn-section-title" style="font-size:0.98rem;">Recent runs</h3>
                 <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearRunHistory">Clear</button>
             </div>
+            <div class="cf-skill-run-filters">
+                <button type="button" class="cf-skill-filter-chip @(_runFilter == null ? "is-active" : "")"
+                        @onclick="() => _runFilter = null">All</button>
+                <button type="button" class="cf-skill-filter-chip @(_runFilter == SkillRunSource.Manual ? "is-active" : "")"
+                        @onclick="() => _runFilter = SkillRunSource.Manual">Manual</button>
+                <button type="button" class="cf-skill-filter-chip @(_runFilter == SkillRunSource.Chat ? "is-active" : "")"
+                        @onclick="() => _runFilter = SkillRunSource.Chat">Chat</button>
+                <button type="button" class="cf-skill-filter-chip @(_runFilter == SkillRunSource.Workflow ? "is-active" : "")"
+                        @onclick="() => _runFilter = SkillRunSource.Workflow">Workflow</button>
+            </div>
             <div class="cf-skill-run-history">
-                @foreach (var log in recentRuns)
+                @if (!FilteredRecentRuns.Any())
+                {
+                    <p class="cf-conn-empty">No runs for this filter.</p>
+                }
+                @foreach (var log in FilteredRecentRuns)
                 {
                     <button type="button" class="cf-skill-run-history-item" @onclick="() => ShowPastRun(log)">
-                        <span class="cf-skill-run-history-name">@log.SkillName</span>
+                        <span class="cf-skill-run-history-name">
+                            @log.SkillName
+                            <span class="cf-skill-source-badge">@SourceLabel(log.Source)</span>
+                        </span>
                         <span class="cf-skill-run-history-meta">
                             @(log.Success ? "OK" : "Failed") · @log.ModelId · @log.DurationSeconds.ToString("0.0")s
                             · @log.StartedAtUtc.ToLocalTime().ToString("g")
+                            @if (!string.IsNullOrWhiteSpace(log.WorkflowName))
+                            {
+                                <text> · @log.WorkflowName</text>
+                            }
                         </span>
                     </button>
                 }
@@ -347,7 +368,13 @@
     private string? runModelId;
     private string runPartial = "";
     private List<string> runLogLines = new();
-    private List<SkillRunLog> recentRuns = new();
+    private List<SkillRunLog> allRecentRuns = new();
+    private string? _runFilter; // null = all; else SkillRunSource.*
+    private IEnumerable<SkillRunLog> FilteredRecentRuns =>
+        string.IsNullOrEmpty(_runFilter)
+            ? allRecentRuns
+            : allRecentRuns.Where(l =>
+                string.Equals(l.Source ?? SkillRunSource.Manual, _runFilter, StringComparison.OrdinalIgnoreCase));
     private ElementReference runLogEl;
     private bool modelPickerOpen;
     private bool modelsLoading;
@@ -359,7 +386,7 @@
         RunLogs.Changed += OnRunLogsChanged;
         await Refresh();
         await RunLogs.LoadAsync();
-        recentRuns = RunLogs.ListRecent().ToList();
+        allRecentRuns = RunLogs.ListRecent().ToList();
     }
 
     public void Dispose()
@@ -376,7 +403,7 @@
 
     private void OnRunLogsChanged() => _ = InvokeAsync(() =>
     {
-        recentRuns = RunLogs.ListRecent().ToList();
+        allRecentRuns = RunLogs.ListRecent().ToList();
         StateHasChanged();
     });
 
@@ -391,7 +418,7 @@
             await SkillStore.LoadAsync();
             skills = SkillStore.List().ToList();
             await RunLogs.LoadAsync();
-            recentRuns = RunLogs.ListRecent().ToList();
+            allRecentRuns = RunLogs.ListRecent().ToList();
         }
         finally
         {
@@ -402,7 +429,7 @@
     private async Task ClearRunHistory()
     {
         await RunLogs.ClearAsync();
-        recentRuns = new();
+        allRecentRuns = new();
     }
 
     private void ShowPastRun(SkillRunLog log)
@@ -726,6 +753,8 @@
             {
                 SkillId = runRecord.Id,
                 ModelId = runModelId,
+                Source = SkillRunSource.Manual,
+                TriggerDetail = "skills-ui",
                 UserMessageOverride = string.IsNullOrWhiteSpace(runUserMessage) ? null : runUserMessage,
                 BodyOverride = string.IsNullOrWhiteSpace(runBodyOverride) ? null : runBodyOverride,
                 OnLog = lines =>
@@ -764,7 +793,7 @@
                 banner = $"Skill {runRecord.Name} finished · {runModelId}";
                 bannerError = false;
             }
-            recentRuns = RunLogs.ListRecent().ToList();
+            allRecentRuns = RunLogs.ListRecent().ToList();
         }
         catch (Exception ex)
         {
@@ -782,4 +811,11 @@
         if (SettingsSync is not null && SyncService is not null)
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Skills);
     }
+
+    private static string SourceLabel(string? source) => (source ?? SkillRunSource.Manual).ToLowerInvariant() switch
+    {
+        SkillRunSource.Chat => "Chat",
+        SkillRunSource.Workflow => "Workflow",
+        _ => "Manual"
+    };
 }

@@ -40,6 +40,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string AutoSyncProfileKey = "app-auto-sync-profile";
     private const string AutoSyncMemoriesKey = "app-auto-sync-memories";
     private const string AutoSyncAppearanceKey = "app-auto-sync-appearance";
+    private const string AutoSyncSkillsKey = "app-auto-sync-skills";
+    private const string AutoSyncWorkflowsKey = "app-auto-sync-workflows";
 
     private readonly MauiAuthCookieStore _cookieStore;
     private readonly SqliteSettingsDatabase _settings;
@@ -93,6 +95,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     public bool AutoSyncProfile { get; private set; } = true;
     public bool AutoSyncMemories { get; private set; } = true;
     public bool AutoSyncAppearance { get; private set; } = true;
+    public bool AutoSyncSkills { get; private set; } = true;
+    public bool AutoSyncWorkflows { get; private set; } = true;
     public IReadOnlyCollection<string> SyncTargetDeviceIds => _syncTargetDeviceIds;
 
     public event Action? OnChanged;
@@ -455,6 +459,10 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         SetAutoSyncFlagAsync(AutoSyncMemoriesKey, v => AutoSyncMemories = v, enabled);
     public Task SetAutoSyncAppearanceAsync(bool enabled) =>
         SetAutoSyncFlagAsync(AutoSyncAppearanceKey, v => AutoSyncAppearance = v, enabled);
+    public Task SetAutoSyncSkillsAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncSkillsKey, v => AutoSyncSkills = v, enabled);
+    public Task SetAutoSyncWorkflowsAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncWorkflowsKey, v => AutoSyncWorkflows = v, enabled);
 
     public Task SendSyncPayloadAsync(string targetDeviceId, string convoId, List<ChatMessage> messages) =>
         Task.CompletedTask;
@@ -866,6 +874,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.AutoSyncProfile = AutoSyncProfile;
         _coordinator.AutoSyncMemories = AutoSyncMemories;
         _coordinator.AutoSyncAppearance = AutoSyncAppearance;
+        _coordinator.AutoSyncSkills = AutoSyncSkills;
+        _coordinator.AutoSyncWorkflows = AutoSyncWorkflows;
         _coordinator.SyncTargetDeviceIds = GetEffectiveSyncTargetDeviceIds();
         _coordinator.IsSelf = IsSelf;
         _coordinator.LocalDeviceId = MyDeviceId;
@@ -1040,6 +1050,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             AutoSyncProfile = await LoadBoolPrefAsync(AutoSyncProfileKey, defaultValue: true);
             AutoSyncMemories = await LoadBoolPrefAsync(AutoSyncMemoriesKey, defaultValue: true);
             AutoSyncAppearance = await LoadBoolPrefAsync(AutoSyncAppearanceKey, defaultValue: true);
+            AutoSyncSkills = await LoadBoolPrefAsync(AutoSyncSkillsKey, defaultValue: true);
+            AutoSyncWorkflows = await LoadBoolPrefAsync(AutoSyncWorkflowsKey, defaultValue: true);
         }
         catch
         {

@@ -16,6 +16,7 @@ public static class SettingsSyncCategory
     public const string Memories = "memories";
     public const string Appearance = "appearance";
     public const string Skills = "skills";
+    public const string Workflows = "workflows";
 
     public static readonly string[] All =
     [
@@ -28,7 +29,8 @@ public static class SettingsSyncCategory
         Profile,
         Memories,
         Appearance,
-        Skills
+        Skills,
+        Workflows
     ];
 
     public static string DisplayName(string category) => category switch
@@ -43,6 +45,7 @@ public static class SettingsSyncCategory
         Memories => "Memories",
         Appearance => "Appearance",
         Skills => "Skills (SKILL.md)",
+        Workflows => "Workflows",
         _ => category
     };
 }

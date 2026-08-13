@@ -13,7 +13,10 @@ public interface ICalendarStore
 
     Task EnsureDefaultCalendarAsync(CancellationToken ct = default);
 
-    Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default);
+    Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default, bool isWorkflowCalendar = false);
+
+    /// <summary>Ensures a system "Workflows" calendar exists; returns its id.</summary>
+    Task<string> EnsureWorkflowCalendarAsync(CancellationToken ct = default);
     Task UpdateCalendarAsync(string id, string name, string color, bool isVisible, string? description = null, CancellationToken ct = default);
     Task SetCalendarVisibleAsync(string id, bool isVisible, CancellationToken ct = default);
     Task ReorderCalendarsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default);
