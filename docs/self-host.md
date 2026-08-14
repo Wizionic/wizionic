@@ -29,14 +29,10 @@ Secrets belong in the environment, not in git.
 |---|---|
 | `BREVO_API_KEY` | Transactional email (magic links). Leave unset to skip email login. |
 | `Email__SmtpUser` / `Email__SmtpPass` | Only if you switch back to SMTP |
-| `OAuth__Google__ClientId` / `OAuth__Google__ClientSecret` | Google connectors |
-| `OAuth__GitHub__ClientId` / `OAuth__GitHub__ClientSecret` | GitHub connectors |
-| `OAuth__Notion__ClientId` / `OAuth__Notion__ClientSecret` | Notion connectors |
-| `OAuth__Stripe__ClientId` / `OAuth__Stripe__ClientSecret` | Stripe connectors |
 | `ZYPHRA_API_KEY` | Optional proxied Zyphra models |
 | `ConnectionStrings__DefaultConnection` | Override SQLite path |
 
-OAuth redirect URIs in `appsettings.json` default to `https://wizionic.com/api/oauth/...`. For a local or custom host, set matching `OAuth__{Provider}__RedirectUri` values and register those URIs with each provider.
+OAuth *app* Client IDs and secrets (Google, GitHub, Notion, Stripe) live in the host SQLite `OAuthProviders` table, not in deploy-time environment variables. Seed them in the database (the production notes live in the private ops repo). Empty `OAuth:*` entries in `appsettings.json` are only a local-dev fallback.
 
 The sample `free-chat` proxied provider in `appsettings.json` points at `http://127.0.0.1:11434/v1/` (local Ollama). Change or remove it if you do not run Ollama there.
 
