@@ -63,7 +63,7 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
 
     public event Action? OnChanged;
 
-    public async Task SetBaseUrlAsync(string baseUrl, CancellationToken cancellationToken = default)
+    public async Task<bool> SetBaseUrlAsync(string baseUrl, CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeBaseUrl(baseUrl);
         if (string.IsNullOrWhiteSpace(normalized))
@@ -73,7 +73,9 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             throw new ArgumentException("Enter a valid http(s) URL.", nameof(baseUrl));
 
-        _baseUrl = normalized.TrimEnd('/');
+        normalized = normalized.TrimEnd('/');
+        var unchanged = string.Equals(_baseUrl, normalized, StringComparison.OrdinalIgnoreCase);
+        _baseUrl = normalized;
 
         // When pointing at a local homeserver, keep Velopack updates on the public
         // production feed for this OS. Always re-assert the platform-correct path so an
@@ -86,21 +88,50 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
             _updateFeedUrlOverride = NormalizeFeedOverride(_updateFeedUrlOverride);
 
         await PersistAsync(cancellationToken);
-        ApplyLive();
+        var appliedLive = ApplyLive();
         OnChanged?.Invoke();
         _logger.LogInformation(
-            "[ServerEndpoint] Login server set to {BaseUrl} (update feed {Feed})",
-            _baseUrl, UpdateFeedUrl);
+            "[ServerEndpoint] Login server set to {BaseUrl} (update feed {Feed}, live={Live})",
+            _baseUrl, UpdateFeedUrl, appliedLive);
+
+        // HttpClient cannot change BaseAddress after the first request; SignalR/cookies
+        // also stay on the old host. Restart whenever the URL actually changed.
+        return !unchanged;
     }
 
-    private void ApplyLive()
+    /// <returns>False when HttpClient already sent a request (BaseAddress is frozen).</returns>
+    private bool ApplyLive()
     {
-        _http.BaseAddress = BaseUri;
+        try
+        {
+            _http.BaseAddress = BaseUri;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogInformation(
+                ex,
+                "[ServerEndpoint] HttpClient already in use; new URL is persisted, restart required");
+            try
+            {
+                _cookieStore.Configure(new AppServerOptions
+                {
+                    BaseUrl = _baseUrl,
+                    UpdateFeedUrl = _updateFeedUrlOverride
+                });
+            }
+            catch
+            {
+                // cookie retarget is best-effort when restart is coming
+            }
+            return false;
+        }
+
         _cookieStore.Configure(new AppServerOptions
         {
             BaseUrl = _baseUrl,
             UpdateFeedUrl = _updateFeedUrlOverride
         });
+        return true;
     }
 
     private async Task PersistAsync(CancellationToken ct)

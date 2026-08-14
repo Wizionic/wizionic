@@ -13,24 +13,34 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
     private WebView? _webView;
     private AbsoluteLayout? _layout;
     private string? _currentUrl;
+    private string? _pendingUrl;
+    private object? _pendingOwner;
+    private object? _owner;
     private bool _visible;
+    private bool _hasLayout;
 
     public bool IsNative => true;
 
     public void Attach(WebView webView, AbsoluteLayout layout)
     {
+        var pending = _pendingUrl;
+        var pendingOwner = _pendingOwner;
         _webView = webView;
         _layout = layout;
         HideCore();
         Console.WriteLine("[UrlEmbed] native overlay attached");
+
+        // Replay a Show() that raced ahead of MainPage.Loaded wiring.
+        if (!string.IsNullOrWhiteSpace(pending))
+            Show(pending, pendingOwner);
     }
 
-    public void Show(string url)
+    public void Show(string url, object? owner = null)
     {
         url = (url ?? "").Trim();
         if (string.IsNullOrWhiteSpace(url))
         {
-            Hide();
+            Hide(owner);
             return;
         }
 
@@ -41,8 +51,14 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
         MainThread.BeginInvokeOnMainThread(() =>
         {
             if (_webView == null)
+            {
+                _pendingUrl = url;
+                _pendingOwner = owner;
+                Console.WriteLine($"[UrlEmbed] Show deferred until overlay attach: {url}");
                 return;
+            }
 
+            _owner = owner;
             var changed = !string.Equals(_currentUrl, url, StringComparison.OrdinalIgnoreCase);
             _currentUrl = url;
             _visible = true;
@@ -58,13 +74,27 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
         });
     }
 
-    public void Hide() => MainThread.BeginInvokeOnMainThread(HideCore);
+    public void Hide(object? owner = null)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (!IsCurrentOwner(owner))
+            {
+                Console.WriteLine("[UrlEmbed] Hide ignored — overlay owned by another embed");
+                return;
+            }
 
-    public void UpdateBounds(double x, double y, double width, double height)
+            HideCore();
+        });
+    }
+
+    public void UpdateBounds(double x, double y, double width, double height, object? owner = null)
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
             if (_webView == null || _layout == null)
+                return;
+            if (!IsCurrentOwner(owner))
                 return;
 
             if (!_visible || width < 2 || height < 2)
@@ -88,13 +118,28 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
             AbsoluteLayout.SetLayoutBounds(_webView, bounds);
             _webView.IsVisible = true;
             _webView.IsEnabled = true;
+
+            // WebView2 can swallow a navigation that happened while the view was 0×0.
+            if (!_hasLayout && !string.IsNullOrWhiteSpace(_currentUrl))
+            {
+                _webView.Source = new UrlWebViewSource { Url = _currentUrl };
+                Console.WriteLine($"[UrlEmbed] re-navigate after first layout {_currentUrl}");
+            }
+            _hasLayout = true;
         });
     }
+
+    private bool IsCurrentOwner(object? owner) =>
+        owner == null || _owner == null || ReferenceEquals(_owner, owner);
 
     private void HideCore()
     {
         _visible = false;
         _currentUrl = null;
+        _pendingUrl = null;
+        _pendingOwner = null;
+        _owner = null;
+        _hasLayout = false;
         if (_webView == null)
             return;
 

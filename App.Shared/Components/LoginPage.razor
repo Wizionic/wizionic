@@ -9,7 +9,7 @@
         <h2>Wizionic</h2>
     </div>
     <div class="login-lead">
-        Connect to local AI and keep all your data local and private! Download the Wizionic app for easy connection to local AI, integration with Home Assistant for your smart home, and an agentically controlled web browser.
+        Download the Wizionic app to use private local AI.
     </div>
     @if (!AppEnvironment.IsMaui)
     {
@@ -24,7 +24,7 @@
                     Download Wizionic App for Windows
                 </a>
             </div>
-            <p class="login-download-desc">Windows installer (.exe) — works on Windows 10 and 11.</p>
+            <p class="login-download-desc">Windows installer (.exe) — Windows 10 and 11.</p>
             <a class="btn btn-primary btn-sm login-download-btn" href="/releases/windows/Wizionic-win-Setup.exe" download>
                 Download for Windows
             </a>
@@ -36,7 +36,7 @@
                 <div class="login-download-badge">Recommended for this device</div>
             }
             <div class="login-download-title">Download Wizionic App for Linux</div>
-            <p class="login-download-desc">Debian/Ubuntu .deb, with AppImage fallback. Run in a terminal:</p>
+            <p class="login-download-desc">Debian/Ubuntu .deb, with AppImage fallback:</p>
             <div class="login-install-cmd-row">
                 <pre class="login-install-cmd" id="linux-install-cmd"><code>@LinuxInstallCommand</code></pre>
                 <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyLinuxInstallCommand">
@@ -51,11 +51,7 @@
         </div>
     </div>
     }
-    <p style="color: var(--color-text-muted);">Chat history and settings are stored entirely in your browser / or on device in the Wizionic app. Log in with an email <em>only</em> if you want:
-        <ul style="margin:0.5rem 0 0.5rem 1.25rem; color: var(--color-text-muted);">
-            <li>to sync your encrypted chat history and settings across browsers or devices</li>
-            <li>one of your devices (connected to your local AI) to act as a chat server for your other devices</li>
-        </ul>
+    <p style="color: var(--color-text-muted);">Login to sync your encrypted data and settings across devices:
     </p>
 
     @if (Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email))
@@ -216,18 +212,7 @@
             </div>
         }
 
-        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border); font-size:0.95em;">
-            You can also continue without logging in but all your chat history and settings will only be stored locally and encrypted on this device.
-            <div style="margin-top:0.35rem;">
-                <a href="/chat" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Chat Now</a>
-                &nbsp;•&nbsp;
-                <a href="/local-ai" style="text-decoration:none; color:var(--primary-dark); font-weight:500;">Setup your local AI</a>
-            </div>
-        </div>
 
-        <p style="margin-top:1rem; font-size:0.8em; color: var(--color-text-muted);">
-            All chat history is only stored locally on your device(s) and is never sent through a server.
-        </p>
     }
 </div>
 

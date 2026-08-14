@@ -1,11 +1,13 @@
 @using App.Core.Skills
 @using App.Core.Storage
 @using App.Core.Workflows
+@using App.Shared.Services
 @using App.Shared.Services.Workflows
 @inject IWorkflowStore WorkflowStore
 @inject IWorkflowOrchestrator Orchestrator
 @inject ISkillStore SkillStore
 @inject IKeyStore KeyStore
+@inject ChatModelCatalogService ModelCatalog
 @implements IDisposable
 
 <div class="cf-skills-panel">
@@ -26,9 +28,7 @@
     }
 
     <p class="text-muted" style="font-size:0.85rem;margin:0 0 0.75rem;">
-        Workflows schedule skills (cron) and can pick models. Scheduled runs appear on the <strong>Workflows</strong> calendar.
-        Format: <code>wizionic.workflow/v1</code> (not full CNCF OWS).
-        <strong>Device-local only</strong> — schedules and the Workflows calendar do not sync to other devices (so the same job does not fire twice).
+        Workflows schedule skills and can pick models. Scheduled runs appear on the <strong>Workflows</strong> calendar.
     </p>
 
     @if (!workflows.Any())
@@ -193,10 +193,58 @@
                         <div>
                             <label class="cf-conn-label">Preferred model</label>
                             <input class="cf-dialog-input" @bind="fPreferredModel" placeholder="@(KeyStore.LastSelectedModel ?? "lemonade/…")" />
+                            <div class="cf-skill-model-row" style="margin-bottom:0;margin-top:0.35rem;">
+                                @if (!preferredPickerOpen)
+                                {
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            @onclick="() => OpenModelPicker(preferred: true)"
+                                            disabled="@modelsLoading">
+                                        @(modelsLoading ? "Loading models…" : "Choose different model…")
+                                    </button>
+                                }
+                                else
+                                {
+                                    <select class="cf-dialog-input" style="max-width:100%;" @bind="fPreferredModel">
+                                        <option value="">(none)</option>
+                                        @if (!string.IsNullOrEmpty(fPreferredModel) && modelOptions.All(m => m != fPreferredModel))
+                                        {
+                                            <option value="@fPreferredModel">@fPreferredModel</option>
+                                        }
+                                        @foreach (var m in modelOptions)
+                                        {
+                                            <option value="@m">@m</option>
+                                        }
+                                    </select>
+                                }
+                            </div>
                         </div>
                         <div>
                             <label class="cf-conn-label">Fallback model</label>
                             <input class="cf-dialog-input" @bind="fFallbackModel" placeholder="optional" />
+                            <div class="cf-skill-model-row" style="margin-bottom:0;margin-top:0.35rem;">
+                                @if (!fallbackPickerOpen)
+                                {
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            @onclick="() => OpenModelPicker(preferred: false)"
+                                            disabled="@modelsLoading">
+                                        @(modelsLoading ? "Loading models…" : "Choose different model…")
+                                    </button>
+                                }
+                                else
+                                {
+                                    <select class="cf-dialog-input" style="max-width:100%;" @bind="fFallbackModel">
+                                        <option value="">(none)</option>
+                                        @if (!string.IsNullOrEmpty(fFallbackModel) && modelOptions.All(m => m != fFallbackModel))
+                                        {
+                                            <option value="@fFallbackModel">@fFallbackModel</option>
+                                        }
+                                        @foreach (var m in modelOptions)
+                                        {
+                                            <option value="@m">@m</option>
+                                        }
+                                    </select>
+                                }
+                            </div>
                         </div>
                     </div>
 
@@ -278,6 +326,10 @@
     private string fCronExpression = "0 9 * * *";
     private string fPreferredModel = "";
     private string fFallbackModel = "";
+    private bool preferredPickerOpen;
+    private bool fallbackPickerOpen;
+    private bool modelsLoading;
+    private List<string> modelOptions = new();
     private string fStrategy = "fallback_chain";
     private bool fProjectCalendar = true;
     private string fCalendarTitle = "";
@@ -359,6 +411,8 @@
         fCronExpression = "0 9 * * *";
         fPreferredModel = model;
         fFallbackModel = model;
+        preferredPickerOpen = false;
+        fallbackPickerOpen = false;
         fStrategy = "fallback_chain";
         fProjectCalendar = true;
         fCalendarTitle = "My workflow";
@@ -389,6 +443,8 @@
         fUserMessage = doc.ExecuteSkill.UserMessage ?? "";
         fPreferredModel = doc.Orchestrator.PreferredModel ?? "";
         fFallbackModel = doc.Orchestrator.FallbackModel ?? "";
+        preferredPickerOpen = false;
+        fallbackPickerOpen = false;
         fStrategy = string.IsNullOrWhiteSpace(doc.Orchestrator.Strategy) ? "fallback_chain" : doc.Orchestrator.Strategy!;
         fProjectCalendar = doc.Calendar.Project;
         fCalendarTitle = doc.Calendar.Title ?? "";
@@ -434,6 +490,44 @@
         if (minute is < 0 or > 59 || hour is < 0 or > 23) return null;
         var now = DateTime.Now;
         return new DateTime(now.Year, now.Month, now.Day, hour, minute, 0, DateTimeKind.Local);
+    }
+
+    private async Task OpenModelPicker(bool preferred)
+    {
+        modelsLoading = true;
+        if (preferred)
+            preferredPickerOpen = true;
+        else
+            fallbackPickerOpen = true;
+        StateHasChanged();
+        try
+        {
+            if (modelOptions.Count == 0)
+            {
+                var list = ModelCatalog.GetAvailableModels();
+                if (list.Count == 0)
+                {
+                    try { await ModelCatalog.RefreshAsync(); }
+                    catch { /* offline */ }
+                    list = ModelCatalog.GetAvailableModels();
+                }
+                modelOptions = list
+                    .Select(m => m.Id)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            if (preferred && string.IsNullOrWhiteSpace(fPreferredModel))
+                fPreferredModel = KeyStore.LastSelectedModel ?? modelOptions.FirstOrDefault() ?? "";
+            if (!preferred && string.IsNullOrWhiteSpace(fFallbackModel))
+                fFallbackModel = KeyStore.LastSelectedModel ?? modelOptions.FirstOrDefault() ?? "";
+        }
+        finally
+        {
+            modelsLoading = false;
+        }
     }
 
     private void OnTriggerModeChanged() { /* re-render for conditional fields */ }

@@ -1,6 +1,6 @@
 @*
   Embed a URL with no address bar.
-  - MAUI: native WebView overlay (works for Home Assistant — bypasses X-Frame-Options).
+  - MAUI Windows/Linux: native WebView overlay (required for Home Assistant — X-Frame-Options).
   - WASM / host: iframe (requires the target to allow framing).
 *@
 @using App.Core.UI
@@ -10,7 +10,7 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
-@if (EmbedOverlay.IsNative)
+@if (UseNativeOverlay)
 {
     <div @ref="_hostRef"
          class="simple-url-embed-host"
@@ -21,12 +21,18 @@
         }
     </div>
 }
-else if (!CanUseIframe)
+else if (!AllowIframe || !CanUseIframe)
 {
-    @* Never put a relative/mixed-content URL in iframe src — browsers or Blazor enhanced
-       navigation can turn it into a same-origin path and dump the user on NotFound. *@
+    @* HA and mixed-content targets must not go in an iframe — blank pane / NotFound. *@
     <div class="simple-url-embed-placeholder" style="padding:1.5rem;color:var(--cf-text-muted);">
-        Cannot embed this URL here (mixed content or invalid address). Open it in a new tab instead.
+        @if (!AllowIframe)
+        {
+            <text>This site cannot be framed. Use the desktop app’s native embed, or open it in a browser.</text>
+        }
+        else
+        {
+            <text>Cannot embed this URL here (mixed content or invalid address). Open it in a new tab instead.</text>
+        }
     </div>
 }
 else
@@ -43,11 +49,20 @@ else
 @code {
     [Parameter] public string? Url { get; set; }
     [Parameter] public string Title { get; set; } = "Embedded page";
+    /// <summary>
+    /// When false, never fall back to an iframe (Home Assistant sends X-Frame-Options: SAMEORIGIN).
+    /// </summary>
+    [Parameter] public bool AllowIframe { get; set; } = true;
 
     private ElementReference _hostRef;
     private DotNetObjectReference<SimpleUrlEmbed>? _dotNetRef;
     private bool _jsAttached;
+    private bool _useIframeFallback;
+    private bool _nativeAttachFailed;
     private string _lastShownUrl = "";
+
+    /// <summary>MAUI native overlay, unless JS interop failed.</summary>
+    private bool UseNativeOverlay => EmbedOverlay.IsNative && !_useIframeFallback && !_nativeAttachFailed;
 
     private string NormalizedUrl
     {
@@ -84,8 +99,10 @@ else
             }
 
             var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
+            // Desktop WebView (MAUI) allows local http embeds even when the Blazor
+            // host origin is https://0.0.0.0/ — same path Linux and Chatfish use.
             if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
-                return false;
+                return AppEnvironment.IsMaui;
 
             return true;
         }
@@ -93,20 +110,20 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
-        if (!EmbedOverlay.IsNative)
+        if (!UseNativeOverlay)
             return;
 
         var url = NormalizedUrl;
         if (url == "about:blank")
         {
-            EmbedOverlay.Hide();
+            EmbedOverlay.Hide(this);
             _lastShownUrl = "";
             return;
         }
 
         if (!string.Equals(_lastShownUrl, url, StringComparison.OrdinalIgnoreCase))
         {
-            EmbedOverlay.Show(url);
+            EmbedOverlay.Show(url, this);
             _lastShownUrl = url;
         }
 
@@ -115,7 +132,7 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!EmbedOverlay.IsNative)
+        if (!UseNativeOverlay)
             return;
 
         if (firstRender || !_jsAttached)
@@ -123,12 +140,19 @@ else
             try
             {
                 _dotNetRef ??= DotNetObjectReference.Create(this);
-                await JS.InvokeVoidAsync("wizionicUrlEmbed.attach", _hostRef, _dotNetRef);
+                await JS.InvokeVoidAsync("appUrlEmbed.attach", _hostRef, _dotNetRef);
                 _jsAttached = true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[UrlEmbed] attach failed: {ex.Message}");
+                Console.WriteLine($"[UrlEmbed] attach failed{(AllowIframe ? ", falling back to iframe" : "")}: {ex.Message}");
+                if (AllowIframe)
+                    _useIframeFallback = true;
+                else
+                    _nativeAttachFailed = true;
+                EmbedOverlay.Hide(this);
+                StateHasChanged();
+                return;
             }
         }
 
@@ -137,11 +161,11 @@ else
 
     private async Task MeasureAndReportAsync()
     {
-        if (!EmbedOverlay.IsNative || !_jsAttached)
+        if (!UseNativeOverlay || !_jsAttached)
             return;
         try
         {
-            await JS.InvokeVoidAsync("wizionicUrlEmbed.measure", _hostRef);
+            await JS.InvokeVoidAsync("appUrlEmbed.measure", _hostRef);
         }
         catch
         {
@@ -152,24 +176,24 @@ else
     [JSInvokable]
     public void OnBounds(double x, double y, double width, double height)
     {
-        EmbedOverlay.UpdateBounds(x, y, width, height);
+        EmbedOverlay.UpdateBounds(x, y, width, height, this);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (EmbedOverlay.IsNative)
+        if (UseNativeOverlay || _jsAttached)
         {
             try
             {
                 if (_jsAttached)
-                    await JS.InvokeVoidAsync("wizionicUrlEmbed.detach", _hostRef);
+                    await JS.InvokeVoidAsync("appUrlEmbed.detach", _hostRef);
             }
             catch
             {
                 // ignore
             }
 
-            EmbedOverlay.Hide();
+            EmbedOverlay.Hide(this);
         }
 
         _dotNetRef?.Dispose();

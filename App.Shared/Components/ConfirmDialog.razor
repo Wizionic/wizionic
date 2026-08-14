@@ -9,7 +9,7 @@
             }
             <div style="display:flex;gap:8px;justify-content:flex-end;">
                 <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="Cancel">@CancelText</button>
-                <button type="button" class="newnote-btn newnote-btn-danger" @onclick="Confirm">@ConfirmText</button>
+                <button type="button" class="newnote-btn @(Danger ? "newnote-btn-danger" : "newnote-btn-primary")" @onclick="Confirm">@ConfirmText</button>
             </div>
         </div>
     </div>
@@ -21,6 +21,7 @@
     [Parameter] public string Message { get; set; } = "";
     [Parameter] public string ConfirmText { get; set; } = "Delete";
     [Parameter] public string CancelText { get; set; } = "Cancel";
+    [Parameter] public bool Danger { get; set; } = true;
     [Parameter] public EventCallback OnConfirm { get; set; }
     [Parameter] public EventCallback OnCancel { get; set; }
 

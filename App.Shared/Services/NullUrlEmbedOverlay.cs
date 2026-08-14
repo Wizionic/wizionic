@@ -10,9 +10,9 @@ public sealed class NullUrlEmbedOverlay : IUrlEmbedOverlay
 
     public bool IsNative => false;
 
-    public void Show(string url) { }
+    public void Show(string url, object? owner = null) { }
 
-    public void Hide() { }
+    public void Hide(object? owner = null) { }
 
-    public void UpdateBounds(double x, double y, double width, double height) { }
+    public void UpdateBounds(double x, double y, double width, double height, object? owner = null) { }
 }

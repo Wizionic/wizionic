@@ -89,6 +89,8 @@ builder.Services.AddSingleton<App.Core.Homeserver.IHomeserverInstallService>(
     _ => App.Shared.Services.NullHomeserverInstallService.Instance);
 builder.Services.AddSingleton<App.Core.Configuration.IAppServerEndpoint>(
     _ => App.Shared.Services.NullAppServerEndpoint.Instance);
+builder.Services.AddSingleton<App.Core.UI.IAppRestartService>(
+    _ => App.Shared.Services.NullAppRestartService.Instance);
 builder.Services.AddSingleton<App.Core.Setup.ISetupWizardHost>(
     _ => App.Shared.Services.NullSetupWizardHost.Instance);
 builder.Services.AddSingleton<App.Core.Lemonade.ILemonadeInstallService>(

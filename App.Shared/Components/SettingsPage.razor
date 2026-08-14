@@ -5,6 +5,7 @@
 @inject App.Core.Update.IUpdateService UpdateService
 @inject App.Core.Homeserver.IHomeserverInstallService Homeserver
 @inject App.Core.Configuration.IAppServerEndpoint ServerEndpoint
+@inject App.Core.UI.IAppRestartService AppRestart
 @inject App.Core.Setup.ISetupWizardHost SetupWizard
 @inject App.Shared.Services.ThemeService Theme
 @inject INavLayoutState NavLayout
@@ -24,9 +25,6 @@
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 860px; margin: 0 auto;">
     <h4 style="margin: 0;">Settings</h4>
-    <p style="color: var(--color-text-muted); font-size: 0.9em;">
-        These preferences are stored only on this device only.
-    </p>
 
     <!-- Login server (MAUI only — WASM always uses the page origin) -->
     @if (AppEnvironment.IsMaui)
@@ -42,10 +40,10 @@
                 <button type="button" class="btn btn-primary btn-sm" @onclick="SaveLoginServer" disabled="@loginServerBusy">
                     @(loginServerBusy ? "Saving…" : "Save login server")
                 </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => loginServerDraft = "https://wizionic.com"' disabled="@loginServerBusy">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset("https://wizionic.com")' disabled="@loginServerBusy">
                     Public (wizionic.com)
                 </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => loginServerDraft = "http://localhost:5150"' disabled="@loginServerBusy">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset("http://localhost:5150")' disabled="@loginServerBusy">
                     Local homeserver
                 </button>
             </div>
@@ -53,6 +51,12 @@
             {
                 <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(loginServerIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
                     @loginServerMessage
+                    @if (loginServerRestartPending && AppRestart.CanRestart)
+                    {
+                        <button type="button" class="btn btn-primary btn-sm" style="margin-left: 0.5rem;" @onclick="RestartForLoginServer">
+                            Restart now
+                        </button>
+                    }
                 </div>
             }
             @if (Homeserver.IsSupported)
@@ -72,9 +76,6 @@
     <!-- Appearance -->
     <div class="settings-card">
         <h3 style="margin: 0 0 0.25rem;">Appearance</h3>
-        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
-            Customize how Wizionic looks on this device.
-        </p>
 
         <div class="theme-setting-row">
             <div class="theme-setting-info">
@@ -246,7 +247,7 @@
             Decides which tool modules (Native, Lemonade, Gallery, etc.) are attached before the chat model runs.
             <strong>Rules</strong> is instant and free.
             <strong>Hybrid</strong> uses rules for clear cases and a small model for ambiguous multi-intent messages.
-            <strong>AI</strong> always classifies with the routing model (falls back to rules on failure).
+            <strong>AI Router</strong> always classifies with the routing model (falls back to rules on failure).
         </p>
 
         <label>Mode</label>
@@ -438,6 +439,15 @@
                OnConfirm="DeleteAllMemories"
                OnCancel="() => showDeleteAllConfirm = false" />
 
+<ConfirmDialog IsVisible="@showRestartConfirm"
+               Title="Restart required"
+               Message="@restartConfirmMessage"
+               ConfirmText="Restart now"
+               CancelText="Later"
+               Danger="false"
+               OnConfirm="RestartForLoginServer"
+               OnCancel="() => showRestartConfirm = false" />
+
 @code {
     private string systemPromptDraft = "";
     private App.Core.Storage.UserProfileSettings profileDraft = new();
@@ -473,6 +483,9 @@
     private string? loginServerMessage;
     private bool loginServerIsError;
     private bool loginServerBusy;
+    private bool loginServerRestartPending;
+    private bool showRestartConfirm;
+    private string restartConfirmMessage = "";
 
     private string routingModeDraft = "Rules";
     private string routingModelDraft = "";
@@ -629,17 +642,38 @@
         }
     }
 
+    private Task ApplyLoginServerPreset(string url)
+    {
+        loginServerDraft = url;
+        return SaveLoginServer();
+    }
+
     private async Task SaveLoginServer()
     {
         loginServerBusy = true;
         loginServerMessage = null;
+        loginServerRestartPending = false;
+        showRestartConfirm = false;
         StateHasChanged();
         try
         {
-            await ServerEndpoint.SetBaseUrlAsync(loginServerDraft);
+            var restartRequired = await ServerEndpoint.SetBaseUrlAsync(loginServerDraft);
             loginServerDraft = ServerEndpoint.BaseUrl;
-            loginServerMessage = $"Login server set to {ServerEndpoint.BaseUrl}";
             loginServerIsError = false;
+            if (restartRequired)
+            {
+                loginServerRestartPending = true;
+                loginServerMessage = $"Login server saved as {ServerEndpoint.BaseUrl}. Restart Wizionic to connect.";
+                restartConfirmMessage =
+                    $"Wizionic must restart to use {ServerEndpoint.BaseUrl}. " +
+                    "The new address is already saved.";
+                if (AppRestart.CanRestart)
+                    showRestartConfirm = true;
+            }
+            else
+            {
+                loginServerMessage = $"Login server is {ServerEndpoint.BaseUrl}.";
+            }
         }
         catch (Exception ex)
         {
@@ -651,6 +685,14 @@
             loginServerBusy = false;
             StateHasChanged();
         }
+    }
+
+    private void RestartForLoginServer()
+    {
+        showRestartConfirm = false;
+        if (!AppRestart.CanRestart)
+            return;
+        AppRestart.Restart();
     }
 
     private void OpenSetupWizard()

@@ -20,6 +20,6 @@ public sealed class NullAppServerEndpoint : IAppServerEndpoint
         remove { }
     }
 
-    public Task SetBaseUrlAsync(string baseUrl, CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+    public Task<bool> SetBaseUrlAsync(string baseUrl, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
 }
