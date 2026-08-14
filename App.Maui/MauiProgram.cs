@@ -233,6 +233,8 @@ public static class MauiProgram
 		});
 		services.AddSingleton<MauiAppServerEndpoint>();
 		services.AddSingleton<IAppServerEndpoint>(sp => sp.GetRequiredService<MauiAppServerEndpoint>());
+		services.AddSingleton<MauiAppRestartService>();
+		services.AddSingleton<IAppRestartService>(sp => sp.GetRequiredService<MauiAppRestartService>());
 
 		services.AddSingleton<ThemeService>();
 		services.AddSingleton<SqliteSettingsDatabase>();
@@ -307,8 +309,9 @@ public static class MauiProgram
 		services.AddSingleton<IUrlEmbedOverlay>(sp => sp.GetRequiredService<MauiUrlEmbedOverlayService>());
 #endif
 #if LINUX_DESKTOP
-		// Linux uses iframe path until a native WebKit overlay is wired.
-		services.AddSingleton<IUrlEmbedOverlay>(_ => NullUrlEmbedOverlay.Instance);
+		// Native WebKit overlay — required for Home Assistant (X-Frame-Options: SAMEORIGIN).
+		services.AddSingleton<LinuxUrlEmbedOverlayService>();
+		services.AddSingleton<IUrlEmbedOverlay>(sp => sp.GetRequiredService<LinuxUrlEmbedOverlayService>());
 #endif
 		services.AddSingleton<MauiPwaDetector>();
 		services.AddSingleton<IPwaDetector>(sp => sp.GetRequiredService<MauiPwaDetector>());

@@ -108,7 +108,8 @@
             else if (CanEmbed)
             {
                 <div class="embed-split-frame-wrap">
-                    <SimpleUrlEmbed @key="embedKey" Url="@embedUrl" Title="Home Assistant" />
+                    @* HA sends X-Frame-Options: SAMEORIGIN — never iframe; native overlay only. *@
+                    <SimpleUrlEmbed Url="@embedUrl" Title="Home Assistant" AllowIframe="false" />
                 </div>
             }
             else
@@ -149,12 +150,11 @@
     private string deviceSummary = "";
     private DateTime? deviceSummaryUpdatedAt;
 
-    private int embedKey;
     private string embedUrl = "";
 
     /// <summary>
-    /// MAUI can always try the embed. WASM/host only when not mixed content (HTTPS page + HTTP HA).
-    /// Relative / non-absolute URLs must not be embedded — they resolve against wizionic.com and 404.
+    /// Home Assistant defaults to X-Frame-Options: SAMEORIGIN, so an iframe is always blank.
+    /// Only the desktop native WebView overlay can show the dashboard.
     /// </summary>
     private bool CanEmbed
     {
@@ -162,19 +162,13 @@
         {
             if (string.IsNullOrWhiteSpace(embedUrl))
                 return false;
-            if (AppEnvironment.IsMaui)
-                return true;
             if (!Uri.TryCreate(embedUrl, UriKind.Absolute, out var target)
                 || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
             {
                 return false;
             }
 
-            var pageHttps = Nav.BaseUri.StartsWith("https:", StringComparison.OrdinalIgnoreCase);
-            if (pageHttps && target.Scheme == Uri.UriSchemeHttp)
-                return false;
-
-            return true;
+            return AppEnvironment.IsMaui;
         }
     }
 
@@ -186,7 +180,7 @@
         haTokenDraft = KeyStore.HomeAssistantToken;
         deviceSummary = KeyStore.HomeAssistantDeviceSummary;
         deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
-        SyncEmbedUrl(reload: true);
+        SyncEmbedUrl();
     }
 
     private void OnAssistantNameChanged(ChangeEventArgs e) =>
@@ -195,13 +189,13 @@
     private void OnHaBaseUrlChanged(ChangeEventArgs e)
     {
         haBaseUrlDraft = e.Value?.ToString() ?? "";
-        SyncEmbedUrl(reload: true);
+        SyncEmbedUrl();
     }
 
     private void OnHaTokenChanged(ChangeEventArgs e) =>
         haTokenDraft = e.Value?.ToString() ?? "";
 
-    private void SyncEmbedUrl(bool reload)
+    private void SyncEmbedUrl()
     {
         var url = (haBaseUrlDraft ?? "").Trim().TrimEnd('/');
         if (string.IsNullOrWhiteSpace(url))
@@ -214,16 +208,7 @@
             && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             url = "http://" + url;
 
-        if (!string.Equals(embedUrl, url, StringComparison.OrdinalIgnoreCase))
-        {
-            embedUrl = url;
-            if (reload)
-                embedKey++;
-        }
-        else if (reload)
-        {
-            embedKey++;
-        }
+        embedUrl = url;
     }
 
     private async Task SaveHomeAssistant()
@@ -235,7 +220,7 @@
         {
             await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.HomeAssistant);
-            SyncEmbedUrl(reload: true);
+            SyncEmbedUrl();
             await RefreshDeviceSummaryAsync();
             haFeedback = "Home Assistant settings saved.";
             haFeedbackIsError = false;
@@ -279,7 +264,7 @@
             }
 
             await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
-            SyncEmbedUrl(reload: true);
+            SyncEmbedUrl();
             await RefreshDeviceSummaryAsync();
             haFeedback = "Connected to Home Assistant successfully.";
             haFeedbackIsError = false;

@@ -10,7 +10,7 @@ $REMOTE_ROOT = "/var/www/wizionic"
 $OUTPUT_DIR = ".\publish_output"
 $MAUI_OUTPUT  = ".\maui_publish"
 $RELEASES_DIR = ".\maui_releases"
-$VERSION      = "0.1.23"   # bump this before each release
+$VERSION      = "0.1.24"   # bump this before each release
 $UPDATE_FEED  = "https://wizionic.com/releases/windows"
 $WindowsBrevoKey = $env:BREVO_API_KEY
 # OAuth secrets — set on the machine that runs deploy.ps1 (never commit these).

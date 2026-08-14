@@ -22,13 +22,18 @@ public sealed class LinuxBrowserHost
 	private readonly LinuxBrowserAgentService _mainAgent;
 	private readonly LinuxSideBrowserService _sideAgent;
 	private readonly LinuxBrowserOverlayService _overlay;
+	private readonly LinuxUrlEmbedOverlayService _urlEmbed;
 	private readonly LinuxBrowserPlatformHooks _platformHooks;
 
 	private Gtk.Overlay? _overlayWidget;
 	private WebKit.WebView? _mainWebView;
 	private WebKit.WebView? _sideWebView;
+	private WebKit.WebView? _urlEmbedWebView;
 	private Gtk.Box? _mainClamp;
 	private Gtk.Box? _sideClamp;
+	private Gtk.Box? _urlEmbedClamp;
+	private string? _urlEmbedLoaded;
+	private Action? _urlEmbedChangedHandler;
 	private Gtk.Window? _window;
 	private Adw.ToolbarView? _toolbarView;
 
@@ -53,11 +58,13 @@ public sealed class LinuxBrowserHost
 		LinuxBrowserAgentService mainAgent,
 		LinuxSideBrowserService sideAgent,
 		LinuxBrowserOverlayService overlay,
+		LinuxUrlEmbedOverlayService urlEmbed,
 		LinuxBrowserPlatformHooks platformHooks)
 	{
 		_mainAgent = mainAgent;
 		_sideAgent = sideAgent;
 		_overlay = overlay;
+		_urlEmbed = urlEmbed;
 		_platformHooks = platformHooks;
 	}
 
@@ -69,8 +76,10 @@ public sealed class LinuxBrowserHost
 		_window = window;
 		_mainWebView = WebKit.WebView.New();
 		_sideWebView = WebKit.WebView.New();
+		_urlEmbedWebView = WebKit.WebView.New();
 		ConfigureWebView(_mainWebView);
 		ConfigureWebView(_sideWebView);
+		ConfigureWebView(_urlEmbedWebView);
 
 		_mainAgent.AttachWebView(_mainWebView);
 		_sideAgent.AttachWebView(_sideWebView);
@@ -78,6 +87,7 @@ public sealed class LinuxBrowserHost
 
 		_mainClamp = CreateClamp(_mainWebView);
 		_sideClamp = CreateClamp(_sideWebView);
+		_urlEmbedClamp = CreateClamp(_urlEmbedWebView);
 
 		_overlayWidget = Gtk.Overlay.New();
 		blazorWebView.Hexpand = true;
@@ -86,13 +96,17 @@ public sealed class LinuxBrowserHost
 
 		_overlayWidget.AddOverlay(_mainClamp);
 		_overlayWidget.AddOverlay(_sideClamp);
+		_overlayWidget.AddOverlay(_urlEmbedClamp);
 
 		// Do not measure overlay children into the window size.
 		_overlayWidget.SetMeasureOverlay(_mainClamp, false);
 		_overlayWidget.SetMeasureOverlay(_sideClamp, false);
+		_overlayWidget.SetMeasureOverlay(_urlEmbedClamp, false);
 
 		_overlayChangedHandler = OnOverlayChanged;
 		_overlay.Changed += _overlayChangedHandler;
+		_urlEmbedChangedHandler = OnOverlayChanged;
+		_urlEmbed.Changed += _urlEmbedChangedHandler;
 
 		try
 		{
@@ -487,7 +501,7 @@ public sealed class LinuxBrowserHost
 
 	private void ApplyLayout()
 	{
-		if (_mainClamp == null || _sideClamp == null)
+		if (_mainClamp == null || _sideClamp == null || _urlEmbedClamp == null)
 			return;
 
 		if (_htmlFullscreen || _overlay.IsHtmlFullscreen)
@@ -498,11 +512,49 @@ public sealed class LinuxBrowserHost
 			// Cover entire window content area (header is hidden during HTML fullscreen).
 			PlaceClamp(_mainClamp, new LinuxBrowserOverlayService.Bounds(0, 0, w, h), visible: true, "main-fs");
 			PlaceClamp(_sideClamp, default, visible: false, "side-fs");
+			PlaceClamp(_urlEmbedClamp, default, visible: false, "url-embed-fs");
 			return;
 		}
 
 		PlaceClamp(_mainClamp, _overlay.MainBounds, _overlay.MainVisible, "main");
 		PlaceClamp(_sideClamp, _overlay.SideBounds, _overlay.SideVisible, "side");
+		PlaceUrlEmbed();
+	}
+
+	private void PlaceUrlEmbed()
+	{
+		if (_urlEmbedClamp == null || _urlEmbedWebView == null)
+			return;
+
+		var visible = _urlEmbed.Visible;
+		var bounds = _urlEmbed.Bounds;
+		PlaceClamp(_urlEmbedClamp, bounds, visible, "url-embed");
+
+		var url = _urlEmbed.Url;
+		// Only blank on Hide — a 0-size measure must not unload HA after we already navigated.
+		if (!_urlEmbed.Requested || string.IsNullOrWhiteSpace(url))
+		{
+			if (_urlEmbedLoaded != null)
+			{
+				try { _urlEmbedWebView.LoadUri("about:blank"); } catch { /* ignore */ }
+				_urlEmbedLoaded = null;
+			}
+			return;
+		}
+
+		if (!string.Equals(_urlEmbedLoaded, url, StringComparison.OrdinalIgnoreCase))
+		{
+			try
+			{
+				_urlEmbedWebView.LoadUri(url);
+				_urlEmbedLoaded = url;
+				Console.WriteLine($"[UrlEmbed] Linux WebKit LoadUri {url}");
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"[UrlEmbed] Linux LoadUri failed: {ex.Message}");
+			}
+		}
 	}
 
 	private void PlaceClamp(

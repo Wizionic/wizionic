@@ -10,6 +10,7 @@
 
 - **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. The server does not store conversation or personal content for WASM/MAUI paths.
 - **Local AI** — **AMD Lemonade Server** and **Ollama** on the user's machine are first-class providers (chat, multimodal, and Lemonade-specific modalities). A logged-in device can relay chat AI to other devices over WebRTC.
+- **Easy UI** make the setup of Local AI, integrations, management of the user's private data as easy as poosible with an Easy UI.
 - **Minimal server footprint** — Wizionic.com Server handles auth, signaling, tool proxies (CORS), CORS-restricted AI proxies, OAuth broker for connectors, and optional Home Server install. Heavy lifting runs on the client.
 - **Tool-rich agents** — Native app tools (Notes, Gallery, Calendar, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, plus MAUI Home Assistant and embedded browser — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.
 - **Local-first sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR is presence + signaling only.

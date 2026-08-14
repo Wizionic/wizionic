@@ -1,5 +1,6 @@
 // Positions the MAUI native URL-embed WebView over a Blazor host element.
-window.appUrlEmbed = (function () {
+// Exposed as appUrlEmbed (matches appTheme / appBrowser). Alias kept for older callers.
+window.appUrlEmbed = window.wizionicUrlEmbed = (function () {
   const observers = new WeakMap();
 
   function measureEl(el) {
@@ -61,7 +62,6 @@ window.appUrlEmbed = (function () {
         if (st.ro) st.ro.disconnect();
         window.removeEventListener("resize", st.onWin);
         window.removeEventListener("scroll", st.onWin, true);
-        st.dotNet.invokeMethodAsync("OnBounds", 0, 0, 0, 0);
       } catch (_) {}
       observers.delete(el);
     }
