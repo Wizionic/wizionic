@@ -1,5 +1,7 @@
 # AGENTS.md — Wizionic
 
+Single agent-instruction file for this repo. Architecture details live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ## Commands
 
 ```bash

@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      tag: ${{ steps.parse.outputs.tag }}
+      prerelease: ${{ steps.parse.outputs.prerelease }}
+    steps:
+      - id: parse
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PRE=false
+          if [[ "$VERSION" == *-* ]]; then PRE=true; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install MAUI Windows workload
+        run: dotnet workload install maui-windows
+
+      - name: Install Velopack CLI
+        run: |
+          dotnet tool install -g vpk
+          echo "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Pack Windows
+        run: powershell -File scripts/pack-windows.ps1 -Version ${{ needs.version.outputs.version }} -SkipDownload
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows
+          path: |
+            maui_releases/**
+            homeserver_releases_win/**
+          if-no-files-found: error
+
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install pack tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev zip
+          dotnet tool install -g vpk
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Pack Linux
+        run: |
+          chmod +x scripts/pack-linux.sh
+          ./scripts/pack-linux.sh --version "${{ needs.version.outputs.version }}" --skip-download
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-linux
+          path: |
+            linux_releases/**
+            homeserver_releases_linux/**
+          if-no-files-found: error
+
+  publish-release:
+    needs: [version, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect files and checksums
+        run: |
+          mkdir -p upload
+          find dist -type f ! -name '*.pdb' -print0 | while IFS= read -r -d '' f; do
+            cp -f "$f" "upload/$(basename "$f")"
+          done
+          cd upload
+          sha256sum * > SHA256SUMS
+          ls -lah
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRE_FLAG=""
+          if [[ "${{ needs.version.outputs.prerelease }}" == "true" ]]; then
+            PRE_FLAG="--prerelease"
+          fi
+          gh release create "${{ needs.version.outputs.tag }}" \
+            $PRE_FLAG \
+            --title "Wizionic ${{ needs.version.outputs.version }}" \
+            --generate-notes \
+            upload/*

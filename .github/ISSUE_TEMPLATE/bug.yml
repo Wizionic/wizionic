@@ -1,0 +1,53 @@
+name: Bug report
+description: A confirmed bug you can reproduce on the latest GitHub Release
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is not looking for contributors or feature requests.
+        Unsolicited PRs will be closed. Fork if you want a different product.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before filing
+      options:
+        - label: I have reproduced this on the latest GitHub Release (or `main` if no release exists yet).
+          required: true
+        - label: This is a confirmed bug, not a feature request or style suggestion.
+          required: true
+        - label: This is not an undisclosed security vulnerability (those go to SECURITY.md).
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows desktop
+        - Linux desktop
+        - Browser (wizionic.com / WASM)
+        - Self-hosted homeserver
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag or installer version (for example 0.2.0).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true

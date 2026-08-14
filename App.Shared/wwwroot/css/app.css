@@ -6398,6 +6398,24 @@ body .message-bot,
     color: var(--color-text-muted);
 }
 
+.login-download-github {
+    margin: 0.55rem 0 0;
+    font-size: 0.8em;
+    color: var(--color-text-muted);
+}
+
+.site-legal-footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border, #e5e5e5);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.site-legal-footer a {
+    color: var(--color-text-muted);
+}
+
 /* Sync page: capability badge + debug log */
 .sync-cap-badge {
     display: inline-block;

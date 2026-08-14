@@ -28,6 +28,9 @@
             <a class="btn btn-primary btn-sm login-download-btn" href="/releases/windows/Wizionic-win-Setup.exe" download>
                 Download for Windows
             </a>
+            <p class="login-download-github">
+                Also on <a href="https://github.com/Wizionic/wizionic/releases/latest">GitHub Releases</a>.
+            </p>
         </div>
 
         <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : _detectedOs == "windows" ? "login-download-card--muted" : null)">
@@ -214,6 +217,16 @@
 
 
     }
+
+    <footer class="site-legal-footer">
+        <a href="/privacy">Privacy</a>
+        <span class="login-download-sep">·</span>
+        <a href="/terms">Terms</a>
+        <span class="login-download-sep">·</span>
+        <a href="https://github.com/Wizionic/wizionic/blob/main/SECURITY.md">Security</a>
+        <span class="login-download-sep">·</span>
+        <a href="https://github.com/Wizionic/wizionic">Source</a>
+    </footer>
 </div>
 
 @code {

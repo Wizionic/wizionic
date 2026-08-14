@@ -50,9 +50,14 @@
         <!-- App Identifier -->
         <ApplicationId>com.wizionic.app</ApplicationId>
 
-        <!-- Versions -->
-        <ApplicationDisplayVersion>1.0.4</ApplicationDisplayVersion>
-        <ApplicationVersion>1</ApplicationVersion>
+        <!-- Versions. Release workflow overrides these from the git tag. -->
+        <Version>0.2.0</Version>
+        <ApplicationDisplayVersion>0.2.0</ApplicationDisplayVersion>
+        <ApplicationVersion>2</ApplicationVersion>
+        <Product>Wizionic</Product>
+        <Company>Wizionic</Company>
+        <Authors>Daniel Goodwin</Authors>
+        <AssemblyTitle>Wizionic</AssemblyTitle>
 
         <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
         <WindowsPackageType>None</WindowsPackageType>

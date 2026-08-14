@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: I want a different product
+    url: https://github.com/Wizionic/wizionic/fork
+    about: This project is not looking for contributors. Fork the repository and keep your changes.
+  - name: Security report
+    url: https://github.com/Wizionic/wizionic/security/advisories/new
+    about: Report a vulnerability privately. Do not file a public issue.

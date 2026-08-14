@@ -140,6 +140,9 @@ $RECYCLE.BIN/
 homeserver.db
 
 terminals/
+temp/
+.aider*
+.aider.chat.history.md
 
 # Local Velopack / publish output
 linux_publish/

@@ -17,3 +17,7 @@
 # Native MAUI app — not buildable/deployable on Linux Railway host
 App.Maui/
 terminals/
+temp/
+.aider*
+scripts/pack-windows.ps1
+scripts/pack-linux.sh

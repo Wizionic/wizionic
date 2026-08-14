@@ -438,6 +438,8 @@ app.Use(async (context, next) =>
     await next();
 });
 
+app.MapLegalDocuments();
+
 app.MapStaticAssets();
 
 // Serve Velopack / Linux installer files from the volume-mounted releases directory.
@@ -518,7 +520,7 @@ app.MapMethods("/releases/{**path}", new[] { "GET", "HEAD" }, (string path, Http
 app.MapMethods("/install.sh", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
 {
     var safePath = ResolveReleaseFile(Path.Combine("linux", "install.sh"));
-    // Also accept site-root copy next to wwwroot (deploy-linux may scp here)
+    // Also accept site-root copy next to wwwroot (ops deploy may scp here)
     if (safePath is null)
     {
         foreach (var candidate in new[]
@@ -537,7 +539,7 @@ app.MapMethods("/install.sh", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
     }
 
     if (safePath is null)
-        return Results.NotFound("Linux install script not found. Run deploy-linux.sh to publish it.");
+        return Results.NotFound("Linux install script not found. Publish install.sh to the releases volume.");
 
     ctx.Response.Headers.CacheControl = "no-cache";
     var contentType = "text/x-shellscript; charset=utf-8";
