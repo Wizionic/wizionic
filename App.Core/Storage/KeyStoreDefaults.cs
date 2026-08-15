@@ -35,3 +35,4 @@ public static class KeyStoreDefaults
         - List before you write: notebooks, calendars, albums, or devices first when the user names one.
         - After generating or editing an image, do not also save it unless the user asked.
         """;
+}
