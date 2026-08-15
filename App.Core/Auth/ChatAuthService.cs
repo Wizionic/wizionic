@@ -259,7 +259,16 @@ public class ChatAuthService : IAuthService
             if (!resp.IsSuccessStatusCode)
             {
                 var apiError = await ReadApiErrorAsync(resp);
-                return (false, apiError ?? $"Could not update two-factor settings ({(int)resp.StatusCode}).");
+                if (!string.IsNullOrWhiteSpace(apiError))
+                    return (false, apiError);
+
+                if (resp.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
+                {
+                    return (false,
+                        "This login server does not support two-factor yet. Deploy the updated website, or point the desktop app at a local host running this branch.");
+                }
+
+                return (false, $"Could not update two-factor settings ({(int)resp.StatusCode}).");
             }
 
             TwoFactorEnabled = enabled;
