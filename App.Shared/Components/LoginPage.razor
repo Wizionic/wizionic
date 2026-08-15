@@ -1,3 +1,4 @@
+@using App.Core.Configuration
 @inject IAuthService Auth
 @inject IGuestDataMigrationService? GuestMigration
 @inject NavigationManager Nav
@@ -20,17 +21,14 @@
                 <div class="login-download-badge">Recommended for this device</div>
             }
             <div class="login-download-title">
-                <a href="/releases/windows/Wizionic-win-Setup.exe" download>
+                <a href="@AppServerOptions.LatestWindowsSetupUrl">
                     Download Wizionic App for Windows
                 </a>
             </div>
             <p class="login-download-desc">Windows installer (.exe) — Windows 10 and 11.</p>
-            <a class="btn btn-primary btn-sm login-download-btn" href="/releases/windows/Wizionic-win-Setup.exe" download>
+            <a class="btn btn-primary btn-sm login-download-btn" href="@AppServerOptions.LatestWindowsSetupUrl">
                 Download for Windows
             </a>
-            <p class="login-download-github">
-                Also on <a href="https://github.com/Wizionic/wizionic/releases/latest">GitHub Releases</a>.
-            </p>
         </div>
 
         <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : _detectedOs == "windows" ? "login-download-card--muted" : null)">
@@ -47,9 +45,9 @@
                 </button>
             </div>
             <div class="login-download-links">
-                <a href="/releases/linux/Wizionic.AppImage" download>AppImage only</a>
+                <a href="@AppServerOptions.LatestLinuxAppImageUrl">AppImage only</a>
                 <span class="login-download-sep">·</span>
-                <a href="/releases/linux/install.sh">install.sh</a>
+                <a href="@AppServerOptions.LatestLinuxInstallScriptUrl">install.sh</a>
             </div>
         </div>
     </div>
