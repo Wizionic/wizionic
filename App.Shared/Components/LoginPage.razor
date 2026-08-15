@@ -77,6 +77,10 @@
             {
                 <div style="color: var(--color-success-fg, var(--cf-success-fg, #22c55e)); margin: 0 0 0.5rem; font-size:0.9em;">@passwordMessage</div>
             }
+            @if (!string.IsNullOrEmpty(twoFactorMessage) && !_showTwoFactorForm)
+            {
+                <div style="color: var(--color-success-fg, var(--cf-success-fg, #22c55e)); margin: 0 0 0.5rem; font-size:0.9em;">@twoFactorMessage</div>
+            }
 
             @if (!_showPasswordForm)
             {
@@ -151,10 +155,20 @@
                 </label>
             }
             }
-        </div>
 
-        @if (Auth.HasPassword)
-        {
+            @if (Auth.HasPassword && !_showTwoFactorForm)
+            {
+                <div style="margin-top:0.35rem;">
+                    <button type="button"
+                            class="btn btn-link p-0"
+                            style="font-size:0.95rem;"
+                            @onclick="() => _showTwoFactorForm = true">
+                        Two-factor sign-in
+                    </button>
+                </div>
+            }
+            else if (Auth.HasPassword)
+            {
             <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
                 <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">Two-factor sign-in</h3>
                 <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
@@ -270,8 +284,15 @@
                         </p>
                     }
                 }
+
+                <div style="margin-top:0.85rem;">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CancelTwoFactorForm" disabled="@busy">
+                        Cancel
+                    </button>
+                </div>
             </div>
-        }
+            }
+        </div>
     }
     else if (!string.IsNullOrEmpty(twoFactorChallengeId))
     {
@@ -439,6 +460,7 @@
 
     private bool _linuxInstallCopied;
     private bool _showPasswordForm;
+    private bool _showTwoFactorForm;
     /// <summary>"windows", "linux", "mac", or null until detected.</summary>
     private string? _detectedOs;
 
@@ -623,6 +645,10 @@
         currentPassword = "";
         passwordError = null;
         passwordMessage = null;
+        twoFactorError = null;
+        twoFactorMessage = null;
+        _showPasswordForm = false;
+        _showTwoFactorForm = false;
         loginMode = LoginMode.Code;
         await ClearTwoFactorChallengeAsync();
         ResetTwoFactorManage();
@@ -695,6 +721,13 @@
         newPassword = "";
         confirmPassword = "";
         currentPassword = "";
+    }
+
+    void CancelTwoFactorForm()
+    {
+        _showTwoFactorForm = false;
+        twoFactorError = null;
+        ResetTwoFactorManage();
     }
 
     async Task SavePassword()
