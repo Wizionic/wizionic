@@ -38,9 +38,12 @@ if (-not $SkipDownload) {
     }
 }
 
+# Force a single TFM so GitHub-hosted Windows runners do not also evaluate ios/maccatalyst.
+$winTfm = "net10.0-windows10.0.19041.0"
 dotnet publish "App.Maui\App.Maui.csproj" `
     -c Release `
-    -f net10.0-windows10.0.19041.0 `
+    -f $winTfm `
+    -p:TargetFrameworks=$winTfm `
     -p:RuntimeIdentifierOverride=win-x64 `
     -p:ApplicationDisplayVersion=$Version `
     -p:Version=$Version `

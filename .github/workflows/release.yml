@@ -42,7 +42,7 @@ jobs:
           global-json-file: global.json
 
       - name: Install MAUI Windows workload
-        run: dotnet workload install maui-windows
+        run: dotnet workload install maui-windows --skip-sign-check
 
       - name: Install Velopack CLI
         run: |
