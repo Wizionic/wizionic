@@ -58,13 +58,18 @@ public class MagicLinkService
         return user.MagicLinkToken;
     }
 
-    public async Task<User?> ValidateMagicLinkAsync(string token)
+    public async Task<User?> FindByMagicTokenAsync(string token)
     {
         var normalizedToken = NormalizeCode(token);
         if (string.IsNullOrEmpty(normalizedToken))
             return null;
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.MagicLinkToken == normalizedToken);
+        return await _db.Users.FirstOrDefaultAsync(u => u.MagicLinkToken == normalizedToken);
+    }
+
+    public async Task<User?> ValidateMagicLinkAsync(string token)
+    {
+        var user = await FindByMagicTokenAsync(token);
         if (user == null)
             return null;
 
@@ -88,7 +93,7 @@ public class MagicLinkService
         return await ConsumeLoginTokenAsync(user);
     }
 
-    private async Task<User?> ConsumeLoginTokenAsync(User user)
+    public async Task<User?> ConsumeLoginTokenAsync(User user)
     {
         if (user.MagicLinkExpiresAt == null || user.MagicLinkExpiresAt < DateTime.UtcNow)
             return null;

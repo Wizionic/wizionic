@@ -25,6 +25,24 @@ public class User
     public string? PasswordHash { get; set; }
 
     /// <summary>
+    /// When true, password login requires a second factor (email code and/or SMS)
+    /// before a session cookie is issued. Does not apply to notebook/chat/gallery unlock.
+    /// </summary>
+    public bool TwoFactorEnabled { get; set; }
+
+    /// <summary>
+    /// Verified E.164 phone for Twilio Verify SMS. Null when SMS is not enrolled.
+    /// </summary>
+    public string? TwoFactorPhoneE164 { get; set; }
+
+    /// <summary>
+    /// SHA-256 (hex) of the one-shot password-verified 2FA challenge id. Cleared after sign-in or expiry.
+    /// </summary>
+    public string? TwoFactorChallengeHash { get; set; }
+
+    public DateTime? TwoFactorChallengeExpiresAt { get; set; }
+
+    /// <summary>
     /// Future admin flag. Defaults to false for all existing and new users.
     /// </summary>
     public bool IsAdmin { get; set; }

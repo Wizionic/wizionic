@@ -22,6 +22,10 @@ public class ChatAuthService : IAuthService
     public string? UserId { get; private set; }
     public string? LocalEncryptionKeyB64 { get; private set; }
     public bool HasPassword { get; private set; }
+    public bool TwoFactorEnabled { get; private set; }
+    public bool HasTwoFactorPhone { get; private set; }
+    public string? TwoFactorPhoneMasked { get; private set; }
+    public bool SmsTwoFactorAvailable { get; private set; }
     public bool IsAuthenticated => !string.IsNullOrEmpty(Email) && !string.IsNullOrEmpty(LocalEncryptionKeyB64);
 
     public string ServerBaseUrl =>
@@ -122,33 +126,9 @@ public class ChatAuthService : IAuthService
 
             if (!resp.IsSuccessStatusCode)
             {
-                return resp.StatusCode == HttpStatusCode.Unauthorized
-                    ? (false, "Invalid or expired login code. Request a new one.")
-                    : (false, $"Could not verify code ({(int)resp.StatusCode}).");
-            }
-
-            await LoadAsync();
-            return IsAuthenticated
-                ? (true, null)
-                : (false, "Signed in on the server, but the session could not be loaded.");
-        }
-        catch (Exception ex)
-        {
-            return (false, "Network error: " + ex.Message);
-        }
-    }
-
-    public async Task<(bool Success, string? Error)> LoginWithPasswordAsync(string email, string password)
-    {
-        try
-        {
-            var payload = new { Email = email.Trim(), Password = password };
-            var resp = await _http.PostAsJsonAsync("api/auth/login-password", payload);
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                // Server intentionally returns a generic message; surface that (or a safe default).
-                string message = "Invalid email or password.";
+                string message = resp.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Invalid or expired login code. Request a new one."
+                    : $"Could not verify code ({(int)resp.StatusCode}).";
                 try
                 {
                     var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
@@ -164,6 +144,229 @@ public class ChatAuthService : IAuthService
             return IsAuthenticated
                 ? (true, null)
                 : (false, "Signed in on the server, but the session could not be loaded.");
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<AuthLoginResult> LoginWithPasswordAsync(string email, string password)
+    {
+        try
+        {
+            var payload = new { Email = email.Trim(), Password = password };
+            var resp = await _http.PostAsJsonAsync("api/auth/login-password", payload);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                string message = "Invalid email or password.";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return AuthLoginResult.Fail(message);
+            }
+
+            var login = await ReadJsonOrNullAsync<PasswordLoginResponse>(resp);
+            if (login?.RequiresTwoFactor == true && !string.IsNullOrWhiteSpace(login.ChallengeId))
+            {
+                return AuthLoginResult.NeedSecondFactor(
+                    login.ChallengeId,
+                    login.Methods ?? new[] { "email" },
+                    login.MaskedPhone);
+            }
+
+            await LoadAsync();
+            return IsAuthenticated
+                ? AuthLoginResult.Ok()
+                : AuthLoginResult.Fail("Signed in on the server, but the session could not be loaded.");
+        }
+        catch (Exception ex)
+        {
+            return AuthLoginResult.Fail("Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<AuthLoginResult> VerifyTwoFactorAsync(string challengeId, string code, string method)
+    {
+        try
+        {
+            var payload = new { ChallengeId = challengeId, Code = code, Method = method };
+            var resp = await _http.PostAsJsonAsync("api/auth/2fa/verify", payload);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                string message = "Incorrect or expired code.";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return AuthLoginResult.Fail(message);
+            }
+
+            await LoadAsync();
+            return IsAuthenticated
+                ? AuthLoginResult.Ok()
+                : AuthLoginResult.Fail("Signed in on the server, but the session could not be loaded.");
+        }
+        catch (Exception ex)
+        {
+            return AuthLoginResult.Fail("Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> SendTwoFactorAsync(string challengeId, string method)
+    {
+        try
+        {
+            var payload = new { ChallengeId = challengeId, Method = method };
+            var resp = await _http.PostAsJsonAsync("api/auth/2fa/send", payload);
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+
+            string message = "Could not send a code.";
+            try
+            {
+                var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                if (!string.IsNullOrWhiteSpace(body?.Message))
+                    message = body.Message;
+            }
+            catch { /* keep default */ }
+
+            return (false, message);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> SetTwoFactorEnabledAsync(bool enabled, string? currentPassword = null)
+    {
+        try
+        {
+            var payload = new { Enabled = enabled, CurrentPassword = currentPassword };
+            var resp = await _http.PostAsJsonAsync("api/auth/2fa/settings", payload);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var apiError = await ReadApiErrorAsync(resp);
+                if (!string.IsNullOrWhiteSpace(apiError))
+                    return (false, apiError);
+
+                if (resp.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
+                {
+                    return (false,
+                        "This login server does not support two-factor yet. Deploy the updated website, or point the desktop app at a local host running this branch.");
+                }
+
+                return (false, $"Could not update two-factor settings ({(int)resp.StatusCode}).");
+            }
+
+            TwoFactorEnabled = enabled;
+            if (!enabled)
+            {
+                HasTwoFactorPhone = false;
+                TwoFactorPhoneMasked = null;
+            }
+
+            OnChanged?.Invoke();
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> EnrollTwoFactorPhoneAsync(string phone)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("api/auth/2fa/enroll-sms", new { Phone = phone });
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+
+            string message = "Could not send an SMS code.";
+            try
+            {
+                var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                if (!string.IsNullOrWhiteSpace(body?.Message))
+                    message = body.Message;
+            }
+            catch { /* keep default */ }
+
+            return (false, message);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> ConfirmTwoFactorPhoneAsync(string phone, string code)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("api/auth/2fa/confirm-sms", new { Phone = phone, Code = code });
+            if (!resp.IsSuccessStatusCode)
+            {
+                string message = "Incorrect or expired code.";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return (false, message);
+            }
+
+            var bodyOk = await ReadJsonOrNullAsync<TwoFactorPhoneResponse>(resp);
+            TwoFactorEnabled = true;
+            HasTwoFactorPhone = true;
+            TwoFactorPhoneMasked = bodyOk?.TwoFactorPhoneMasked;
+            OnChanged?.Invoke();
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> RemoveTwoFactorPhoneAsync(string? currentPassword = null)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("api/auth/2fa/remove-phone", new { CurrentPassword = currentPassword });
+            if (!resp.IsSuccessStatusCode)
+            {
+                string message = "Could not remove the phone number.";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return (false, message);
+            }
+
+            HasTwoFactorPhone = false;
+            TwoFactorPhoneMasked = null;
+            OnChanged?.Invoke();
+            return (true, null);
         }
         catch (Exception ex)
         {
@@ -326,6 +529,10 @@ public class ChatAuthService : IAuthService
             UserId = me.Id;
             LocalEncryptionKeyB64 = keyResp.Key;
             HasPassword = me.HasPassword;
+            TwoFactorEnabled = me.TwoFactorEnabled;
+            HasTwoFactorPhone = me.HasTwoFactorPhone;
+            TwoFactorPhoneMasked = me.TwoFactorPhoneMasked;
+            SmsTwoFactorAvailable = me.SmsTwoFactorAvailable;
             return AuthFetchResult.Success;
         }
         catch (HttpRequestException ex)
@@ -354,15 +561,87 @@ public class ChatAuthService : IAuthService
         return await response.Content.ReadFromJsonAsync<T>();
     }
 
+    private static async Task<string?> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+
+            if (TryStringProp(root, "message", out var message) || TryStringProp(root, "Message", out message))
+                return message;
+
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in errors.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind != JsonValueKind.Array)
+                        continue;
+                    foreach (var item in prop.Value.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                            return item.GetString();
+                    }
+                }
+            }
+
+            if (TryStringProp(root, "detail", out var detail))
+                return detail;
+            if (TryStringProp(root, "title", out var title))
+                return title;
+        }
+        catch
+        {
+            // Keep the caller fallback.
+        }
+
+        return null;
+    }
+
+    private static bool TryStringProp(JsonElement root, string name, out string? value)
+    {
+        value = null;
+        if (!root.TryGetProperty(name, out var prop) || prop.ValueKind != JsonValueKind.String)
+            return false;
+        value = prop.GetString();
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
     private void ClearAuthState()
     {
         Email = null;
         UserId = null;
         LocalEncryptionKeyB64 = null;
         HasPassword = false;
+        TwoFactorEnabled = false;
+        HasTwoFactorPhone = false;
+        TwoFactorPhoneMasked = null;
+        SmsTwoFactorAvailable = false;
     }
 
-    private record UserMeResponse(string? Email, string? Id, bool HasLocalEncryptionKey, bool HasPassword = false);
+    private record UserMeResponse(
+        string? Email,
+        string? Id,
+        bool HasLocalEncryptionKey,
+        bool HasPassword = false,
+        bool TwoFactorEnabled = false,
+        bool HasTwoFactorPhone = false,
+        string? TwoFactorPhoneMasked = null,
+        bool SmsTwoFactorAvailable = false);
+    private record PasswordLoginResponse(
+        bool Success,
+        bool RequiresTwoFactor = false,
+        string? ChallengeId = null,
+        string[]? Methods = null,
+        string? MaskedPhone = null,
+        string? PreferredMethod = null);
+    private record TwoFactorPhoneResponse(string? TwoFactorPhoneMasked);
     private record EncryptionKeyResponse(string? Key);
     private record ErrorMessageResponse(string? Message);
 }

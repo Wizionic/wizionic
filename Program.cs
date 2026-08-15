@@ -84,6 +84,16 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Keys are now per-user via ProviderKeyService (WASM clients call providers directly; server only proxies tools + serves keys).
 
 builder.Services.AddScoped<MagicLinkService>();
+builder.Services.Configure<TwilioOptions>(builder.Configuration.GetSection(TwilioOptions.SectionName));
+builder.Services.PostConfigure<TwilioOptions>(opts =>
+{
+    opts.AccountSid = FirstEnv("Twilio__AccountSid", "Twilio:AccountSid") ?? opts.AccountSid;
+    opts.ApiKeySid = FirstEnv("Twilio__ApiKeySid", "Twilio:ApiKeySid") ?? opts.ApiKeySid;
+    opts.ApiKeySecret = FirstEnv("Twilio__ApiKeySecret", "Twilio:ApiKeySecret") ?? opts.ApiKeySecret;
+    opts.VerifyServiceSid = FirstEnv("Twilio__VerifyServiceSid", "Twilio:VerifyServiceSid") ?? opts.VerifyServiceSid;
+});
+builder.Services.AddSingleton<ITwilioVerifyService, TwilioVerifyService>();
+builder.Services.AddScoped<TwoFactorAuthService>();
 builder.Services.AddScoped<ProviderKeyService>();
 builder.Services.AddSingleton<DevicePresenceService>();
 
@@ -322,6 +332,9 @@ app.UseForwardedHeaders();
     var brevoKey = Environment.GetEnvironmentVariable("BREVO_API_KEY")
                 ?? Environment.GetEnvironmentVariable("Email__BrevoApiKey");
     Console.WriteLine($"[Brevo] apiKeyConfigured={!string.IsNullOrWhiteSpace(brevoKey)}");
+
+    var twilio = app.Services.GetRequiredService<ITwilioVerifyService>();
+    Console.WriteLine($"[Twilio] verifyConfigured={twilio.IsConfigured}");
 }
 
 // Proxied AI provider diagnostics (keys are never logged).
@@ -512,9 +525,9 @@ app.MapMethods("/install.sh", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
     return Results.File(safePath, contentType, fileDownloadName: "install.sh");
 });
 
-app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks) =>
+app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks, TwoFactorAuthService twoFactor) =>
 {
-    var user = await magicLinks.ValidateMagicLinkAsync(token);
+    var user = await magicLinks.FindByMagicTokenAsync(token);
 
     if (user == null)
     {
@@ -522,7 +535,23 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
         return;
     }
 
-    await AuthSignInHelper.SignInUserAsync(ctx, user);
+    // 2FA accounts: the email link only completes a password-verified challenge.
+    if (user.TwoFactorEnabled && !twoFactor.HasLiveChallenge(user))
+    {
+        ctx.Response.Redirect("/?passwordRequired=1");
+        return;
+    }
+
+    var ready = await magicLinks.ConsumeLoginTokenAsync(user);
+    if (ready == null)
+    {
+        ctx.Response.Redirect("/");
+        return;
+    }
+
+    twoFactor.ClearChallenge(ready);
+    await twoFactor.PersistAsync();
+    await AuthSignInHelper.SignInUserAsync(ctx, ready);
 
     // After successful magic-link sign-in, land on "/" so the WASM landing page can
     // immediately show the "Logged in as ..." state (with buttons to chat/settings).
@@ -678,5 +707,18 @@ static string? ResolveSqlitePath(string? connectionString)
     {
         return path;
     }
+}
+
+static string? FirstEnv(params string[] names)
+{
+    foreach (var name in names)
+    {
+        var value = Environment.GetEnvironmentVariable(name)
+            ?? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User);
+        if (!string.IsNullOrWhiteSpace(value))
+            return value.Trim();
+    }
+
+    return null;
 }
 

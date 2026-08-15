@@ -1,3 +1,4 @@
+@using App.Core.Auth
 @using App.Core.Configuration
 @inject IAuthService Auth
 @inject IGuestDataMigrationService? GuestMigration
@@ -52,7 +53,7 @@
         </div>
     </div>
     }
-    @if (!(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)))
+    @if (!(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)) && string.IsNullOrEmpty(twoFactorChallengeId))
     {
     <p style="color: var(--color-text-muted);">Login to sync your encrypted data and settings across devices:
     </p>
@@ -75,6 +76,10 @@
             @if (!string.IsNullOrEmpty(passwordMessage) && !_showPasswordForm)
             {
                 <div style="color: var(--color-success-fg, var(--cf-success-fg, #22c55e)); margin: 0 0 0.5rem; font-size:0.9em;">@passwordMessage</div>
+            }
+            @if (!string.IsNullOrEmpty(twoFactorMessage) && !_showTwoFactorForm)
+            {
+                <div style="color: var(--color-success-fg, var(--cf-success-fg, #22c55e)); margin: 0 0 0.5rem; font-size:0.9em;">@twoFactorMessage</div>
             }
 
             @if (!_showPasswordForm)
@@ -142,7 +147,193 @@
                     Cancel
                 </button>
             </div>
+            @if (!Auth.HasPassword)
+            {
+                <label style="display:flex; align-items:flex-start; gap:0.5rem; margin-top:0.85rem; font-size:0.9em;">
+                    <input type="checkbox" @bind="enableTwoFactorOnSave" disabled="@busy" />
+                    <span>Require a second factor when signing in (email code, or SMS if you add a phone).</span>
+                </label>
             }
+            }
+
+            @if (Auth.HasPassword && !_showTwoFactorForm)
+            {
+                <div style="margin-top:0.35rem;">
+                    <button type="button"
+                            class="btn btn-link p-0"
+                            style="font-size:0.95rem;"
+                            @onclick="() => _showTwoFactorForm = true">
+                        Two-factor sign-in
+                    </button>
+                </div>
+            }
+            else if (Auth.HasPassword)
+            {
+            <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+                <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">Two-factor sign-in</h3>
+                <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                    Only asked when you first sign in. Unlocking notebooks, chats, and albums still uses your password alone.
+                </p>
+
+                @if (!string.IsNullOrEmpty(twoFactorMessage))
+                {
+                    <div style="color: var(--color-success-fg, var(--cf-success-fg, #22c55e)); margin: 0 0 0.5rem; font-size:0.9em;">@twoFactorMessage</div>
+                }
+                @if (!string.IsNullOrEmpty(twoFactorError))
+                {
+                    <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@twoFactorError</div>
+                }
+
+                <label style="display:flex; align-items:flex-start; gap:0.5rem; font-size:0.95em;">
+                    <input type="checkbox"
+                           checked="@Auth.TwoFactorEnabled"
+                           disabled="@busy"
+                           @onchange="OnTwoFactorCheckboxChanged" />
+                    <span>Require a second factor when signing in</span>
+                </label>
+
+                @if (_confirmDisableTwoFactor)
+                {
+                    <div style="margin-top:0.6rem; display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+                        <input type="password"
+                               @bind-value="twoFactorCurrentPassword"
+                               @bind-value:event="oninput"
+                               placeholder="Current password"
+                               class="form-control"
+                               autocomplete="current-password" />
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                            <button class="btn btn-primary btn-sm" @onclick="ConfirmDisableTwoFactor" disabled="@(busy || string.IsNullOrWhiteSpace(twoFactorCurrentPassword))">
+                                Turn off two-factor
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CancelDisableTwoFactor" disabled="@busy">Cancel</button>
+                        </div>
+                    </div>
+                }
+
+                @if (Auth.TwoFactorEnabled)
+                {
+                    <p style="margin:0.65rem 0 0; font-size:0.9em; color: var(--color-text-muted);">
+                        After your password we will ask for an email code@(Auth.HasTwoFactorPhone ? $", or SMS to {Auth.TwoFactorPhoneMasked}." : ".")
+                    </p>
+
+                    @if (Auth.SmsTwoFactorAvailable)
+                    {
+                        @if (Auth.HasTwoFactorPhone && !_changePhone)
+                        {
+                            <div style="margin-top:0.6rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _changePhone = true" disabled="@busy">Change number</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _confirmRemovePhone = true" disabled="@busy">Remove phone</button>
+                            </div>
+                            @if (_confirmRemovePhone)
+                            {
+                                <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+                                    <input type="password"
+                                           @bind-value="twoFactorCurrentPassword"
+                                           @bind-value:event="oninput"
+                                           placeholder="Current password"
+                                           class="form-control"
+                                           autocomplete="current-password" />
+                                    <div style="display:flex; gap:0.5rem;">
+                                        <button class="btn btn-primary btn-sm" @onclick="RemovePhone" disabled="@(busy || string.IsNullOrWhiteSpace(twoFactorCurrentPassword))">Remove phone</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _confirmRemovePhone = false" disabled="@busy">Cancel</button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div style="margin-top:0.65rem; display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+                                <input type="tel"
+                                       @bind-value="phoneNumber"
+                                       @bind-value:event="oninput"
+                                       placeholder="+15551234567"
+                                       class="form-control"
+                                       autocomplete="tel" />
+                                @if (smsEnrollSent)
+                                {
+                                    <input type="text"
+                                           @bind-value="smsEnrollCode"
+                                           @bind-value:event="oninput"
+                                           placeholder="SMS code"
+                                           class="form-control"
+                                           inputmode="numeric"
+                                           autocomplete="one-time-code" />
+                                }
+                                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="SendEnrollSms" disabled="@(busy || string.IsNullOrWhiteSpace(phoneNumber))">
+                                        @(smsEnrollSent ? "Resend SMS" : "Send SMS code")
+                                    </button>
+                                    @if (smsEnrollSent)
+                                    {
+                                        <button class="btn btn-primary btn-sm" @onclick="ConfirmEnrollSms" disabled="@(busy || string.IsNullOrWhiteSpace(smsEnrollCode))">
+                                            Confirm phone
+                                        </button>
+                                    }
+                                    @if (_changePhone)
+                                    {
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CancelChangePhone" disabled="@busy">Cancel</button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <p style="margin:0.5rem 0 0; font-size:0.85em; color: var(--color-text-muted);">
+                            SMS is not configured on this server. Email codes still work as the second factor.
+                        </p>
+                    }
+                }
+
+                <div style="margin-top:0.85rem;">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CancelTwoFactorForm" disabled="@busy">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+            }
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(twoFactorChallengeId))
+    {
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div style="color: var(--cf-error-fg); margin: 0.25rem 0 0.5rem; font-size:0.9em;">@error</div>
+        }
+
+        <p style="color: var(--color-text-muted);">
+            Enter the @(twoFactorMethod == "sms" ? "SMS" : "email") code to finish signing in.
+            @if (twoFactorMethod == "sms" && !string.IsNullOrEmpty(twoFactorMaskedPhone))
+            {
+                <text> Sent to @twoFactorMaskedPhone.</text>
+            }
+        </p>
+
+        <div style="display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+            <input type="text"
+                   @bind-value="twoFactorCode"
+                   @bind-value:event="oninput"
+                   placeholder="Verification code"
+                   class="form-control"
+                   autocomplete="one-time-code"
+                   @onkeydown="TwoFactorKeyHandler" />
+            <div>
+                <button class="btn btn-primary" @onclick="VerifyTwoFactor" disabled="@(busy || string.IsNullOrWhiteSpace(twoFactorCode))">
+                    Verify and sign in
+                </button>
+            </div>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ResendTwoFactor" disabled="@busy">Resend code</button>
+                @if (twoFactorMethods.Contains("sms") && twoFactorMethod != "sms")
+                {
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => SwitchTwoFactorMethod("sms")' disabled="@busy">Use SMS</button>
+                }
+                @if (twoFactorMethods.Contains("email") && twoFactorMethod != "email")
+                {
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => SwitchTwoFactorMethod("email")' disabled="@busy">Use email</button>
+                }
+                <button type="button" class="btn btn-link btn-sm p-0" @onclick="CancelTwoFactor" disabled="@busy">Back</button>
+            </div>
         </div>
     }
     else
@@ -190,6 +381,9 @@
                         Sign in with password
                     </button>
                 </div>
+                <p style="margin:0; font-size:0.85em; color: var(--color-text-muted);">
+                    If you turned on two-factor, sign in with your password first.
+                </p>
             </div>
         }
         else if (loginSent)
@@ -266,6 +460,7 @@
 
     private bool _linuxInstallCopied;
     private bool _showPasswordForm;
+    private bool _showTwoFactorForm;
     /// <summary>"windows", "linux", "mac", or null until detected.</summary>
     private string? _detectedOs;
 
@@ -283,6 +478,29 @@
     string? passwordError;
     string? passwordMessage;
     LoginMode loginMode = LoginMode.Code;
+
+    bool enableTwoFactorOnSave;
+    bool _confirmDisableTwoFactor;
+    bool _confirmRemovePhone;
+    bool _changePhone;
+    bool smsEnrollSent;
+    string twoFactorCurrentPassword = "";
+    string phoneNumber = "";
+    string smsEnrollCode = "";
+    string? twoFactorError;
+    string? twoFactorMessage;
+
+    string? twoFactorChallengeId;
+    string twoFactorMethod = "email";
+    List<string> twoFactorMethods = new() { "email" };
+    string? twoFactorMaskedPhone;
+    string twoFactorCode = "";
+
+    private const string TfChallengeKey = "wizionic.tf.challenge";
+    private const string TfMethodKey = "wizionic.tf.method";
+    private const string TfMethodsKey = "wizionic.tf.methods";
+    private const string TfMaskedKey = "wizionic.tf.masked";
+    private const string TfEmailKey = "wizionic.tf.email";
 
     private async Task CopyLinuxInstallCommand()
     {
@@ -303,6 +521,9 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender && string.IsNullOrEmpty(twoFactorChallengeId) && !Auth.IsAuthenticated)
+            await RestoreTwoFactorChallengeAsync();
+
         if (!firstRender || AppEnvironment.IsMaui || _detectedOs is not null)
             return;
 
@@ -356,7 +577,16 @@
         if (Auth.IsAuthenticated && RedirectAuthenticatedToChat && !isExplicitAccountView)
         {
             Nav.NavigateTo(RedirectAfterLogin, replace: true);
+            return;
         }
+
+        if (uri.Query.Contains("passwordRequired=1", StringComparison.OrdinalIgnoreCase))
+        {
+            loginMode = LoginMode.Password;
+            error = "This account requires your password, then a second factor.";
+        }
+
+        await RestoreTwoFactorChallengeAsync();
     }
 
     async Task SendLoginCode()
@@ -415,7 +645,13 @@
         currentPassword = "";
         passwordError = null;
         passwordMessage = null;
+        twoFactorError = null;
+        twoFactorMessage = null;
+        _showPasswordForm = false;
+        _showTwoFactorForm = false;
         loginMode = LoginMode.Code;
+        await ClearTwoFactorChallengeAsync();
+        ResetTwoFactorManage();
     }
 
     void Reset()
@@ -447,14 +683,20 @@
             if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))
                 return;
 
-            var (success, err) = await Auth.LoginWithPasswordAsync(email, passwordLogin);
-            if (!success)
+            var result = await Auth.LoginWithPasswordAsync(email, passwordLogin);
+            if (!result.Success)
             {
-                error = err ?? "Invalid email or password.";
+                error = result.Error ?? "Invalid email or password.";
                 return;
             }
 
             passwordLogin = "";
+            if (result.RequiresTwoFactor && !string.IsNullOrWhiteSpace(result.ChallengeId))
+            {
+                await BeginTwoFactorAsync(result);
+                return;
+            }
+
             if (GuestMigration is not null)
                 await GuestMigration.MigrateIfNeededAsync();
 
@@ -479,6 +721,13 @@
         newPassword = "";
         confirmPassword = "";
         currentPassword = "";
+    }
+
+    void CancelTwoFactorForm()
+    {
+        _showTwoFactorForm = false;
+        twoFactorError = null;
+        ResetTwoFactorManage();
     }
 
     async Task SavePassword()
@@ -519,6 +768,16 @@
             newPassword = "";
             confirmPassword = "";
             currentPassword = "";
+
+            if (!changingExisting && enableTwoFactorOnSave)
+            {
+                var (tfOk, tfErr) = await Auth.SetTwoFactorEnabledAsync(true);
+                if (tfOk)
+                    passwordMessage += " Two-factor sign-in is on.";
+                else
+                    passwordError = tfErr ?? "Password saved, but two-factor could not be enabled.";
+                enableTwoFactorOnSave = false;
+            }
         }
         finally
         {
@@ -544,5 +803,303 @@
             return false;
 
         return true;
+    }
+
+    async Task OnTwoFactorCheckboxChanged(ChangeEventArgs e)
+    {
+        twoFactorError = null;
+        twoFactorMessage = null;
+        var want = e.Value is bool b && b || string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        if (want == Auth.TwoFactorEnabled)
+            return;
+
+        if (!want)
+        {
+            _confirmDisableTwoFactor = true;
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.SetTwoFactorEnabledAsync(true);
+            if (!ok)
+                twoFactorError = err ?? "Could not enable two-factor sign-in.";
+            else
+                twoFactorMessage = "Two-factor sign-in is on. We will ask for an email code after your password.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task ConfirmDisableTwoFactor()
+    {
+        twoFactorError = null;
+        twoFactorMessage = null;
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.SetTwoFactorEnabledAsync(false, twoFactorCurrentPassword);
+            if (!ok)
+            {
+                twoFactorError = err ?? "Could not turn off two-factor sign-in.";
+                return;
+            }
+
+            twoFactorMessage = "Two-factor sign-in is off.";
+            ResetTwoFactorManage();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    void CancelDisableTwoFactor()
+    {
+        _confirmDisableTwoFactor = false;
+        twoFactorCurrentPassword = "";
+    }
+
+    async Task SendEnrollSms()
+    {
+        twoFactorError = null;
+        twoFactorMessage = null;
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.EnrollTwoFactorPhoneAsync(phoneNumber);
+            if (!ok)
+            {
+                twoFactorError = err ?? "Could not send an SMS code.";
+                return;
+            }
+
+            smsEnrollSent = true;
+            twoFactorMessage = "SMS code sent.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task ConfirmEnrollSms()
+    {
+        twoFactorError = null;
+        twoFactorMessage = null;
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.ConfirmTwoFactorPhoneAsync(phoneNumber, smsEnrollCode);
+            if (!ok)
+            {
+                twoFactorError = err ?? "Incorrect or expired code.";
+                return;
+            }
+
+            twoFactorMessage = "SMS two-factor is ready.";
+            phoneNumber = "";
+            smsEnrollCode = "";
+            smsEnrollSent = false;
+            _changePhone = false;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task RemovePhone()
+    {
+        twoFactorError = null;
+        twoFactorMessage = null;
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.RemoveTwoFactorPhoneAsync(twoFactorCurrentPassword);
+            if (!ok)
+            {
+                twoFactorError = err ?? "Could not remove the phone number.";
+                return;
+            }
+
+            twoFactorMessage = "Phone number removed. Email codes are still used as the second factor.";
+            _confirmRemovePhone = false;
+            twoFactorCurrentPassword = "";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    void CancelChangePhone()
+    {
+        _changePhone = false;
+        smsEnrollSent = false;
+        smsEnrollCode = "";
+        phoneNumber = "";
+    }
+
+    void ResetTwoFactorManage()
+    {
+        _confirmDisableTwoFactor = false;
+        _confirmRemovePhone = false;
+        _changePhone = false;
+        smsEnrollSent = false;
+        twoFactorCurrentPassword = "";
+        phoneNumber = "";
+        smsEnrollCode = "";
+        enableTwoFactorOnSave = false;
+    }
+
+    async Task BeginTwoFactorAsync(AuthLoginResult result)
+    {
+        twoFactorChallengeId = result.ChallengeId;
+        twoFactorMethods = result.Methods.Count > 0 ? result.Methods.ToList() : new List<string> { "email" };
+        twoFactorMethod = twoFactorMethods.Contains("sms") ? "sms" : "email";
+        twoFactorMaskedPhone = result.MaskedPhone;
+        twoFactorCode = "";
+        loginMode = LoginMode.Password;
+        await PersistTwoFactorChallengeAsync();
+    }
+
+    async Task VerifyTwoFactor()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(twoFactorChallengeId) || string.IsNullOrWhiteSpace(twoFactorCode))
+            return;
+
+        busy = true;
+        try
+        {
+            var result = await Auth.VerifyTwoFactorAsync(twoFactorChallengeId, twoFactorCode, twoFactorMethod);
+            if (!result.Success)
+            {
+                error = result.Error ?? "Incorrect or expired code.";
+                return;
+            }
+
+            await ClearTwoFactorChallengeAsync();
+            if (GuestMigration is not null)
+                await GuestMigration.MigrateIfNeededAsync();
+
+            Nav.NavigateTo(RedirectAfterLogin, replace: true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task TwoFactorKeyHandler(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !busy && !string.IsNullOrWhiteSpace(twoFactorCode))
+            await VerifyTwoFactor();
+    }
+
+    async Task ResendTwoFactor()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(twoFactorChallengeId))
+            return;
+
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.SendTwoFactorAsync(twoFactorChallengeId, twoFactorMethod);
+            error = ok ? null : (err ?? "Could not send a code.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task SwitchTwoFactorMethod(string method)
+    {
+        twoFactorMethod = method;
+        twoFactorCode = "";
+        error = null;
+        await PersistTwoFactorChallengeAsync();
+        await ResendTwoFactor();
+    }
+
+    async Task CancelTwoFactor()
+    {
+        await ClearTwoFactorChallengeAsync();
+        error = null;
+    }
+
+    async Task PersistTwoFactorChallengeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("sessionStorage.setItem", TfChallengeKey, twoFactorChallengeId ?? "");
+            await JS.InvokeVoidAsync("sessionStorage.setItem", TfMethodKey, twoFactorMethod);
+            await JS.InvokeVoidAsync("sessionStorage.setItem", TfMethodsKey, string.Join(",", twoFactorMethods));
+            await JS.InvokeVoidAsync("sessionStorage.setItem", TfMaskedKey, twoFactorMaskedPhone ?? "");
+            await JS.InvokeVoidAsync("sessionStorage.setItem", TfEmailKey, email);
+        }
+        catch
+        {
+            // sessionStorage may be unavailable (MAUI / private mode).
+        }
+    }
+
+    async Task RestoreTwoFactorChallengeAsync()
+    {
+        if (Auth.IsAuthenticated)
+        {
+            await ClearTwoFactorChallengeAsync();
+            return;
+        }
+
+        try
+        {
+            var challenge = await JS.InvokeAsync<string>("sessionStorage.getItem", TfChallengeKey);
+            if (string.IsNullOrWhiteSpace(challenge))
+                return;
+
+            twoFactorChallengeId = challenge;
+            twoFactorMethod = await JS.InvokeAsync<string>("sessionStorage.getItem", TfMethodKey) ?? "email";
+            var methods = await JS.InvokeAsync<string>("sessionStorage.getItem", TfMethodsKey);
+            twoFactorMethods = string.IsNullOrWhiteSpace(methods)
+                ? new List<string> { twoFactorMethod }
+                : methods.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            twoFactorMaskedPhone = await JS.InvokeAsync<string>("sessionStorage.getItem", TfMaskedKey);
+            var storedEmail = await JS.InvokeAsync<string>("sessionStorage.getItem", TfEmailKey);
+            if (!string.IsNullOrWhiteSpace(storedEmail))
+                email = storedEmail;
+            loginMode = LoginMode.Password;
+        }
+        catch
+        {
+            // Ignore missing JS / storage.
+        }
+    }
+
+    async Task ClearTwoFactorChallengeAsync()
+    {
+        twoFactorChallengeId = null;
+        twoFactorCode = "";
+        twoFactorMaskedPhone = null;
+        twoFactorMethod = "email";
+        twoFactorMethods = new List<string> { "email" };
+        try
+        {
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", TfChallengeKey);
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", TfMethodKey);
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", TfMethodsKey);
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", TfMaskedKey);
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", TfEmailKey);
+        }
+        catch
+        {
+            // Ignore.
+        }
     }
 }

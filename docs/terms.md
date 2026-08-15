@@ -1,6 +1,6 @@
 # Terms of Service
 
-**Effective date:** 14 August 2026  
+**Effective date:** 15 August 2026  
 **Operator:** Daniel Goodwin, operating as Wizionic  
 **Contact:** daniellgoodwin@protonmail.com  
 **Site:** https://wizionic.com
@@ -38,7 +38,7 @@ You must provide a real email address you control if you register. I may refuse 
 
 ## Third-party services
 
-If you connect Google, GitHub, Notion, Stripe, Ollama, Lemonade, MCP servers, or a cloud model provider, those providers' terms also apply. Wizionic is not those providers.
+If you connect Google, GitHub, Notion, Stripe, Ollama, Lemonade, MCP servers, or a cloud model provider, those providers' terms also apply. If you enroll SMS two-factor, Twilio's terms apply to delivery of those codes. Wizionic is not those providers.
 
 ## Desktop updates
 

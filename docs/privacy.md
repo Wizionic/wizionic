@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** 14 August 2026  
+**Effective date:** 15 August 2026  
 **Operator:** Daniel Goodwin, operating as Wizionic  
 **Contact:** daniellgoodwin@protonmail.com  
 **Site:** https://wizionic.com  
@@ -20,7 +20,9 @@ If you create an account on wizionic.com, the server may store:
 
 - Email address
 - Optional password hash (if you set a password)
+- Optional two-factor flag and, if you enroll SMS, your phone number (E.164)
 - Magic-link / login-code token until it is used or expires
+- A short-lived hashed 2FA challenge after a successful password (until you finish sign-in or it expires)
 - Auth cookie `AppAuth` (HttpOnly, first-party, 10-year sliding session)
 - A per-user local encryption key so your own devices can decrypt the same local data
 - Optional cloud provider API keys (`UserProviderKeys`) **only if you choose to save them on the server**
@@ -28,7 +30,8 @@ If you create an account on wizionic.com, the server may store:
 - SignalR presence and WebRTC signaling messages (offers, answers, ICE candidates — not chat payloads)
 - Logs of tool-proxy requests you trigger (`search_web`, `summarize_url`, and similar)
 - Proxied model requests if you pick a hosted/proxied model
-- Transactional email metadata via Brevo (magic-link delivery)
+- Transactional email metadata via Brevo (magic-link and email second-factor codes)
+- SMS second-factor delivery via Twilio Verify, if you enroll a phone number (Twilio sees the number and the OTP message)
 
 Optional user-saved provider keys on the server are stored as configured today. Treat server-stored keys as sensitive and prefer keeping keys on the device when you can.
 
@@ -77,7 +80,11 @@ The desktop app does not transfer information to other networked systems unless 
 
 ## Email
 
-Magic-link login codes are sent through Brevo from `no-reply@wizionic.com`. Brevo sees the destination address and the message content of that transactional email.
+Magic-link and email second-factor codes are sent through Brevo from `no-reply@wizionic.com`. Brevo sees the destination address and the message content of that transactional email.
+
+## SMS two-factor (optional)
+
+If you turn on two-factor sign-in and enroll a phone number, Wizionic stores that number on your account and sends one-time codes through Twilio Verify. Twilio sees the destination number and the verification SMS. Two-factor is asked only when you first sign in. Unlocking protected notebooks, chats, or albums still uses your account password only.
 
 ## No advertising / no analytics suite
 
