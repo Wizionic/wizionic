@@ -33,6 +33,9 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             .HasIndex(u => u.Email)
             .IsUnique();
 
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.TwoFactorChallengeHash);
+
         modelBuilder.Entity<UserProviderKey>()
             .HasOne(k => k.User)
             .WithMany()

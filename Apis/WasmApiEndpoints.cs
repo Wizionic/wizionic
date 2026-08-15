@@ -15,10 +15,16 @@ namespace App.Apis;
 /// - POST /api/auth/request-magic-link  (PUBLIC) → creates the short-lived magic token and emails login code/link
 /// - POST /api/auth/verify-code         (PUBLIC) → exchange email+code for cookie session
 /// - POST /api/auth/login-password      (PUBLIC) → email+password login (generic errors; no existence/password-set clues)
+/// - POST /api/auth/2fa/send            (PUBLIC) → send SMS/email code for a password-verified challenge
+/// - POST /api/auth/2fa/verify          (PUBLIC) → complete 2FA and issue cookie
 /// - POST /api/auth/logout              (PUBLIC) → clear cookie
-/// - GET  /api/auth/me                  (protected) → identity (email, id, has key, has password)
+/// - GET  /api/auth/me                  (protected) → identity (email, id, has key, has password, 2FA flags)
 /// - POST /api/auth/set-password        (protected) → set/change account password (min 6 chars)
-/// - POST /api/auth/verify-password     (protected) → check password (notebook unlock)
+/// - POST /api/auth/2fa/settings        (protected) → enable/disable login 2FA
+/// - POST /api/auth/2fa/enroll-sms      (protected) → start Twilio phone enrollment
+/// - POST /api/auth/2fa/confirm-sms     (protected) → confirm Twilio phone enrollment
+/// - POST /api/auth/2fa/remove-phone    (protected) → drop enrolled SMS number
+/// - POST /api/auth/verify-password     (protected) → check password (notebook unlock; never 2FA)
 /// - GET  /api/user/encryption-key      (protected) → per-user AES-GCM key for client storage/sync
 /// - GET  /api/keys                     (protected) → server-stored provider keys (decrypted) so WASM can import them
 ///
@@ -65,21 +71,37 @@ public static class WasmApiEndpoints
             });
         });
 
-        publicAuth.MapPost("/verify-code", async (HttpContext ctx, MagicLinkService magic, VerifyLoginCode req) =>
+        publicAuth.MapPost("/verify-code", async (HttpContext ctx, MagicLinkService magic, TwoFactorAuthService twoFactor, AppDbContext db, VerifyLoginCode req) =>
         {
             if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Code))
                 return Results.BadRequest("Email and code are required.");
 
-            var user = await magic.ValidateLoginCodeAsync(req.Email.Trim(), req.Code.Trim());
+            var email = req.Email.Trim();
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
             if (user == null)
                 return Results.Unauthorized();
 
-            await AuthSignInHelper.SignInUserAsync(ctx, user);
+            if (user.TwoFactorEnabled && !twoFactor.HasLiveChallenge(user))
+            {
+                return Results.Json(new
+                {
+                    success = false,
+                    message = "This account requires your password, then a second factor. Sign in with your password first."
+                }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            var ready = await magic.ValidateLoginCodeAsync(email, req.Code.Trim());
+            if (ready == null)
+                return Results.Unauthorized();
+
+            twoFactor.ClearChallenge(ready);
+            await twoFactor.PersistAsync();
+            await AuthSignInHelper.SignInUserAsync(ctx, ready);
 
             return Results.Ok(new
             {
                 success = true,
-                email = user.Email,
+                email = ready.Email,
                 message = "Signed in successfully."
             });
         });
@@ -92,7 +114,7 @@ public static class WasmApiEndpoints
 
         // Password login. Always returns the same generic error so callers cannot tell
         // whether the email exists or whether a password has been set.
-        publicAuth.MapPost("/login-password", async (HttpContext ctx, MagicLinkService magic, AppDbContext db, LoginWithPassword req) =>
+        publicAuth.MapPost("/login-password", async (HttpContext ctx, MagicLinkService magic, AppDbContext db, TwoFactorAuthService twoFactor, LoginWithPassword req) =>
         {
             const string genericFail = "Invalid email or password.";
 
@@ -112,11 +134,82 @@ public static class WasmApiEndpoints
             if (!PasswordHashService.Verify(req.Password, user.PasswordHash))
                 return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
 
+            if (user.TwoFactorEnabled)
+            {
+                var challengeId = twoFactor.CreateChallenge(user);
+                await twoFactor.PersistAsync();
+
+                var method = twoFactor.PreferredMethod(user);
+                var (sent, sendErr) = await twoFactor.SendAsync(user, method, ctx);
+                if (!sent && method == "sms")
+                {
+                    method = "email";
+                    (sent, sendErr) = await twoFactor.SendAsync(user, method, ctx);
+                }
+
+                if (!sent)
+                {
+                    twoFactor.ClearChallenge(user);
+                    await twoFactor.PersistAsync();
+                    return Results.Json(new { success = false, message = sendErr ?? genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+                }
+
+                return Results.Ok(new
+                {
+                    success = true,
+                    requiresTwoFactor = true,
+                    challengeId,
+                    methods = twoFactor.MethodsFor(user),
+                    maskedPhone = TwoFactorAuthService.MaskPhone(user.TwoFactorPhoneE164),
+                    preferredMethod = method
+                });
+            }
+
             // Ensure encryption key is usable (same rules as magic-link login).
             var ready = await magic.EnsureUserReadyForSignInAsync(user);
             if (ready == null)
                 return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
 
+            await AuthSignInHelper.SignInUserAsync(ctx, ready);
+
+            return Results.Ok(new
+            {
+                success = true,
+                email = ready.Email,
+                message = "Signed in successfully."
+            });
+        });
+
+        publicAuth.MapPost("/2fa/send", async (HttpContext ctx, TwoFactorAuthService twoFactor, TwoFactorSendRequest req) =>
+        {
+            var user = await twoFactor.FindByChallengeAsync(req.ChallengeId);
+            if (user == null)
+                return Results.Json(new { success = false, message = "Session expired. Sign in with your password again." }, statusCode: StatusCodes.Status401Unauthorized);
+
+            var (ok, err) = await twoFactor.SendAsync(user, req.Method, ctx);
+            return ok
+                ? Results.Ok(new { success = true })
+                : Results.Json(new { success = false, message = err ?? "Could not send a code." }, statusCode: StatusCodes.Status400BadRequest);
+        });
+
+        publicAuth.MapPost("/2fa/verify", async (HttpContext ctx, MagicLinkService magic, TwoFactorAuthService twoFactor, TwoFactorVerifyRequest req) =>
+        {
+            const string genericFail = "Incorrect or expired code.";
+
+            var user = await twoFactor.FindByChallengeAsync(req.ChallengeId);
+            if (user == null)
+                return Results.Json(new { success = false, message = "Session expired. Sign in with your password again." }, statusCode: StatusCodes.Status401Unauthorized);
+
+            var (ok, err) = await twoFactor.VerifyAsync(user, req.Method, req.Code);
+            if (!ok)
+                return Results.Json(new { success = false, message = err ?? genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+
+            var ready = await magic.EnsureUserReadyForSignInAsync(user);
+            if (ready == null)
+                return Results.Json(new { success = false, message = genericFail }, statusCode: StatusCodes.Status401Unauthorized);
+
+            twoFactor.ClearChallenge(ready);
+            await twoFactor.PersistAsync();
             await AuthSignInHelper.SignInUserAsync(ctx, ready);
 
             return Results.Ok(new
@@ -135,7 +228,7 @@ public static class WasmApiEndpoints
         // The main /api/* (auth/me, keys, encryption-key) remain protected.
         var toolsGroup = endpoints.MapGroup("/api/tools");
 
-        group.MapGet("/auth/me", async (ClaimsPrincipal user, KeyProtectionService protector, AppDbContext db) =>
+        group.MapGet("/auth/me", async (ClaimsPrincipal user, KeyProtectionService protector, AppDbContext db, ITwilioVerifyService twilio) =>
         {
             var email = user.Identity?.Name;
             if (string.IsNullOrEmpty(email))
@@ -145,7 +238,13 @@ public static class WasmApiEndpoints
             // The actual unprotected key bytes are returned by the dedicated endpoint below.
             var row = await db.Users.AsNoTracking()
                 .Where(u => u.Email == email)
-                .Select(u => new { HasKey = u.LocalEncryptionKey != null, HasPassword = u.PasswordHash != null && u.PasswordHash != "" })
+                .Select(u => new
+                {
+                    HasKey = u.LocalEncryptionKey != null,
+                    HasPassword = u.PasswordHash != null && u.PasswordHash != "",
+                    u.TwoFactorEnabled,
+                    u.TwoFactorPhoneE164
+                })
                 .FirstOrDefaultAsync();
 
             if (row == null)
@@ -156,7 +255,11 @@ public static class WasmApiEndpoints
                 Email = email,
                 Id = user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
                 HasLocalEncryptionKey = row.HasKey,
-                HasPassword = row.HasPassword
+                HasPassword = row.HasPassword,
+                TwoFactorEnabled = row.TwoFactorEnabled,
+                HasTwoFactorPhone = !string.IsNullOrEmpty(row.TwoFactorPhoneE164),
+                TwoFactorPhoneMasked = TwoFactorAuthService.MaskPhone(row.TwoFactorPhoneE164),
+                SmsTwoFactorAvailable = twilio.IsConfigured
             });
         });
 
@@ -188,6 +291,100 @@ public static class WasmApiEndpoints
             await db.SaveChangesAsync();
 
             return Results.Ok(new { success = true, hasPassword = true, message = "Password saved." });
+        });
+
+        group.MapPost("/auth/2fa/settings", async (ClaimsPrincipal principal, AppDbContext db, TwoFactorSettingsRequest req) =>
+        {
+            var email = principal.Identity?.Name;
+            if (string.IsNullOrEmpty(email))
+                return Results.Unauthorized();
+
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user == null)
+                return Results.Unauthorized();
+
+            if (req.Enabled)
+            {
+                if (string.IsNullOrEmpty(user.PasswordHash))
+                    return Results.BadRequest(new { message = "Set a password before turning on two-factor sign-in." });
+
+                user.TwoFactorEnabled = true;
+                await db.SaveChangesAsync();
+                return Results.Ok(new { success = true, twoFactorEnabled = true });
+            }
+
+            if (string.IsNullOrEmpty(user.PasswordHash)
+                || string.IsNullOrEmpty(req.CurrentPassword)
+                || !PasswordHashService.Verify(req.CurrentPassword, user.PasswordHash))
+            {
+                return Results.BadRequest(new { message = "Current password is required to turn off two-factor sign-in." });
+            }
+
+            user.TwoFactorEnabled = false;
+            user.TwoFactorPhoneE164 = null;
+            user.TwoFactorChallengeHash = null;
+            user.TwoFactorChallengeExpiresAt = null;
+            await db.SaveChangesAsync();
+            return Results.Ok(new { success = true, twoFactorEnabled = false, hasTwoFactorPhone = false });
+        });
+
+        group.MapPost("/auth/2fa/enroll-sms", async (ClaimsPrincipal principal, TwoFactorAuthService twoFactor, EnrollSmsRequest req) =>
+        {
+            var email = principal.Identity?.Name;
+            if (string.IsNullOrEmpty(email))
+                return Results.Unauthorized();
+
+            var (ok, err) = await twoFactor.StartPhoneEnrollmentAsync(req.Phone ?? "");
+            return ok
+                ? Results.Ok(new { success = true })
+                : Results.BadRequest(new { message = err ?? "Could not send an SMS code." });
+        });
+
+        group.MapPost("/auth/2fa/confirm-sms", async (ClaimsPrincipal principal, AppDbContext db, TwoFactorAuthService twoFactor, ConfirmSmsRequest req) =>
+        {
+            var email = principal.Identity?.Name;
+            if (string.IsNullOrEmpty(email))
+                return Results.Unauthorized();
+
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user == null)
+                return Results.Unauthorized();
+
+            if (string.IsNullOrEmpty(user.PasswordHash))
+                return Results.BadRequest(new { message = "Set a password before adding SMS." });
+
+            var (ok, err) = await twoFactor.ConfirmPhoneEnrollmentAsync(user, req.Phone ?? "", req.Code ?? "");
+            return ok
+                ? Results.Ok(new
+                {
+                    success = true,
+                    twoFactorEnabled = true,
+                    hasTwoFactorPhone = true,
+                    twoFactorPhoneMasked = TwoFactorAuthService.MaskPhone(user.TwoFactorPhoneE164)
+                })
+                : Results.BadRequest(new { message = err ?? "Incorrect or expired code." });
+        });
+
+        group.MapPost("/auth/2fa/remove-phone", async (ClaimsPrincipal principal, AppDbContext db, RemovePhoneRequest req) =>
+        {
+            var email = principal.Identity?.Name;
+            if (string.IsNullOrEmpty(email))
+                return Results.Unauthorized();
+
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user == null)
+                return Results.Unauthorized();
+
+            if (string.IsNullOrEmpty(user.PasswordHash)
+                || string.IsNullOrEmpty(req.CurrentPassword)
+                || !PasswordHashService.Verify(req.CurrentPassword, user.PasswordHash))
+            {
+                return Results.BadRequest(new { message = "Current password is required to remove the phone number." });
+            }
+
+            user.TwoFactorPhoneE164 = null;
+            await db.SaveChangesAsync();
+            return Results.Ok(new { success = true, hasTwoFactorPhone = false });
         });
 
         // Verify the account password (used to unlock password-protected notebooks).
@@ -384,6 +581,12 @@ public static class WasmApiEndpoints
     public record LoginWithPassword(string Email, string Password);
     public record SetPasswordRequest(string? Password, string? ConfirmPassword, string? CurrentPassword = null);
     public record VerifyPasswordRequest(string? Password);
+    public record TwoFactorSendRequest(string? ChallengeId, string? Method);
+    public record TwoFactorVerifyRequest(string? ChallengeId, string? Code, string? Method);
+    public record TwoFactorSettingsRequest(bool Enabled, string? CurrentPassword = null);
+    public record EnrollSmsRequest(string? Phone);
+    public record ConfirmSmsRequest(string? Phone, string? Code);
+    public record RemovePhoneRequest(string? CurrentPassword);
 
     // --- MCP Registry proxy models (clean output for the Tools page) ---
 
