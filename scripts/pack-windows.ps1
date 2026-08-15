@@ -38,12 +38,15 @@ if (-not $SkipDownload) {
     }
 }
 
-# Force a single TFM so GitHub-hosted Windows runners do not also evaluate ios/maccatalyst.
+# WizionicPackTarget is a MAUI-only property so referenced projects keep net10.0.
 $winTfm = "net10.0-windows10.0.19041.0"
+dotnet restore "App.Maui\App.Maui.csproj" -p:WizionicPackTarget=windows
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 dotnet publish "App.Maui\App.Maui.csproj" `
     -c Release `
     -f $winTfm `
-    -p:TargetFrameworks=$winTfm `
+    -p:WizionicPackTarget=windows `
     -p:RuntimeIdentifierOverride=win-x64 `
     -p:ApplicationDisplayVersion=$Version `
     -p:Version=$Version `
