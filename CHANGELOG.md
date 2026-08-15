@@ -7,17 +7,17 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-### Changed
+## [0.2.0] — 2026-08-15
 
-- Desktop app updates now come from [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest) instead of wizionic.com. Login/sync stay on wizionic.com. The repository must be public for unauthenticated update checks.
+First public source release.
 
 ### Added
 
 - Public open-source documentation: license, privacy policy, terms, security policy, and self-host guide.
+- Live `/privacy` and `/terms` pages for the hosted site (Google OAuth + SignPath).
 - Unsigned GitHub Actions release workflow for Windows and Linux installers.
 
-## [0.2.0] — TBD
+### Changed
 
-First public source release. Installers and in-app updates come from
-[GitHub Releases](https://github.com/Wizionic/wizionic/releases). Existing 0.1.x
-installs still check wizionic.com until they install a 0.2.x build once.
+- Desktop app updates now come from [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest) instead of wizionic.com. Login/sync stay on wizionic.com.
+- Existing 0.1.x installs still check wizionic.com until they install a 0.2.x build once.
