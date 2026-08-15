@@ -74,7 +74,7 @@
             </h3>
             <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
                 Optional. Use a password to sign in without waiting for an email code, and to unlock protected notebooks.
-                Minimum @MinPasswordLength characters.
+                @App.Core.Auth.PasswordRules.RequirementsText
             </p>
 
             @if (!string.IsNullOrEmpty(passwordMessage))
@@ -101,7 +101,7 @@
                 <input type="password"
                        @bind-value="newPassword"
                        @bind-value:event="oninput"
-                       placeholder="New password (min @MinPasswordLength characters)"
+                       placeholder="New password"
                        class="form-control"
                        autocomplete="new-password" />
             </div>
@@ -238,7 +238,7 @@
     [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
 
     private const string LinuxInstallCommand = "curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash";
-    private const int MinPasswordLength = 6;
+
     private bool _linuxInstallCopied;
     /// <summary>"windows", "linux", "mac", or null until detected.</summary>
     private string? _detectedOs;
@@ -453,9 +453,9 @@
         busy = true;
         try
         {
-            if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < MinPasswordLength)
+            if (!App.Core.Auth.PasswordRules.TryValidate(newPassword, out var reason))
             {
-                passwordError = $"Password must be at least {MinPasswordLength} characters.";
+                passwordError = reason;
                 return;
             }
 

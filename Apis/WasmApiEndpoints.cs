@@ -161,15 +161,14 @@ public static class WasmApiEndpoints
         });
 
         // Set or change password for the currently signed-in user.
-        // Easy requirements: minimum length only (see PasswordHashService.MinLength).
         group.MapPost("/auth/set-password", async (ClaimsPrincipal principal, AppDbContext db, SetPasswordRequest req) =>
         {
             var email = principal.Identity?.Name;
             if (string.IsNullOrEmpty(email))
                 return Results.Unauthorized();
 
-            if (!PasswordHashService.MeetsRequirements(req.Password))
-                return Results.BadRequest(new { message = $"Password must be at least {PasswordHashService.MinLength} characters." });
+            if (!App.Core.Auth.PasswordRules.TryValidate(req.Password, out var reason))
+                return Results.BadRequest(new { message = reason });
 
             if (!string.Equals(req.Password, req.ConfirmPassword, StringComparison.Ordinal))
                 return Results.BadRequest(new { message = "Passwords do not match." });
