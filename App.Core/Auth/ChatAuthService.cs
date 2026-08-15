@@ -258,16 +258,8 @@ public class ChatAuthService : IAuthService
             var resp = await _http.PostAsJsonAsync("api/auth/2fa/settings", payload);
             if (!resp.IsSuccessStatusCode)
             {
-                string message = $"Could not update two-factor settings ({(int)resp.StatusCode}).";
-                try
-                {
-                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
-                    if (!string.IsNullOrWhiteSpace(body?.Message))
-                        message = body.Message;
-                }
-                catch { /* keep default */ }
-
-                return (false, message);
+                var apiError = await ReadApiErrorAsync(resp);
+                return (false, apiError ?? $"Could not update two-factor settings ({(int)resp.StatusCode}).");
             }
 
             TwoFactorEnabled = enabled;
@@ -558,6 +550,58 @@ public class ChatAuthService : IAuthService
             return default;
 
         return await response.Content.ReadFromJsonAsync<T>();
+    }
+
+    private static async Task<string?> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+
+            if (TryStringProp(root, "message", out var message) || TryStringProp(root, "Message", out message))
+                return message;
+
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in errors.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind != JsonValueKind.Array)
+                        continue;
+                    foreach (var item in prop.Value.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                            return item.GetString();
+                    }
+                }
+            }
+
+            if (TryStringProp(root, "detail", out var detail))
+                return detail;
+            if (TryStringProp(root, "title", out var title))
+                return title;
+        }
+        catch
+        {
+            // Keep the caller fallback.
+        }
+
+        return null;
+    }
+
+    private static bool TryStringProp(JsonElement root, string name, out string? value)
+    {
+        value = null;
+        if (!root.TryGetProperty(name, out var prop) || prop.ValueKind != JsonValueKind.String)
+            return false;
+        value = prop.GetString();
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     private void ClearAuthState()

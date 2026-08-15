@@ -1,6 +1,7 @@
 using App.Data;
 using App.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
@@ -293,7 +294,7 @@ public static class WasmApiEndpoints
             return Results.Ok(new { success = true, hasPassword = true, message = "Password saved." });
         });
 
-        group.MapPost("/auth/2fa/settings", async (ClaimsPrincipal principal, AppDbContext db, TwoFactorSettingsRequest req) =>
+        group.MapPost("/auth/2fa/settings", async (ClaimsPrincipal principal, AppDbContext db, [FromBody] TwoFactorSettingsRequest req) =>
         {
             var email = principal.Identity?.Name;
             if (string.IsNullOrEmpty(email))
@@ -583,7 +584,11 @@ public static class WasmApiEndpoints
     public record VerifyPasswordRequest(string? Password);
     public record TwoFactorSendRequest(string? ChallengeId, string? Method);
     public record TwoFactorVerifyRequest(string? ChallengeId, string? Code, string? Method);
-    public record TwoFactorSettingsRequest(bool Enabled, string? CurrentPassword = null);
+    public sealed class TwoFactorSettingsRequest
+    {
+        public bool Enabled { get; set; }
+        public string? CurrentPassword { get; set; }
+    }
     public record EnrollSmsRequest(string? Phone);
     public record ConfirmSmsRequest(string? Phone, string? Code);
     public record RemovePhoneRequest(string? CurrentPassword);
