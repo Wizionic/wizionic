@@ -315,54 +315,13 @@ var app = builder.Build();
 // HSTS, HTTPS redirection, authentication, or anything that inspects Scheme/Host.
 app.UseForwardedHeaders();
 
-// Diagnostic at startup so it's obvious whether Email__Smtp* env vars (or user-secrets)
-// were picked up for SMTP credentials. Never logs secret values.
 {
     var emailSection = builder.Configuration.GetSection("Email");
-    var sectionUser = emailSection["SmtpUser"] ?? string.Empty;
-    var sectionPass = emailSection["SmtpPass"] ?? string.Empty;
+    Console.WriteLine($"[Email] SMTP host={emailSection["SmtpHost"] ?? "<none>"} configuredUser={!string.IsNullOrWhiteSpace(emailSection["SmtpUser"])}");
 
-    string liveUser = Environment.GetEnvironmentVariable("Email__SmtpUser")
-                   ?? Environment.GetEnvironmentVariable("Email__SmtpUser", EnvironmentVariableTarget.User)
-                   ?? Environment.GetEnvironmentVariable("Email:SmtpUser")
-                   ?? "(not set)";
-    string livePass = Environment.GetEnvironmentVariable("Email__SmtpPass")
-                   ?? Environment.GetEnvironmentVariable("Email__SmtpPass", EnvironmentVariableTarget.User)
-                   ?? Environment.GetEnvironmentVariable("Email:SmtpPass")
-                   ?? "(not set)";
-    int livePassLen = livePass == "(not set)" ? 0 : livePass.Length;
-    string livePassPreview = livePassLen >= 8 ? livePass.Substring(0,4) + "..." + livePass.Substring(livePassLen-4) : livePass;
-
-    bool userFromEnv = liveUser != "(not set)";
-    bool passFromEnv = livePass != "(not set)";
-
-    bool hasUser = !string.IsNullOrWhiteSpace(sectionUser);
-    bool hasPass = !string.IsNullOrWhiteSpace(sectionPass);
-
-    Console.WriteLine($"[Email] SMTP configured: host={emailSection["SmtpHost"] ?? "<none>"} port={emailSection["SmtpPort"] ?? "587"} hasUser={hasUser} hasPass={hasPass} user=\"{sectionUser}\" from={emailSection["From"] ?? "<default>"}");
-    Console.WriteLine($"[Email] LIVE ENV AT STARTUP: Email__SmtpUser='{liveUser}' | Email__SmtpPass len={livePassLen} preview={livePassPreview} (fromEnv user:{userFromEnv} pass:{passFromEnv})");
-}
-
-// Brevo HTTP API diagnostics (new primary email path)
-{
-    string? brevoKey = Environment.GetEnvironmentVariable("BREVO_API_KEY")
-                    ?? Environment.GetEnvironmentVariable("Email__BrevoApiKey")
-                    ?? Environment.GetEnvironmentVariable("Email__BrevoApiKey", EnvironmentVariableTarget.User)
-                    ?? Environment.GetEnvironmentVariable("Email:BrevoApiKey");
-
-    var brevoSection = builder.Configuration.GetSection("Brevo");
-    string from = brevoSection["From"] ?? builder.Configuration["Email:From"] ?? "(default)";
-    string senderName = brevoSection["SenderName"] ?? "Wizionic";
-
-    bool keyPresent = !string.IsNullOrWhiteSpace(brevoKey);
-    int keyLen = brevoKey?.Length ?? 0;
-    string keyPreview = keyLen >= 8 ? brevoKey!.Substring(0, 4) + "..." + brevoKey!.Substring(keyLen - 4) : (brevoKey ?? "(not set)");
-
-    Console.WriteLine($"[Brevo] Configured: from={from} senderName={senderName} keyPresent={keyPresent} keyLen={keyLen} preview={keyPreview}");
-    if (!keyPresent)
-    {
-        Console.WriteLine("[Brevo] WARNING: No BREVO_API_KEY (or Email__BrevoApiKey) found. Emails will not be sent via Brevo until the env var is set.");
-    }
+    var brevoKey = Environment.GetEnvironmentVariable("BREVO_API_KEY")
+                ?? Environment.GetEnvironmentVariable("Email__BrevoApiKey");
+    Console.WriteLine($"[Brevo] apiKeyConfigured={!string.IsNullOrWhiteSpace(brevoKey)}");
 }
 
 // Proxied AI provider diagnostics (keys are never logged).

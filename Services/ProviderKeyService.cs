@@ -6,17 +6,18 @@ namespace App.Services;
 
 /// <summary>
 /// Manages per-user API keys for providers defined in ProviderCatalog.
-/// Keys are currently stored plaintext (see entity for TODO on encryption).
 /// </summary>
 public class ProviderKeyService
 {
     private readonly AppDbContext _db;
     private readonly IHttpContextAccessor _http;
+    private readonly KeyProtectionService _protector;
 
-    public ProviderKeyService(AppDbContext db, IHttpContextAccessor http)
+    public ProviderKeyService(AppDbContext db, IHttpContextAccessor http, KeyProtectionService protector)
     {
         _db = db;
         _http = http;
+        _protector = protector;
     }
 
     private async Task<User> GetCurrentUserAsync()
@@ -64,7 +65,7 @@ public class ProviderKeyService
             {
                 UserId = user.Id,
                 ProviderId = providerId,
-                Key = apiKey,
+                Key = _protector.Protect(apiKey),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -72,7 +73,7 @@ public class ProviderKeyService
         }
         else
         {
-            existing.Key = apiKey;
+            existing.Key = _protector.Protect(apiKey);
             existing.UpdatedAt = DateTime.UtcNow;
         }
 

@@ -44,21 +44,6 @@ public class BrevoEmailSender : IEmailSender
         _options = options.Value;
         _logger = logger;
         _httpFactory = httpFactory;
-
-        // Initial diagnostics (key never logged)
-        var keyInfo = GetKeyInfo();
-        Console.WriteLine($"[Brevo-DIAG][ctor] From='{_options.From}' SenderName='{_options.SenderName}' keyPresent={keyInfo.Present} keyLen={keyInfo.Length} preview={keyInfo.Preview}");
-    }
-
-    private (bool Present, int Length, string Preview) GetKeyInfo()
-    {
-        string? key = ReadApiKeyFromEnv();
-        if (string.IsNullOrWhiteSpace(key))
-            return (false, 0, "(not set)");
-
-        int len = key.Length;
-        string preview = len >= 8 ? key.Substring(0, 4) + "..." + key.Substring(len - 4) : key;
-        return (true, len, preview);
     }
 
     private string? ReadApiKeyFromEnv()
@@ -84,7 +69,7 @@ public class BrevoEmailSender : IEmailSender
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            _logger.LogWarning("[BrevoEmailSender] BREVO_API_KEY not configured. Would have sent login code to {Email}: code={Code} link={Link}", toEmail, loginCode, magicLinkUrl);
+            _logger.LogWarning("[BrevoEmailSender] BREVO_API_KEY not configured; login email not sent.");
             return;
         }
 
@@ -94,11 +79,7 @@ public class BrevoEmailSender : IEmailSender
             return;
         }
 
-        var keyInfo = GetKeyInfo(); // re-read for fresh diagnostics
-        Console.WriteLine($"[Brevo-DIAG][send] >>> SENDING VIA BREVO HTTP API <<<");
-        Console.WriteLine($"[Brevo-DIAG][send] From='{_options.From}' SenderName='{_options.SenderName}' keyLen={keyInfo.Length} preview={keyInfo.Preview}");
-
-        _logger.LogInformation("[BrevoEmailSender] Sending login email via Brevo HTTP API to {Email} (from {From})", toEmail, _options.From);
+        _logger.LogInformation("[BrevoEmailSender] Sending login email via Brevo HTTP API.");
 
         var (textBody, htmlBody) = LoginEmailContent.Build(loginCode, magicLinkUrl);
 
@@ -144,8 +125,7 @@ public class BrevoEmailSender : IEmailSender
                 }
                 catch { /* best effort */ }
 
-                _logger.LogInformation("Login email sent via Brevo to {Email} (messageId: {MessageId})", toEmail, messageId ?? "(none)");
-                Console.WriteLine($"[Brevo-DIAG][send] Success. Status={(int)response.StatusCode} messageId={messageId ?? "n/a"}");
+                _logger.LogInformation("Login email sent via Brevo (messageId: {MessageId})", messageId ?? "(none)");
             }
             else
             {

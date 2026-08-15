@@ -34,9 +34,18 @@ public class KeyProtectionService
         }
         catch
         {
-            // In production you might log and/or treat as invalid (force re-entry of key).
-            // For now return empty so callers can treat as "no key configured".
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Prefer a protected value; if it was stored raw, return it unchanged.
+    /// </summary>
+    public string UnprotectOrPlain(string stored)
+    {
+        if (string.IsNullOrEmpty(stored))
+            return stored;
+        var unprotected = Unprotect(stored);
+        return string.IsNullOrEmpty(unprotected) ? stored : unprotected;
     }
 }

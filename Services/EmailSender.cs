@@ -72,29 +72,13 @@ public class EmailSender : IEmailSender
         {
             _options.SmtpPass = envPass.Trim();
         }
-
-        // Loud diagnostic so you can see exactly what the options contain vs the live env var
-        // (useful when using dotnet watch and env vars set in the shell).
-        string liveEnvUser = Environment.GetEnvironmentVariable("Email__SmtpUser")
-                          ?? Environment.GetEnvironmentVariable("Email__SmtpUser", EnvironmentVariableTarget.User)
-                          ?? Environment.GetEnvironmentVariable("Email:SmtpUser") ?? "(not set)";
-        string liveEnvPass = Environment.GetEnvironmentVariable("Email__SmtpPass")
-                          ?? Environment.GetEnvironmentVariable("Email__SmtpPass", EnvironmentVariableTarget.User)
-                          ?? Environment.GetEnvironmentVariable("Email:SmtpPass") ?? "(not set)";
-        int livePassLen = liveEnvPass == "(not set)" ? 0 : liveEnvPass.Length;
-        string passPreview = livePassLen >= 8 ? liveEnvPass.Substring(0, 4) + "..." + liveEnvPass.Substring(livePassLen - 4) : liveEnvPass;
-        Console.WriteLine($"[SMTP-DIAG][ctor] options.User='{_options.SmtpUser}' | live $env:Email__SmtpUser='{liveEnvUser}' | passLen={livePassLen} preview={passPreview}");
-        if (_options.SmtpUser.Contains("smtp-brevo.com") && ! (liveEnvPass.StartsWith("xsmtpsib-") || liveEnvPass.StartsWith("xkeysib-")) )
-        {
-            Console.WriteLine($"[SMTP-DIAG][ctor] !!! WARNING: The pass we read does not start with xsmtpsib- (Brevo SMTP keys should). It starts with '{liveEnvPass.Substring(0, Math.Min(10, livePassLen))}'");
-        }
     }
 
     public async Task SendLoginEmailAsync(string toEmail, string loginCode, string magicLinkUrl)
     {
         if (string.IsNullOrWhiteSpace(_options.SmtpHost) || string.IsNullOrWhiteSpace(_options.From))
         {
-            _logger.LogWarning("[EmailSender] SMTP not configured. Would have sent login code to {Email}: code={Code} link={Link}", toEmail, loginCode, magicLinkUrl);
+            _logger.LogWarning("[EmailSender] SMTP not configured; login email not sent.");
             return;
         }
 
@@ -123,38 +107,8 @@ public class EmailSender : IEmailSender
 
             if (!string.IsNullOrWhiteSpace(_options.SmtpUser))
             {
-                var passLen = _options.SmtpPass?.Length ?? 0;
-                if (passLen == 0)
-                {
-                    _logger.LogWarning("[EmailSender] SmtpUser is set but SmtpPass is empty! Authentication will almost certainly fail.");
-                }
-
-                // === THIS IS THE KEY DIAGNOSTIC YOU ASKED FOR ===
-                // It shows exactly what we are about to pass to AuthenticateAsync,
-                // plus a fresh read of the env var in the same process at the exact moment of the call.
-                string liveUserNow = Environment.GetEnvironmentVariable("Email__SmtpUser")
-                                  ?? Environment.GetEnvironmentVariable("Email:SmtpUser")
-                                  ?? "(not set in env right now)";
-                string livePassNow = Environment.GetEnvironmentVariable("Email__SmtpPass")
-                                  ?? Environment.GetEnvironmentVariable("Email:SmtpPass")
-                                  ?? "(not set in env right now)";
-                int livePassLenNow = livePassNow == "(not set in env right now)" ? 0 : livePassNow.Length;
-                string passPreviewNow = livePassLenNow >= 8
-                    ? livePassNow.Substring(0, 4) + "..." + livePassNow.Substring(livePassLenNow - 4)
-                    : livePassNow;
-
-                Console.WriteLine($"[SMTP-DIAG][auth] >>> SENDING TO BREVO <<<");
-                Console.WriteLine($"[SMTP-DIAG][auth] options.SmtpUser = '{_options.SmtpUser}'");
-                Console.WriteLine($"[SMTP-DIAG][auth] options.SmtpPass length = {passLen}");
-                Console.WriteLine($"[SMTP-DIAG][auth] LIVE env at this instant: Email__SmtpUser='{liveUserNow}'");
-                Console.WriteLine($"[SMTP-DIAG][auth] LIVE env at this instant: Email__SmtpPass len={livePassLenNow} preview={passPreviewNow}");
-                if (_options.SmtpUser.Contains("smtp-brevo.com") && !(_options.SmtpPass?.StartsWith("xsmtpsib-") == true || _options.SmtpPass?.StartsWith("xkeysib-") == true))
-                {
-                    Console.WriteLine($"[SMTP-DIAG][auth] !!! WARNING: Pass does not start with xsmtpsib- or xkeysib-. Brevo SMTP keys almost always do. Current pass starts with '{_options.SmtpPass?.Substring(0, Math.Min(10, passLen))}'");
-                }
-                Console.WriteLine($"[SMTP-DIAG][auth] >>> calling AuthenticateAsync now...");
-
-                _logger.LogInformation("[EmailSender] Authenticating with SMTP user \"{User}\" (pass length={PassLen})", _options.SmtpUser, passLen);
+                if (string.IsNullOrEmpty(_options.SmtpPass))
+                    _logger.LogWarning("[EmailSender] SmtpUser is set but SmtpPass is empty.");
 
                 await smtp.AuthenticateAsync(_options.SmtpUser, _options.SmtpPass);
             }
@@ -167,7 +121,7 @@ public class EmailSender : IEmailSender
         catch (Exception ex)
         {
             // For auth failures (535 5.7.8 etc.) this will include the attempted user in preceding log lines.
-            _logger.LogError(ex, "Failed to send login email to {Email} (attempted SMTP user: \"{User}\"). Code was: {Code}", toEmail, _options.SmtpUser, loginCode);
+            _logger.LogError(ex, "Failed to send login email.");
 
             // Extra guidance on the console for the common Brevo 535 case.
             var msg = (ex.InnerException?.ToString() ?? ex.ToString());

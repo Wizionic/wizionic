@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using App.Core.Auth;
 
 namespace App.Services;
 
@@ -14,11 +15,10 @@ public static class PasswordHashService
     private const int SaltSize = 16;
     private const int HashSize = 32;
 
-    /// <summary>Minimum password length (kept intentionally easy).</summary>
-    public const int MinLength = 6;
+    public const int MinLength = PasswordRules.MinLength;
 
     public static bool MeetsRequirements(string? password) =>
-        !string.IsNullOrEmpty(password) && password.Length >= MinLength;
+        PasswordRules.MeetsRequirements(password);
 
     public static string Hash(string password)
     {

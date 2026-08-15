@@ -56,8 +56,6 @@ public static class WasmApiEndpoints
             var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
             var magicLink = $"{baseUrl}/magic-login?token={Uri.EscapeDataString(loginCode)}";
 
-            Console.WriteLine($"[DEV] Login code for {req.Email}: {loginCode} (link: {magicLink})");
-
             await emailSender.SendLoginEmailAsync(req.Email.Trim(), loginCode, magicLink);
 
             return Results.Ok(new
@@ -163,15 +161,14 @@ public static class WasmApiEndpoints
         });
 
         // Set or change password for the currently signed-in user.
-        // Easy requirements: minimum length only (see PasswordHashService.MinLength).
         group.MapPost("/auth/set-password", async (ClaimsPrincipal principal, AppDbContext db, SetPasswordRequest req) =>
         {
             var email = principal.Identity?.Name;
             if (string.IsNullOrEmpty(email))
                 return Results.Unauthorized();
 
-            if (!PasswordHashService.MeetsRequirements(req.Password))
-                return Results.BadRequest(new { message = $"Password must be at least {PasswordHashService.MinLength} characters." });
+            if (!App.Core.Auth.PasswordRules.TryValidate(req.Password, out var reason))
+                return Results.BadRequest(new { message = reason });
 
             if (!string.Equals(req.Password, req.ConfirmPassword, StringComparison.Ordinal))
                 return Results.BadRequest(new { message = "Passwords do not match." });
@@ -239,11 +236,9 @@ public static class WasmApiEndpoints
                 plaintextKey = LocalEncryptionKeyService.GenerateRawKeyBase64();
                 u.LocalEncryptionKey = plaintextKey;
                 await db.SaveChangesAsync();
-                Console.WriteLine($"[Auth] Created LocalEncryptionKey for {email} (first fetch).");
             }
             else if (plaintextKey == null)
             {
-                Console.WriteLine($"[Auth] LocalEncryptionKey for {email} is missing or corrupted; refusing to rotate.");
                 return Results.Problem(
                     title: "Encryption key unavailable",
                     detail: "Your account encryption key could not be read. Data was not rotated. Contact support or restore homeserver.db from backup.",
@@ -253,7 +248,6 @@ public static class WasmApiEndpoints
             {
                 u.LocalEncryptionKey = plaintextKey;
                 await db.SaveChangesAsync();
-                Console.WriteLine($"[Auth] Migrated legacy protected LocalEncryptionKey to plaintext for {email}.");
             }
 
             return Results.Ok(new { Key = plaintextKey });
@@ -270,7 +264,7 @@ public static class WasmApiEndpoints
             {
                 k.ProviderId,
                 k.Enabled,
-                Key = string.IsNullOrEmpty(k.Key) ? null : protector.Unprotect(k.Key) // plaintext only for this authenticated response
+                Key = string.IsNullOrEmpty(k.Key) ? null : protector.UnprotectOrPlain(k.Key)
             });
             return Results.Ok(result);
         });
