@@ -122,3 +122,14 @@ window.appTheme = window.appTheme || {
         this._systemListener = null;
     }
 };
+
+window.appPlatform = function () {
+    try {
+        return (navigator.userAgentData && navigator.userAgentData.platform)
+            || navigator.platform
+            || navigator.userAgent
+            || '';
+    } catch (e) {
+        return navigator.userAgent || '';
+    }
+};

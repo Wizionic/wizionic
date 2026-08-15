@@ -12,10 +12,7 @@ public class UserProviderKey
     /// </summary>
     public string ProviderId { get; set; } = "";
 
-    /// <summary>
-    /// API key for the provider. Stored as-is for initial implementation.
-    /// TODO: encrypt at rest using IDataProtector (or symmetric with master key from config/user-secrets).
-    /// </summary>
+    /// <summary>API key for the provider. Older rows may still be raw; new writes go through KeyProtectionService.</summary>
     public string Key { get; set; } = "";
 
     /// <summary>
