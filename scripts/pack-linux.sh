@@ -15,6 +15,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 VERSION="${VERSION:-0.2.0}"
+# MAUI Resizetizer requires a 3-part display version (0.2.0), not 0.2.0-rc.3.
+DISPLAY_VERSION="${VERSION%%-*}"
 OUTPUT_DIR="${OUTPUT_DIR:-./linux_publish}"
 RELEASES_DIR="${RELEASES_DIR:-./linux_releases}"
 DEB_BUILD_DIR="${DEB_BUILD_DIR:-./linux_deb_build}"
@@ -120,7 +122,7 @@ dotnet publish "App.Maui/App.Maui.csproj" \
   -r linux-x64 \
   --self-contained true \
   -o "$OUTPUT_DIR" \
-  -p:ApplicationDisplayVersion="$VERSION" \
+  -p:ApplicationDisplayVersion="$DISPLAY_VERSION" \
   -p:Version="$VERSION" \
   -p:DebugType=None \
   -p:DebugSymbols=false
@@ -422,7 +424,7 @@ else
     -p:SelectBlazorWebAssemblyRazorConfiguration=Release \
     -p:BuildProjectReferences=true \
     -p:Version="$VERSION" \
-    -p:ApplicationDisplayVersion="$VERSION"
+    -p:ApplicationDisplayVersion="$DISPLAY_VERSION"
 
   if [[ ! -f "$HOMESERVER_OUTPUT/App" && ! -f "$HOMESERVER_OUTPUT/App.dll" ]]; then
     echo "ERROR: homeserver publish missing App entrypoint in $HOMESERVER_OUTPUT" >&2

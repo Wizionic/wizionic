@@ -14,6 +14,9 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+# MAUI Resizetizer requires a 3-part display version (0.2.0), not 0.2.0-rc.3.
+$DisplayVersion = ($Version -split "-")[0]
+
 $MauiOutput = ".\maui_publish"
 $ReleasesDir = ".\maui_releases"
 $UpdateFeed = "https://wizionic.com/releases/windows"
@@ -48,7 +51,7 @@ dotnet publish "App.Maui\App.Maui.csproj" `
     -f $winTfm `
     -p:WizionicPackTarget=windows `
     -p:RuntimeIdentifierOverride=win-x64 `
-    -p:ApplicationDisplayVersion=$Version `
+    -p:ApplicationDisplayVersion=$DisplayVersion `
     -p:Version=$Version `
     -o $MauiOutput
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
