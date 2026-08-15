@@ -239,7 +239,7 @@
     /// </summary>
     [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
 
-    private const string LinuxInstallCommand = "curl -fsSL https://wizionic.com/install.sh | bash";
+    private const string LinuxInstallCommand = "curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash";
     private const int MinPasswordLength = 6;
     private bool _linuxInstallCopied;
     /// <summary>"windows", "linux", "mac", or null until detected.</summary>

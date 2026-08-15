@@ -42,7 +42,7 @@ If you connect Google, GitHub, Notion, Stripe, Ollama, Lemonade, MCP servers, or
 
 ## Desktop updates
 
-Official installers may check [wizionic.com](https://wizionic.com) and/or [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest) for updates. You can ignore or uninstall the app at any time. Windows uninstall is provided by the Velopack installer.
+Official desktop builds check [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest) for updates. You can ignore or uninstall the app at any time. Windows uninstall is provided by the Velopack installer.
 
 ## Changes
 

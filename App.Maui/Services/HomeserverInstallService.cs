@@ -22,7 +22,6 @@ namespace App.Maui.Services;
 /// </summary>
 public sealed class HomeserverInstallService : IHomeserverInstallService
 {
-    private readonly string _feedBaseUrl;
     private readonly string _productionBaseUrl;
     private readonly ILogger<HomeserverInstallService> _logger;
     private readonly HttpClient _http;
@@ -37,12 +36,11 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         _productionBaseUrl = string.IsNullOrWhiteSpace(options.Value.BaseUrl)
             ? "https://wizionic.com"
             : options.Value.BaseUrl.TrimEnd('/');
-        _feedBaseUrl = _productionBaseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase)
-            ? "https://wizionic.com"
-            : _productionBaseUrl;
         _logger = logger;
         _http = httpClientFactory.CreateClient(nameof(HomeserverInstallService));
         _http.Timeout = TimeSpan.FromMinutes(15);
+        if (!_http.DefaultRequestHeaders.UserAgent.Any())
+            _http.DefaultRequestHeaders.UserAgent.ParseAdd("Wizionic");
         _serverEndpoint = serverEndpoint;
 
         if (File.Exists(HomeserverPaths.PendingUpdateFlagPath))
@@ -266,7 +264,9 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
     private async Task<HomeserverFeedManifest?> GetFeedManifestAsync(CancellationToken ct)
     {
-        var url = $"{_feedBaseUrl}/{HomeserverPaths.ReleasesFeedPath}/{HomeserverPaths.LatestManifestFile}";
+        var url = OperatingSystem.IsLinux()
+            ? AppServerOptions.HomeserverLinuxManifestUrl
+            : AppServerOptions.HomeserverWinManifestUrl;
         try
         {
             var manifest = await _http.GetFromJsonAsync<HomeserverFeedManifest>(url, ct);
@@ -279,7 +279,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 var fileName = string.IsNullOrWhiteSpace(manifest.FileName)
                     ? $"homeserver-{rid}-{manifest.Version}.zip"
                     : manifest.FileName;
-                manifest.Url = $"{_feedBaseUrl}/{HomeserverPaths.ReleasesFeedPath}/{fileName}";
+                manifest.Url = AppServerOptions.GitHubLatestDownloadUrl(fileName);
             }
 
             return manifest;
@@ -808,9 +808,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
             var path = Path.Combine(MauiAppData.Directory, "appsettings.Local.json");
             Directory.CreateDirectory(MauiAppData.Directory);
-            var updateFeed = OperatingSystem.IsLinux()
-                ? $"{_feedBaseUrl}/releases/linux"
-                : $"{_feedBaseUrl}/releases/windows";
+            var updateFeed = AppServerOptions.GitHubRepoUrl;
             var json = JsonSerializer.Serialize(new
             {
                 AppServer = new

@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using App.Core.Configuration;
 using Microsoft.Extensions.Logging;
@@ -77,15 +76,9 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
         var unchanged = string.Equals(_baseUrl, normalized, StringComparison.OrdinalIgnoreCase);
         _baseUrl = normalized;
 
-        // When pointing at a local homeserver, keep Velopack updates on the public
-        // production feed for this OS. Always re-assert the platform-correct path so an
-        // older Windows-only override cannot stick on Linux (or vice versa).
-        if (IsLocalHost(_baseUrl))
-            _updateFeedUrlOverride = PublicProductionFeedUrl();
-        else
-            // Non-local: clear override so feed derives from BaseUrl + platform path,
-            // unless an explicit override was already platform-correct.
-            _updateFeedUrlOverride = NormalizeFeedOverride(_updateFeedUrlOverride);
+        // Login server (wizionic.com or a local homeserver) is independent of
+        // desktop updates. Those always come from GitHub Releases.
+        _updateFeedUrlOverride = PublicProductionFeedUrl();
 
         await PersistAsync(cancellationToken);
         var appliedLive = ApplyLive();
@@ -163,41 +156,30 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
     }
 
     /// <summary>
-    /// Default Velopack feed: public production channel when login server is local;
-    /// otherwise {BaseUrl}/releases/{linux|windows}.
+    /// Desktop updates always come from GitHub Releases, regardless of login server.
     /// </summary>
-    internal static string ResolveDefaultFeedUrl(string baseUrl)
-    {
-        if (IsLocalHost(baseUrl))
-            return PublicProductionFeedUrl();
+    internal static string ResolveDefaultFeedUrl(string baseUrl) => PublicProductionFeedUrl();
 
-        return baseUrl.TrimEnd('/') + "/" + AppServerOptions.DefaultUpdateFeedPath;
-    }
-
-    /// <summary>Public wizionic.com feed for the current OS (never cross-platform).</summary>
-    internal static string PublicProductionFeedUrl() =>
-        IsLinuxDesktop()
-            ? "https://wizionic.com/releases/linux"
-            : "https://wizionic.com/releases/windows";
+    internal static string PublicProductionFeedUrl() => AppServerOptions.GitHubRepoUrl;
 
     /// <summary>
-    /// Normalize / correct a stored feed override. Rewrites a cross-platform path
-    /// (linux app with /releases/windows, or windows app with /releases/linux) to the
-    /// matching channel on the same host when possible.
+    /// Normalize a stored feed override. Old wizionic.com /releases/* folder feeds
+    /// are rewritten to the GitHub repo URL so existing installs migrate.
     /// </summary>
     internal static string? NormalizeFeedOverride(string? feedUrl)
     {
         if (string.IsNullOrWhiteSpace(feedUrl))
-            return null;
+            return AppServerOptions.GitHubRepoUrl;
 
         var trimmed = feedUrl.Trim().TrimEnd('/');
-        var linux = IsLinuxDesktop();
 
-        if (linux && ContainsPathSegment(trimmed, "/releases/windows"))
-            return SwapReleaseChannel(trimmed, "windows", "linux");
+        if (trimmed.Contains("github.com/Wizionic/wizionic", StringComparison.OrdinalIgnoreCase))
+            return AppServerOptions.GitHubRepoUrl;
 
-        if (!linux && ContainsPathSegment(trimmed, "/releases/linux"))
-            return SwapReleaseChannel(trimmed, "linux", "windows");
+        if (trimmed.Contains("wizionic.com/releases", StringComparison.OrdinalIgnoreCase)
+            || ContainsPathSegment(trimmed, "/releases/windows")
+            || ContainsPathSegment(trimmed, "/releases/linux"))
+            return AppServerOptions.GitHubRepoUrl;
 
         return trimmed;
     }
@@ -209,18 +191,6 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
             normalized?.Trim().TrimEnd('/'),
             StringComparison.OrdinalIgnoreCase);
 
-    private static string SwapReleaseChannel(string feedUrl, string from, string to)
-    {
-        // Prefer exact suffix swap; fall back to substring for query-less paths.
-        var marker = "/releases/" + from;
-        var idx = feedUrl.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (idx < 0)
-            return PublicProductionFeedUrl();
-
-        var hostAndPrefix = feedUrl[..idx];
-        return hostAndPrefix + "/releases/" + to;
-    }
-
     private static bool ContainsPathSegment(string url, string segment) =>
         url.Contains(segment, StringComparison.OrdinalIgnoreCase);
 
@@ -231,10 +201,4 @@ public sealed class MauiAppServerEndpoint : IAppServerEndpoint
         return url.Trim().TrimEnd('/');
     }
 
-    private static bool IsLocalHost(string url) =>
-        url.Contains("localhost", StringComparison.OrdinalIgnoreCase)
-        || url.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsLinuxDesktop() =>
-        RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 }

@@ -381,7 +381,7 @@
                 <strong>@(installedVersion ?? "unknown")</strong>
                 @if (!string.IsNullOrEmpty(latestFeedVersion))
                 {
-                    <span> · Latest on server: <strong>@latestFeedVersion</strong></span>
+                    <span> · Latest on GitHub: <strong>@latestFeedVersion</strong></span>
                 }
             </div>
 
@@ -703,19 +703,8 @@
     private void LoadInstalledVersion()
     {
         installedVersion = UpdateService.GetInstalledVersion();
-        // Prefer the platform-specific feed URL from MauiUpdateService (already linux vs windows).
-        // Infer package name from the feed path so we never call OperatingSystem APIs in Shared UI.
-        var feed = UpdateService.UpdateFeedUrl?.TrimEnd('/');
-        if (string.IsNullOrEmpty(feed))
-            feed = "https://wizionic.com/releases/windows";
-
-        // Treat unknown/empty as Windows only when the feed path is not clearly Linux.
-        var isLinuxFeed = feed.Contains("/linux", StringComparison.OrdinalIgnoreCase)
-            || feed.Contains("releases.linux", StringComparison.OrdinalIgnoreCase);
-        // Linux: install.sh defaults to user AppImage (in-app updates). Windows: Setup.exe.
-        installerDownloadUrl = isLinuxFeed
-            ? "https://wizionic.com/install.sh"
-            : feed.TrimEnd('/') + "/Wizionic-win-Setup.exe";
+        installerDownloadUrl = UpdateService.InstallerDownloadUrl
+            ?? App.Core.Configuration.AppServerOptions.LatestWindowsSetupUrl;
     }
 
     private void RefreshHomeserverStatus()

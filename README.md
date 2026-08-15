@@ -13,12 +13,12 @@ This repository is public so you can inspect the product. **It is not a call for
 
 ## Download
 
-Installers will be published to [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest). Until the first Actions-built release is verified, Windows and Linux installers also remain at [wizionic.com](https://wizionic.com).
+Installers and in-app updates are published to [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest). The hosted site [wizionic.com](https://wizionic.com) is for login, sync signaling, and the web client.
 
 | Platform | Package |
 |---|---|
 | Windows 10 / 11 | `Wizionic-win-Setup.exe` (Velopack) |
-| Linux (x64) | AppImage, `.deb`, or `curl -fsSL https://wizionic.com/install.sh \| bash` |
+| Linux (x64) | AppImage, `.deb`, or `curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh \| bash` |
 
 ## Sole author
 

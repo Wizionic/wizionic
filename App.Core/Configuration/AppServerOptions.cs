@@ -10,9 +10,21 @@ public class AppServerOptions
     /// </summary>
     public string BaseUrl { get; set; } = "http://localhost:5136";
 
+    public const string GitHubRepoUrl = "https://github.com/Wizionic/wizionic";
+    public const string GitHubApiLatestReleaseUrl = "https://api.github.com/repos/Wizionic/wizionic/releases/latest";
+
+    public static string GitHubLatestDownloadUrl(string assetFileName) =>
+        $"{GitHubRepoUrl}/releases/latest/download/{assetFileName}";
+
+    public static string LatestWindowsSetupUrl => GitHubLatestDownloadUrl("Wizionic-win-Setup.exe");
+    public static string LatestLinuxAppImageUrl => GitHubLatestDownloadUrl("Wizionic.AppImage");
+    public static string LatestLinuxInstallScriptUrl => GitHubLatestDownloadUrl("install.sh");
+    public static string HomeserverWinManifestUrl => GitHubLatestDownloadUrl("homeserver-win-latest.json");
+    public static string HomeserverLinuxManifestUrl => GitHubLatestDownloadUrl("homeserver-linux-latest.json");
+
     /// <summary>
-    /// Optional override for the Velopack feed URL. When unset, defaults to
-    /// {BaseUrl}/releases/windows on Windows and {BaseUrl}/releases/linux on Linux.
+    /// Optional override for the Velopack source. When unset, desktop updates
+    /// use GitHub Releases at <see cref="GitHubRepoUrl"/> (not the login server).
     /// </summary>
     public string? UpdateFeedUrl { get; set; }
 
@@ -36,7 +48,7 @@ public class AppServerOptions
 
     public string GetUpdateFeedUrl() =>
         string.IsNullOrWhiteSpace(UpdateFeedUrl)
-            ? BaseUrl.TrimEnd('/') + "/" + DefaultUpdateFeedPath
+            ? GitHubRepoUrl
             : UpdateFeedUrl.TrimEnd('/');
 
     private static bool IsLinuxDesktop()

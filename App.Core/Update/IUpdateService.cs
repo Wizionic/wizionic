@@ -34,6 +34,9 @@ public interface IUpdateService
     /// <summary>Update feed URL (empty when updates are unavailable on this platform).</summary>
     string? UpdateFeedUrl { get; }
 
+    /// <summary>Direct installer download for the current OS (GitHub Releases).</summary>
+    string? InstallerDownloadUrl { get; }
+
     Task<UpdateCheckResult> CheckForUpdateAsync();
 
     Task DownloadAndInstallAsync(UpdateInfo update);

@@ -18,6 +18,8 @@ public class NullUpdateService : IUpdateService
 
     public string? UpdateFeedUrl => null;
 
+    public string? InstallerDownloadUrl => null;
+
     public Task<UpdateCheckResult> CheckForUpdateAsync() =>
         Task.FromResult(new UpdateCheckResult
         {

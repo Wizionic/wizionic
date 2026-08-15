@@ -22,8 +22,9 @@ RELEASES_DIR="${RELEASES_DIR:-./linux_releases}"
 DEB_BUILD_DIR="${DEB_BUILD_DIR:-./linux_deb_build}"
 HOMESERVER_OUTPUT="${HOMESERVER_OUTPUT:-./homeserver_publish_linux}"
 HOMESERVER_RELEASES="${HOMESERVER_RELEASES:-./homeserver_releases_linux}"
-UPDATE_FEED="${UPDATE_FEED:-https://wizionic.com/releases/linux}"
-HOMESERVER_FEED="${HOMESERVER_FEED:-https://wizionic.com/releases/homeserver/linux}"
+GITHUB_REPO="${GITHUB_REPO:-https://github.com/Wizionic/wizionic}"
+UPDATE_FEED="${UPDATE_FEED:-${GITHUB_REPO}/releases/latest/download}"
+HOMESERVER_FEED="${HOMESERVER_FEED:-${GITHUB_REPO}/releases/download/v${VERSION:-0.2.0}}"
 PACK_ID="Wizionic"
 PACK_TITLE="Wizionic"
 MAIN_EXE="Wizionic"
@@ -54,6 +55,9 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+DISPLAY_VERSION="${VERSION%%-*}"
+HOMESERVER_FEED="${GITHUB_REPO}/releases/download/v${VERSION}"
 
 resolve_icon() {
   if [[ -f "$ICON_PATH" ]]; then
@@ -107,7 +111,7 @@ if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
 else
   echo ""
   echo "Downloading previous releases from $UPDATE_FEED ..."
-  if ! vpk download http --url "$UPDATE_FEED" --outputDir "$RELEASES_DIR" --channel linux; then
+  if ! vpk download github --repoUrl "$GITHUB_REPO" --outputDir "$RELEASES_DIR" --channel linux; then
     echo "WARNING: could not download previous releases (empty feed or network)."
     echo "         Continuing without deltas."
   fi
@@ -253,8 +257,8 @@ echo "Writing install.sh ..."
 cat > "$RELEASES_DIR/install.sh" << EOF
 #!/usr/bin/env bash
 # Wizionic Linux installer
-#   curl -fsSL https://wizionic.com/install.sh | bash              # AppImage (recommended)
-#   curl -fsSL https://wizionic.com/install.sh | bash -s -- --system  # .deb under /opt
+#   curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash -s -- --system
 set -euo pipefail
 
 VERSION="${VERSION}"
@@ -269,8 +273,8 @@ usage() {
 Wizionic Linux installer
 
 Usage:
-  curl -fsSL https://wizionic.com/install.sh | bash
-  curl -fsSL https://wizionic.com/install.sh | bash -s -- [options]
+  curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash
+  curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash -s -- [options]
 
 Options:
   --appimage, --user   Install AppImage to ~/Applications (default; supports in-app updates)
@@ -317,9 +321,9 @@ install_deb_file() {
   echo ""
   echo "NOTE: System installs are root-owned. In-app updates usually cannot replace"
   echo "      /opt/wizionic/Wizionic.AppImage. To upgrade later either:"
-  echo "        curl -fsSL https://wizionic.com/install.sh | bash -s -- --system"
+  echo "        curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash -s -- --system"
   echo "      or use the user AppImage install (recommended for auto-update):"
-  echo "        curl -fsSL https://wizionic.com/install.sh | bash"
+  echo "        curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash"
 }
 
 install_appimage() {
@@ -446,7 +450,7 @@ else
   )
 
   HOMESERVER_SHA256="$(sha256sum "$HOMESERVER_ZIP_PATH" | awk '{print $1}')"
-  cat > "$HOMESERVER_RELEASES/latest.json" << MANIFEST
+  cat > "$HOMESERVER_RELEASES/homeserver-linux-latest.json" << MANIFEST
 {
   "version": "${VERSION}",
   "fileName": "${HOMESERVER_ZIP_NAME}",

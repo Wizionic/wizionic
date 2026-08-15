@@ -7,12 +7,13 @@ using App.Core.Homeserver;
 using App.Core.Update;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Velopack.Sources;
 
 namespace App.Maui.Services;
 
 /// <summary>
 /// Velopack-based auto-updater for the MAUI desktop target.
-/// Reads the update feed URL from AppServer options in appsettings.json.
+/// Reads updates from GitHub Releases (Velopack GithubSource).
 /// When a local Home Server is installed, also refreshes its binaries (never the SQLite data dir).
 /// </summary>
 public class MauiUpdateService : IUpdateService
@@ -32,12 +33,19 @@ public class MauiUpdateService : IUpdateService
         _logger = logger;
         _http = httpClientFactory.CreateClient(nameof(MauiUpdateService));
         _http.Timeout = TimeSpan.FromSeconds(30);
+        if (!_http.DefaultRequestHeaders.UserAgent.Any())
+            _http.DefaultRequestHeaders.UserAgent.ParseAdd("Wizionic");
         _homeserver = homeserver;
     }
 
-    public string? UpdateFeedUrl => _endpoint.UpdateFeedUrl;
+    public string? UpdateFeedUrl => AppServerOptions.GitHubRepoUrl;
 
-    private string _updateUrl => _endpoint.UpdateFeedUrl;
+    public string? InstallerDownloadUrl =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+            ? AppServerOptions.LatestLinuxAppImageUrl
+            : AppServerOptions.LatestWindowsSetupUrl;
+
+    private string _updateUrl => AppServerOptions.GitHubRepoUrl;
 
     public bool IsVelopackInstalled => CreateManager().IsInstalled;
 
@@ -45,7 +53,8 @@ public class MauiUpdateService : IUpdateService
         CreateManager().CurrentVersion?.ToString();
 
     private Velopack.UpdateManager CreateManager() =>
-        new Velopack.UpdateManager(_updateUrl);
+        new Velopack.UpdateManager(
+            new GithubSource(AppServerOptions.GitHubRepoUrl, accessToken: null, prerelease: false));
 
     public async Task<UpdateCheckResult> CheckForUpdateAsync()
     {
@@ -225,7 +234,7 @@ public class MauiUpdateService : IUpdateService
         + $"({appImagePath ?? "system AppImage"}). "
         + "System packages under /opt cannot be replaced in-app. "
         + "Reinstall with the user AppImage installer for automatic updates: "
-        + "curl -fsSL https://wizionic.com/install.sh | bash";
+        + $"curl -fsSL {AppServerOptions.LatestLinuxInstallScriptUrl} | bash";
 
     private UpdateCheckResult BuildResult(
         UpdateCheckStatus status,
@@ -249,20 +258,27 @@ public class MauiUpdateService : IUpdateService
     {
         try
         {
-            var feedUrl = _updateUrl.TrimEnd('/') + "/" + AppServerOptions.VelopackReleasesIndexFile;
-            var feed = await _http.GetFromJsonAsync<VelopackFeed>(feedUrl);
-            if (feed?.Assets == null || feed.Assets.Length == 0)
+            using var req = new HttpRequestMessage(HttpMethod.Get, AppServerOptions.GitHubApiLatestReleaseUrl);
+            req.Headers.Accept.ParseAdd("application/vnd.github+json");
+            var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "[Update] GitHub latest release returned {Status}. The repository must be public for unauthenticated updates.",
+                    (int)resp.StatusCode);
+                return null;
+            }
+
+            var payload = await resp.Content.ReadFromJsonAsync<GitHubLatestRelease>();
+            var tag = payload?.TagName?.Trim();
+            if (string.IsNullOrWhiteSpace(tag))
                 return null;
 
-            return feed.Assets
-                .Where(a => a.Type == "Full" && a.PackageId is "Wizionic" or "com.wizionic.app")
-                .Select(a => a.Version)
-                .OrderByDescending(ParseVersion)
-                .FirstOrDefault();
+            return tag.StartsWith('v') || tag.StartsWith('V') ? tag[1..] : tag;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[Update] Could not read feed JSON from {FeedUrl}", _updateUrl);
+            _logger.LogWarning(ex, "[Update] Could not read latest release from GitHub");
             return null;
         }
     }
@@ -326,21 +342,9 @@ public class MauiUpdateService : IUpdateService
         mgr.ApplyUpdatesAndRestart(_pendingUpdateInfo);
     }
 
-    private sealed class VelopackFeed
+    private sealed class GitHubLatestRelease
     {
-        [JsonPropertyName("Assets")]
-        public VelopackFeedAsset[]? Assets { get; init; }
-    }
-
-    private sealed class VelopackFeedAsset
-    {
-        [JsonPropertyName("PackageId")]
-        public string PackageId { get; init; } = "";
-
-        [JsonPropertyName("Version")]
-        public string Version { get; init; } = "";
-
-        [JsonPropertyName("Type")]
-        public string Type { get; init; } = "";
+        [JsonPropertyName("tag_name")]
+        public string? TagName { get; init; }
     }
 }

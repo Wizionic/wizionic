@@ -19,7 +19,7 @@ $DisplayVersion = ($Version -split "-")[0]
 
 $MauiOutput = ".\maui_publish"
 $ReleasesDir = ".\maui_releases"
-$UpdateFeed = "https://wizionic.com/releases/windows"
+$UpdateFeed = "https://github.com/Wizionic/wizionic"
 $HomeserverOutput = ".\homeserver_publish_win"
 $HomeserverReleases = ".\homeserver_releases_win"
 
@@ -35,7 +35,7 @@ New-Item -ItemType Directory -Force -Path $ReleasesDir | Out-Null
 if (-not $SkipDownload) {
     Write-Host "Downloading existing releases from $UpdateFeed ..."
     try {
-        vpk download http --url $UpdateFeed --outputDir $ReleasesDir
+        vpk download github --repoUrl $UpdateFeed --outputDir $ReleasesDir
     } catch {
         Write-Host "WARNING: could not download previous releases. Continuing without deltas."
     }
@@ -94,9 +94,9 @@ if (-not $SkipHomeserver) {
         version  = $Version
         fileName = $zipName
         sha256   = $sha256
-        url      = "https://wizionic.com/releases/homeserver/windows/$zipName"
+        url      = "https://github.com/Wizionic/wizionic/releases/download/v$Version/$zipName"
     } | ConvertTo-Json
-    Set-Content -Path (Join-Path $HomeserverReleases "latest.json") -Value $manifest -Encoding utf8
+    Set-Content -Path (Join-Path $HomeserverReleases "homeserver-win-latest.json") -Value $manifest -Encoding utf8
 }
 
 Write-Host "Done. Artifacts in $ReleasesDir"
