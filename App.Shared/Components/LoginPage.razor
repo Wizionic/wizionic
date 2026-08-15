@@ -9,11 +9,11 @@
         <img class="login-brand-logo" src="/images/app50.png" width="48" height="48" alt="Wizionic" title="Wizionic" />
         <h2>Wizionic</h2>
     </div>
+    @if (!AppEnvironment.IsMaui)
+    {
     <div class="login-lead">
         Download the Wizionic app to use private local AI.
     </div>
-    @if (!AppEnvironment.IsMaui)
-    {
     <div class="login-download-stack">
         <div class="login-download-card @(_detectedOs == "windows" ? "login-download-card--active" : _detectedOs == "linux" ? "login-download-card--muted" : null)">
             @if (_detectedOs == "windows")
@@ -52,8 +52,11 @@
         </div>
     </div>
     }
+    @if (!(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)))
+    {
     <p style="color: var(--color-text-muted);">Login to sync your encrypted data and settings across devices:
     </p>
+    }
 
     @if (Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email))
     {
@@ -69,6 +72,22 @@
         </div>
 
         <div style="margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+            @if (!string.IsNullOrEmpty(passwordMessage) && !_showPasswordForm)
+            {
+                <div style="color: var(--color-success-fg, var(--cf-success-fg, #22c55e)); margin: 0 0 0.5rem; font-size:0.9em;">@passwordMessage</div>
+            }
+
+            @if (!_showPasswordForm)
+            {
+                <button type="button"
+                        class="btn btn-link p-0"
+                        style="font-size:0.95rem;"
+                        @onclick="() => _showPasswordForm = true">
+                    @(Auth.HasPassword ? "Change password" : "Add a password")
+                </button>
+            }
+            else
+            {
             <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">
                 @(Auth.HasPassword ? "Change password" : "Add a password")
             </h3>
@@ -113,11 +132,17 @@
                        class="form-control"
                        autocomplete="new-password" />
             </div>
-            <button class="btn btn-primary"
-                    @onclick="SavePassword"
-                    disabled="@(busy || string.IsNullOrWhiteSpace(newPassword) || string.IsNullOrWhiteSpace(confirmPassword) || (Auth.HasPassword && string.IsNullOrWhiteSpace(currentPassword)))">
-                @(Auth.HasPassword ? "Update password" : "Save password")
-            </button>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                <button class="btn btn-primary"
+                        @onclick="SavePassword"
+                        disabled="@(busy || string.IsNullOrWhiteSpace(newPassword) || string.IsNullOrWhiteSpace(confirmPassword) || (Auth.HasPassword && string.IsNullOrWhiteSpace(currentPassword)))">
+                    @(Auth.HasPassword ? "Update password" : "Save password")
+                </button>
+                <button type="button" class="btn btn-outline-secondary" @onclick="CancelPasswordForm" disabled="@busy">
+                    Cancel
+                </button>
+            </div>
+            }
         </div>
     }
     else
@@ -240,6 +265,7 @@
     private const string LinuxInstallCommand = "curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash";
 
     private bool _linuxInstallCopied;
+    private bool _showPasswordForm;
     /// <summary>"windows", "linux", "mac", or null until detected.</summary>
     private string? _detectedOs;
 
@@ -446,6 +472,15 @@
             await LoginWithPassword();
     }
 
+    void CancelPasswordForm()
+    {
+        _showPasswordForm = false;
+        passwordError = null;
+        newPassword = "";
+        confirmPassword = "";
+        currentPassword = "";
+    }
+
     async Task SavePassword()
     {
         passwordError = null;
@@ -480,6 +515,7 @@
             passwordMessage = changingExisting
                 ? "Password updated."
                 : "Password saved. You can now sign in with it next time.";
+            _showPasswordForm = false;
             newPassword = "";
             confirmPassword = "";
             currentPassword = "";
