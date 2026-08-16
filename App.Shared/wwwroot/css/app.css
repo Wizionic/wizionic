@@ -7870,3 +7870,127 @@ html[data-theme="nord"] .cal-week-dayhead.today .cal-week-date {
     color: #202124;
 }
 
+.help-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.help-glyph {
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted, #737373);
+    padding: 0.05rem 0.2rem;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.help-glyph:hover,
+.help-glyph:focus-visible {
+    color: var(--color-text, inherit);
+}
+
+.help-page {
+    padding: 1rem 1.25rem 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.help-page-header h2 {
+    margin: 0 0 0.25rem;
+}
+
+.help-page-lead {
+    margin: 0 0 1rem;
+    color: var(--color-text-muted);
+    font-size: 0.92rem;
+}
+
+.help-view {
+    display: grid;
+    grid-template-columns: minmax(11rem, 16rem) 1fr;
+    gap: 1.25rem;
+    min-height: 18rem;
+}
+
+.help-view-search {
+    margin-bottom: 0.65rem;
+}
+
+.help-view-toc {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.help-view-toc-item {
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.92rem;
+}
+
+.help-view-toc-item:hover {
+    background: var(--color-bg-muted, #f4f4f5);
+}
+
+.help-view-toc-item.is-active {
+    background: var(--color-info-bg, #eef2ff);
+    font-weight: 600;
+}
+
+.help-view-article {
+    line-height: 1.55;
+}
+
+.help-view-article h1 { font-size: 1.45rem; margin-top: 0; }
+.help-view-article h2 { font-size: 1.15rem; }
+.help-view-article table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; }
+.help-view-article th, .help-view-article td { border: 1px solid var(--color-border, #e5e5e5); padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+.help-view-muted, .help-view-empty { color: var(--color-text-muted); font-size: 0.9rem; }
+
+.help-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+}
+
+.help-overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+}
+
+.help-overlay-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: min(52rem, 100%);
+    height: 100%;
+    background: var(--color-bg, #fff);
+    color: inherit;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+    display: flex;
+    flex-direction: column;
+    padding: 0.85rem 1rem 1rem;
+    overflow: auto;
+}
+
+.help-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.help-overlay-header h2 { margin: 0; font-size: 1.2rem; }
+
+@media (max-width: 720px) {
+    .help-view { grid-template-columns: 1fr; }
+}
+

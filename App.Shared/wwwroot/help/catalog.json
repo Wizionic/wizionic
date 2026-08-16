@@ -1,0 +1,21 @@
+{
+  "topics": [
+    { "id": "start", "title": "Getting started", "file": "index.md", "routes": ["/help"], "audience": "howto" },
+    { "id": "chat", "title": "Chat", "file": "chat.md", "routes": ["/chat"], "audience": "howto" },
+    { "id": "local-ai", "title": "Ollama (local AI)", "file": "local-ai-ollama.md", "routes": ["/local-ai"], "audience": "howto" },
+    { "id": "lemonade", "title": "Lemonade (local AI)", "file": "lemonade.md", "routes": ["/lemonade"], "audience": "howto" },
+    { "id": "cloud-providers", "title": "Cloud providers", "file": "cloud-providers.md", "routes": ["/cloud-providers"], "audience": "howto" },
+    { "id": "notes", "title": "Notes", "file": "notes.md", "routes": ["/notes"], "audience": "howto" },
+    { "id": "gallery", "title": "Gallery", "file": "gallery.md", "routes": ["/gallery"], "audience": "howto" },
+    { "id": "calendar", "title": "Calendar", "file": "calendar.md", "routes": ["/calendar"], "audience": "howto" },
+    { "id": "sync", "title": "Devices and sync", "file": "sync.md", "routes": ["/sync"], "audience": "howto" },
+    { "id": "settings", "title": "Settings", "file": "settings.md", "routes": ["/settings"], "audience": "howto" },
+    { "id": "tool-routing", "title": "Tool routing", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "tool-routing" },
+    { "id": "tools", "title": "Tools, MCP, and connectors", "file": "tools-mcp.md", "routes": ["/tools"], "audience": "howto" },
+    { "id": "skills", "title": "Skills and workflows", "file": "skills-workflows.md", "routes": ["/tools"], "audience": "howto" },
+    { "id": "account", "title": "Account, password, and 2FA", "file": "account-password-2fa.md", "routes": ["/", "/account", "/login"], "audience": "howto" },
+    { "id": "privacy-data", "title": "What stays on this device", "file": "privacy-data.md", "routes": ["/privacy"], "audience": "reference" },
+    { "id": "desktop", "title": "Desktop: browser and Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true },
+    { "id": "troubleshooting", "title": "Troubleshooting", "file": "troubleshooting.md", "routes": [], "audience": "howto" }
+  ]
+}

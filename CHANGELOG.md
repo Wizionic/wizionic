@@ -10,6 +10,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Added
 
 - Optional two-factor sign-in after a password: email code always, SMS via Twilio Verify if a phone is enrolled. Notebook/chat/album unlock stays password-only.
+- In-app Help (`/help` and a top-bar ?). Settings cards and setup pages open the matching article. No model required.
 
 ## [0.2.0] — 2026-08-15
 

@@ -41,6 +41,10 @@ builder.Services.AddSingleton<IBrowserDownloadService, NullBrowserDownloadServic
 // Singleton so settings survive navigation and stay aligned with auth + multi-user prefixes.
 builder.Services.AddSingleton<WasmKeyStore>();
 builder.Services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<WasmKeyStore>());
+builder.Services.AddSingleton<App.Shared.Services.Help.HelpCatalogService>();
+builder.Services.AddSingleton<App.Core.Help.IHelpCatalog>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpCatalogService>());
+builder.Services.AddSingleton<App.Shared.Services.Help.HelpOverlay>();
+builder.Services.AddSingleton<App.Core.Help.IHelpOverlay>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpOverlay>());
 builder.Services.AddScoped<ChatModelCatalogService>();
 builder.Services.AddScoped<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
 builder.Services.AddScoped<ChatCompletionService>();

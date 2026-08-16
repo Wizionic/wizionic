@@ -17,6 +17,7 @@
 <div class="settings-content cf-connectors-page">
     <div class="cf-conn-top">
         <div class="cf-conn-tabs">
+            <HelpGlyph Topic="@(activeTab == "skills" ? "skills" : activeTab == "workflows" ? "skills" : "tools")" />
             <button type="button" class="cf-conn-tab @(activeTab == "tools" ? "cf-conn-tab-active" : "")"
                     @onclick="ShowToolsTab">Tools</button>
             <button type="button" class="cf-conn-tab @(activeTab == "skills" ? "cf-conn-tab-active" : "")"
@@ -52,7 +53,7 @@
     @if (activeTab == "skills")
     {
         <section class="cf-conn-section">
-            <h2 class="cf-conn-section-title">Skills</h2>
+            <h2 class="cf-conn-section-title help-heading">Skills <HelpGlyph Topic="skills" /></h2>
             <p class="text-muted" style="font-size:0.88rem;margin:-0.35rem 0 0.85rem;">
                 Run skillsfrom here or type <code>/skill-name</code> in chat.
             </p>

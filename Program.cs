@@ -191,6 +191,10 @@ builder.Services.AddScoped(sp =>
 });
 builder.Services.AddScoped<ChatAuthService>();
 builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
+builder.Services.AddSingleton<App.Shared.Services.Help.HelpCatalogService>();
+builder.Services.AddSingleton<App.Core.Help.IHelpCatalog>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpCatalogService>());
+builder.Services.AddSingleton<App.Shared.Services.Help.HelpOverlay>();
+builder.Services.AddSingleton<App.Core.Help.IHelpOverlay>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpOverlay>());
 builder.Services.AddScoped<NullSyncService>();
 builder.Services.AddScoped<ISyncService>(sp => sp.GetRequiredService<NullSyncService>());
 builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyncService>());

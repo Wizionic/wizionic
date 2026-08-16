@@ -1,0 +1,10 @@
+@page "/help"
+@page "/help/{TopicId}"
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@layout App.Shared.Layout.AppLayout
+
+<HelpPage TopicId="@TopicId" />
+
+@code {
+    [Parameter] public string? TopicId { get; set; }
+}
