@@ -1,0 +1,163 @@
+@using App.Core.Help
+@using Markdig
+@using Markdig.Extensions.AutoIdentifiers
+@inject IHelpCatalog Catalog
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="help-view">
+    <div class="help-view-sidebar">
+        <input type="search"
+               class="form-control help-view-search"
+               placeholder="Search help"
+               @bind="query"
+               @bind:event="oninput"
+               @bind:after="OnQueryChanged" />
+        <nav class="help-view-toc" aria-label="Help topics">
+            @foreach (var topic in visible)
+            {
+                <button type="button"
+                        class="help-view-toc-item @(IsActive(topic) ? "is-active" : "")"
+                        @onclick="() => Select(topic.Id)">
+                    @topic.Title
+                </button>
+            }
+            @if (visible.Count == 0)
+            {
+                <div class="help-view-empty">No matching topics.</div>
+            }
+        </nav>
+    </div>
+    <article class="help-view-article" @ref="_articleRef">
+        @if (busy)
+        {
+            <p class="help-view-muted">Loading…</p>
+        }
+        else
+        {
+            @((MarkupString)html)
+        }
+    </article>
+</div>
+
+@code {
+    [Parameter] public string? TopicId { get; set; }
+    [Parameter] public EventCallback<string> TopicIdChanged { get; set; }
+
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .UseAutoIdentifiers(AutoIdentifierOptions.GitHub)
+        .Build();
+
+    private string query = "";
+    private string html = "";
+    private string? CurrentId;
+    private string? _pendingAnchor;
+    private bool busy = true;
+    private List<HelpTopic> visible = new();
+    private ElementReference _articleRef;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Catalog.EnsureLoadedAsync();
+        RefreshList();
+        var id = TopicId;
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            var path = new Uri(Nav.Uri).AbsolutePath;
+            id = Catalog.FindByRoute(path)?.Id ?? "start";
+        }
+
+        if (!string.Equals(CurrentId, id, StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(html))
+            await LoadArticle(id!);
+        else
+            _pendingAnchor = Catalog.FindById(id)?.Anchor;
+    }
+
+    private void RefreshList()
+    {
+        visible = Catalog.Search(query).ToList();
+    }
+
+    private void OnQueryChanged()
+    {
+        RefreshList();
+    }
+
+    private bool IsActive(HelpTopic topic)
+    {
+        if (topic.Id.Equals(CurrentId, StringComparison.OrdinalIgnoreCase))
+            return true;
+        var current = Catalog.FindById(CurrentId);
+        return current != null
+            && topic.ShowInToc
+            && string.Equals(current.File, topic.File, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task Select(string id)
+    {
+        await LoadArticle(id);
+        await TopicIdChanged.InvokeAsync(id);
+    }
+
+    private async Task LoadArticle(string id)
+    {
+        CurrentId = id;
+        busy = true;
+        var markdown = await Catalog.GetMarkdownAsync(id);
+        html = WrapH2Sections(Markdown.ToHtml(markdown, Pipeline));
+        _pendingAnchor = Catalog.FindById(id)?.Anchor;
+        busy = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (string.IsNullOrWhiteSpace(_pendingAnchor) || busy)
+            return;
+
+        var anchor = _pendingAnchor;
+        _pendingAnchor = null;
+        await ScrollToAnchorAsync(anchor);
+    }
+
+    private async Task ScrollToAnchorAsync(string anchor)
+    {
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            try
+            {
+                if (await JS.InvokeAsync<bool>("appHelp.scrollToId", anchor))
+                    return;
+            }
+            catch
+            {
+                // JS helper not loaded yet.
+            }
+
+            await Task.Delay(40);
+        }
+    }
+
+    /// <summary>Wrap each h2 and the copy that follows it so MAUI/WebView can shade sections.</summary>
+    private static string WrapH2Sections(string html)
+    {
+        const string open = "<h2";
+        var idx = html.IndexOf(open, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+            return html;
+
+        var sb = new System.Text.StringBuilder(html.Length + 128);
+        sb.Append(html, 0, idx);
+        while (idx >= 0)
+        {
+            var next = html.IndexOf(open, idx + 4, StringComparison.OrdinalIgnoreCase);
+            var end = next < 0 ? html.Length : next;
+            sb.Append("<section class=\"help-section\">");
+            sb.Append(html, idx, end - idx);
+            sb.Append("</section>");
+            idx = next;
+        }
+
+        return sb.ToString();
+    }
+}

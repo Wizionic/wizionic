@@ -8,6 +8,10 @@
 <SyncConnectionBootstrap />
 <WorkflowDueBootstrap />
 <SetupWizard />
+@if (AppEnvironment.IsMaui)
+{
+    <HelpPanel />
+}
 
 <div class="app-shell" data-nav-layout="@NavLayoutModeString">
     <AppTopBar />

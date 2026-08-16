@@ -170,7 +170,7 @@
             else if (Auth.HasPassword)
             {
             <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
-                <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">Two-factor sign-in</h3>
+                <h3 class="help-heading" style="font-size:1.05rem; margin:0 0 0.35rem 0;">Two-factor sign-in <HelpGlyph Topic="account" /></h3>
                 <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
                     Only asked when you first sign in. Unlocking notebooks, chats, and albums still uses your password alone.
                 </p>
@@ -445,6 +445,8 @@
         <a href="https://github.com/Wizionic/wizionic">Source</a>
     </footer>
 </div>
+
+<HelpOverlayHost />
 
 @code {
     [Parameter] public bool RedirectAuthenticatedToChat { get; set; } = true;

@@ -13,6 +13,7 @@ public sealed class LinuxUrlEmbedOverlayService : IUrlEmbedOverlay
 	private object? _owner;
 	private string? _url;
 	private bool _visible;
+	private bool _suppressed;
 	private LinuxBrowserOverlayService.Bounds _bounds;
 
 	public bool IsNative => true;
@@ -30,7 +31,7 @@ public sealed class LinuxUrlEmbedOverlayService : IUrlEmbedOverlay
 
 	public bool Visible
 	{
-		get { lock (_gate) return _visible && _bounds.IsValid; }
+		get { lock (_gate) return _visible && !_suppressed && _bounds.IsValid; }
 	}
 
 	public LinuxBrowserOverlayService.Bounds Bounds
@@ -115,6 +116,19 @@ public sealed class LinuxUrlEmbedOverlayService : IUrlEmbedOverlay
 				changed = _bounds != next;
 				_bounds = next;
 			}
+		}
+
+		if (changed)
+			Changed?.Invoke();
+	}
+
+	public void SetSuppressed(bool suppressed)
+	{
+		bool changed;
+		lock (_gate)
+		{
+			changed = _suppressed != suppressed;
+			_suppressed = suppressed;
 		}
 
 		if (changed)

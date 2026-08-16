@@ -1,0 +1,144 @@
+@using App.Core.Browser
+@using App.Core.Help
+@using App.Core.UI
+@inject IHelpOverlay Overlay
+@inject IUrlEmbedOverlay UrlEmbed
+@inject IBrowserOverlaySync BrowserOverlay
+@implements IDisposable
+
+@if (Overlay.IsOpen)
+{
+    <div class="help-overlay"
+         @ref="_overlayRef"
+         role="dialog"
+         aria-modal="true"
+         aria-label="Help"
+         tabindex="-1"
+         @onkeydown="OnKeyDown"
+         @onpointermove="OnPointerMove"
+         @onpointerup="EndResize">
+        <div class="help-overlay-backdrop" @onclick="Close"></div>
+        <div class="help-modal"
+             style="@ModalStyle"
+             @onclick:stopPropagation="true">
+            <div class="help-modal-chrome">
+                <button type="button"
+                        class="help-modal-close"
+                        title="Close"
+                        aria-label="Close help"
+                        @onclick="Close">
+                    <i class="bi bi-x-lg" aria-hidden="true"></i>
+                </button>
+                <span class="help-modal-title">Help</span>
+            </div>
+            <div class="help-modal-body">
+                <HelpView TopicId="@Overlay.TopicId" TopicIdChanged="OnTopicChanged" />
+            </div>
+            <div class="help-modal-resize"
+                 title="Resize"
+                 @onpointerdown="StartResize"></div>
+        </div>
+    </div>
+}
+
+@code {
+    private const double MinWidth = 520;
+    private const double MinHeight = 380;
+    private double _width = 860;
+    private double _height = 560;
+    private bool _resizing;
+    private double _startX;
+    private double _startY;
+    private double _startW;
+    private double _startH;
+    private Action? _handler;
+    private ElementReference _overlayRef;
+    private bool _focusWhenOpen;
+
+    private string ModalStyle => $"width:{_width.ToString(System.Globalization.CultureInfo.InvariantCulture)}px;height:{_height.ToString(System.Globalization.CultureInfo.InvariantCulture)}px;";
+
+    protected override void OnInitialized()
+    {
+        _handler = OnOverlayChanged;
+        Overlay.Changed += _handler;
+    }
+
+    private void OnOverlayChanged()
+    {
+        ApplyNativeOverlaySuppression(Overlay.IsOpen);
+        if (Overlay.IsOpen)
+            _focusWhenOpen = true;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusWhenOpen && Overlay.IsOpen)
+        {
+            _focusWhenOpen = false;
+            try { await _overlayRef.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private void ApplyNativeOverlaySuppression(bool suppress)
+    {
+        try { UrlEmbed.SetSuppressed(suppress); } catch { /* iframe / null host */ }
+        try
+        {
+            if (suppress)
+            {
+                BrowserOverlay.SetMainOverlayVisible(false);
+                BrowserOverlay.SetSideOverlayVisible(false);
+            }
+            else
+            {
+                BrowserOverlay.RestoreCachedOverlay();
+            }
+        }
+        catch { /* WASM null overlay */ }
+    }
+
+    private void Close()
+    {
+        Overlay.Close();
+    }
+
+    private void OnTopicChanged(string id) => Overlay.Open(id);
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            Close();
+    }
+
+    private void StartResize(PointerEventArgs e)
+    {
+        _resizing = true;
+        _startX = e.ClientX;
+        _startY = e.ClientY;
+        _startW = _width;
+        _startH = _height;
+    }
+
+    private void OnPointerMove(PointerEventArgs e)
+    {
+        if (!_resizing)
+            return;
+
+        var maxW = Math.Max(MinWidth, 96 * 12); // fallback; CSS also caps with max-width
+        _width = Math.Clamp(_startW + (e.ClientX - _startX), MinWidth, 1400);
+        _height = Math.Clamp(_startH + (e.ClientY - _startY), MinHeight, 1000);
+    }
+
+    private void EndResize()
+    {
+        _resizing = false;
+    }
+
+    public void Dispose()
+    {
+        if (_handler != null)
+            Overlay.Changed -= _handler;
+        ApplyNativeOverlaySuppression(false);
+    }
+}

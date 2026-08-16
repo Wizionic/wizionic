@@ -43,7 +43,7 @@
         @* ── Panel 1: Devices ─────────────────────────────────────────── *@
         <section class="sync-panel">
             <div class="sync-panel-header">
-                <h3 class="sync-panel-title">Devices</h3>
+                <h3 class="sync-panel-title help-heading">Devices <HelpGlyph Topic="sync" /></h3>
                 <button @onclick="RefreshDevices" class="btn btn-outline-primary btn-sm" disabled="@isRefreshing">
                     @(isRefreshing ? "Refreshing..." : "Refresh")
                 </button>
@@ -620,6 +620,8 @@
         }
     }
 </div>
+
+<HelpOverlayHost />
 
 @code {
     [Parameter] public string? PendingDataSyncMessage { get; set; }

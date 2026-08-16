@@ -252,6 +252,10 @@ public static class MauiProgram
 		services.AddSingleton<MauiStorageQuotaService>();
 		services.AddSingleton<IStorageQuotaService>(sp => sp.GetRequiredService<MauiStorageQuotaService>());
 		services.AddSingleton<ISyncPreferencesStore, SqliteSyncPreferencesStore>();
+		services.AddSingleton<App.Shared.Services.Help.HelpCatalogService>(_ => new App.Shared.Services.Help.HelpCatalogService());
+		services.AddSingleton<App.Core.Help.IHelpCatalog>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpCatalogService>());
+		services.AddSingleton<App.Shared.Services.Help.HelpOverlay>();
+		services.AddSingleton<App.Core.Help.IHelpOverlay>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpOverlay>());
 		services.AddSingleton<App.Core.Skills.ISkillStore, App.Shared.Services.Skills.PreferencesSkillStore>();
 		services.AddSingleton<App.Core.Skills.ISkillRunLogStore, App.Shared.Services.Skills.SkillRunLogStore>();
 		services.AddSingleton<App.Core.Skills.ISkillRunner, App.Shared.Services.Skills.SkillRunner>();

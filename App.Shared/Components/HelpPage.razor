@@ -1,0 +1,27 @@
+@using App.Core.Help
+@inject IHelpCatalog Catalog
+@inject IHelpOverlay Overlay
+@inject NavigationManager Nav
+
+<div class="help-page">
+    <div class="help-page-header">
+        <h2>Help</h2>
+        <p class="help-page-lead">Articles ship with the app. No model is required to read them.</p>
+    </div>
+    <HelpView TopicId="@TopicId" TopicIdChanged="OnTopicChanged" />
+</div>
+
+@code {
+    [Parameter] public string? TopicId { get; set; }
+
+    protected override void OnInitialized()
+    {
+        Overlay.Close();
+    }
+
+    private void OnTopicChanged(string id)
+    {
+        var url = string.IsNullOrWhiteSpace(id) || id == "start" ? "/help" : "/help/" + id;
+        Nav.NavigateTo(url, replace: true);
+    }
+}
