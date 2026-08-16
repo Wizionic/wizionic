@@ -191,8 +191,9 @@ builder.Services.AddScoped(sp =>
 });
 builder.Services.AddScoped<ChatAuthService>();
 builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
-builder.Services.AddScoped<App.Shared.Services.Help.HelpCatalogService>();
-builder.Services.AddScoped<App.Core.Help.IHelpCatalog>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpCatalogService>());
+// Parameterless: articles are embedded. Do not inject NavigationManager (scoped) here.
+builder.Services.AddSingleton<App.Shared.Services.Help.HelpCatalogService>(_ => new App.Shared.Services.Help.HelpCatalogService());
+builder.Services.AddSingleton<App.Core.Help.IHelpCatalog>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpCatalogService>());
 builder.Services.AddSingleton<App.Shared.Services.Help.HelpOverlay>();
 builder.Services.AddSingleton<App.Core.Help.IHelpOverlay>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpOverlay>());
 builder.Services.AddScoped<NullSyncService>();
@@ -339,6 +340,7 @@ app.UseForwardedHeaders();
 
     var twilio = app.Services.GetRequiredService<ITwilioVerifyService>();
     Console.WriteLine($"[Twilio] verifyConfigured={twilio.IsConfigured}");
+    Console.WriteLine("[Help] catalog=embedded");
 }
 
 // Proxied AI provider diagnostics (keys are never logged).
