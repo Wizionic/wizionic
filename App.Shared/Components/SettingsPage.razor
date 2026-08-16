@@ -13,6 +13,7 @@
 @inject App.Core.Chat.IChatModelCatalog ModelCatalog
 @inject App.Shared.Services.Tools.IRequestRouter RequestRouter
 @inject App.Shared.Services.Tools.IToolProvider ToolProvider
+@inject App.Core.Help.IHelpAskService HelpAsk
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @using App.Core.Update
@@ -298,6 +299,49 @@
         </div>
     </div>
 
+    <div class="settings-card" style="margin-top: 1rem;">
+        <h3 class="help-heading" style="margin: 0 0 0.25rem;">Help answers <HelpGlyph Topic="settings-help-answers" /></h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+            Optional. Ask in Help uses this chat model and shipped help articles only.
+            A cloud model will send those excerpts and your question to that provider.
+            Browse still works with the model off.
+        </p>
+        <label>Answer model</label>
+        <select class="form-select form-select-sm" style="max-width: 28rem;" @bind="helpAnswerDraft">
+            <option value="">Off — browse only</option>
+            @foreach (var m in helpAnswerOptions)
+            {
+                <option value="@m.Id">@m.Label</option>
+            }
+        </select>
+        <label style="margin-top: 0.75rem;">Embeddings model (optional)</label>
+        <select class="form-select form-select-sm" style="max-width: 28rem;" @bind="helpEmbedDraft">
+            <option value="">None — keyword retrieval</option>
+            @foreach (var m in helpEmbedOptions)
+            {
+                <option value="@m.Id">@m.Label</option>
+            }
+        </select>
+        <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0.35rem 0 0;">
+            Local Ollama or Lemonade embeddings only. Changing this rebuilds the help index on this device.
+        </p>
+        <p class="help-index-status">@helpIndexStatusText</p>
+        <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+            <button type="button" class="btn btn-primary btn-sm" @onclick="SaveHelpModels" disabled="@helpBusy">
+                @(helpBusy ? "Saving…" : "Save help models")
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="RebuildHelpIndex" disabled="@helpBusy">
+                Rebuild help index
+            </button>
+        </div>
+        @if (!string.IsNullOrEmpty(helpSaveMessage))
+        {
+            <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(helpSaveIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
+                @helpSaveMessage
+            </div>
+        }
+    </div>
+
     <!-- System prompt -->
     <h3 class="help-heading" style="margin: 1.25rem 0 0.5rem;">System prompt <HelpGlyph Topic="settings-system-prompt" /></h3>
     <p style="color: var(--color-text-muted); font-size: 0.85em; margin-bottom: 0.5rem;">
@@ -499,6 +543,15 @@
     private string? routingTestResult;
     private bool routingTestBusy;
 
+    private string helpAnswerDraft = "";
+    private string helpEmbedDraft = "";
+    private List<(string Id, string Label)> helpAnswerOptions = new();
+    private List<(string Id, string Label)> helpEmbedOptions = new();
+    private bool helpBusy;
+    private string? helpSaveMessage;
+    private bool helpSaveIsError;
+    private string helpIndexStatusText = "Index: not loaded yet.";
+
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
         UpdateCheckStatus.UpToDate => updateCheckResult.Message ?? "You're on the latest version.",
@@ -525,6 +578,7 @@
         profileDraft = KeyStore.GetUserProfile();
         ReloadMemories();
         LoadToolRoutingDraft();
+        await LoadHelpModelsDraft();
 
         if (AppEnvironment.IsMaui)
         {
@@ -556,6 +610,121 @@
         catch
         {
             routingModelOptions = new();
+        }
+    }
+
+    private async Task LoadHelpModelsDraft()
+    {
+        helpAnswerDraft = KeyStore.HelpAnswerModelId ?? "";
+        helpEmbedDraft = KeyStore.HelpEmbedModelId ?? "";
+        try
+        {
+            helpAnswerOptions = ModelCatalog.GetAvailableModels()
+                .Where(m => !string.IsNullOrWhiteSpace(m.Id) && !m.IsImageGeneration)
+                .Select(m => (m.Id, string.IsNullOrWhiteSpace(m.Label) ? m.Id : m.Label))
+                .OrderBy(m => m.Item2, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            helpAnswerOptions = new();
+        }
+
+        helpEmbedOptions = new();
+        foreach (var m in KeyStore.LemonadeModelSettingsList.Where(x => x.IsEmbeddings))
+        {
+            var id = "lemonade/" + m.Name;
+            var label = string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label;
+            helpEmbedOptions.Add((id, label + " (Lemonade)"));
+        }
+
+        foreach (var m in KeyStore.OllamaModelSettingsList)
+        {
+            if (!LooksLikeEmbedModel(m.Name))
+                continue;
+            helpEmbedOptions.Add(("ollama/" + m.Name, (string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label) + " (Ollama)"));
+        }
+
+        try
+        {
+            var status = await HelpAsk.GetIndexStatusAsync();
+            helpIndexStatusText = FormatHelpIndexStatus(status);
+        }
+        catch (Exception ex)
+        {
+            helpIndexStatusText = "Index: " + ex.Message;
+        }
+    }
+
+    private static bool LooksLikeEmbedModel(string name)
+    {
+        var n = name ?? "";
+        return n.Contains("embed", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("nomic", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("minilm", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("bge-", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("e5-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatHelpIndexStatus(App.Core.Help.HelpIndexStatus status)
+    {
+        if (!status.Ready)
+            return "Index: empty (keyword retrieval until you rebuild with an embeddings model).";
+        var mode = status.HasVectors ? (status.EmbedModelId ?? "vectors") : "keyword chunks only";
+        var when = status.BuiltAtUtc.HasValue ? status.BuiltAtUtc.Value.ToLocalTime().ToString("g") : "unknown time";
+        return $"Index ready · {status.ChunkCount} chunks · {mode} · {when}";
+    }
+
+    private async Task SaveHelpModels()
+    {
+        helpBusy = true;
+        helpSaveMessage = null;
+        StateHasChanged();
+        try
+        {
+            await KeyStore.SetHelpModelsAsync(
+                string.IsNullOrWhiteSpace(helpAnswerDraft) ? null : helpAnswerDraft,
+                string.IsNullOrWhiteSpace(helpEmbedDraft) ? null : helpEmbedDraft);
+            helpSaveMessage = string.IsNullOrWhiteSpace(helpAnswerDraft)
+                ? "Help answers off. Browse still works."
+                : "Help models saved.";
+            helpSaveIsError = false;
+        }
+        catch (Exception ex)
+        {
+            helpSaveMessage = ex.Message;
+            helpSaveIsError = true;
+        }
+        finally
+        {
+            helpBusy = false;
+        }
+    }
+
+    private async Task RebuildHelpIndex()
+    {
+        helpBusy = true;
+        helpSaveMessage = null;
+        StateHasChanged();
+        try
+        {
+            await KeyStore.SetHelpModelsAsync(
+                string.IsNullOrWhiteSpace(helpAnswerDraft) ? null : helpAnswerDraft,
+                string.IsNullOrWhiteSpace(helpEmbedDraft) ? null : helpEmbedDraft);
+            await HelpAsk.RebuildIndexAsync();
+            var status = await HelpAsk.GetIndexStatusAsync();
+            helpIndexStatusText = FormatHelpIndexStatus(status);
+            helpSaveMessage = "Help index rebuilt.";
+            helpSaveIsError = false;
+        }
+        catch (Exception ex)
+        {
+            helpSaveMessage = ex.Message;
+            helpSaveIsError = true;
+        }
+        finally
+        {
+            helpBusy = false;
         }
     }
 

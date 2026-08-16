@@ -45,6 +45,9 @@ builder.Services.AddSingleton<App.Shared.Services.Help.HelpCatalogService>(_ => 
 builder.Services.AddSingleton<App.Core.Help.IHelpCatalog>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpCatalogService>());
 builder.Services.AddSingleton<App.Shared.Services.Help.HelpOverlay>();
 builder.Services.AddSingleton<App.Core.Help.IHelpOverlay>(sp => sp.GetRequiredService<App.Shared.Services.Help.HelpOverlay>());
+builder.Services.AddSingleton<App.Core.Help.IHelpIndex, App.Shared.Services.Help.MemoryHelpIndex>();
+builder.Services.AddScoped<App.Shared.Services.Help.HelpEmbeddingClient>();
+builder.Services.AddScoped<App.Core.Help.IHelpAskService, App.Shared.Services.Help.HelpAskService>();
 builder.Services.AddScoped<ChatModelCatalogService>();
 builder.Services.AddScoped<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());
 builder.Services.AddScoped<ChatCompletionService>();

@@ -30,6 +30,12 @@ public interface IKeyStore
     string? ToolRoutingModelId { get; }
     Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default);
 
+    /// <summary>Chat-eligible model used to answer Ask in Help. Empty = browse only.</summary>
+    string? HelpAnswerModelId { get; }
+    /// <summary>Optional embeddings model used to build the local help vector index.</summary>
+    string? HelpEmbedModelId { get; }
+    Task SetHelpModelsAsync(string? answerModelId, string? embedModelId, CancellationToken ct = default);
+
     string GetKey(string providerId);
     Task SetKeyAsync(string providerId, string key, CancellationToken ct = default);
     Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default);

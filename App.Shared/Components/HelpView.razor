@@ -1,7 +1,12 @@
+@using App.Core.Chat
 @using App.Core.Help
+@using App.Core.Storage
 @using Markdig
 @using Markdig.Extensions.AutoIdentifiers
 @inject IHelpCatalog Catalog
+@inject IHelpAskService Ask
+@inject IKeyStore Keys
+@inject IChatModelCatalog Models
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
@@ -9,10 +14,37 @@
     <div class="help-view-sidebar">
         <input type="search"
                class="form-control help-view-search"
-               placeholder="Search help"
+               placeholder="Filter topics"
                @bind="query"
                @bind:event="oninput"
                @bind:after="OnQueryChanged" />
+        <label class="help-ask-label" for="help-answer-model">Help model</label>
+        <select id="help-answer-model"
+                class="form-select form-select-sm help-ask-model"
+                @bind="answerModelDraft"
+                @bind:after="OnAnswerModelChanged">
+            <option value="">Off — browse only</option>
+            @foreach (var m in answerModels)
+            {
+                <option value="@m.Id">@m.Label</option>
+            }
+        </select>
+        @if (!string.IsNullOrEmpty(answerModelDraft))
+        {
+            <div class="help-ask-box">
+                <textarea class="form-control help-ask-input"
+                          rows="2"
+                          placeholder="Ask about this app…"
+                          @bind="askText"
+                          @onkeydown="OnAskKeyDown"></textarea>
+                <button type="button"
+                        class="btn btn-primary btn-sm"
+                        disabled="@askBusy"
+                        @onclick="RunAsk">
+                    @(askBusy ? "Asking…" : "Ask")
+                </button>
+            </div>
+        }
         <nav class="help-view-toc" aria-label="Help topics">
             @foreach (var topic in visible)
             {
@@ -29,6 +61,30 @@
         </nav>
     </div>
     <article class="help-view-article" @ref="_articleRef">
+        @if (!string.IsNullOrEmpty(askError))
+        {
+            <p class="help-ask-error">@askError</p>
+        }
+        @if (!string.IsNullOrEmpty(askHtml))
+        {
+            <div class="help-ask-answer">
+                <div class="help-ask-answer-label">Answer</div>
+                @((MarkupString)askHtml)
+                @if (askCitations.Count > 0)
+                {
+                    <div class="help-ask-cites">
+                        @foreach (var hit in askCitations)
+                        {
+                            <button type="button"
+                                    class="help-ask-cite"
+                                    @onclick="() => OpenCitation(hit)">
+                                @hit.Chunk.Title
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        }
         @if (busy)
         {
             <p class="help-view-muted">Loading…</p>
@@ -56,10 +112,18 @@
     private bool busy = true;
     private List<HelpTopic> visible = new();
     private ElementReference _articleRef;
+    private string answerModelDraft = "";
+    private List<ChatModelInfo> answerModels = new();
+    private string askText = "";
+    private string askHtml = "";
+    private string? askError;
+    private bool askBusy;
+    private List<HelpSearchHit> askCitations = new();
 
     protected override async Task OnParametersSetAsync()
     {
         await Catalog.EnsureLoadedAsync();
+        LoadAnswerModels();
         RefreshList();
         var id = TopicId;
         if (string.IsNullOrWhiteSpace(id))
@@ -82,6 +146,92 @@
     private void OnQueryChanged()
     {
         RefreshList();
+    }
+
+    private void LoadAnswerModels()
+    {
+        try
+        {
+            answerModels = Models.GetAvailableModels()
+                .Where(m => !string.IsNullOrWhiteSpace(m.Id) && !m.IsImageGeneration)
+                .ToList();
+        }
+        catch
+        {
+            answerModels = new();
+        }
+
+        answerModelDraft = Keys.HelpAnswerModelId ?? "";
+    }
+
+    private async Task OnAnswerModelChanged()
+    {
+        await Keys.SetHelpModelsAsync(
+            string.IsNullOrWhiteSpace(answerModelDraft) ? null : answerModelDraft,
+            Keys.HelpEmbedModelId);
+        if (string.IsNullOrEmpty(answerModelDraft))
+        {
+            askHtml = "";
+            askError = null;
+            askCitations = new();
+        }
+    }
+
+    private async Task OnAskKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await RunAsk();
+        }
+    }
+
+    private async Task RunAsk()
+    {
+        if (askBusy)
+            return;
+        askBusy = true;
+        askError = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Ask.AskAsync(askText);
+            askCitations = result.Citations.ToList();
+            askError = result.Error;
+            askHtml = string.IsNullOrWhiteSpace(result.AnswerMarkdown)
+                ? ""
+                : Markdown.ToHtml(result.AnswerMarkdown, Pipeline);
+        }
+        catch (Exception ex)
+        {
+            askError = ex.Message;
+            askHtml = "";
+            askCitations = new();
+        }
+        finally
+        {
+            askBusy = false;
+        }
+    }
+
+    private async Task OpenCitation(HelpSearchHit hit)
+    {
+        var id = hit.Chunk.TopicId;
+        var topic = Catalog.FindById(id);
+        if (!string.IsNullOrEmpty(hit.Chunk.Anchor) && topic != null)
+        {
+            var match = Catalog.Topics.FirstOrDefault(t =>
+                string.Equals(t.File, topic.File, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(t.Anchor, hit.Chunk.Anchor, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+                id = match.Id;
+        }
+
+        await Select(id);
+        if (!string.IsNullOrEmpty(hit.Chunk.Anchor))
+        {
+            _pendingAnchor = hit.Chunk.Anchor;
+            await ScrollToAnchorAsync(hit.Chunk.Anchor);
+        }
     }
 
     private bool IsActive(HelpTopic topic)

@@ -35,6 +35,16 @@ Decides which tool **modules** (Native, Lemonade, Gallery, Notes, and so on) are
 
 This is not the same as enabling MCP servers. Routing only chooses among modules that are already available.
 
+## Help answers {#help-answers}
+
+Optional. The Help panel can **Ask** a chat model using only the shipped help articles.
+
+- **Answer model** — writes the reply. Off keeps Help as browse + search.
+- **Embeddings model** — optional local Ollama or Lemonade embeddings model. Builds a small index in `help_rag.db` on desktop (not your chat history). Without it, Ask still works from keyword matches.
+- Changing the answer model does not rebuild the index. Changing the embeddings model or the articles does.
+
+A cloud answer model sends the question and a few article excerpts to that provider. Browse never needs a model.
+
 ## System prompt {#system-prompt}
 
 Extra instructions for every chat. The app also sends a built-in default (date, how storage works, tool habits). Your text is added on this device.
