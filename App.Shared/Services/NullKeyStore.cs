@@ -40,6 +40,11 @@ public sealed class NullKeyStore : IKeyStore
     public Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default) =>
         Task.CompletedTask;
 
+    public string? HelpAnswerModelId => null;
+    public string? HelpEmbedModelId => null;
+    public Task SetHelpModelsAsync(string? answerModelId, string? embedModelId, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
     public string GetKey(string providerId) => "";
     public Task SetKeyAsync(string providerId, string key, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default) =>

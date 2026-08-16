@@ -28,6 +28,7 @@ public class WasmKeyStore : IKeyStore
     private const string OAuthConnectorsKey = "wasm-oauth-connectors";
     private const string LastSelectedModelKey = "wasm-last-selected-model";
     private const string ToolRoutingKey = "wasm-tool-routing";
+    private const string HelpModelsKey = "wasm-help-models";
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
@@ -42,6 +43,8 @@ public class WasmKeyStore : IKeyStore
     private string _lastSelectedModel = "";
     private ToolRoutingMode _toolRoutingMode = ToolRoutingMode.Rules;
     private string? _toolRoutingModelId;
+    private string? _helpAnswerModelId;
+    private string? _helpEmbedModelId;
     private string? _systemPrompt;
     private bool _systemPromptCustomized;
     private UserProfileSettings _userProfile = new();
@@ -116,6 +119,21 @@ public class WasmKeyStore : IKeyStore
 
         _lastSelectedModel = await GetItemAsync(LastSelectedModelKey, ct) ?? "";
 
+        var helpModelsJson = await GetItemAsync(HelpModelsKey, ct);
+        if (!string.IsNullOrEmpty(helpModelsJson))
+        {
+            try
+            {
+                var hm = JsonSerializer.Deserialize<HelpModelsConfig>(helpModelsJson);
+                if (hm != null)
+                {
+                    _helpAnswerModelId = string.IsNullOrWhiteSpace(hm.AnswerModelId) ? null : hm.AnswerModelId.Trim();
+                    _helpEmbedModelId = string.IsNullOrWhiteSpace(hm.EmbedModelId) ? null : hm.EmbedModelId.Trim();
+                }
+            }
+            catch { /* keep defaults */ }
+        }
+
         var toolRoutingJson = await GetItemAsync(ToolRoutingKey, ct);
         if (!string.IsNullOrEmpty(toolRoutingJson))
         {
@@ -166,6 +184,8 @@ public class WasmKeyStore : IKeyStore
     {
         _providerKeys = new();
         _lastSelectedModel = "";
+        _helpAnswerModelId = null;
+        _helpEmbedModelId = null;
         _systemPrompt = null;
         _systemPromptCustomized = false;
         _userProfile = new();
@@ -349,6 +369,27 @@ public class WasmKeyStore : IKeyStore
     {
         public int Mode { get; set; }
         public string? ModelId { get; set; }
+    }
+
+    public string? HelpAnswerModelId => _helpAnswerModelId;
+    public string? HelpEmbedModelId => _helpEmbedModelId;
+
+    public async Task SetHelpModelsAsync(string? answerModelId, string? embedModelId, CancellationToken ct = default)
+    {
+        _helpAnswerModelId = string.IsNullOrWhiteSpace(answerModelId) ? null : answerModelId.Trim();
+        _helpEmbedModelId = string.IsNullOrWhiteSpace(embedModelId) ? null : embedModelId.Trim();
+        var json = JsonSerializer.Serialize(new HelpModelsConfig
+        {
+            AnswerModelId = _helpAnswerModelId,
+            EmbedModelId = _helpEmbedModelId
+        });
+        await SetItemAsync(HelpModelsKey, json, ct);
+    }
+
+    private sealed class HelpModelsConfig
+    {
+        public string? AnswerModelId { get; set; }
+        public string? EmbedModelId { get; set; }
     }
 
     public string GetKey(string providerId) =>

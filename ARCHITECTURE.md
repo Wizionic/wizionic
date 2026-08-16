@@ -1013,6 +1013,83 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
 
 ---
 
+## In-app Help and optional RAG
+
+Help is **browse-first**. Articles ship inside the app (no model required to read them). Optional **Ask** retrieves a few chunks from those articles and answers with a user-chosen chat model. Chat history, notes, and `ARCHITECTURE.md` are never indexed.
+
+### What ships
+
+| Piece | Location |
+|-------|----------|
+| Source markdown | `docs/user/*.md` + `docs/user/catalog.json` |
+| Runtime copy | `App.Shared/wwwroot/help/*` (embedded as `help.{file}` resources) |
+| Catalog | `IHelpCatalog` / `HelpCatalogService` — no `NavigationManager` (safe as a host singleton) |
+
+`ARCHITECTURE.md` is **not** a user help article. Edit both `docs/user` and `wwwroot/help` (or copy the folder) when articles change.
+
+### UI
+
+- **Full page** `/help` and `/help/{topicId}` (`HelpPage` + `HelpView`).
+- **Modal** from `?` glyphs (`HelpGlyph` → `IHelpOverlay` → `HelpPanel`). WASM `AppLayout` is static SSR, so the modal is hosted in the page island (`HelpOverlayHost`); MAUI hosts `HelpPanel` in the layout.
+- Contextual `?` topics can be subsection ids (`settings-system-prompt`) with `anchor` + `toc: false` in the catalog. After render, `appHelp.scrollToId` jumps to the heading.
+- Native desktop WebViews (browser / HA) are suppressed while the modal is open (`IUrlEmbedOverlay.SetSuppressed`); layout bounds are not changed.
+
+### Ask pipeline
+
+```
+question
+  → IHelpCatalog keyword Search (always)
+  → if embed index ready: vector top-k (desktop SQLite / WASM memory)
+  → merge + dedupe, k ≈ 6 chunks
+  → complete with a fixed help system prompt (no user prompt, no tools, no memories)
+  → render markdown + citation chips that open the article + anchor
+```
+
+Browse and topic filter work with **no model**. Ask is hidden until **Help answer model** is set.
+
+### Two models (do not mix)
+
+| Setting (`IKeyStore`) | Role | Default |
+|-----------------------|------|---------|
+| `HelpAnswerModelId` | Chat-eligible catalog model that writes the answer | Off (browse only) |
+| `HelpEmbedModelId` | Optional local Ollama/Lemonade **embeddings** model for the vector index | None (keyword retrieval still feeds Ask) |
+
+Device-local only — **not** a settings-sync category (available models differ per machine). Changing the answer model does **not** rebuild the index. Changing the embed model or shipping new articles does.
+
+UI: Help sidebar dropdown + **Settings → Help answers** (save + **Rebuild help index**).
+
+### Index store
+
+The index is a **cache**. Deleting it must never touch chats, notes, or auth.
+
+| Target | Store |
+|--------|--------|
+| MAUI / Linux desktop | `{AppData}/help_rag.db` (`SqliteHelpIndex`) — chunk text + embedding blobs; cosine in process. Optionally `LoadExtension(vec0)` if `vec0.dll` / `vec0.so` sits next to the app. |
+| WASM | `MemoryHelpIndex` (in-process; keyword-only if no embed model) |
+
+Schema (desktop): `help_meta` (catalog hash, embed model, dimensions, built_at) + `help_chunks` (id, topic_id, title, anchor, text, embedding BLOB).
+
+**Reindex** (`HelpAskService` + `HelpChunker`):
+
+- Split articles on `h2`/`h3` (same `{#anchors}` as `?` jump).
+- Stale when catalog hash, embed model id, or dimensions differ.
+- Runs in the background after Help opens if stale **and** an embed model is set; Settings **Rebuild** is always explicit.
+- Embed failures keep the previous index; browse is unaffected.
+
+### Completions (why not ME.AI for Lemonade)
+
+The OpenAI SDK used by `GetChatClientForModel` sends `max_completion_tokens` (Lemonade wants `max_tokens`) and **drops** `reasoning` / `reasoning_content` on deserialize. Qwen3.x thinking models then look empty.
+
+For `ollama/*` and `lemonade/*`, Help Ask POSTs `/v1/chat/completions` itself (`HelpEmbeddingClient.CompleteAsync`): `max_tokens` 4096, `enable_thinking: false`, then parses `content`, `reasoning_content`, and `<think>` blocks. Cloud answer models still use `ChatModelCatalogService.GetChatClientForModel`.
+
+A cloud answer model **does** send the question plus a few shipped excerpts to that provider. Local Lemonade/Ollama stay on-device.
+
+`finish_reason: length` means the reply hit the token cap — raise `max_tokens` or pick a non-thinking / larger-context model. Poor answers on “what is a workflow” are usually **article coverage**, not retrieval (fix `docs/user/skills-workflows.md` later).
+
+**Key files:** `App.Core/Help/*`, `App.Shared/Services/Help/*`, `App.Maui/Services/SqliteHelpIndex.cs`, `HelpView.razor`, `HelpPanel.razor`, `HelpOverlayHost.razor`, `SettingsPage.razor` (Help answers), `docs/user/` + `App.Shared/wwwroot/help/`
+
+---
+
 ## Key Files Reference
  
  ### Host — startup & shell
@@ -1057,7 +1134,11 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
  | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets (incl. gallery/calendar/settings), AI server pick |
  | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults, tool routing model |
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
- | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, preferences, setup wizard entry |
+ | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, help answer/embed models, preferences, setup wizard entry |
+ | `Components/HelpPage.razor` | `/help` | Full-page help (browse + optional Ask) |
+ | `Components/HelpView.razor` | (in `/help` + modal) | TOC, articles, Ask box, citations |
+ | `Components/HelpPanel.razor` | (overlay) | Centered resizable help modal |
+ | `Components/HelpOverlayHost.razor` | (WASM pages) | Hosts `HelpPanel` in the interactive page island |
  | `Components/ToolsPage.razor` | `/tools` | Tabs: Skills (SKILL.md) + Tools (OAuth catalog + MCP registry) |
  | `Components/SkillsPanel.razor` | (in `/tools`) | Create/upload/edit/run Agent Skills |
  | `Components/SetupWizard.razor` | (overlay) | MAUI: optional Home Server / Lemonade / Ollama install |
@@ -1088,6 +1169,11 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
  | `Services/Tools/ContextualRequestRouter.cs` | Keyword / wake-word / panel heuristics |
  | `Services/Tools/AiRequestRouter.cs` | Small-model module classifier |
  | `Services/SettingsSyncStore.cs` | Settings category export/import for WebRTC |
+ | `Services/Help/HelpCatalogService.cs` | Embedded help catalog + markdown |
+ | `Services/Help/HelpAskService.cs` | Keyword/vector retrieve + help completion |
+ | `Services/Help/HelpChunker.cs` | Split articles on headings; catalog hash |
+ | `Services/Help/HelpEmbeddingClient.cs` | Local embeddings + raw Lemonade/Ollama chat |
+ | `Services/Help/MemoryHelpIndex.cs` | In-memory help index (WASM) |
  
  ### Business Contracts (`App.Core`)
  
@@ -1098,7 +1184,11 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
  | `Storage/IGalleryStore.cs` | Albums, thumbs, encrypted images, display URLs |
  | `Storage/ICalendarStore.cs` | Calendars + events |
  | `Storage/ICryptoService.cs` | Interface for AES-GCM encryption/decryption |
- | `Storage/IKeyStore.cs` | Settings, Ollama/Lemonade, API keys, MCP, OAuth installs, tool routing |
+ | `Storage/IKeyStore.cs` | Settings, Ollama/Lemonade, API keys, MCP, OAuth installs, tool routing, help models |
+ | `Help/IHelpCatalog.cs` | Shipped help topics + markdown |
+ | `Help/IHelpOverlay.cs` | In-app help modal open/close |
+ | `Help/IHelpAskService.cs` | Optional Ask (retrieve + complete) |
+ | `Help/IHelpIndex.cs` | Disposable local chunk/vector index |
  | `Chat/IChatCompletionService.cs` | Completion contract + `ChatCompletionStats` |
  | `Chat/ChatModelInfo.cs` | Catalog entry (tools, vision, context, Omni, image flags) |
  | `Tools/ToolRoutingMode.cs` | Rules / Ai / Hybrid |
@@ -1125,6 +1215,7 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
  | **Encryption** | `Services/WasmCryptoService.cs` (WebCrypto JS) | `Services/MauiCryptoService.cs` (Native .NET) |
  | **Sync** | `Services/WasmSyncService.cs` | `Services/MauiSyncService.cs` (SIPSorcery) |
  | **Keys/Settings** | `Services/WasmKeyStore.cs` (localStorage) | `Services/SqliteKeyStore.cs` (SQLite) |
+ | **Help index** | `MemoryHelpIndex` (in-process) | `SqliteHelpIndex` (`help_rag.db`, optional vec0) |
  | **Home Assistant** | `NullSmartHomeService` (no-op) | `Services/HomeAssistantService.cs` |
  | **OAuth / URI** | Browser navigation | `MauiUriLauncher`, `MauiOAuthInterceptor` |
  | **Embedded browser** | Null browser services (`NullBrowserAgentService`, etc.) | **Windows:** `MauiBrowserAgentService`, `BrowserOverlayService`, WebView2. **Linux:** `LinuxBrowserAgentService`, `LinuxBrowserHost`, WebKitGTK. Shared: `SqliteBrowserStore`, `MauiPwaDetector`. |

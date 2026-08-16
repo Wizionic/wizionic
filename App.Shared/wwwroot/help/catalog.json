@@ -15,6 +15,7 @@
     { "id": "settings-about-you", "title": "About you", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "about-you", "toc": false },
     { "id": "settings-memories", "title": "Memories", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "memories", "toc": false },
     { "id": "tool-routing", "title": "Tool routing", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "tool-routing", "toc": false },
+    { "id": "settings-help-answers", "title": "Help answers", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "help-answers", "toc": false },
     { "id": "settings-system-prompt", "title": "System prompt", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "system-prompt", "toc": false },
     { "id": "tools", "title": "Tools, MCP, and connectors", "file": "tools-mcp.md", "routes": ["/tools"], "audience": "howto" },
     { "id": "skills", "title": "Skills and workflows", "file": "skills-workflows.md", "routes": ["/tools"], "audience": "howto" },
