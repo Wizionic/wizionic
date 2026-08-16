@@ -188,3 +188,36 @@ window.appNavLayout = window.appNavLayout || {
 try {
     window.appNavLayout.ensureSecondaryClickDelegation();
 } catch (e) { }
+
+window.appHelp = window.appHelp || {};
+window.appHelp.scrollToId = function (id) {
+    if (!id) return false;
+    var el = document.getElementById(id);
+    if (!el) {
+        try { el = document.querySelector('#' + CSS.escape(id)); } catch (e) { }
+    }
+    if (!el) return false;
+
+    var section = el.closest('.help-section');
+    if (section) {
+        section.classList.add('is-target');
+        if (section.__helpTargetTimer) clearTimeout(section.__helpTargetTimer);
+        section.__helpTargetTimer = setTimeout(function () {
+            section.classList.remove('is-target');
+        }, 1800);
+    }
+
+    var root = el.closest('.help-view-article') || el.closest('.help-modal-body') || el;
+    while (root && root !== document.body) {
+        var style = window.getComputedStyle(root);
+        var oy = style.overflowY;
+        if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && root.scrollHeight > root.clientHeight + 2) {
+            var top = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - 12;
+            root.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+            return true;
+        }
+        root = root.parentElement;
+    }
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    return true;
+};

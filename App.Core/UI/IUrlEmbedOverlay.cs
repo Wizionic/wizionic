@@ -25,4 +25,10 @@ public interface IUrlEmbedOverlay
     /// (same coordinate space as browser overlays).
     /// </summary>
     void UpdateBounds(double x, double y, double width, double height, object? owner = null);
+
+    /// <summary>
+    /// Temporarily hide the native WebView without unloading it (e.g. while a modal is open).
+    /// Default is a no-op for iframe / null hosts.
+    /// </summary>
+    void SetSuppressed(bool suppressed) { }
 }

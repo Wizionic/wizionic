@@ -1,0 +1,5 @@
+@* WASM AppLayout is static SSR, so the modal must live in the page's WASM island. *@
+@if (!AppEnvironment.IsMaui)
+{
+    <HelpPanel />
+}

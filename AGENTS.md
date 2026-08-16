@@ -36,6 +36,12 @@ Full write-up: [`ARCHITECTURE.md`](ARCHITECTURE.md) (repo root; not a public sit
 | `Apis/` | WasmApiEndpoints.cs (auth/keys/tools), AiProxyEndpoints.cs (cloud model proxy) |
 | `Data/` | EF Core context + entities, Migrations/ |
 
+## Git (review before remote)
+
+- Commit locally when a change is complete if that helps the user review history.
+- **Do not `git push`, create a GitHub PR, or force-update a remote branch unless the user explicitly says to push or that the work is ready.**
+- Leave the working tree in place so the user can inspect and make small edits in Visual Studio / VS Code first.
+
 ## Constraints & gotchas
 
 - No unit tests — manual validation via running app is the primary testing approach.

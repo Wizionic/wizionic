@@ -17,6 +17,7 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
     private object? _pendingOwner;
     private object? _owner;
     private bool _visible;
+    private bool _suppressed;
     private bool _hasLayout;
 
     public bool IsNative => true;
@@ -62,8 +63,8 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
             var changed = !string.Equals(_currentUrl, url, StringComparison.OrdinalIgnoreCase);
             _currentUrl = url;
             _visible = true;
-            _webView.IsVisible = true;
-            _webView.IsEnabled = true;
+            _webView.IsVisible = !_suppressed;
+            _webView.IsEnabled = !_suppressed;
 
             if (changed || _webView.Source is not UrlWebViewSource src
                 || !string.Equals(src.Url, url, StringComparison.OrdinalIgnoreCase))
@@ -116,8 +117,8 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
 
             AbsoluteLayout.SetLayoutFlags(_webView, AbsoluteLayoutFlags.None);
             AbsoluteLayout.SetLayoutBounds(_webView, bounds);
-            _webView.IsVisible = true;
-            _webView.IsEnabled = true;
+            _webView.IsVisible = !_suppressed;
+            _webView.IsEnabled = !_suppressed;
 
             // WebView2 can swallow a navigation that happened while the view was 0×0.
             if (!_hasLayout && !string.IsNullOrWhiteSpace(_currentUrl))
@@ -156,5 +157,18 @@ public sealed class MauiUrlEmbedOverlayService : IUrlEmbedOverlay
 
         AbsoluteLayout.SetLayoutBounds(_webView, new Rect(0, 0, 0, 0));
         AbsoluteLayout.SetLayoutFlags(_webView, AbsoluteLayoutFlags.None);
+    }
+
+    public void SetSuppressed(bool suppressed)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _suppressed = suppressed;
+            if (_webView == null)
+                return;
+            var show = _visible && !suppressed;
+            _webView.IsVisible = show;
+            _webView.IsEnabled = show;
+        });
     }
 }

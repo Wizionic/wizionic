@@ -112,7 +112,11 @@ public sealed class HelpCatalogService : IHelpCatalog
 
         lock (_gate)
         {
-            return VisibleTopics()
+            IEnumerable<HelpTopic> pool = _topics;
+            if (!AppEnvironment.IsMaui)
+                pool = pool.Where(t => !t.DesktopOnly);
+
+            return pool
                 .Select(t =>
                 {
                     var blob = _searchBlob.GetValueOrDefault(t.Id) ?? (t.Title + " " + t.Id);
@@ -150,6 +154,7 @@ public sealed class HelpCatalogService : IHelpCatalog
                     Audience = t.Audience ?? "howto",
                     Anchor = t.Anchor,
                     DesktopOnly = t.DesktopOnly,
+                    ShowInToc = t.Toc ?? string.IsNullOrEmpty(t.Anchor),
                     Routes = t.Routes ?? Array.Empty<string>()
                 })
                 .ToList() ?? new List<HelpTopic>();
@@ -175,9 +180,10 @@ public sealed class HelpCatalogService : IHelpCatalog
 
     private List<HelpTopic> VisibleTopics()
     {
-        if (AppEnvironment.IsMaui)
-            return _topics.ToList();
-        return _topics.Where(t => !t.DesktopOnly).ToList();
+        IEnumerable<HelpTopic> list = _topics;
+        if (!AppEnvironment.IsMaui)
+            list = list.Where(t => !t.DesktopOnly);
+        return list.Where(t => t.ShowInToc).ToList();
     }
 
     private static string? ReadResource(string fileName)
@@ -237,6 +243,7 @@ public sealed class HelpCatalogService : IHelpCatalog
         public string? Audience { get; set; }
         public string? Anchor { get; set; }
         public bool DesktopOnly { get; set; }
+        public bool? Toc { get; set; }
         [JsonPropertyName("routes")]
         public string[]? Routes { get; set; }
     }
