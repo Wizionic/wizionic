@@ -1,64 +1,58 @@
-using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using App.Core.Help;
-using Microsoft.AspNetCore.Components;
 
 namespace App.Shared.Services.Help;
 
+/// <summary>
+/// Loads shipped help articles from embedded resources. No NavigationManager / HttpClient
+/// so this can be a singleton on the host without breaking Development scope validation.
+/// </summary>
 public sealed class HelpCatalogService : IHelpCatalog
 {
-    public const string ContentPrefix = "_content/App.Shared/help/";
+    private const string ResourcePrefix = "help.";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly NavigationManager _nav;
     private readonly object _gate = new();
-    private Task? _loadTask;
+    private bool _loaded;
     private List<HelpTopic> _topics = new();
     private readonly Dictionary<string, string> _markdown = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _searchBlob = new(StringComparer.OrdinalIgnoreCase);
-
-    public HelpCatalogService(NavigationManager nav)
-    {
-        _nav = nav;
-    }
 
     public IReadOnlyList<HelpTopic> Topics
     {
         get
         {
+            EnsureLoaded();
             lock (_gate)
                 return _topics.ToList();
         }
     }
 
-    public async Task EnsureLoadedAsync(CancellationToken ct = default)
+    public Task EnsureLoadedAsync(CancellationToken ct = default)
     {
-        Task load;
-        lock (_gate)
-        {
-            _loadTask ??= LoadCoreAsync();
-            load = _loadTask;
-        }
-
-        await load.WaitAsync(ct);
+        EnsureLoaded();
+        return Task.CompletedTask;
     }
 
     public HelpTopic? FindById(string? id)
     {
         if (string.IsNullOrWhiteSpace(id))
             return null;
+        EnsureLoaded();
         lock (_gate)
             return _topics.FirstOrDefault(t => t.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
     }
 
     public HelpTopic? FindByRoute(string path)
     {
+        EnsureLoaded();
         path = NormalizePath(path);
         if (path.StartsWith("/help", StringComparison.OrdinalIgnoreCase))
             return FindById("start");
@@ -70,42 +64,36 @@ public sealed class HelpCatalogService : IHelpCatalog
         }
     }
 
-    public async Task<string> GetMarkdownAsync(string topicId, CancellationToken ct = default)
+    public Task<string> GetMarkdownAsync(string topicId, CancellationToken ct = default)
     {
-        await EnsureLoadedAsync(ct);
+        EnsureLoaded();
         var topic = FindById(topicId);
         if (topic == null)
-            return "";
+            return Task.FromResult("");
 
         lock (_gate)
         {
             if (_markdown.TryGetValue(topic.File, out var cached))
-                return cached;
+                return Task.FromResult(cached);
         }
 
-        using var http = CreateClient();
-        string text;
-        try
-        {
-            text = await http.GetStringAsync(ContentPrefix + topic.File, ct);
-        }
-        catch
-        {
-            return $"# {topic.Title}\n\nThis article could not be loaded.";
-        }
+        var raw = ReadResource(topic.File);
+        if (raw == null)
+            return Task.FromResult($"# {topic.Title}\n\nThis article could not be loaded.");
 
-        text = StripFrontMatter(text);
+        var text = StripFrontMatter(raw);
         lock (_gate)
         {
             _markdown[topic.File] = text;
             _searchBlob[topic.Id] = BuildSearchBlob(topic, text);
         }
 
-        return text;
+        return Task.FromResult(text);
     }
 
     public IReadOnlyList<HelpTopic> Search(string query)
     {
+        EnsureLoaded();
         if (string.IsNullOrWhiteSpace(query))
         {
             lock (_gate)
@@ -140,53 +128,48 @@ public sealed class HelpCatalogService : IHelpCatalog
         }
     }
 
-    private async Task LoadCoreAsync()
+    private void EnsureLoaded()
     {
-        using var http = CreateClient();
-        CatalogFile? catalog;
-        try
-        {
-            catalog = await http.GetFromJsonAsync<CatalogFile>(ContentPrefix + "catalog.json", JsonOptions);
-        }
-        catch
-        {
-            catalog = null;
-        }
-
-        var topics = catalog?.Topics?
-            .Where(t => !string.IsNullOrWhiteSpace(t.Id) && !string.IsNullOrWhiteSpace(t.File))
-            .Select(t => new HelpTopic
-            {
-                Id = t.Id!,
-                Title = string.IsNullOrWhiteSpace(t.Title) ? t.Id! : t.Title!,
-                File = t.File!,
-                Audience = t.Audience ?? "howto",
-                Anchor = t.Anchor,
-                DesktopOnly = t.DesktopOnly,
-                Routes = t.Routes ?? Array.Empty<string>()
-            })
-            .ToList() ?? new List<HelpTopic>();
-
-        if (!AppEnvironment.IsMaui)
-            topics = topics.Where(t => !t.DesktopOnly).ToList();
-
         lock (_gate)
         {
+            if (_loaded)
+                return;
+
+            var json = ReadResource("catalog.json");
+            CatalogFile? catalog = null;
+            if (!string.IsNullOrWhiteSpace(json))
+                catalog = JsonSerializer.Deserialize<CatalogFile>(json, JsonOptions);
+
+            var topics = catalog?.Topics?
+                .Where(t => !string.IsNullOrWhiteSpace(t.Id) && !string.IsNullOrWhiteSpace(t.File))
+                .Select(t => new HelpTopic
+                {
+                    Id = t.Id!,
+                    Title = string.IsNullOrWhiteSpace(t.Title) ? t.Id! : t.Title!,
+                    File = t.File!,
+                    Audience = t.Audience ?? "howto",
+                    Anchor = t.Anchor,
+                    DesktopOnly = t.DesktopOnly,
+                    Routes = t.Routes ?? Array.Empty<string>()
+                })
+                .ToList() ?? new List<HelpTopic>();
+
+            if (!AppEnvironment.IsMaui)
+                topics = topics.Where(t => !t.DesktopOnly).ToList();
+
             _topics = topics;
             foreach (var t in topics)
+            {
                 _searchBlob[t.Id] = t.Title + " " + t.Id;
-        }
+                var raw = ReadResource(t.File);
+                if (raw == null)
+                    continue;
+                var text = StripFrontMatter(raw);
+                _markdown[t.File] = text;
+                _searchBlob[t.Id] = BuildSearchBlob(t, text);
+            }
 
-        foreach (var t in topics.DistinctBy(x => x.File))
-        {
-            try
-            {
-                await GetMarkdownAsync(t.Id);
-            }
-            catch
-            {
-                // Search still works on titles.
-            }
+            _loaded = true;
         }
     }
 
@@ -197,8 +180,16 @@ public sealed class HelpCatalogService : IHelpCatalog
         return _topics.Where(t => !t.DesktopOnly).ToList();
     }
 
-    private HttpClient CreateClient() =>
-        new() { BaseAddress = new Uri(_nav.BaseUri) };
+    private static string? ReadResource(string fileName)
+    {
+        var asm = typeof(HelpCatalogService).Assembly;
+        var name = ResourcePrefix + fileName;
+        using var stream = asm.GetManifestResourceStream(name);
+        if (stream == null)
+            return null;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 
     private static string NormalizePath(string path)
     {
