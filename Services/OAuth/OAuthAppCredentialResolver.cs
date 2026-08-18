@@ -55,7 +55,7 @@ public sealed class OAuthAppCredentialResolver
             }
         }
 
-        // Fallback: IOptions / environment (local dev)
+        // Optional fallback: OAuth__GitHub__ClientId (etc.) from the environment. Not used in appsettings.
         var cfg = providerId switch
         {
             "google" => _options.Google,

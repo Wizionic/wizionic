@@ -8,12 +8,13 @@
 
 ## Core Values
 
-- **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. The server does not store conversation or personal content for WASM/MAUI paths.
-- **Local AI** — **AMD Lemonade Server** and **Ollama** on the user's machine are first-class providers (chat, multimodal, and Lemonade-specific modalities). A logged-in device can relay chat AI to other devices over WebRTC.
-- **Easy UI** make the setup of Local AI, integrations, management of the user's private data as easy as poosible with an Easy UI.
-- **Minimal server footprint** — Wizionic.com Server handles auth, signaling, tool proxies (CORS), CORS-restricted AI proxies, OAuth broker for connectors, and optional Home Server install. Heavy lifting runs on the client.
-- **Tool-rich agents** — Native app tools (Notes, Gallery, Calendar, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, plus MAUI Home Assistant and embedded browser — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.
-- **Local-first sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR is presence + signaling only.
+- **Local AI** — **AMD Lemonade Server** and **Ollama** can be installed with the setup wizard on the user's machine as first-class local AI providers (chat, multimodal, and Lemonade-specific modalities). 
+- **Tools Available** — Native app tools (Notes, Gallery, Calendar, Browser, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, first class **Home Assistant** integration — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.  Tools can then be used in Skills or scheduled in Workflows.
+- **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. When the public server is used as the Home Server, it does not store conversation or personal content for WASM/MAUI client.
+- **Local Device to Device sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR from the Home Server is presence + signaling only.
+- **Minimal Server Footprint**  The desktop app plus a **Home Server** on the installed PC (`http://localhost:5150`) covers login, magic-link/2FA APIs, SignalR presence, and WebRTC signaling. Installing Home Server from the setup wizard downloads that package from **GitHub Releases** and retargets the login server. Desktop *app* updates also come from GitHub. The hosted site (Wizionic.com) is only an optional public host (web client + the same APIs) for people who do not run their own Home Server.
+- **Mobile Device Support** The WASM website from the Home Server can be installed as a Progressive Web App (PWA) on Android and IOS devices.  A logged-in mobile device can relay chat AI to other devices over WebRTC.
+- **Easy UI** — Make setup of local AI, integrations, and the user's private data as easy as possible.
 
 ---
 
@@ -21,7 +22,7 @@
 
 ```
 App/
-├── ARCHITECTURE.md     # This file (repo root; not published)
+├── ARCHITECTURE.md     # This file (repo root)
 ├── App.csproj          # Host (Server): ASP.NET Core, APIs, SignalR hub, SQLite, auth
 ├── App.Core/           # Business Logic & Contracts: Interfaces, DTOs, shared models
 ├── App.Shared/         # Shared UI & logic: Razor components, Layouts, Common services (used by both WASM & MAUI)

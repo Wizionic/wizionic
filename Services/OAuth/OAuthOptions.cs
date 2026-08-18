@@ -27,6 +27,8 @@ public sealed class OAuthPendingAuth
     public string ConnectorId { get; set; } = "";
     public string CodeVerifier { get; set; } = "";
     public string? ReturnBaseUrl { get; set; }
+    /// <summary>Exact redirect_uri sent to the provider; must be reused on token exchange.</summary>
+    public string RedirectUri { get; set; } = "";
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string[] Scopes { get; set; } = Array.Empty<string>();
 }

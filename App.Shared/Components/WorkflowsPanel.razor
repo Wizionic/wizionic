@@ -106,7 +106,7 @@
                 <button type="button" class="cf-conn-tab @(editorTab == 0 ? "cf-conn-tab-active" : "")"
                         @onclick="() => editorTab = 0">Form</button>
                 <button type="button" class="cf-conn-tab @(editorTab == 1 ? "cf-conn-tab-active" : "")"
-                        @onclick="SwitchToRaw">Raw YAML</button>
+                        @onclick="SwitchToRaw">YAML</button>
             </div>
 
             @if (editorTab == 0)
@@ -276,7 +276,7 @@
             }
             else
             {
-                <label class="cf-conn-label">Raw YAML (<code>wizionic.workflow/v1</code>)</label>
+                <label class="cf-conn-label">YAML (<code>wizionic.workflow/v1</code>)</label>
                 <textarea class="cf-dialog-input cf-skill-raw" rows="18" @bind="yamlText" spellcheck="false"></textarea>
             }
 

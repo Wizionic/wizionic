@@ -63,7 +63,7 @@ public sealed class OAuthBrokerService
         string provider,
         string connectorId,
         string? returnBaseUrl,
-        string? redirectUriOverride,
+        string? requestOrigin,
         CancellationToken ct = default)
     {
         provider = (provider ?? "").Trim().ToLowerInvariant();
@@ -79,9 +79,7 @@ public sealed class OAuthBrokerService
         if (cfg is null)
             return ($"OAuth provider '{provider}' is not configured on the server.", null);
 
-        var redirectUri = string.IsNullOrWhiteSpace(redirectUriOverride)
-            ? cfg.RedirectUri
-            : redirectUriOverride.Trim();
+        var redirectUri = OAuthRedirectResolver.Resolve(provider, requestOrigin, cfg.RedirectUri);
         if (string.IsNullOrWhiteSpace(redirectUri))
             return ("Redirect URI is not configured.", null);
 
@@ -98,6 +96,7 @@ public sealed class OAuthBrokerService
             ConnectorId = connectorId,
             CodeVerifier = verifier,
             ReturnBaseUrl = returnBaseUrl,
+            RedirectUri = redirectUri,
             Scopes = scopes
         });
 
@@ -143,7 +142,9 @@ public sealed class OAuthBrokerService
         if (cfg is null)
             return ("Provider not configured.", null);
 
-        var redirectUri = cfg.RedirectUri;
+        var redirectUri = string.IsNullOrWhiteSpace(pending.RedirectUri)
+            ? cfg.RedirectUri
+            : pending.RedirectUri;
         try
         {
             var tokens = await ExchangeCodeAsync(provider, cfg, code, redirectUri, pending.CodeVerifier, ct);
