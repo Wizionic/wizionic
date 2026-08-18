@@ -1,18 +1,12 @@
 
 
-<table width="100%">
-  <tr>
-    <td align="center" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0F172A 100%); padding: 40px 0; border-radius: 8px; width: 100%;">
-      <img src="wwwroot/images/icon192.png" width="120" alt="Wizionic Logo" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
-      <p style="margin: 15px 0 0 0; color: #94A3B8; font-size: 14px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        Privacy · Local AI · Open Source
-      </p>
-    <p style="margin: 15px 0 0 0; color: #94A3B8; font-size: 24px; font-weight: 600; letter-spacing: 2px;  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        Wizionic
-      </p>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="wwwroot/images/IconWhiteBG180.png" width="120" alt="Wizionic">
+  <br>
+  <strong>Privacy · Local AI · Open Source</strong>
+  <br>
+  Wizionic
+</p>
 
 
 ---
@@ -58,65 +52,65 @@ https://github.com/Wizionic/wizionic/releases/latest/download/Wizionic-win-Setup
 ### 1. Chat
 
 The available features depend on the capabilities of your installed Lemonade or Ollama models.
-<img src="wwwroot/screenshots/chat.png"  alt="Wizionic Chat" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Chat.png" alt="Wizionic Chat"></p>
 
 
 ### 2. Tools - Skills - Workflows
 Available tools including built-in tools, MCP & OAuth tools, Home Assistant as a tool if installed.
-<img src="wwwroot/screenshots/tools.png"  alt="Wizionic Tools" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Tools.png" alt="Wizionic Tools"></p>
 
 Import or create Skills that combine multiple tools into reusable AI actions.
-<img src="wwwroot/screenshots/skills.png"  alt="Wizionic Tools" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Skills.png" alt="Wizionic Skills"></p>
 
 Automate repetitive tasks by scheduling AI Skills to run whenever you want. Import or create **Workflows** and schedule them to run with assigned models.
-<img src="wwwroot/screenshots/workflows.png"  alt="Wizionic Tools" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Workflows.png" alt="Wizionic Workflows"></p>
 
 Edit Workflows to change their schedule or model they use.  Scheduled workflows will appear on the calendar
-<img src="wwwroot/screenshots/editworkflow.png"  alt="Wizionic Tools" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/EditWorkflow.png" alt="Wizionic Edit Workflow"></p>
 
 ### 3. Browser Tool
 
 Wizionic contains a built-in multi-tab browser tool that can be agentically controlled for navigating, clicking, getting content and filling in fields:  `navigate_to`, `get_page_content`, `click_element`, `fill_field`   Inactive tabs are suspended to reduce memory usage. (for example a tab playing a youtube video will stop when not active).   
 
 A split view allows you to display multiple sites.  The toolbar on the far right of the screen is for installing Progressive Web Apps (PWAs).  Bookmarks can sync between your devices.
-<img src="wwwroot/screenshots/browser.png"  alt="Browser Tool" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Browser.png" alt="Browser Tool"></p>
 
 ### 4. Notebook tool
 
 Wizionic includes a full-featured Notebook tool.  Chat messages can manually be saved to a notebook and notes can be re-ordered, edited, protected with a password, and exported.  The Notebooks can also be controlled by AI agents:
  `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry` .
-<img src="wwwroot/screenshots/notebooks.png"  alt="Notebook Tool" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Notebooks.png" alt="Notebook Tool"></p>
 *Agentic browsing: The AI can navigate to URLs, extract content, and interact with web pages.*
 
 ### 5. Gallery Tool
 AI-generated images are automatically saved to the "My Media" album. Images from chat can also be organized into custom albums that you create. Photos and images uploaded to the gallery automatically sync across your devices. The gallery is also available as a tool for AI: `list_gallery_albums`, `list_recent_chat_images`, `save_to_gallery` . 
 
-<img src="wwwroot/screenshots/gallery.png"  alt="Gallery Tool" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Gallery.png" alt="Gallery Tool"></p>
 
 ### 6. Calendar Tool
 Scheduled AI workflows are shown on the workflows calendar. This calendar tool supports multiple calendars and is available to AI as tool through `list_calendars`, `list_events`, `add_calendar_event`, `update_calendar_event`, `delete_calendar_event` .
 
-<img src="wwwroot/screenshots/calendar.png"  alt="Calendar Tool" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Calendar.png" alt="Calendar Tool"></p>
 
 ### 7. Lemonade Configuration
 AMD Lemonade is given as an option to install on your computer if you do not already have a local AI server installed. The setup wizard can also install it at a later time after install.   Refresh Models will get the current list of models available for Wizionic to use. Specific models from Lemonade can be chosen for Image Generation, Image Editing, Text to Speech, and voice.  The right side displays the local Lemonade configuration website where different models can easily be downloaded.
 
-<img src="wwwroot/screenshots/lemonade.png"  alt="Lemonade Configuration" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Lemonade.png" alt="Lemonade Configuration"></p>
 
 ### 8. Home Assistant Configuration
 If you have installed Home Assistant (https://github.com/home-assistant) Wizionic provides first-class integration to control and automate your smart home with Local AI.  Give your Home Assistant instance a name so the AI knows when you're referring to your smart home. . "Hey Bro" is the assistant name in the example.
 
-<img src="wwwroot/screenshots/homeassistant.png"  alt="Home Assistant" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/HomeAssistant.png" alt="Home Assistant"></p>
 
 
 ### 9. Settings
 Settings is where you configure many options for Wizionic.
-<img src="wwwroot/screenshots/settings.png"  alt="Calendar Tool" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Settings.png" alt="Settings"></p>
 
 
 ### 10. Sync
 Wizionic is designed for people who use multiple devices.   To keep important you data safe, it is important for the data to exist on multiple devices in the event of an unrecoverable device failure .  The sync feature detects all the devices for the logged in user and allows syncing of data and settings to all devices automatically.  From the Sync settings page, it is possible to disable sync for certain devices or features. 
-<img src="wwwroot/screenshots/sync.png"  alt="Calendar Tool" style="display: block; margin: 0 auto; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.5));">
+<p align="center"><img src="wwwroot/screenshots/Sync.png" alt="Sync"></p>
 
 
 ## Contributing
