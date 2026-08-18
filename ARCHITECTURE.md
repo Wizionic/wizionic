@@ -1003,12 +1003,12 @@ Installs prefer OS services (Windows Service / systemd) when supported. Admin ac
 | Table / entity | Purpose |
 |----------------|---------|
 | `Users` | Email, magic-link token, `LocalEncryptionKey` (protected) |
-| `UserProviderKeys` | Optional server-stored provider API keys (importable to WASM) |
+| `UserProviderKeys` | Leftover table; the app no longer saves provider API keys on the host |
 | `DataProtectionKeys` | ASP.NET key ring for encrypting secrets at rest |
 | `OAuthProviders` | App-level OAuth ClientId/secret (github, google, …) for the host broker |
 | `Connectors` | Marketplace catalog for OAuth/OpenAPI tiles (name, icon, scopes, featured) |
 
-**Not stored on the central server:** WASM/MAUI conversation history, note bodies, gallery bytes, calendar events, user OAuth access tokens, or WebRTC sync payloads. Those stay on devices (KeyStore / IndexedDB / SQLite).
+**Not stored on the central server:** WASM/MAUI conversation history, note bodies, gallery bytes, calendar events, user provider API keys, user OAuth access tokens, or WebRTC sync payloads. Those stay on devices (KeyStore / IndexedDB / SQLite).
 
 A **Home Server** install uses its own DB path (not overwritten by desktop app updates).
 
