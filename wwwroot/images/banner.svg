@@ -1,0 +1,59 @@
+<svg width="960" height="200" viewBox="0 0 960 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Dark gradient background -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0F172A"/>
+      <stop offset="50%" style="stop-color:#1E293B"/>
+      <stop offset="100%" style="stop-color:#0F172A"/>
+    </linearGradient>
+
+    <!-- Neon blue glow filter for icon -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Subtle grid pattern overlay -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1E3A5F" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+  </defs>
+
+  <!-- Background gradient -->
+  <rect width="960" height="200" fill="url(#bg)"/>
+
+  <!-- Subtle grid overlay -->
+  <rect width="960" height="200" fill="url(#grid)"/>
+
+  <!-- Left neon accent line -->
+  <line x1="0" y1="100" x2="340" y2="100"
+        stroke="#1D4ED8" stroke-width="1" opacity="0.4"/>
+
+  <!-- Right neon accent line -->
+  <line x1="620" y1="100" x2="960" y2="100"
+        stroke="#1D4ED8" stroke-width="1" opacity="0.4"/>
+
+  <!-- Neon glow circle behind icon -->
+  <circle cx="480" cy="100" r="75"
+          fill="none" stroke="#3B82F6" stroke-width="1" opacity="0.2"/>
+  <circle cx="480" cy="100" r="65"
+          fill="none" stroke="#60A5FA" stroke-width="0.5" opacity="0.15"/>
+
+  <!-- Your icon (centered) -->
+  <image href="icon192.png"
+         x="420" y="40" width="120" height="120"
+         filter="url(#glow)"/>
+
+  <!-- Optional: Tagline text below icon -->
+  <text x="480" y="185"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#64748B"
+        text-anchor="middle"
+        letter-spacing="3">
+    PRIVACY · LOCAL AI · OPEN SOURCE
+  </text>
+</svg>

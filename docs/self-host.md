@@ -36,7 +36,9 @@ Secrets belong in the environment, not in git.
 | `ZYPHRA_API_KEY` | Optional proxied Zyphra models |
 | `ConnectionStrings__DefaultConnection` | Override SQLite path |
 
-OAuth *app* Client IDs and secrets (Google, GitHub, Notion, Stripe) live in the host SQLite `OAuthProviders` table, not in deploy-time environment variables. Seed them in the database (the production notes live in the private ops repo). Empty `OAuth:*` entries in `appsettings.json` are only a local-dev fallback.
+OAuth *app* Client IDs and secrets (Google, GitHub, Notion, Stripe) live in the host SQLite `OAuthProviders` table, not in `appsettings.json`. Seed them in the database (the production notes live in the private ops repo).
+
+The broker sends `redirect_uri` for **this host**: `https://wizionic.com/api/oauth/{provider}/callback` on the public site, or `http://localhost:5150/api/oauth/{provider}/callback` on a wizard-installed Home Server. Register both (and `http://127.0.0.1:5150/…`) on each provider. A Home Server still needs its own `OAuthProviders` row (same client id/secret is fine; the stored `RedirectUri` can stay the public URL).
 
 The sample `free-chat` proxied provider in `appsettings.json` points at `http://127.0.0.1:11434/v1/` (local Ollama). Change or remove it if you do not run Ollama there.
 

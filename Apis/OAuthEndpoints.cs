@@ -28,7 +28,7 @@ public static class OAuthEndpoints
             var ret = string.IsNullOrWhiteSpace(returnUrl) ? baseOrigin : returnUrl.Trim();
 
             var (error, authorizeUrl) = await broker.StartAuthAsync(
-                provider, connectorId!, ret, redirectUriOverride: null, ct);
+                provider, connectorId!, ret, requestOrigin: baseOrigin, ct);
             if (error is not null || authorizeUrl is null)
                 return Results.BadRequest(new { message = error ?? "Could not start OAuth." });
 
