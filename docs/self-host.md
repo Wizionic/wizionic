@@ -2,7 +2,7 @@
 
 This guide runs the **host** (Blazor web app + APIs + SignalR) on your own machine or a VPS. It does not describe Wizionic's production server.
 
-Chat, notes, gallery, and calendar still live on each client. The host stores accounts, Data Protection keys, optional saved provider keys, and signaling.
+Chat, notes, gallery, and calendar still live on each client. The host stores accounts, Data Protection keys, and signaling. Provider API keys stay on each device.
 
 ## Requirements
 

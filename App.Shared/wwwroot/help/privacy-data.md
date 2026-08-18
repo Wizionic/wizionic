@@ -10,7 +10,7 @@ Full legal text: [Privacy](/privacy) and [Terms](/terms).
 ## On this device
 
 - Chat, notes, gallery, and calendar **content** (AES-256-GCM before write)
-- Your cloud API keys (unless you chose to store a copy on the server)
+- Your cloud API keys (on-device key store; they can sync between your devices over WebRTC)
 - Connector access tokens and MCP tokens
 - Device-local workflows
 
@@ -18,7 +18,6 @@ Full legal text: [Privacy](/privacy) and [Terms](/terms).
 
 - Email, optional password hash, optional 2FA flag and phone
 - A per-user encryption key so your devices can read the same data
-- Optional saved provider keys
 - Presence and WebRTC signaling (not chat payloads)
 - Transactional email (login codes) via Brevo
 - SMS codes via Twilio if you enrolled a number

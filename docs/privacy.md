@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** 15 August 2026  
+**Effective date:** 18 August 2026  
 **Operator:** Daniel Goodwin, operating as Wizionic  
 **Contact:** daniellgoodwin@protonmail.com  
 **Site:** https://wizionic.com  
@@ -25,7 +25,6 @@ If you create an account on wizionic.com, the server may store:
 - A short-lived hashed 2FA challenge after a successful password (until you finish sign-in or it expires)
 - Auth cookie `AppAuth` (HttpOnly, first-party, 10-year sliding session)
 - A per-user local encryption key so your own devices can decrypt the same local data
-- Optional cloud provider API keys (`UserProviderKeys`) **only if you choose to save them on the server**
 - OAuth *application* client IDs and secrets (Google, GitHub, Notion, Stripe) that belong to the Wizionic app, not your personal access tokens
 - SignalR presence and WebRTC signaling messages (offers, answers, ICE candidates — not chat payloads)
 - Logs of tool-proxy requests you trigger (`search_web`, `summarize_url`, and similar)
@@ -33,14 +32,13 @@ If you create an account on wizionic.com, the server may store:
 - Transactional email metadata via Brevo (magic-link and email second-factor codes)
 - SMS second-factor delivery via Twilio Verify, if you enroll a phone number (Twilio sees the number and the OTP message)
 
-Optional user-saved provider keys on the server are stored as configured today. Treat server-stored keys as sensitive and prefer keeping keys on the device when you can.
-
 ## What stays on the device
 
 - Chat, notes, gallery, and calendar **content** (encrypted before it is written to IndexedDB or SQLite)
 - Metadata such as titles and dates is stored in cleartext locally so the sidebar can list items quickly
 - Guest data under the `wasmchat-` namespace
 - Authenticated local data under `u-{userId}-`
+- Cloud provider API keys in the on-device key store (they can sync between your devices over WebRTC)
 - User OAuth *access* tokens and MCP tokens in the on-device key store
 - Device-local workflows / schedules (they are not synced)
 
