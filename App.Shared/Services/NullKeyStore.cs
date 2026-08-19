@@ -35,6 +35,9 @@ public sealed class NullKeyStore : IKeyStore
 
     public Task SetLastSelectedModelAsync(string modelId, CancellationToken ct = default) => Task.CompletedTask;
 
+    public int MaxOutputTokens => KeyStoreDefaults.DefaultMaxOutputTokens;
+    public Task SetMaxOutputTokensAsync(int value, CancellationToken ct = default) => Task.CompletedTask;
+
     public ToolRoutingMode ToolRoutingMode => ToolRoutingMode.Rules;
     public string? ToolRoutingModelId => null;
     public Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default) =>
@@ -45,9 +48,35 @@ public sealed class NullKeyStore : IKeyStore
     public Task SetHelpModelsAsync(string? answerModelId, string? embedModelId, CancellationToken ct = default) =>
         Task.CompletedTask;
 
-    public string GetKey(string providerId) => "";
-    public Task SetKeyAsync(string providerId, string key, CancellationToken ct = default) => Task.CompletedTask;
-    public Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default) =>
+    public IReadOnlyList<ModelProfile> ModelProfiles => Array.Empty<ModelProfile>();
+    public string? ActiveModelProfileId => null;
+    public ModelProfile? GetModelProfile(string id) => null;
+    public Task UpsertModelProfileAsync(ModelProfile profile, CancellationToken ct = default) =>
+        Task.CompletedTask;
+    public Task RemoveModelProfileAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SetActiveModelProfileIdAsync(string? id, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReplaceModelProfilesAsync(
+        IEnumerable<ModelProfile> profiles, string? activeId, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public IReadOnlyList<CloudProviderConfig> CloudProviders => Array.Empty<CloudProviderConfig>();
+    public CloudProviderConfig? GetCloudProvider(string id) => null;
+    public Task UpsertCloudProviderAsync(CloudProviderConfig provider, CancellationToken ct = default) =>
+        Task.CompletedTask;
+    public Task RemoveCloudProviderAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReplaceCloudProvidersAsync(IEnumerable<CloudProviderConfig> providers, CancellationToken ct = default) =>
+        Task.CompletedTask;
+    public Task SaveCloudModelSettingsAsync(string providerId, CloudModelSettings settings, CancellationToken ct = default) =>
+        Task.CompletedTask;
+    public Task SetCloudModalityDefaultsAsync(
+        string providerId,
+        string? imageModel = null,
+        string? editModel = null,
+        string? ttsModel = null,
+        string? sttModel = null,
+        string? voice = null,
+        CancellationToken ct = default) => Task.CompletedTask;
+    public Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default) =>
         Task.CompletedTask;
 
     public string OllamaBaseUrl => "http://localhost:11434";

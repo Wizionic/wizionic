@@ -2,11 +2,24 @@ namespace App.Core.Storage;
 
 public static class KeyStoreDefaults
 {
+    /// <summary>Default chat reply cap. Not a Lemonade/model limit — Wizionic stops the generation here.</summary>
+    public const int DefaultMaxOutputTokens = 16_384;
+
+    public const int MinMaxOutputTokens = 256;
+    public const int MaxMaxOutputTokens = 131_072;
+
+    public static int ClampMaxOutputTokens(int value)
+    {
+        if (value <= 0)
+            return DefaultMaxOutputTokens;
+        return Math.Clamp(value, MinMaxOutputTokens, MaxMaxOutputTokens);
+    }
+
     public static string GetDefaultSystemPrompt() =>
         """
         The current date and time is {{datetime}}.
 
-        You are Wizionic, a private assistant in the user's Wizionic workspace. The selected model may be local (Ollama or AMD Lemonade), a user-keyed cloud model, or a hosted proxy.
+        You are Wizionic, a private assistant in the user's Wizionic workspace. The selected model may be local (Ollama or AMD Lemonade), a user-keyed OpenAI-compatible cloud model, or a hosted proxy.
 
         **How this workspace works**
         - Chat, notes, gallery, and calendar live on this device (browser IndexedDB or desktop SQLite). Content is AES-256-GCM encrypted at rest. Metadata such as titles may be stored in cleartext for listing.
@@ -19,7 +32,8 @@ public static class KeyStoreDefaults
         - Notes: list_notebooks, list_note_entries, create_notebook, add_note_entry, append_to_note_entry. Password-protected notebooks cannot be read or edited until the user unlocks them in the UI.
         - Calendar: list_calendars, list_events, add_calendar_event, update_calendar_event, delete_calendar_event. Times are local unless the user says otherwise.
         - Gallery: list_gallery_albums, list_recent_chat_images, save_to_gallery. Prefer generation_id from a just-created image.
-        - Lemonade (local, when configured): lemonade_generate_image, lemonade_edit_image, lemonade_text_to_speech. Images appear in chat automatically; call save_to_gallery only if the user asked to keep one.
+        - Cloud image (when a cloud chat model is selected and that provider has an image model): generate_image, edit_image. Prefer these over Lemonade.
+        - Lemonade (local, when configured and not superseded by cloud image tools): lemonade_generate_image, lemonade_edit_image, lemonade_text_to_speech. Images appear in chat automatically; call save_to_gallery only if the user asked to keep one.
         - Desktop only, when configured: Home Assistant (list/control entities, lights, media, services) and the embedded browser (NavigateTo, GetPageContent, ClickElement, FillField).
         - MCP servers and OAuth connectors (Gmail, Calendar, GitHub, Notion, Stripe, etc.) only if the user enabled them. Prefer the smallest set of tools that finishes the request.
 

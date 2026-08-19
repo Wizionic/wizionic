@@ -185,9 +185,56 @@
 
 
         <div class="app-nav-account">
-            <a href="/account" title="Account / Login">
+            <a href="/account" class="app-nav-account-link" title="Account / Login">
                 <i class="bi bi-person-circle"></i>
             </a>
+            <button type="button"
+                    class="app-nav-account-menu-btn"
+                    data-wasm-account-menu="true"
+                    title="Account and settings"
+                    aria-haspopup="true"
+                    aria-expanded="false"
+                    aria-controls="app-nav-account-menu">
+                <i class="bi bi-person-circle"></i>
+            </button>
+            <div id="app-nav-account-menu" class="app-nav-account-dropdown" data-account-menu hidden>
+                <a href="/account" class="app-nav-account-dropdown-item">
+                    <i class="bi bi-person-circle"></i>
+                    <span>Account / Login</span>
+                </a>
+                <div class="app-nav-context-menu-divider"></div>
+                <a href="/settings" class="app-nav-account-dropdown-item">
+                    <i class="bi bi-gear"></i>
+                    <span>Settings</span>
+                </a>
+                <a href="/lemonade" class="app-nav-account-dropdown-item">
+                    <span class="app-nav-account-dropdown-emoji" aria-hidden="true">🍋</span>
+                    <span>Lemonade</span>
+                </a>
+                <a href="/local-ai" class="app-nav-account-dropdown-item">
+                    <span class="app-nav-account-dropdown-emoji" aria-hidden="true">🦙</span>
+                    <span>Ollama</span>
+                </a>
+                <a href="/cloud-providers" class="app-nav-account-dropdown-item">
+                    <i class="bi bi-cloud"></i>
+                    <span>Cloud providers</span>
+                </a>
+                @if (AppEnvironment.IsMaui)
+                {
+                    <a href="/home-assistant" class="app-nav-account-dropdown-item">
+                        <i class="bi bi-house-gear"></i>
+                        <span>Home Assistant</span>
+                    </a>
+                }
+                <a href="/sync" class="app-nav-account-dropdown-item">
+                    <i class="bi bi-arrow-repeat"></i>
+                    <span>Devices &amp; Sync</span>
+                </a>
+                <a href="/help" class="app-nav-account-dropdown-item">
+                    <i class="bi bi-question-circle"></i>
+                    <span>Help</span>
+                </a>
+            </div>
         </div>
     </div>
 </div>

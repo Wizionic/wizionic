@@ -1,5 +1,6 @@
 using App.Contracts;
 using App.Core.Chat;
+using App.Core.Cloud;
 using App.Core.Storage;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -62,23 +63,24 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
             return new ServerProxyChatClient(_proxyHttp, provider.Id, model.Id);
         }
 
-        var entry = ProviderCatalog.GetModel(modelId);
-        if (entry == null)
-            throw new InvalidOperationException($"Unknown model '{modelId}'.");
+        if (CloudModelId.TryParse(modelId, out var cloudProviderId, out var cloudModelName))
+        {
+            var cloud = _keyStore.GetCloudProvider(cloudProviderId)
+                ?? throw new InvalidOperationException($"Unknown cloud provider '{cloudProviderId}'. Add one in Cloud providers.");
+            if (string.IsNullOrWhiteSpace(cloud.ApiKey))
+                throw new InvalidOperationException($"No API key configured for '{cloud.DisplayName}'. Add one in Cloud providers.");
 
-        var (catalogProvider, modelDef) = entry.Value;
+            var origin = CloudModelCatalogResolver.NormalizeBaseUrl(cloud.BaseUrl);
+            if (string.IsNullOrWhiteSpace(origin))
+                throw new InvalidOperationException($"Cloud provider '{cloud.DisplayName}' has no base URL.");
 
-        var apiKey = _keyStore.GetKey(catalogProvider.Id);
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException($"No API key configured for provider '{catalogProvider.DisplayName}'. Add one in Settings.");
+            var credential2 = new ApiKeyCredential(cloud.ApiKey);
+            var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(origin.TrimEnd('/') + "/") };
+            var rootClient2 = new OpenAIClient(credential2, clientOptions);
+            return rootClient2.GetChatClient(cloudModelName).AsIChatClient();
+        }
 
-        var providerBaseUrl = catalogProvider.BaseUrl?.TrimEnd('/') + "/";
-        var credential2 = new ApiKeyCredential(apiKey);
-        var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(providerBaseUrl) };
-
-        var rootClient2 = new OpenAIClient(credential2, clientOptions);
-        var directClient = rootClient2.GetChatClient(modelDef.Id);
-        return directClient.AsIChatClient();
+        throw new InvalidOperationException($"Unknown model '{modelId}'.");
     }
 
     public async Task RefreshAsync(CancellationToken ct = default)
@@ -165,17 +167,48 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
                 IsLemonadeBackend: true));
         }
 
-        foreach (var provider in ProviderCatalog.Providers)
+        foreach (var provider in _keyStore.CloudProviders)
         {
-            var key = _keyStore.GetKey(provider.Id);
-            if (!string.IsNullOrWhiteSpace(key))
+            if (string.IsNullOrWhiteSpace(provider.ApiKey))
+                continue;
+
+            foreach (var m in provider.Models)
             {
-                foreach (var m in provider.Models)
+                if (!m.IsChatEligible && !m.IsImage)
+                    continue;
+
+                if ((m.IsImage || m.IsEdit) && !m.IsChatEligible)
                 {
+                    var kind = m.IsEdit && m.IsImage
+                        ? "Image+Edit"
+                        : m.IsEdit
+                            ? "Edit"
+                            : "Image";
+                    var label = string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label;
                     result.Add(new ChatModelInfo(
-                        m.Id, m.Label, m.Icon, provider.Id, provider.DisplayName,
-                        SupportsTools: m.SupportsTools, SupportsVision: m.SupportsVision));
+                        CloudModelId.Format(provider.Id, m.Name),
+                        $"{label} ({kind})",
+                        "🎨",
+                        provider.Id,
+                        provider.DisplayName,
+                        SupportsTools: false,
+                        SupportsVision: false,
+                        ContextSize: 0,
+                        IsImageGeneration: true,
+                        SupportsImageEdit: m.IsEdit));
+                    continue;
                 }
+
+                var chatLabel = string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label;
+                result.Add(new ChatModelInfo(
+                    CloudModelId.Format(provider.Id, m.Name),
+                    chatLabel,
+                    "☁",
+                    provider.Id,
+                    provider.DisplayName,
+                    SupportsTools: m.SupportsTools,
+                    SupportsVision: m.SupportsVision,
+                    ContextSize: m.ContextSize));
             }
         }
 

@@ -353,6 +353,7 @@ public static class MauiProgram
 		services.AddSingleton<HomeAssistantToolModule>();
 		services.AddSingleton<BrowserAgentToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.LemonadeToolModule>();
+		services.AddSingleton<App.Shared.Services.Tools.CloudToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.GalleryToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.CalendarToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.NotesToolModule>();
@@ -360,6 +361,7 @@ public static class MauiProgram
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<HomeAssistantToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<BrowserAgentToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.LemonadeToolModule>());
+		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.CloudToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.GalleryToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.CalendarToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.NotesToolModule>());
@@ -370,6 +372,8 @@ public static class MauiProgram
 		services.AddSingleton<IChatCompletionService>(sp => sp.GetRequiredService<ChatCompletionService>());
 		services.AddSingleton<App.Core.Lemonade.ILemonadeImageService, App.Shared.Services.Lemonade.LemonadeImageService>();
 		services.AddSingleton<App.Core.Lemonade.ILemonadeSpeechService, App.Shared.Services.Lemonade.LemonadeSpeechService>();
+		services.AddSingleton<App.Core.Cloud.ICloudImageService, App.Shared.Services.Cloud.CloudImageService>();
+		services.AddSingleton<App.Core.Cloud.ICloudSpeechService, App.Shared.Services.Cloud.CloudSpeechService>();
 		services.AddSingleton<ChatAuthService>();
 		services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 		services.AddHttpClient();

@@ -7,6 +7,8 @@ title: Settings
 
 This page stays local except the **login server** URL on desktop (that is where the app signs in).
 
+The desktop app also checks for a newer installer when it starts. You are asked only if an update is available.
+
 ## Login server (desktop only) {#login-server}
 
 Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server uses `http://localhost:5150`. After you change it, restart if the app asks you to.
@@ -25,6 +27,10 @@ Optional name and occupation injected into the system prompt when customization 
 
 Short facts sent with the system prompt. They are not uploaded to wizionic.com as a memory service.
 
+## Reply length {#reply-length}
+
+How many new tokens a chat reply may generate. Default is **16,384**. This is an app stop, not the model’s context window (that is still set per Ollama/Lemonade model). Thinking models share this budget between hidden reasoning and the visible answer.
+
 ## Tool routing {#tool-routing}
 
 Decides which tool **modules** (Native, Lemonade, Gallery, Notes, and so on) are attached before the model runs.
@@ -34,6 +40,16 @@ Decides which tool **modules** (Native, Lemonade, Gallery, Notes, and so on) are
 - **AI router** — always classify with the routing model; falls back to rules if that fails.
 
 This is not the same as enabling MCP servers. Routing only chooses among modules that are already available.
+
+## Model profiles {#model-profiles}
+
+A **profile** is a named stack: chat model plus image, edit, TTS, STT, voice, optional routing-model override, and optional vision proxy.
+
+Chat lists profiles at the top of the model menu. Palette, mic, and Speak use the profile slots — they no longer follow “the provider of whatever chat model is selected.”
+
+Create or edit profiles on Settings. Add keys and refresh models on [Cloud providers](/cloud-providers) or [Lemonade](/lemonade); assign those models here.
+
+If you pick a raw model in Chat (not a profile), you get that model plus its own tools and vision. Image, speech, and vision proxy stay off unless you select a profile.
 
 ## Help answers {#help-answers}
 

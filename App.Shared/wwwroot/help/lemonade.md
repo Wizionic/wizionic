@@ -11,7 +11,7 @@ title: Lemonade (local AI)
 
 - Desktop app: Settings → **Run setup wizard**, or install from [the Lemonade guide](https://lemonade-server.ai/docs/guide/install/).
 - Enter the base URL (and an API key only if you set `LEMONADE_API_KEY` on the server).
-- **Test connection**, then **Refresh Models from Lemonade**.
+- **Save and Test**, then **Refresh Models from Lemonade**.
 - Enable the chat models you want in the list. Image, speech, and other specialty models are configured on the same page.
 
 ## Browser on wizionic.com

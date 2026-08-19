@@ -14,7 +14,7 @@
 
 Keep your AI workspace private and secure on your own devices, sync it seamlessly across all your devices, and automate work, routines, and even your smart home with AI-powered Skills and Workflows.
 
-Built from the ground up for 🍋 **AMD Lemonade Server** and 🦙 **Ollama**, with first-class **Home Assistant** integration.
+Built from the ground up for 🍋 **AMD Lemonade Server** and 🦙 **Ollama**, with optional **OpenAI-compatible cloud** providers and first-class **Home Assistant** integration.
 
 <p>
 
@@ -29,13 +29,13 @@ Built from the ground up for 🍋 **AMD Lemonade Server** and 🦙 **Ollama**, w
 ```shell
 curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash
 ```
-**Download for Windows**: 
+**Download for Windows**:
 https://github.com/Wizionic/wizionic/releases/latest/download/Wizionic-win-Setup.exe
 
 ---
 
-##  Why Wizionic❔
-### Built-in tools for 💬 **chat,📝 notes, 📸 galleries, 📅calendar, 🌐 browser, 🔨 MCP , and 🏠smart-home control**
+##  Why Wizionic❓
+### Built-in tools for 💬 **chat, 📝 notes, 📸 galleries, 📅calendar, 🌐 browser, 🔨 MCP, and 🏠 smart-home control**
 
 
 - **🔒 Privacy-First Architecture:** All your data lives only on your devices and is encrypted at rest (AES-256-GCM).
@@ -75,7 +75,7 @@ Wizionic contains a built-in multi-tab browser tool that can be agentically cont
 A split view allows you to display multiple sites.  The toolbar on the far right of the screen is for installing Progressive Web Apps (PWAs).  Bookmarks can sync between your devices.
 <p align="center"><img src="wwwroot/screenshots/Browser.png" alt="Browser Tool"></p>
 
-### 4. Notebook tool
+### 4. Notebook Tool
 
 Wizionic includes a full-featured Notebook tool.  Chat messages can manually be saved to a notebook and notes can be re-ordered, edited, protected with a password, and exported.  The Notebooks can also be controlled by AI agents:
  `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry` .
@@ -98,7 +98,7 @@ AMD Lemonade is given as an option to install on your computer if you do not alr
 <p align="center"><img src="wwwroot/screenshots/Lemonade.png" alt="Lemonade Configuration"></p>
 
 ### 8. Home Assistant Configuration
-If you have installed Home Assistant (https://github.com/home-assistant) Wizionic provides first-class integration to control and automate your smart home with Local AI.  Give your Home Assistant instance a name so the AI knows when you're referring to your smart home. . "Hey Bro" is the assistant name in the example.
+If you have installed Home Assistant (https://github.com/home-assistant) Wizionic provides first-class integration to control and automate your smart home with Local AI.  Give your Home Assistant instance a name so the AI knows when you're referring to your smart home. "Hey Bro" is the assistant name in the example.
 
 <p align="center"><img src="wwwroot/screenshots/HomeAssistant.png" alt="Home Assistant"></p>
 
@@ -109,7 +109,7 @@ Settings is where you configure many options for Wizionic.
 
 
 ### 10. Sync
-Wizionic is designed for people who use multiple devices.   To keep important you data safe, it is important for the data to exist on multiple devices in the event of an unrecoverable device failure .  The sync feature detects all the devices for the logged in user and allows syncing of data and settings to all devices automatically.  From the Sync settings page, it is possible to disable sync for certain devices or features. 
+Wizionic is designed for people who use multiple devices.   To keep important your data safe, it is important for the data to exist on multiple devices in the event of an unrecoverable device failure.  The sync feature detects all the devices for the logged in user and allows syncing of data and settings to all devices automatically.  From the Sync settings page, it is possible to disable sync for certain devices or features. 
 <p align="center"><img src="wwwroot/screenshots/Sync.png" alt="Sync"></p>
 
 

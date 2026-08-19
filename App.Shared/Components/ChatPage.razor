@@ -6,6 +6,7 @@
 @using App.Core.Auth
 @using App.Core.Chat
 @using App.Core.Lemonade
+@using App.Core.Cloud
 @using App.Core.Storage
 @using App.Core.Sync
 @using App.Core.Tools
@@ -32,6 +33,8 @@
 @inject IChatCompletionService ChatCompletionService
 @inject ILemonadeImageService LemonadeImages
 @inject ILemonadeSpeechService LemonadeSpeech
+@inject ICloudImageService CloudImages
+@inject ICloudSpeechService CloudSpeech
 @inject INoteStore NoteStore
 @inject IGalleryStore GalleryStore
 @inject IGalleryChatHandoff GalleryChatHandoff
@@ -141,31 +144,33 @@
                                 @((MarkupString)FormatMessage(msg.Content ?? ""))
                                 @if (msg.Attachments != null && msg.Attachments.Any())
                                 {
-                                    <div class="message-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;">
+                                    <div class="message-attachments" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;">
                                         @foreach (var att in msg.Attachments)
                                         {
-                                            <div style="width:52px; height:52px; border:1px solid var(--cf-border); border-radius:4px; overflow:hidden; background:var(--cf-bg-subtle); position:relative; flex-shrink:0;">
-                                                @{
-                                                    var thumbSrc = att.DataUrl;
-                                                    if (thumbSrc == null && att.ContentType != null && att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(att.DataBase64))
+                                            @if (IsImageAttachment(att))
+                                            {
+                                                var thumbSrc = AttachmentDataUrl(att);
+                                                <div style="width:52px; height:52px; border:1px solid var(--cf-border); border-radius:4px; overflow:hidden; background:var(--cf-bg-subtle); position:relative; flex-shrink:0;">
+                                                    @if (thumbSrc != null)
                                                     {
-                                                        thumbSrc = $"data:{att.ContentType};base64,{att.DataBase64}";
+                                                        <img src="@thumbSrc" alt="@att.Name"
+                                                             style="width:100%; height:100%; object-fit:cover; cursor:pointer;"
+                                                             title="@att.Name — click for options"
+                                                             @onclick="() => OpenImagePreview(thumbSrc, att.Name, att.DataBase64, att.ContentType)" />
                                                     }
-                                                }
-                                                @if (thumbSrc != null)
-                                                {
-                                                    <img src="@thumbSrc" alt="@att.Name"
-                                                         style="width:100%; height:100%; object-fit:cover; cursor:pointer;"
-                                                         title="@att.Name — click for options"
-                                                         @onclick="() => OpenImagePreview(thumbSrc, att.Name, att.DataBase64, att.ContentType)" />
-                                                }
-                                                else
-                                                {
-                                                    <div style="font-size:9px; display:flex; align-items:center; justify-content:center; height:100%; color:var(--cf-text-muted); text-align:center; padding:2px;">
-                                                        📄<br /><span style="font-size:6px; word-break:break-all; line-height:1;">@att.Name</span>
-                                                    </div>
-                                                }
-                                            </div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="chat-doc-chip" title="@att.Name"
+                                                        @onclick="() => OpenTextPreview(att)">
+                                                    <i class="bi bi-file-earmark-text"></i>
+                                                    <span class="chat-doc-chip-meta">
+                                                        <span class="chat-doc-chip-name">@att.Name</span>
+                                                        <span class="chat-doc-chip-size">@ChatAttachmentClassifier.FormatSize(att.Size)</span>
+                                                    </span>
+                                                </button>
+                                            }
                                         }
                                     </div>
                                 }
@@ -242,19 +247,26 @@
                                                 }
                                                 else
                                                 {
-                                                    <div style="padding:8px; font-size:0.75em; color:var(--cf-text-muted);">@att.Name</div>
+                                                    <button type="button" class="chat-doc-chip" title="@att.Name"
+                                                            @onclick="() => OpenTextPreview(att)">
+                                                        <i class="bi bi-file-earmark-text"></i>
+                                                        <span class="chat-doc-chip-meta">
+                                                            <span class="chat-doc-chip-name">@att.Name</span>
+                                                            <span class="chat-doc-chip-size">@ChatAttachmentClassifier.FormatSize(att.Size)</span>
+                                                        </span>
+                                                    </button>
                                                 }
                                             </div>
                                         }
                                     </div>
                                 }
                                 <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px; margin-top:4px;">
-                                    @if (LemonadeSpeech.IsTtsAvailable && !string.IsNullOrWhiteSpace(msg.Content) && !IsImageOnlyAssistantMessage(msg))
+                                    @if (IsTtsAvailable && !string.IsNullOrWhiteSpace(msg.Content) && !IsImageOnlyAssistantMessage(msg))
                                     {
                                         <button type="button"
                                                 class="btn btn-link-style"
                                                 style="font-size:0.75em; padding:2px 6px; opacity:0.85;"
-                                                title="Read aloud with Lemonade TTS"
+                                                title="Read aloud"
                                                 disabled="@(ttsBusyIndex == capturedIndex)"
                                                 @onclick="() => SpeakMessageAsync(capturedIndex)"
                                                 @onclick:stopPropagation>
@@ -299,30 +311,33 @@
                     <div class="message-wrapper flex-grow-1">
                         @if (pendingFiles.Any())
                         {
-                            <div class="pending-attachments" style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid #f0f0f0;">
+                            <div class="pending-attachments" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid #f0f0f0;">
                                 @foreach (var f in pendingFiles)
                                 {
-                                    <div style="position:relative; width:42px; height:42px; border:1px solid #ddd; border-radius:4px; overflow:hidden; background:#fafafa; flex-shrink:0;">
-                                        @{
-                                            var thumbSrc = f.DataUrl;
-                                            if (thumbSrc == null && f.ContentType != null && f.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(f.DataBase64))
+                                    @if (IsImageAttachment(f))
+                                    {
+                                        var thumbSrc = AttachmentDataUrl(f);
+                                        <div style="position:relative; width:42px; height:42px; border:1px solid #ddd; border-radius:4px; overflow:hidden; background:#fafafa; flex-shrink:0;">
+                                            @if (thumbSrc != null)
                                             {
-                                                thumbSrc = $"data:{f.ContentType};base64,{f.DataBase64}";
+                                                <img src="@thumbSrc" alt="@f.Name" style="width:100%; height:100%; object-fit:cover;" />
                                             }
-                                        }
-                                        @if (thumbSrc != null)
-                                        {
-                                            <img src="@thumbSrc" alt="@f.Name" style="width:100%; height:100%; object-fit:cover;" />
-                                        }
-                                        else
-                                        {
-                                            <div style="font-size:9px; height:100%; display:flex; align-items:center; justify-content:center; color:var(--cf-text-muted); text-align:center; padding:1px; line-height:1.1;">
-                                                📄<br /><span style="font-size:7px; word-break:break-all;">@f.Name</span>
-                                            </div>
-                                        }
-                                        <button @onclick:stopPropagation @onclick="() => RemovePendingFile(f)" 
-                                                style="position:absolute; top:-1px; right:-1px; background:#e11d48; color:white; border:none; border-radius:50%; width:13px; height:13px; font-size:8px; line-height:11px; cursor:pointer;">×</button>
-                                    </div>
+                                            <button type="button" class="chat-doc-chip-remove" title="Remove"
+                                                    @onclick:stopPropagation @onclick="() => RemovePendingFile(f)">×</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="chat-doc-chip" title="@f.Name" @onclick="() => OpenTextPreview(f)">
+                                            <i class="bi bi-file-earmark-text"></i>
+                                            <span class="chat-doc-chip-meta">
+                                                <span class="chat-doc-chip-name">@f.Name</span>
+                                                <span class="chat-doc-chip-size">@ChatAttachmentClassifier.FormatSize(f.Size)</span>
+                                            </span>
+                                            <button type="button" class="chat-doc-chip-remove" title="Remove"
+                                                    @onclick:stopPropagation @onclick="() => RemovePendingFile(f)">×</button>
+                                        </div>
+                                    }
                                 }
                             </div>
                         }
@@ -402,7 +417,7 @@
                     <div class="input-toolbar">
                         <!-- Plus menu replaced New Chat (new chat is in sidebar). Opens attach actions. -->
                         <div class="attach-btn-wrap">
-                            <button class="action-btn" @onclick:stopPropagation @onclick="ToggleAttachMenu" title="Attach file or more">
+                            <button class="action-btn" @onclick:stopPropagation @onclick="ToggleAttachMenu" title="Attach an image, PDF, or text/code file">
                                 <i class="bi bi-plus-circle"></i>
                             </button>
 
@@ -412,13 +427,13 @@
                                     <div @onclick="async () => { showAttachMenu = false; await TriggerFileUpload(); }">
                                         <i class="bi bi-upload" style="margin-right:4px;"></i> Upload a file
                                     </div>
-                                    @if (ShowLemonadeImageActions)
+                                    @if (ShowImageActions)
                                     {
                                         <div @onclick="() => { showAttachMenu = false; OpenImageGenPanel(); }">
                                             <i class="bi bi-palette" style="margin-right:4px;"></i> Generate image
                                         </div>
                                     }
-                                    @if (ShowLemonadeImageEditActions && FindLatestImageAttachment() != null)
+                                    @if (ShowImageEditActions && FindLatestImageAttachment() != null)
                                     {
                                         <div @onclick="() => { showAttachMenu = false; OpenImageEditPanel(null); }">
                                             <i class="bi bi-pencil-square" style="margin-right:4px;"></i> Edit last image
@@ -430,7 +445,16 @@
                         </div>
 
                         <select @bind="selectedModel" @bind:after="OnSelectedModelChanged" class="model-selector">
-                            @foreach (var group in modelList.GroupBy(m => m.ProviderName))
+                            @if (modelList.Any(m => m.ProviderName == "Profiles"))
+                            {
+                                <optgroup label="Profiles">
+                                    @foreach (var m in modelList.Where(x => x.ProviderName == "Profiles"))
+                                    {
+                                        <option value="@m.Id">@m.Icon @m.Label</option>
+                                    }
+                                </optgroup>
+                            }
+                            @foreach (var group in modelList.Where(m => m.ProviderName != "Profiles").GroupBy(m => m.ProviderName))
                             {
                                 <optgroup label="@group.Key">
                                     @foreach (var m in group)
@@ -464,7 +488,7 @@
 
                         @if (IsImageGenerationModel)
                         {
-                            <i class="bi bi-palette capability-icon" title="Image generation model. Type a prompt and press send to generate with Lemonade."></i>
+                            <i class="bi bi-palette capability-icon" title="Image generation model. Type a prompt and press send to generate."></i>
                         }
                         else if (CurrentModelInfo?.IsOmniCollection == true)
                         {
@@ -482,20 +506,20 @@
                             <i class="bi bi-image capability-icon" title="@visionTitle"></i>
                         }
                         @* Image / speech toolbar actions only when the selected model (or Lemonade modality) can use them *@
-                        @if (ShowLemonadeImageActions)
+                        @if (ShowImageActions)
                         {
-                            <button type="button" class="action-btn" title="Generate image with Lemonade (advanced options)"
+                            <button type="button" class="action-btn" title="Generate image (advanced options)"
                                     disabled="@isSending"
                                     @onclick="OpenImageGenPanel">
                                 <i class="bi bi-palette"></i>
                             </button>
                         }
 
-                        @if (ShowLemonadeSpeechActions && LemonadeSpeech.IsSttAvailable)
+                        @if (ShowSpeechActions && IsSttAvailable)
                         {
                             <button type="button"
                                     class="action-btn @(isMicRecording ? "mic-recording" : "")"
-                                    title="@(isMicRecording ? "Stop recording and transcribe" : "Speak — record with Lemonade Whisper")"
+                                    title="@(isMicRecording ? "Stop recording and transcribe" : "Speak — record and transcribe")"
                                     disabled="@(isSending || isMicTranscribing)"
                                     @onclick="ToggleMicRecording"
                                     style="@(isMicRecording ? "color:#e11d48;" : null)">
@@ -514,7 +538,7 @@
                             </button>
                         }
 
-                        @if (ShowLemonadeSpeechActions && LemonadeSpeech.IsTtsAvailable)
+                        @if (ShowSpeechActions && IsTtsAvailable)
                         {
                             <button type="button"
                                     class="action-btn"
@@ -555,7 +579,7 @@
                     @if (isMicRecording)
                     {
                         <div style="font-size:0.75em; color:#e11d48; padding:2px 8px 6px;">
-                            Recording… click the mic again to stop and transcribe with @(LemonadeSpeech.DefaultSttModel ?? "Whisper").
+                            Recording… click the mic again to stop and transcribe@(SttModelHint is { } sttHint ? $" with {sttHint}" : "").
                         </div>
                     }
                     else if (!string.IsNullOrEmpty(micStatusMessage))
@@ -574,6 +598,12 @@
                     {
                         <div style="font-size:0.75em; color:@(contextStatusIsError ? "#b91c1c" : "var(--cf-text-muted)"); padding:2px 8px 6px; white-space:pre-wrap;">
                             @contextStatusMessage
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(attachStatusMessage))
+                    {
+                        <div style="font-size:0.75em; color:@(attachStatusIsError ? "#b91c1c" : "var(--cf-text-muted)"); padding:2px 8px 6px; white-space:pre-wrap;">
+                            @attachStatusMessage
                         </div>
                     }
                 </div>
@@ -601,7 +631,7 @@
                     <button type="button" class="menu-button"><i class="bi bi-journal-plus"></i></button>
                     Add to notes
                 </div>
-                @if (LemonadeSpeech.IsTtsAvailable && _botMenuMessageIndex is int speakIdx
+                @if (IsTtsAvailable && _botMenuMessageIndex is int speakIdx
                     && speakIdx >= 0 && speakIdx < messages.Count
                     && !string.IsNullOrWhiteSpace(messages[speakIdx].Content)
                     && !IsImageOnlyAssistantMessage(messages[speakIdx]))
@@ -611,7 +641,7 @@
                         Read aloud
                     </div>
                 }
-                @if (ShowLemonadeImageEditActions && _botMenuMessageIndex is int botMsgIdx && MessageHasImageAttachment(botMsgIdx))
+                @if (ShowImageEditActions && _botMenuMessageIndex is int botMsgIdx && MessageHasImageAttachment(botMsgIdx))
                 {
                     <div @onclick="() => { var idx = botMsgIdx; CloseMenu(); OpenImageEditPanel(idx); }">
                         <button type="button" class="menu-button"><i class="bi bi-pencil-square"></i></button>
@@ -629,7 +659,7 @@
                     <button type="button" class="menu-button"><i class="bi bi-journal-plus"></i></button>
                     Add to notes
                 </div>
-                @if (LemonadeSpeech.IsTtsAvailable && _userMenuMessageIndex is int userSpeakIdx
+                @if (IsTtsAvailable && _userMenuMessageIndex is int userSpeakIdx
                     && userSpeakIdx >= 0 && userSpeakIdx < messages.Count
                     && !string.IsNullOrWhiteSpace(messages[userSpeakIdx].Content))
                 {
@@ -716,7 +746,7 @@
     <div class="menu-overlay" style="z-index: 40;" @onclick="CloseImagePanel"></div>
     <div class="image-gen-panel" style="position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:41; width:min(420px,92vw); background:var(--cf-bg, #fff); border:1px solid var(--cf-border,#ddd); border-radius:12px; padding:1rem 1.1rem; box-shadow:0 12px 40px rgba(0,0,0,.18);" @onclick:stopPropagation>
         <h4 style="margin:0 0 0.75rem 0; font-size:1.05rem;">
-            @(imagePanelMode == "edit" ? "Edit image (Lemonade)" : "Generate image (Lemonade)")
+            @(imagePanelMode == "edit" ? "Edit image" : "Generate image")
         </h4>
 
         @if (imagePanelMode == "edit" && imageEditPreviewUrl != null)
@@ -733,12 +763,14 @@
 
         <label style="font-size:0.8em;">Model</label>
         <select class="form-control" style="width:100%; margin-bottom:0.5rem;" @bind="imageModel" @bind:after="OnImagePanelModelChanged">
-            @foreach (var m in (imagePanelMode == "edit" ? LemonadeImages.EditModelNames : LemonadeImages.ImageModelNames))
+            @foreach (var m in ImagePanelModelNames)
             {
                 <option value="@m">@m</option>
             }
         </select>
 
+        @if (!imagePanelUsesCloud)
+        {
         <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
             <div style="width:72px;">
                 <label style="font-size:0.8em;">Steps</label>
@@ -779,6 +811,7 @@
                 </select>
             </div>
         </div>
+        }
 
         @if (!string.IsNullOrEmpty(imagePanelError))
         {
@@ -790,6 +823,30 @@
             <button type="button" class="btn btn-primary" @onclick="SubmitImagePanel" disabled="@imageBusy">
                 @(imageBusy ? "Working…" : (imagePanelMode == "edit" ? "Edit" : "Generate"))
             </button>
+        </div>
+    </div>
+}
+
+@if (textPreviewAttachment != null)
+{
+    <div class="menu-overlay" style="z-index:50; background:rgba(0,0,0,.65);" @onclick="CloseTextPreview"></div>
+    <div class="chat-text-preview" @onclick:stopPropagation>
+        <div class="chat-text-preview-header">
+            <h4 title="@textPreviewAttachment.Name">@textPreviewAttachment.Name</h4>
+            <span>@ChatAttachmentClassifier.FormatSize(textPreviewAttachment.Size)</span>
+        </div>
+        @if (!string.IsNullOrEmpty(textPreviewNote))
+        {
+            <div style="padding:6px 14px; font-size:0.75rem; color:var(--cf-text-muted); border-bottom:1px solid var(--cf-border, #e5e5e5);">
+                @textPreviewNote
+            </div>
+        }
+        <pre>@textPreviewBody</pre>
+        <div class="chat-text-preview-actions">
+            <button type="button" class="btn btn-outline-secondary" @onclick="() => DownloadAttachment(textPreviewAttachment)">
+                <i class="bi bi-download"></i> Download
+            </button>
+            <button type="button" class="btn btn-outline-secondary" @onclick="CloseTextPreview">Close</button>
         </div>
     </div>
 }
@@ -1003,6 +1060,11 @@
     string? imagePreviewBase64;
     string? imagePreviewContentType;
     string? imageActionFeedback;
+    Attachment? textPreviewAttachment;
+    string textPreviewBody = "";
+    string? textPreviewNote;
+    string? attachStatusMessage;
+    bool attachStatusIsError;
     CancellationTokenSource? _imageCts;
 
     // Speech-to-text (Lemonade Whisper)
@@ -1046,34 +1108,126 @@
     /// <summary>Keep this many newest visible messages after compact.</summary>
     const int CompactKeepRecentMessages = 6;
 
+    private string EffectiveChatModelId =>
+        ModelProfileId.ResolveChatModelId(KeyStore, selectedModel) ?? selectedModel ?? "";
+
     private ChatModelInfo? CurrentModelInfo =>
-        string.IsNullOrEmpty(selectedModel)
+        string.IsNullOrEmpty(EffectiveChatModelId)
             ? null
-            : modelList.FirstOrDefault(m => m.Id == selectedModel);
+            : modelList.FirstOrDefault(m => m.Id == EffectiveChatModelId);
 
     /// <summary>Selected Lemonade image model — Send generates an image instead of chat.</summary>
     private bool IsImageGenerationModel => CurrentModelInfo?.IsImageGeneration == true;
 
-    /// <summary>Selected model is served by Lemonade (chat, image, omni, etc.).</summary>
+    /// <summary>Resolved chat model is served by Lemonade (chat, image, omni, etc.).</summary>
     private bool IsLemonadeModelSelected =>
-        !string.IsNullOrEmpty(selectedModel) &&
-        selectedModel.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase);
+        EffectiveChatModelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Lemonade image toolbar / + menu — only when a Lemonade model is selected
-    /// (chat, image, or omni). Hidden for Ollama and cloud models.
-    /// </summary>
-    private bool ShowLemonadeImageActions =>
-        LemonadeImages.IsGenerateAvailable && IsLemonadeModelSelected;
+    private bool IsCloudModelSelected => CloudModelId.IsCloud(EffectiveChatModelId);
 
-    private bool ShowLemonadeImageEditActions =>
-        LemonadeImages.IsEditAvailable && IsLemonadeModelSelected;
+    private string? CurrentCloudProviderId =>
+        CloudModelId.TryParse(EffectiveChatModelId, out var providerId, out _) ? providerId : null;
 
-    /// <summary>
-    /// Mic / TTS toolbar — Lemonade speech is model-agnostic input/output, but hide
-    /// on pure image-generation models where chat text is not the primary flow.
-    /// </summary>
-    private bool ShowLemonadeSpeechActions => !IsImageGenerationModel;
+    private string? ProfileImageModelId => ModelProfileId.ResolveImageModelId(KeyStore, selectedModel);
+    private string? ProfileEditModelId => ModelProfileId.ResolveEditModelId(KeyStore, selectedModel);
+
+    /// <summary>Image toolbar when a <b>profile</b> has an image slot (raw models: Send-as-image only).</summary>
+    private bool ShowImageActions
+    {
+        get
+        {
+            var id = ProfileImageModelId;
+            if (string.IsNullOrWhiteSpace(id))
+                return false;
+            if (ModelProfileId.TryCloudProvider(id, out var pid, out _))
+                return CloudImages.IsGenerateAvailable(pid) || CloudImages.ImageModelNames(pid).Count > 0;
+            if (ModelProfileId.IsLemonadeCatalog(id))
+                return LemonadeImages.IsGenerateAvailable;
+            return false;
+        }
+    }
+
+    private bool ShowImageEditActions
+    {
+        get
+        {
+            var id = ProfileEditModelId ?? ProfileImageModelId;
+            if (string.IsNullOrWhiteSpace(id))
+                return false;
+            if (ModelProfileId.TryCloudProvider(id, out var pid, out _))
+                return CloudImages.IsEditAvailable(pid) || CloudImages.EditModelNames(pid).Count > 0;
+            if (ModelProfileId.IsLemonadeCatalog(id))
+                return LemonadeImages.IsEditAvailable;
+            return false;
+        }
+    }
+
+    private bool ShowSpeechActions => !IsImageGenerationModel;
+
+    private bool UseCloudSpeech =>
+        ModelProfileId.TryCloudProvider(ModelProfileId.ResolveTtsModelId(KeyStore, selectedModel), out _, out _)
+        || ModelProfileId.TryCloudProvider(ModelProfileId.ResolveSttModelId(KeyStore, selectedModel), out _, out _);
+
+    private string? SpeechCloudProviderId
+    {
+        get
+        {
+            if (ModelProfileId.TryCloudProvider(ModelProfileId.ResolveTtsModelId(KeyStore, selectedModel), out var ttsPid, out _))
+                return ttsPid;
+            if (ModelProfileId.TryCloudProvider(ModelProfileId.ResolveSttModelId(KeyStore, selectedModel), out var sttPid, out _))
+                return sttPid;
+            return null;
+        }
+    }
+
+    private bool IsSttAvailable
+    {
+        get
+        {
+            var id = ModelProfileId.ResolveSttModelId(KeyStore, selectedModel);
+            if (ModelProfileId.TryCloudProvider(id, out var pid, out _))
+                return CloudSpeech.IsSttAvailable(pid);
+            if (ModelProfileId.IsLemonadeCatalog(id))
+                return LemonadeSpeech.IsSttAvailable;
+            return false;
+        }
+    }
+
+    private bool IsTtsAvailable
+    {
+        get
+        {
+            var id = ModelProfileId.ResolveTtsModelId(KeyStore, selectedModel);
+            if (ModelProfileId.TryCloudProvider(id, out var pid, out _))
+                return CloudSpeech.IsTtsAvailable(pid);
+            if (ModelProfileId.IsLemonadeCatalog(id))
+                return LemonadeSpeech.IsTtsAvailable;
+            return false;
+        }
+    }
+
+    private string? SttModelHint
+    {
+        get
+        {
+            var id = ModelProfileId.ResolveSttModelId(KeyStore, selectedModel);
+            if (ModelProfileId.TryCloudProvider(id, out var pid, out var name))
+                return name ?? CloudSpeech.DefaultSttModel(pid) ?? "STT";
+            if (ModelProfileId.IsLemonadeCatalog(id))
+                return id!.Split('/', 2)[1];
+            return null;
+        }
+    }
+
+    private bool imagePanelUsesCloud;
+    private string? imagePanelCloudProviderId;
+
+    private IEnumerable<string> ImagePanelModelNames =>
+        imagePanelUsesCloud && imagePanelCloudProviderId != null
+            ? (imagePanelMode == "edit"
+                ? CloudImages.EditModelNames(imagePanelCloudProviderId)
+                : CloudImages.ImageModelNames(imagePanelCloudProviderId))
+            : (imagePanelMode == "edit" ? LemonadeImages.EditModelNames : LemonadeImages.ImageModelNames);
 
     private bool CurrentModelSupportsTools
     {
@@ -1096,7 +1250,9 @@
             var mi = CurrentModelInfo;
             if (mi != null && !mi.SupportsVision && !string.IsNullOrWhiteSpace(mi.VisionProxyModelId))
                 return mi.VisionProxyModelId;
-            return KeyStore.GetVisionProxyModelName();
+            if (ModelProfileId.IsProfilePicker(selectedModel))
+                return KeyStore.GetVisionProxyModelName();
+            return null;
         }
     }
 
@@ -1371,7 +1527,7 @@
             currentUser = AuthService.Email;
 
         // Local catalog from KeyStore — no HTTP wait for proxy providers.
-        modelList = ModelCatalog.GetAvailableModels();
+        ReloadModelListFromCatalog(preferRemote: false);
         EnsureValidModelSelection();
 
         localConvos = await ConversationStore.LoadIndexAsync();
@@ -1383,6 +1539,7 @@
         var fromGalleryEdit = GalleryChatHandoff.TryTakeEditWithAiRequest(out var editImage);
         if (fromGalleryEdit && editImage != null)
         {
+            ChatPanel.IsOpen = true;
             await NewConversation();
             pendingFiles.Add(editImage);
             SelectPreferredImageEditModel();
@@ -1439,10 +1596,7 @@
                 await GuestMigration.MigrateIfNeededAsync();
 
             await ModelCatalog.RefreshAsync();
-            if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
-                modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
-            else
-                modelList = ModelCatalog.GetAvailableModels();
+            ReloadModelListFromCatalog(preferRemote: true);
             // Keep gallery-edit model if we still have a pending image attachment.
             if (pendingFiles.Any(IsImageAttachment) && CurrentModelInfo?.SupportsImageEdit != true)
                 SelectPreferredImageEditModel();
@@ -1458,7 +1612,7 @@
 
                 if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
                 {
-                    modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
+                    ReloadModelListFromCatalog(preferRemote: true);
                     EnsureValidModelSelection();
                 }
 
@@ -1474,11 +1628,31 @@
     private async Task RefreshModelListAsync()
     {
         await ModelCatalog.RefreshAsync();
+        ReloadModelListFromCatalog(preferRemote: true);
+    }
 
-        if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
+    private void ReloadModelListFromCatalog(bool preferRemote)
+    {
+        if (preferRemote && !string.IsNullOrEmpty(SyncService.AiServerDeviceId) && SyncService.RemoteModels.Any())
             modelList = ChatModelMapper.ToChatModelInfoList(SyncService.RemoteModels);
         else
             modelList = ModelCatalog.GetAvailableModels();
+
+        var profiles = KeyStore.ModelProfiles;
+        if (profiles.Count == 0)
+            return;
+
+        var head = profiles
+            .Where(p => !string.IsNullOrWhiteSpace(p.Id) && !string.IsNullOrWhiteSpace(p.Name))
+            .Select(p => new ChatModelInfo(
+                ModelProfileId.ForPicker(p.Id),
+                p.Name,
+                "📋",
+                p.Id,
+                "Profiles"))
+            .ToList();
+        if (head.Count > 0)
+            modelList = head.Concat(modelList).ToList();
     }
 
     private void EnsureValidModelSelection()
@@ -1491,6 +1665,15 @@
 
         if (IsModelInList(selectedModel))
             return;
+
+        var activeProfilePicker = !string.IsNullOrWhiteSpace(KeyStore.ActiveModelProfileId)
+            ? ModelProfileId.ForPicker(KeyStore.ActiveModelProfileId)
+            : null;
+        if (IsModelInList(activeProfilePicker))
+        {
+            selectedModel = activeProfilePicker!;
+            return;
+        }
 
         var savedModel = KeyStore.LastSelectedModel;
         if (IsModelInList(savedModel))
@@ -1517,9 +1700,11 @@
         if (string.IsNullOrEmpty(selectedModel))
             return;
 
+        if (ModelProfileId.TryParsePicker(selectedModel, out var profileId))
+            await KeyStore.SetActiveModelProfileIdAsync(profileId);
         await KeyStore.SetLastSelectedModelAsync(selectedModel);
         if (IsImageGenerationModel)
-            ApplyImageParamsFromModel(selectedModel);
+            ApplyImageParamsFromModel(EffectiveChatModelId);
         RefreshContextEstimate(preferServerUsage: false);
     }
 
@@ -1650,7 +1835,7 @@
             };
 
             var result = await ChatCompletionService.CompleteAsync(
-                selectedModel,
+                EffectiveChatModelId,
                 compactMsgs,
                 currentUser,
                 conversationId: activeConvoId + ":compact",
@@ -1798,32 +1983,56 @@
                 return;
             }
 
-            var result = await LemonadeSpeech.TranscribeAsync(new LemonadeTranscriptionRequest(
-                WavBytes: wavBytes,
-                Model: LemonadeSpeech.DefaultSttModel,
-                Language: null,
-                FileName: "chat-recording.wav"), ct);
-
-            if (!result.Success || string.IsNullOrWhiteSpace(result.Text))
+            string? transcript;
+            string? transcriptModel;
+            if (UseCloudSpeech && SpeechCloudProviderId != null)
             {
-                micStatusIsError = true;
-                micStatusMessage = result.Error ?? "Transcription failed.";
-                return;
+                var sttSlot = ModelProfileId.ResolveSttModelId(KeyStore);
+                ModelProfileId.TryCloudProvider(sttSlot, out _, out var sttModel);
+                var result = await CloudSpeech.TranscribeAsync(new CloudTranscriptionRequest(
+                    ProviderId: SpeechCloudProviderId,
+                    WavBytes: wavBytes,
+                    Model: sttModel ?? CloudSpeech.DefaultSttModel(SpeechCloudProviderId),
+                    Language: null,
+                    FileName: "chat-recording.wav"), ct);
+                if (!result.Success || string.IsNullOrWhiteSpace(result.Text))
+                {
+                    micStatusIsError = true;
+                    micStatusMessage = result.Error ?? "Transcription failed.";
+                    return;
+                }
+                transcript = result.Text;
+                transcriptModel = result.Model;
+            }
+            else
+            {
+                var result = await LemonadeSpeech.TranscribeAsync(new LemonadeTranscriptionRequest(
+                    WavBytes: wavBytes,
+                    Model: LemonadeSpeech.DefaultSttModel,
+                    Language: null,
+                    FileName: "chat-recording.wav"), ct);
+                if (!result.Success || string.IsNullOrWhiteSpace(result.Text))
+                {
+                    micStatusIsError = true;
+                    micStatusMessage = result.Error ?? "Transcription failed.";
+                    return;
+                }
+                transcript = result.Text;
+                transcriptModel = result.Model;
             }
 
             try
             {
-                await JS.InvokeVoidAsync("appendChatTextareaText", messageTextarea, result.Text);
+                await JS.InvokeVoidAsync("appendChatTextareaText", messageTextarea, transcript);
             }
             catch
             {
-                // Fallback: show transcript in status if textarea interop fails
-                micStatusMessage = "Transcript: " + result.Text;
+                micStatusMessage = "Transcript: " + transcript;
                 micStatusIsError = false;
                 return;
             }
 
-            micStatusMessage = $"Transcribed with {result.Model ?? "Whisper"}.";
+            micStatusMessage = $"Transcribed with {transcriptModel ?? "STT"}.";
             micStatusIsError = false;
             _ = ClearMicStatusAfterDelayAsync();
         }
@@ -1970,7 +2179,7 @@
 
     async Task SpeakMessageAsync(int index)
     {
-        if (!LemonadeSpeech.IsTtsAvailable)
+        if (!IsTtsAvailable)
             return;
         if (index < 0 || index >= messages.Count)
             return;
@@ -1997,21 +2206,45 @@
         {
             try { await JS.InvokeVoidAsync("appStopAudio"); } catch { }
 
-            var result = await LemonadeSpeech.SpeakAsync(new LemonadeSpeechRequest(
-                Input: text,
-                Model: LemonadeSpeech.DefaultTtsModel,
-                Voice: LemonadeSpeech.DefaultVoice,
-                Speed: 1.0,
-                ResponseFormat: "mp3"), ct);
-
-            if (!result.Success || result.AudioBytes is not { Length: > 0 })
+            string? audioB64;
+            string contentType;
+            if (UseCloudSpeech && SpeechCloudProviderId != null)
             {
-                ttsStatusMessage = result.Error ?? "Text-to-speech failed.";
-                return;
+                var ttsSlot = ModelProfileId.ResolveTtsModelId(KeyStore);
+                ModelProfileId.TryCloudProvider(ttsSlot, out _, out var ttsModel);
+                var result = await CloudSpeech.SpeakAsync(new CloudSpeechRequest(
+                    ProviderId: SpeechCloudProviderId,
+                    Input: text,
+                    Model: ttsModel ?? CloudSpeech.DefaultTtsModel(SpeechCloudProviderId),
+                    Voice: ModelProfileId.ResolveVoice(KeyStore) ?? CloudSpeech.DefaultVoice(SpeechCloudProviderId),
+                    Speed: 1.0,
+                    ResponseFormat: "mp3"), ct);
+                if (!result.Success || result.AudioBytes is not { Length: > 0 })
+                {
+                    ttsStatusMessage = result.Error ?? "Text-to-speech failed.";
+                    return;
+                }
+                audioB64 = result.ToBase64();
+                contentType = result.ContentType ?? "audio/mpeg";
+            }
+            else
+            {
+                var result = await LemonadeSpeech.SpeakAsync(new LemonadeSpeechRequest(
+                    Input: text,
+                    Model: LemonadeSpeech.DefaultTtsModel,
+                    Voice: LemonadeSpeech.DefaultVoice,
+                    Speed: 1.0,
+                    ResponseFormat: "mp3"), ct);
+                if (!result.Success || result.AudioBytes is not { Length: > 0 })
+                {
+                    ttsStatusMessage = result.Error ?? "Text-to-speech failed.";
+                    return;
+                }
+                audioB64 = result.ToBase64();
+                contentType = result.ContentType ?? "audio/mpeg";
             }
 
-            var b64 = result.ToBase64();
-            var play = await JS.InvokeAsync<string>("appPlayAudioBase64", b64, result.ContentType ?? "audio/mpeg");
+            var play = await JS.InvokeAsync<string>("appPlayAudioBase64", audioB64, contentType);
             if (play != "ok")
                 ttsStatusMessage = "Playback failed: " + play;
         }
@@ -2187,7 +2420,7 @@
         const long maxSize = 15 * 1024 * 1024; // 15 MB limit for attachments for now
         if (file.Size > maxSize)
         {
-            await JS.InvokeVoidAsync("alert", $"File is too large ({file.Size / 1024 / 1024}MB). Max 15MB supported for attachments currently.");
+            SetAttachStatus($"File is too large ({file.Size / 1024 / 1024}MB). Max 15MB supported for attachments currently.", isError: true);
             return;
         }
 
@@ -2197,22 +2430,77 @@
             using var ms = new MemoryStream();
             await stream.CopyToAsync(ms);
             var bytes = ms.ToArray();
-            var base64 = Convert.ToBase64String(bytes);
+            var contentType = ChatAttachmentClassifier.GuessContentType(file.Name, file.ContentType);
+            var kind = ChatAttachmentClassifier.Classify(file.Name, contentType, bytes);
+
+            if (kind == ChatAttachmentKind.Unsupported)
+            {
+                SetAttachStatus(ChatAttachmentClassifier.UnsupportedMessage(), isError: true);
+                return;
+            }
 
             var att = new Attachment(
                 Name: file.Name,
-                ContentType: string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
-                DataBase64: base64,
+                ContentType: contentType,
+                DataBase64: Convert.ToBase64String(bytes),
                 Size: file.Size
             );
 
             pendingFiles.Add(att);
+            if (kind == ChatAttachmentKind.Text && ChatAttachmentClassifier.WouldTruncate(bytes))
+            {
+                SetAttachStatus(
+                    $"Only the first {ChatAttachmentClassifier.MaxInlinedChars:N0} characters of {file.Name} will be sent to the model.",
+                    isError: false);
+            }
+            else
+            {
+                attachStatusMessage = null;
+            }
+
             StateHasChanged();
         }
         catch (Exception ex)
         {
-            await JS.InvokeVoidAsync("alert", "Could not read file: " + ex.Message);
+            SetAttachStatus("Could not read file: " + ex.Message, isError: true);
         }
+    }
+
+    void SetAttachStatus(string message, bool isError)
+    {
+        attachStatusMessage = message;
+        attachStatusIsError = isError;
+        StateHasChanged();
+    }
+
+    void OpenTextPreview(Attachment att)
+    {
+        if (ChatAttachmentClassifier.Classify(att) == ChatAttachmentKind.Pdf)
+        {
+            SetAttachStatus("PDF preview is not available here. Send the message and a vision-capable model can read it.", isError: false);
+            return;
+        }
+
+        if (!ChatAttachmentClassifier.TryDecodeText(att.DataBase64, out var text))
+        {
+            SetAttachStatus($"Could not read {att.Name} as text.", isError: true);
+            return;
+        }
+
+        const int previewCap = 200_000;
+        textPreviewNote = text.Length > previewCap
+            ? $"Showing the first {previewCap:N0} of {text.Length:N0} characters."
+            : null;
+        textPreviewBody = text.Length > previewCap ? text[..previewCap] : text;
+        textPreviewAttachment = att;
+        StateHasChanged();
+    }
+
+    void CloseTextPreview()
+    {
+        textPreviewAttachment = null;
+        textPreviewBody = "";
+        textPreviewNote = null;
     }
 
     void RemovePendingFile(Attachment att)
@@ -2281,6 +2569,14 @@
 
         if (firstRender)
         {
+            if (KeyStore.ModelProfiles.Count > 0 &&
+                !modelList.Any(m => m.ProviderName == "Profiles"))
+            {
+                ReloadModelListFromCatalog(preferRemote: false);
+                EnsureValidModelSelection();
+                StateHasChanged();
+            }
+
             try
             {
                 var collapsedForMobile = await JS.InvokeAsync<bool>("appSidebar.initForViewport");
@@ -2462,6 +2758,7 @@
 
         isTyping = true;
         pendingFiles.Clear();
+        attachStatusMessage = null;
         try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
         RequestScrollToBottom();
         StateHasChanged();
@@ -2527,7 +2824,7 @@
             var wasStopped = statsLine?.Contains("stopped", StringComparison.OrdinalIgnoreCase) == true
                              || accumulated.Contains("Generation stopped", StringComparison.OrdinalIgnoreCase);
 
-            if (!wasStopped && autoSpeakReplies && LemonadeSpeech.IsTtsAvailable && !hasOmniAudio &&
+            if (!wasStopped && autoSpeakReplies && IsTtsAvailable && !hasOmniAudio &&
                 !string.IsNullOrWhiteSpace(accumulated) &&
                 !accumulated.StartsWith("Error calling provider", StringComparison.OrdinalIgnoreCase))
             {
@@ -2559,9 +2856,12 @@
         if (string.IsNullOrWhiteSpace(prompt))
             return;
 
-        var modelName = selectedModel.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase)
-            ? selectedModel.Split('/', 2)[1]
-            : selectedModel;
+        var isCloudImage = CloudModelId.TryParse(selectedModel, out var sendCloudProviderId, out var sendCloudModel);
+        var modelName = isCloudImage
+            ? sendCloudModel
+            : selectedModel.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase)
+                ? selectedModel.Split('/', 2)[1]
+                : selectedModel;
 
         var sourceImage = pendingFiles.LastOrDefault(IsImageAttachment);
         var wantsEdit = sourceImage != null;
@@ -2575,13 +2875,15 @@
             }
         }
 
-        if (wantsEdit && !LemonadeImages.ModelSupportsEdit(modelName))
+        var editSupported = isCloudImage
+            ? CloudImages.ModelSupportsEdit(sendCloudProviderId, modelName)
+            : LemonadeImages.ModelSupportsEdit(modelName);
+        if (wantsEdit && !editSupported)
         {
             await AppendImageErrorMessageAsync(
                 $"(Edit image) {prompt}",
                 $"{modelName} does not support image editing (generate-only). " +
-                "Pick a model labeled Image+Edit (e.g. Flux-2-Klein), or remove the attachment to generate a new image. " +
-                "Z-Image-Turbo is generate-only.");
+                "Pick an Image+Edit model, or remove the attachment to generate a new image.");
             pendingFiles.Clear();
             try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
             return;
@@ -2597,42 +2899,76 @@
 
         await KeyStore.SetLastSelectedModelAsync(selectedModel);
 
-        LemonadeImageResult result;
+        string? resultB64;
+        string? resultModel;
+        string? resultError;
         try
         {
-            if (wantsEdit && sourceBytes is { Length: > 0 })
+            if (isCloudImage)
             {
-                result = await LemonadeImages.EditAsync(new LemonadeImageEditRequest(
-                    Prompt: prompt,
-                    ImagePngBytes: sourceBytes,
-                    Model: modelName,
-                    Size: ImageSizeString,
-                    Steps: imageSteps > 0 ? imageSteps : null,
-                    CfgScale: imageCfg,
-                    Seed: ParsedImageSeed));
+                CloudImageResult cloudResult;
+                if (wantsEdit && sourceBytes is { Length: > 0 })
+                {
+                    cloudResult = await CloudImages.EditAsync(new CloudImageEditRequest(
+                        ProviderId: sendCloudProviderId,
+                        Prompt: prompt,
+                        ImageBytes: sourceBytes,
+                        Model: modelName));
+                }
+                else
+                {
+                    cloudResult = await CloudImages.GenerateAsync(new CloudImageGenerateRequest(
+                        ProviderId: sendCloudProviderId,
+                        Prompt: prompt,
+                        Model: modelName));
+                }
+                resultB64 = cloudResult.Base64Png;
+                resultModel = cloudResult.Model;
+                resultError = cloudResult.Success ? null : cloudResult.Error;
             }
             else
             {
-                result = await LemonadeImages.GenerateAsync(new LemonadeImageGenerateRequest(
-                    Prompt: prompt,
-                    Model: modelName,
-                    Size: ImageSizeString,
-                    Steps: imageSteps > 0 ? imageSteps : null,
-                    CfgScale: imageCfg,
-                    Seed: ParsedImageSeed));
-            }
+                LemonadeImageResult result;
+                if (wantsEdit && sourceBytes is { Length: > 0 })
+                {
+                    result = await LemonadeImages.EditAsync(new LemonadeImageEditRequest(
+                        Prompt: prompt,
+                        ImagePngBytes: sourceBytes,
+                        Model: modelName,
+                        Size: ImageSizeString,
+                        Steps: imageSteps > 0 ? imageSteps : null,
+                        CfgScale: imageCfg,
+                        Seed: ParsedImageSeed));
+                }
+                else
+                {
+                    result = await LemonadeImages.GenerateAsync(new LemonadeImageGenerateRequest(
+                        Prompt: prompt,
+                        Model: modelName,
+                        Size: ImageSizeString,
+                        Steps: imageSteps > 0 ? imageSteps : null,
+                        CfgScale: imageCfg,
+                        Seed: ParsedImageSeed));
+                }
 
-            if (result.Success && !string.IsNullOrWhiteSpace(result.Base64Png) &&
-                !string.Equals(imageUpscale, "off", StringComparison.OrdinalIgnoreCase))
-            {
-                typingLabel = "Upscaling…";
-                StateHasChanged();
-                result = await MaybeUpscaleAsync(result);
+                if (result.Success && !string.IsNullOrWhiteSpace(result.Base64Png) &&
+                    !string.Equals(imageUpscale, "off", StringComparison.OrdinalIgnoreCase))
+                {
+                    typingLabel = "Upscaling…";
+                    StateHasChanged();
+                    result = await MaybeUpscaleAsync(result);
+                }
+
+                resultB64 = result.Base64Png;
+                resultModel = result.Model;
+                resultError = result.Success ? null : result.Error;
             }
         }
         catch (Exception ex)
         {
-            result = LemonadeImageResult.Fail(ex.Message);
+            resultB64 = null;
+            resultModel = modelName;
+            resultError = ex.Message;
         }
         finally
         {
@@ -2641,11 +2977,11 @@
             typingLabel = "Wizionic is thinking…";
         }
 
-        if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
+        if (string.IsNullOrWhiteSpace(resultB64))
         {
             await AppendImageErrorMessageAsync(
                 wantsEdit ? $"(Edit image) {prompt}" : $"(Generate image) {prompt}",
-                result.Error ?? "Image request failed.");
+                resultError ?? "Image request failed.");
             return;
         }
 
@@ -2654,10 +2990,10 @@
             var convoId = activeConvoId ?? "_default";
             MediaBuffer.AddImage(
                 convoId,
-                result.Base64Png,
+                resultB64,
                 "image/png",
                 wantsEdit ? "edited-image.png" : "generated-image.png",
-                wantsEdit ? "lemonade_edit" : "lemonade_generate");
+                wantsEdit ? "image_edit" : "image_generate");
         }
         catch { /* non-fatal */ }
 
@@ -2665,11 +3001,11 @@
         string? autoSaveNote = null;
         if (ContextualRequestRouter.MessageSuggestsGalleryTools(prompt))
         {
-            autoSaveNote = await TryAutoSaveGeneratedImageAsync(prompt, result.Base64Png);
+            autoSaveNote = await TryAutoSaveGeneratedImageAsync(prompt, resultB64);
         }
 
         await AppendGeneratedImageMessageAsync(
-            prompt, result.Base64Png, result.Model ?? modelName, wantsEdit, autoSaveNote);
+            prompt, resultB64, selectedModel, wantsEdit, autoSaveNote);
         StateHasChanged();
     }
 
@@ -2781,7 +3117,7 @@
 
     async Task<string> CallProvider(Func<string, Task>? onPartialText = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(selectedModel))
+        if (string.IsNullOrEmpty(EffectiveChatModelId))
             return "No model selected.";
 
         try
@@ -2789,7 +3125,7 @@
             if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
                 await SyncService.EnsureAiProxyConnectionAsync();
-                var (text, toolTrace) = await SyncService.SendChatRequestAsync(selectedModel, messages);
+                var (text, toolTrace) = await SyncService.SendChatRequestAsync(EffectiveChatModelId, messages);
                 _pendingToolTrace = toolTrace;
                 // WebRTC AI relay is non-streaming today; deliver full text once.
                 var extracted = ApplyOmniMediaExtraction(text);
@@ -2799,7 +3135,7 @@
             }
 
             var result = await ChatCompletionService.CompleteAsync(
-                selectedModel,
+                EffectiveChatModelId,
                 messages,
                 currentUser,
                 activeConvoId,
@@ -3221,8 +3557,7 @@
     }
 
     static bool IsImageAttachment(Attachment att) =>
-        att.ContentType != null &&
-        att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
+        ChatAttachmentClassifier.Classify(att) == ChatAttachmentKind.Image &&
         !string.IsNullOrWhiteSpace(att.DataBase64);
 
     Attachment? FindLatestImageAttachment()
@@ -3245,18 +3580,34 @@
         imageEditSourceBytes = null;
         imageEditPreviewUrl = null;
         imagePrompt = "";
-        imageModel = LemonadeImages.DefaultImageModel ?? LemonadeImages.ImageModelNames.FirstOrDefault() ?? "";
-        ApplyImageParamsFromModel(imageModel);
+        imagePanelUsesCloud = ModelProfileId.TryCloudProvider(ProfileImageModelId, out var imgPid, out var imgName);
+        imagePanelCloudProviderId = imagePanelUsesCloud ? imgPid : null;
+        if (imagePanelUsesCloud && imagePanelCloudProviderId != null)
+        {
+            imageModel = imgName
+                         ?? CloudImages.DefaultImageModel(imagePanelCloudProviderId)
+                         ?? CloudImages.ImageModelNames(imagePanelCloudProviderId).FirstOrDefault()
+                         ?? "";
+        }
+        else
+        {
+            imageModel = LemonadeImages.DefaultImageModel ?? LemonadeImages.ImageModelNames.FirstOrDefault() ?? "";
+            ApplyImageParamsFromModel(imageModel);
+        }
         showImagePanel = true;
     }
 
     void OpenImageEditPanel(int? messageIndex)
     {
-        if (!LemonadeImages.IsEditAvailable)
+        imagePanelUsesCloud = ModelProfileId.TryCloudProvider(ProfileEditModelId ?? ProfileImageModelId, out var editPid, out _);
+        imagePanelCloudProviderId = imagePanelUsesCloud ? editPid : null;
+        var editAvailable = imagePanelUsesCloud
+            ? CloudImages.IsEditAvailable(imagePanelCloudProviderId!)
+            : LemonadeImages.IsEditAvailable;
+        if (!editAvailable)
         {
             imagePanelError =
-                "No edit-capable Lemonade models found. Install a model with the “edit” label (e.g. Flux-2-Klein) and refresh Local AI. " +
-                "Generate-only models like Z-Image-Turbo cannot edit.";
+                "No edit-capable image models found. Refresh models on Cloud providers or Local AI.";
             imagePanelMode = "edit";
             showImagePanel = true;
             imageEditSourceBytes = null;
@@ -3294,8 +3645,17 @@
         imagePanelError = null;
         imageEditPreviewUrl = AttachmentDataUrl(source);
         imagePrompt = "";
-        imageModel = LemonadeImages.DefaultEditModel ?? LemonadeImages.EditModelNames.FirstOrDefault() ?? "";
-        ApplyImageParamsFromModel(imageModel);
+        if (imagePanelUsesCloud && imagePanelCloudProviderId != null)
+        {
+            imageModel = CloudImages.DefaultEditModel(imagePanelCloudProviderId)
+                         ?? CloudImages.EditModelNames(imagePanelCloudProviderId).FirstOrDefault()
+                         ?? "";
+        }
+        else
+        {
+            imageModel = LemonadeImages.DefaultEditModel ?? LemonadeImages.EditModelNames.FirstOrDefault() ?? "";
+            ApplyImageParamsFromModel(imageModel);
+        }
         showImagePanel = true;
     }
 
@@ -3322,14 +3682,16 @@
 
         if (string.IsNullOrWhiteSpace(imageModel))
         {
-            imagePanelError = "Select a Lemonade image model. Refresh models on Local AI if the list is empty.";
+            imagePanelError = "Select an image model. Refresh models if the list is empty.";
             return;
         }
 
-        if (imagePanelMode == "edit" && !LemonadeImages.ModelSupportsEdit(imageModel))
+        var panelEditOk = imagePanelUsesCloud && imagePanelCloudProviderId != null
+            ? CloudImages.ModelSupportsEdit(imagePanelCloudProviderId, imageModel)
+            : LemonadeImages.ModelSupportsEdit(imageModel);
+        if (imagePanelMode == "edit" && !panelEditOk)
         {
-            imagePanelError =
-                $"{imageModel} does not support editing. Choose a model labeled edit (e.g. Flux-2-Klein).";
+            imagePanelError = $"{imageModel} does not support editing. Choose an edit-capable model.";
             return;
         }
 
@@ -3343,48 +3705,89 @@
         _imageCts = new CancellationTokenSource();
         var ct = _imageCts.Token;
 
-        LemonadeImageResult result;
+        string? panelB64;
+        string? panelModel;
+        string? panelError;
         try
         {
-            if (imagePanelMode == "edit")
+            if (imagePanelUsesCloud && imagePanelCloudProviderId != null)
             {
-                if (imageEditSourceBytes is not { Length: > 0 })
+                CloudImageResult cloudResult;
+                if (imagePanelMode == "edit")
                 {
-                    imagePanelError = "No source image for edit.";
-                    return;
+                    if (imageEditSourceBytes is not { Length: > 0 })
+                    {
+                        imagePanelError = "No source image for edit.";
+                        return;
+                    }
+
+                    cloudResult = await CloudImages.EditAsync(new CloudImageEditRequest(
+                        ProviderId: imagePanelCloudProviderId,
+                        Prompt: imagePrompt.Trim(),
+                        ImageBytes: imageEditSourceBytes,
+                        Model: imageModel), ct);
+                }
+                else
+                {
+                    cloudResult = await CloudImages.GenerateAsync(new CloudImageGenerateRequest(
+                        ProviderId: imagePanelCloudProviderId,
+                        Prompt: imagePrompt.Trim(),
+                        Model: imageModel), ct);
                 }
 
-                result = await LemonadeImages.EditAsync(new LemonadeImageEditRequest(
-                    Prompt: imagePrompt.Trim(),
-                    ImagePngBytes: imageEditSourceBytes,
-                    Model: imageModel,
-                    Size: ImageSizeString,
-                    Steps: imageSteps > 0 ? imageSteps : null,
-                    CfgScale: imageCfg,
-                    Seed: ParsedImageSeed), ct);
+                panelB64 = cloudResult.Base64Png;
+                panelModel = cloudResult.Model;
+                panelError = cloudResult.Success ? null : cloudResult.Error;
             }
             else
             {
-                result = await LemonadeImages.GenerateAsync(new LemonadeImageGenerateRequest(
-                    Prompt: imagePrompt.Trim(),
-                    Model: imageModel,
-                    Size: ImageSizeString,
-                    Steps: imageSteps > 0 ? imageSteps : null,
-                    CfgScale: imageCfg,
-                    Seed: ParsedImageSeed), ct);
-            }
+                LemonadeImageResult result;
+                if (imagePanelMode == "edit")
+                {
+                    if (imageEditSourceBytes is not { Length: > 0 })
+                    {
+                        imagePanelError = "No source image for edit.";
+                        return;
+                    }
 
-            if (result.Success && !string.IsNullOrWhiteSpace(result.Base64Png) &&
-                !string.Equals(imageUpscale, "off", StringComparison.OrdinalIgnoreCase))
-            {
-                typingLabel = "Upscaling…";
-                StateHasChanged();
-                result = await MaybeUpscaleAsync(result);
+                    result = await LemonadeImages.EditAsync(new LemonadeImageEditRequest(
+                        Prompt: imagePrompt.Trim(),
+                        ImagePngBytes: imageEditSourceBytes,
+                        Model: imageModel,
+                        Size: ImageSizeString,
+                        Steps: imageSteps > 0 ? imageSteps : null,
+                        CfgScale: imageCfg,
+                        Seed: ParsedImageSeed), ct);
+                }
+                else
+                {
+                    result = await LemonadeImages.GenerateAsync(new LemonadeImageGenerateRequest(
+                        Prompt: imagePrompt.Trim(),
+                        Model: imageModel,
+                        Size: ImageSizeString,
+                        Steps: imageSteps > 0 ? imageSteps : null,
+                        CfgScale: imageCfg,
+                        Seed: ParsedImageSeed), ct);
+                }
+
+                if (result.Success && !string.IsNullOrWhiteSpace(result.Base64Png) &&
+                    !string.Equals(imageUpscale, "off", StringComparison.OrdinalIgnoreCase))
+                {
+                    typingLabel = "Upscaling…";
+                    StateHasChanged();
+                    result = await MaybeUpscaleAsync(result);
+                }
+
+                panelB64 = result.Base64Png;
+                panelModel = result.Model;
+                panelError = result.Success ? null : result.Error;
             }
         }
         catch (Exception ex)
         {
-            result = LemonadeImageResult.Fail(ex.Message);
+            panelB64 = null;
+            panelModel = imageModel;
+            panelError = ex.Message;
         }
         finally
         {
@@ -3394,21 +3797,21 @@
             typingLabel = "Wizionic is thinking…";
         }
 
-        if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
+        if (string.IsNullOrWhiteSpace(panelB64))
         {
-            imagePanelError = result.Error ?? "Image request failed.";
+            imagePanelError = panelError ?? "Image request failed.";
             StateHasChanged();
             return;
         }
 
         string? panelAutoSave = null;
         if (ContextualRequestRouter.MessageSuggestsGalleryTools(imagePrompt))
-            panelAutoSave = await TryAutoSaveGeneratedImageAsync(imagePrompt, result.Base64Png);
+            panelAutoSave = await TryAutoSaveGeneratedImageAsync(imagePrompt, panelB64);
 
         await AppendGeneratedImageMessageAsync(
             imagePrompt.Trim(),
-            result.Base64Png,
-            result.Model ?? imageModel,
+            panelB64,
+            ResolveImagePanelCatalogId(panelModel ?? imageModel),
             isEdit: imagePanelMode == "edit",
             autoSaveNote: panelAutoSave);
 
@@ -3419,8 +3822,44 @@
         StateHasChanged();
     }
 
+    string ResolveImagePanelCatalogId(string modelOrId)
+    {
+        if (string.IsNullOrWhiteSpace(modelOrId))
+            return selectedModel ?? "";
+        if (CloudModelId.IsCloud(modelOrId)
+            || modelOrId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase)
+            || modelOrId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+            return modelOrId;
+        if (imagePanelUsesCloud && !string.IsNullOrWhiteSpace(imagePanelCloudProviderId))
+            return CloudModelId.Format(imagePanelCloudProviderId, modelOrId);
+        return "lemonade/" + modelOrId.Trim();
+    }
+
+    (string Source, string Model) DescribeImageCatalogModel(string catalogModelId)
+    {
+        if (CloudModelId.TryParse(catalogModelId, out var providerId, out var cloudName))
+        {
+            var provider = KeyStore.GetCloudProvider(providerId);
+            var source = !string.IsNullOrWhiteSpace(provider?.DisplayName) ? provider!.DisplayName : providerId;
+            return (source, cloudName);
+        }
+
+        if (catalogModelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
+            return ("Lemonade", catalogModelId.Split('/', 2)[1]);
+        if (catalogModelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+            return ("Ollama", catalogModelId.Split('/', 2)[1]);
+        return ("Direct", catalogModelId);
+    }
+
+    string FormatDirectImageTrace(bool isEdit, string catalogModelId)
+    {
+        var action = isEdit ? "Image edit" : "Image generate";
+        var (source, model) = DescribeImageCatalogModel(catalogModelId);
+        return $"[{DateTime.UtcNow:HH:mm:ss.fff}] 🎨 {action} · {source} · {model}";
+    }
+
     async Task AppendGeneratedImageMessageAsync(
-        string prompt, string base64Png, string modelName, bool isEdit, string? autoSaveNote = null)
+        string prompt, string base64Png, string catalogModelId, bool isEdit, string? autoSaveNote = null)
     {
         if (string.IsNullOrEmpty(activeConvoId))
         {
@@ -3451,12 +3890,14 @@
         if (!string.IsNullOrWhiteSpace(autoSaveNote))
             caption = caption + "\n\n" + autoSaveNote;
 
+        var used = string.IsNullOrWhiteSpace(catalogModelId) ? selectedModel : catalogModelId;
         messages.Add(new ChatMessage(
             Role: "assistant",
             Content: caption,
-            ModelUsed: $"lemonade/{modelName}",
+            ModelUsed: used,
             Timestamp: now,
             Attachments: new List<Attachment> { att },
+            ToolTrace: FormatDirectImageTrace(isEdit, used ?? ""),
             ItemId: Guid.NewGuid().ToString("N"),
             ModifiedAt: now));
 

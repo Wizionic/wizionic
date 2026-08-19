@@ -19,7 +19,7 @@ public sealed class AiRequestRouter
 
     private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Native", "Lemonade", "Gallery", "Calendar", "Notes", "HomeAssistant", "BrowserAgent"
+        "Native", "Cloud", "Lemonade", "Gallery", "Calendar", "Notes", "HomeAssistant", "BrowserAgent"
     };
 
     private readonly ChatModelCatalogService _catalog;
@@ -47,7 +47,7 @@ public sealed class AiRequestRouter
         var fallback = _rules.ClassifyRules(
             message, activeModules, conversationId, useSessionStickiness: false);
 
-        var modelId = (_keyStore.ToolRoutingModelId ?? "").Trim();
+        var modelId = (ModelProfileId.ResolveRoutingModelId(_keyStore) ?? "").Trim();
         if (string.IsNullOrEmpty(modelId))
             return Relabel(fallback, sourceLabel + "→Rules", "no routing model");
 
@@ -190,7 +190,8 @@ public sealed class AiRequestRouter
         "HomeAssistant: lights, switches, climate, media players, covers, scenes, locks, vacuum, " +
         "brightness, color, turn on/off, volume, thermostat — even without a wake word. " +
         "When using HomeAssistant set target_module to \"HomeAssistant\" and include it in modules. " +
-        "Lemonade: draw/generate/create images. Gallery: albums/save photos. " +
+        "Cloud: generate/edit images with the selected cloud provider (use instead of Lemonade when Cloud is listed). " +
+        "Lemonade: local draw/generate/create images. Gallery: albums/save photos. " +
         "Calendar: schedule/add/list/update/delete calendar events and appointments. " +
         "Notes: create notebooks, add/append note entries, attach chat images to notes. " +
         "Native: weather, search, time, math, URLs. " +

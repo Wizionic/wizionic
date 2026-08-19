@@ -91,7 +91,7 @@ ChatCompletionService.CompleteAsync()  (Shared)
                 │                 · image models → LemonadeImageService (not chat loop)
                 │                 · Omni collections → server-side multimodal tools
                 ├── proxied/*    → POST /api/proxy/chat (server-side key)
-                └── user keys    → direct to Groq, OpenRouter, Gemini, etc.
+                └── user-keyed cloud/{provider}/* → OpenAI-compat client (base URL + key on device)
         │
         ▼
 Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore saves encrypted JSON
@@ -270,7 +270,7 @@ flowchart TD
 
 `CompositeRequestRouter` is the app-wide `IRequestRouter`. `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
 
-Known module names for the AI router: `Native`, `Lemonade`, `Gallery`, `Calendar`, `Notes`, `HomeAssistant`, `BrowserAgent` (plus MCP tools when utility/MCP path is open).
+Known module names for the AI router: `Native`, `Cloud`, `Lemonade`, `Gallery`, `Calendar`, `Notes`, `HomeAssistant`, `BrowserAgent` (plus MCP tools when utility/MCP path is open).
 
 **Configure:** Settings / chat tool-routing UI → mode + catalog model id. Stored in `WasmKeyStore` / `SqliteKeyStore` and can sync under settings categories (e.g. local-ai / related prefs).
 
@@ -948,6 +948,7 @@ Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
 | `local-ai` | Ollama URL, models, vision proxy, tool-routing mode/model |
 | `lemonade` | Lemonade URL, key, modality defaults, models |
 | `cloud-providers` | User API keys (encrypted at rest on each device) |
+| `model-profiles` | Named chat/image/speech stacks |
 | `home-assistant` | HA URL/token/assistant name (desktop) |
 | `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens (auto-sync toggle on Sync page) |
 | `skills` | User SKILL.md library (markdown + enabled flags); auto-sync toggle on Sync page |
@@ -1134,7 +1135,7 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | `Components/CalendarPage.razor` | `/calendar` | Multi-calendar Day/Week/Month/Year, ICS import/export |
  | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets (incl. gallery/calendar/settings), AI server pick |
  | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults, tool routing model |
- | `Components/CloudProvidersPage.razor` | `/cloud-providers` | API keys for Groq, OpenRouter, Gemini, etc. |
+ | `Components/CloudProvidersPage.razor` | `/cloud-providers` | Add OpenAI-compatible cloud providers (name, base URL, key); refresh models |
  | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, help answer/embed models, preferences, setup wizard entry |
  | `Components/HelpPage.razor` | `/help` | Full-page help (browse + optional Ask) |
  | `Components/HelpView.razor` | (in `/help` + modal) | TOC, articles, Ask box, citations |
@@ -1154,7 +1155,9 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | File | Description |
  |------|-------------|
  | `Services/ChatCompletionService.cs` | Core completion loop, streaming, tool routing, context trim, vision proxy |
- | `Services/ChatModelCatalogService.cs` | Manage available AI models (Ollama, Lemonade, proxied, user keys) |
+ | `Services/ChatModelCatalogService.cs` | Manage available AI models (Ollama, Lemonade, proxied, user-keyed `cloud/{provider}/*`) |
+ | `Services/Cloud/CloudImageService.cs` | OpenAI-compatible image generate / edit for user-keyed providers |
+ | `Services/Cloud/CloudSpeechService.cs` | OpenAI audio + xAI `/tts` `/stt` adapters |
  | `Services/Lemonade/LemonadeImageService.cs` | Lemonade image generate / edit / upscale |
  | `Services/Lemonade/LemonadeSpeechService.cs` | Lemonade STT + TTS |
  | `Services/Lemonade/OmniMediaExtractor.cs` | Extract data-URI media from Omni replies |

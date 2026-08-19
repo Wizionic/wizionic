@@ -84,9 +84,8 @@ public sealed class ContextualRequestRouter : IRequestRouter
                     modules.Add("Calendar");
                 if (MessageSuggestsNotesTools(message) && Has("Notes"))
                     modules.Add("Notes");
-                if (MessageSuggestsImageTools(message) && Has("Lemonade"))
+                if (MessageSuggestsImageTools(message) && AddImageModule(modules, Has))
                 {
-                    modules.Add("Lemonade");
                     if (Has("Gallery")) modules.Add("Gallery");
                 }
 
@@ -109,9 +108,8 @@ public sealed class ContextualRequestRouter : IRequestRouter
                 modules.Add("Gallery");
             if (MessageSuggestsNotesTools(message) && Has("Notes"))
                 modules.Add("Notes");
-            if (MessageSuggestsImageTools(message) && Has("Lemonade"))
+            if (MessageSuggestsImageTools(message) && AddImageModule(modules, Has))
             {
-                modules.Add("Lemonade");
                 if (Has("Gallery")) modules.Add("Gallery");
             }
 
@@ -130,7 +128,7 @@ public sealed class ContextualRequestRouter : IRequestRouter
         if (imageIntent)
         {
             var modules = new List<string> { "Native" };
-            if (Has("Lemonade")) modules.Add("Lemonade");
+            AddImageModule(modules, Has);
             if (Has("Gallery")) modules.Add("Gallery");
             // "draw X and add to my notes" — attach Notes so the model can save after generate
             if (notesIntent && Has("Notes")) modules.Add("Notes");
@@ -308,7 +306,32 @@ public sealed class ContextualRequestRouter : IRequestRouter
     }
 
     /// <summary>
-    /// User wants image generation/editing (attach Lemonade + Gallery tools).
+    /// Image generate/edit tools only from the selected <b>profile</b> slots.
+    /// A raw model in the picker does not inherit Imagine or Lemonade image tools.
+    /// </summary>
+    private bool AddImageModule(List<string> modules, Func<string, bool> has)
+    {
+        var imageId = ModelProfileId.ResolveImageModelId(_keyStore);
+        if (string.IsNullOrWhiteSpace(imageId))
+            return false;
+
+        if (ModelProfileId.TryCloudProvider(imageId, out _, out _) && has("Cloud"))
+        {
+            modules.Add("Cloud");
+            return true;
+        }
+
+        if (ModelProfileId.IsLemonadeCatalog(imageId) && has("Lemonade"))
+        {
+            modules.Add("Lemonade");
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// User wants image generation/editing (attach Cloud or Lemonade + Gallery tools).
     /// Also true for "create/make … and save to album" style prompts that omit the word "image".
     /// </summary>
     public static bool MessageSuggestsImageTools(string message)

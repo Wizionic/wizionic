@@ -10,6 +10,7 @@ public static class SettingsSyncCategory
     public const string LocalAi = "local-ai";
     public const string Lemonade = "lemonade";
     public const string CloudProviders = "cloud-providers";
+    public const string ModelProfiles = "model-profiles";
     public const string HomeAssistant = "home-assistant";
     public const string Tools = "tools";
     public const string SystemPrompt = "system-prompt";
@@ -23,6 +24,7 @@ public static class SettingsSyncCategory
         LocalAi,
         Lemonade,
         CloudProviders,
+        ModelProfiles,
         HomeAssistant,
         Tools,
         SystemPrompt,
@@ -37,6 +39,7 @@ public static class SettingsSyncCategory
         LocalAi => "Local AI",
         Lemonade => "Lemonade",
         CloudProviders => "Cloud Providers",
+        ModelProfiles => "Model profiles",
         HomeAssistant => "Home Assistant",
         Tools => "Tools (MCP + Connectors)",
         SystemPrompt => "System prompt",

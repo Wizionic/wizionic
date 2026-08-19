@@ -48,12 +48,10 @@
             <label>Base URL</label>
             <input type="text"
                    @bind="lemonadeBaseUrl"
-                   @bind:event="oninput"
-                   @bind:after="OnBaseUrlEdited"
                    placeholder="http://localhost:13305"
                    class="form-control" />
             <div style="font-size:0.75em; color:var(--cf-text-muted); margin:2px 0 4px;">
-                Default: http://localhost:13305
+                Default: http://localhost:13305. Saved when you click Save and Test (not while typing).
             </div>
 
             <label style="margin-top: 0.5rem;">API key (optional)</label>
@@ -63,7 +61,7 @@
             </div>
 
             <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
-                <button type="button" @onclick="TestLemonadeConnection" class="btn btn-outline-secondary">Test connection</button>
+                <button type="button" @onclick="TestLemonadeConnection" class="btn btn-outline-secondary">Save and Test</button>
                 <button type="button" @onclick="RefreshLemonadeModels" class="btn btn-outline-primary">Refresh Models from Lemonade</button>
             </div>
             @if (!string.IsNullOrEmpty(lemonadeHealthSummary))
@@ -204,55 +202,10 @@
                 </div>
             </div>
 
-            <div style="margin-top: 1.25rem; padding-bottom: 1.5rem;">
-                <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">Modality defaults</h4>
-                <p style="font-size: 0.8em; color: var(--cf-text-muted); margin-top: 0;">
-                    Used by image generation, speech-to-text, and text-to-speech features in chat.
-                </p>
-
-                <label>Image generation model</label>
-                <select class="form-control" @bind="defaultImageModel">
-                    <option value="">— none —</option>
-                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsImage))
-                    {
-                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                    }
-                </select>
-
-                <label style="margin-top: 0.4rem;">Image edit model</label>
-                <select class="form-control" @bind="defaultEditModel">
-                    <option value="">— none —</option>
-                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsEdit))
-                    {
-                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                    }
-                </select>
-
-                <label style="margin-top: 0.4rem;">Text-to-speech model</label>
-                <select class="form-control" @bind="defaultTtsModel">
-                    <option value="">— none —</option>
-                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsTts))
-                    {
-                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                    }
-                </select>
-
-                <label style="margin-top: 0.4rem;">Speech-to-text model</label>
-                <select class="form-control" @bind="defaultSttModel">
-                    <option value="">— none —</option>
-                    @foreach (var m in lemonadeModelSettings.Where(x => x.IsTranscription))
-                    {
-                        <option value="@m.Name">@DisplayLemonadeLabel(m)</option>
-                    }
-                </select>
-
-                <label style="margin-top: 0.4rem;">Default voice (TTS)</label>
-                <input type="text" @bind="defaultVoice" placeholder="shimmer" class="form-control" />
-
-                <button type="button" @onclick="SaveModalityDefaults" class="btn btn-outline-primary" style="margin-top: 0.5rem;">
-                    Save modality defaults
-                </button>
-            </div>
+            <p style="font-size: 0.8em; color: var(--cf-text-muted); margin: 1rem 0 1.5rem;">
+                Which Lemonade model Chat uses for image or speech is set on
+                <a href="/settings">Settings → Model profiles</a>.
+            </p>
 
             @if (!string.IsNullOrEmpty(pageFeedback))
             {
@@ -356,8 +309,6 @@
         SyncEmbedUrl();
         ReloadAll();
     }
-
-    void OnBaseUrlEdited() => SyncEmbedUrl();
 
     void SyncEmbedUrl()
     {

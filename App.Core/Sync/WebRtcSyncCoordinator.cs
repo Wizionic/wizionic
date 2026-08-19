@@ -64,6 +64,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     public bool AutoSyncLocalAi { get; set; }
     public bool AutoSyncLemonade { get; set; }
     public bool AutoSyncCloudProviders { get; set; }
+    public bool AutoSyncModelProfiles { get; set; }
     public bool AutoSyncHomeAssistant { get; set; }
     public bool AutoSyncTools { get; set; }
     public bool AutoSyncSystemPrompt { get; set; }
@@ -815,6 +816,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         SettingsSyncCategory.LocalAi => AutoSyncLocalAi,
         SettingsSyncCategory.Lemonade => AutoSyncLemonade,
         SettingsSyncCategory.CloudProviders => AutoSyncCloudProviders,
+        SettingsSyncCategory.ModelProfiles => AutoSyncModelProfiles,
         SettingsSyncCategory.HomeAssistant => AutoSyncHomeAssistant,
         SettingsSyncCategory.Tools => AutoSyncTools,
         SettingsSyncCategory.SystemPrompt => AutoSyncSystemPrompt,
@@ -2069,7 +2071,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         var includeBookmarks = AutoSyncBookmarks && supportsBrowser && _browserStore != null;
         var includeApps = AutoSyncInstalledApps && supportsBrowser && _sidebarStore != null;
         var includeAlbums = AutoSyncGallery && _galleryStore != null;
-        var anySettingsAuto = AutoSyncLocalAi || AutoSyncLemonade || AutoSyncCloudProviders
+        var anySettingsAuto = AutoSyncLocalAi || AutoSyncLemonade || AutoSyncCloudProviders || AutoSyncModelProfiles
             || AutoSyncHomeAssistant || AutoSyncTools || AutoSyncSystemPrompt
             || AutoSyncProfile || AutoSyncMemories || AutoSyncAppearance
             || AutoSyncSkills;

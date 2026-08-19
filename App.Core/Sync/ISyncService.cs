@@ -28,6 +28,7 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     bool AutoSyncLocalAi { get; }
     bool AutoSyncLemonade { get; }
     bool AutoSyncCloudProviders { get; }
+    bool AutoSyncModelProfiles { get; }
     bool AutoSyncHomeAssistant { get; }
     bool AutoSyncTools { get; }
     bool AutoSyncSystemPrompt { get; }
@@ -71,6 +72,7 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     Task SetAutoSyncLocalAiAsync(bool enabled);
     Task SetAutoSyncLemonadeAsync(bool enabled);
     Task SetAutoSyncCloudProvidersAsync(bool enabled);
+    Task SetAutoSyncModelProfilesAsync(bool enabled);
     Task SetAutoSyncHomeAssistantAsync(bool enabled);
     Task SetAutoSyncToolsAsync(bool enabled);
     Task SetAutoSyncSystemPromptAsync(bool enabled);

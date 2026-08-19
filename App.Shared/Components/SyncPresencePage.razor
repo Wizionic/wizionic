@@ -566,6 +566,7 @@
                 @SettingsSection("Local AI", SettingsSyncCategory.LocalAi, SyncService.AutoSyncLocalAi, ToggleAutoSyncLocalAi)
                 @SettingsSection("Lemonade", SettingsSyncCategory.Lemonade, SyncService.AutoSyncLemonade, ToggleAutoSyncLemonade)
                 @SettingsSection("Cloud Providers", SettingsSyncCategory.CloudProviders, SyncService.AutoSyncCloudProviders, ToggleAutoSyncCloudProviders)
+                @SettingsSection("Model profiles", SettingsSyncCategory.ModelProfiles, SyncService.AutoSyncModelProfiles, ToggleAutoSyncModelProfiles)
                 @if (AppEnvironment.IsMaui)
                 {
                     @SettingsSection("Home Assistant", SettingsSyncCategory.HomeAssistant, SyncService.AutoSyncHomeAssistant, ToggleAutoSyncHomeAssistant)
@@ -880,6 +881,7 @@
     private async Task ToggleAutoSyncLocalAi(ChangeEventArgs e) { await SyncService.SetAutoSyncLocalAiAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncLemonade(ChangeEventArgs e) { await SyncService.SetAutoSyncLemonadeAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncCloudProviders(ChangeEventArgs e) { await SyncService.SetAutoSyncCloudProvidersAsync(e.Value is bool b && b); StateHasChanged(); }
+    private async Task ToggleAutoSyncModelProfiles(ChangeEventArgs e) { await SyncService.SetAutoSyncModelProfilesAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncHomeAssistant(ChangeEventArgs e) { await SyncService.SetAutoSyncHomeAssistantAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncTools(ChangeEventArgs e) { await SyncService.SetAutoSyncToolsAsync(e.Value is bool b && b); StateHasChanged(); }
     private async Task ToggleAutoSyncSkills(ChangeEventArgs e) { await SyncService.SetAutoSyncSkillsAsync(e.Value is bool b && b); StateHasChanged(); }

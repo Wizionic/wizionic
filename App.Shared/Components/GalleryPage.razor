@@ -19,6 +19,7 @@
 @inject IGallerySyncBridge SyncBridge
 @inject IStorageQuotaService StorageQuota
 @inject ISidebarState SidebarState
+@inject IChatPanelState ChatPanel
 @inject IGalleryChatHandoff GalleryChatHandoff
 
 <WasmSidebarSync />
@@ -1064,6 +1065,11 @@
             ContentType: string.IsNullOrWhiteSpace(img.ContentType) ? "image/jpeg" : img.ContentType,
             DataBase64: img.DataBase64,
             Size: img.Size > 0 ? img.Size : (long)(img.DataBase64.Length * 0.75)));
+
+        // Gallery closes the chat panel; /chat with the panel closed is a blank main area on MAUI.
+        ChatPanel.IsOpen = true;
+        if (AppEnvironment.IsMaui)
+            await SidebarState.SetCollapsedAsync(false, JS);
 
         // New chat with image attached + preferred image-edit model (handled in ChatPage).
         Nav.NavigateTo("/chat?galleryEdit=1");

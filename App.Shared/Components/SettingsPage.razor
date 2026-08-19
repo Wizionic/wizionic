@@ -19,6 +19,7 @@
 @using App.Core.Update
 @using App.Core.Homeserver
 @using App.Core.Sync
+@using App.Core.Chat
 @using App.Core.Tools
 @using App.Shared.Services
 @using App.Shared.Services.Tools
@@ -241,6 +242,41 @@
         </div>
     </div>
 
+    <!-- Reply length -->
+    <div class="settings-card" style="margin-top: 1rem;">
+        <h3 class="help-heading" style="margin: 0 0 0.25rem;">Reply length <HelpGlyph Topic="settings-reply-length" /></h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+            Maximum new tokens the model may generate in one chat reply (includes hidden thinking on models that reason first).
+            This is an app limit, not the model’s context window. Default is 16,384.
+        </p>
+        <label>Max output tokens</label>
+        <input type="number"
+               class="form-control form-control-sm"
+               style="max-width: 10rem;"
+               min="@App.Core.Storage.KeyStoreDefaults.MinMaxOutputTokens"
+               max="@App.Core.Storage.KeyStoreDefaults.MaxMaxOutputTokens"
+               step="1024"
+               @bind="maxOutputDraft" />
+        <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0.35rem 0 0;">
+            Allowed range @App.Core.Storage.KeyStoreDefaults.MinMaxOutputTokens.ToString("N0")–
+            @App.Core.Storage.KeyStoreDefaults.MaxMaxOutputTokens.ToString("N0").
+        </p>
+        <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+            <button type="button" class="btn btn-primary btn-sm" @onclick="SaveMaxOutputTokens" disabled="@maxOutputBusy">
+                @(maxOutputBusy ? "Saving…" : "Save reply length")
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ResetMaxOutputTokens" disabled="@maxOutputBusy">
+                Reset to 16,384
+            </button>
+        </div>
+        @if (!string.IsNullOrEmpty(maxOutputSaveMessage))
+        {
+            <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(maxOutputSaveIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
+                @maxOutputSaveMessage
+            </div>
+        }
+    </div>
+
     <!-- Tool routing -->
     <div class="settings-card" style="margin-top: 1rem;">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Tool routing <HelpGlyph Topic="tool-routing" /></h3>
@@ -297,6 +333,128 @@
                             border-radius: 6px; font-size: 0.8em; white-space: pre-wrap;">@routingTestResult</pre>
             }
         </div>
+    </div>
+
+    <div class="settings-card" style="margin-top: 1rem;">
+        <h3 class="help-heading" style="margin: 0 0 0.25rem;">Model profiles <HelpGlyph Topic="settings-model-profiles" /></h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+            A profile is a named stack: chat model plus image, edit, speech, routing, and vision proxy.
+            Chat lists profiles at the top of the model menu. Palette, mic, and Speak use these slots — not “whatever provider the chat model belongs to.”
+        </p>
+
+        <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
+            <select class="form-select form-select-sm" style="max-width: 16rem;" @bind="profileEditId" @bind:after="LoadProfileDraft">
+                <option value="">— new profile —</option>
+                @foreach (var p in modelProfiles)
+                {
+                    <option value="@p.Id">@p.Name</option>
+                }
+            </select>
+            <button type="button" class="btn btn-outline-primary btn-sm" @onclick="StartNewProfile">New</button>
+            <button type="button" class="btn btn-primary btn-sm" @onclick="SaveModelProfile" disabled="@profileBusy">
+                @(profileBusy ? "Saving…" : "Save profile")
+            </button>
+            @if (!string.IsNullOrEmpty(profileEditId))
+            {
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="DeleteModelProfile" disabled="@profileBusy">Delete</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ActivateModelProfile" disabled="@profileBusy">
+                    Use in Chat
+                </button>
+            }
+        </div>
+
+        <div style="display:grid; gap:0.5rem; max-width:32rem;">
+            <div>
+                <label>Name</label>
+                <input class="form-control form-control-sm" @bind="profileNameDraft" placeholder="Daily Grok" />
+            </div>
+            <div>
+                <label>Chat model</label>
+                <select class="form-select form-select-sm" @bind="profileChatDraft">
+                    <option value="">— none —</option>
+                    @foreach (var m in profileChatOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Routing model (optional override)</label>
+                <select class="form-select form-select-sm" @bind="profileRoutingDraft">
+                    <option value="">Use Settings → Tool routing</option>
+                    @foreach (var m in routingModelOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Image generation</label>
+                <select class="form-select form-select-sm" @bind="profileImageDraft">
+                    <option value="">— none —</option>
+                    @foreach (var m in profileImageOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Image edit</label>
+                <select class="form-select form-select-sm" @bind="profileEditDraft">
+                    <option value="">— none —</option>
+                    @foreach (var m in profileEditOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Text-to-speech</label>
+                <select class="form-select form-select-sm" @bind="profileTtsDraft">
+                    <option value="">— none —</option>
+                    @foreach (var m in profileTtsOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Speech-to-text</label>
+                <select class="form-select form-select-sm" @bind="profileSttDraft">
+                    <option value="">— none —</option>
+                    @foreach (var m in profileSttOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Voice</label>
+                <input class="form-control form-control-sm" @bind="profileVoiceDraft" placeholder="eve" />
+            </div>
+            <div>
+                <label>Vision proxy (optional)</label>
+                <select class="form-select form-select-sm" @bind="profileVisionDraft">
+                    <option value="">None — only the chat model’s vision</option>
+                    @foreach (var m in profileVisionOptions)
+                    {
+                        <option value="@m.Id">@m.Label</option>
+                    }
+                </select>
+            </div>
+        </div>
+        @if (!string.IsNullOrEmpty(profileSaveMessage))
+        {
+            <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(profileSaveIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
+                @profileSaveMessage
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(KeyStore.ActiveModelProfileId))
+        {
+            <p style="margin: 0.6rem 0 0; font-size: 0.8em; color: var(--color-text-muted);">
+                Active in Chat: <strong>@(KeyStore.GetModelProfile(KeyStore.ActiveModelProfileId)?.Name ?? KeyStore.ActiveModelProfileId)</strong>
+            </p>
+        }
     </div>
 
     <div class="settings-card" style="margin-top: 1rem;">
@@ -533,6 +691,11 @@
     private bool showRestartConfirm;
     private string restartConfirmMessage = "";
 
+    private int maxOutputDraft = App.Core.Storage.KeyStoreDefaults.DefaultMaxOutputTokens;
+    private bool maxOutputBusy;
+    private string? maxOutputSaveMessage;
+    private bool maxOutputSaveIsError;
+
     private string routingModeDraft = "Rules";
     private string routingModelDraft = "";
     private List<(string Id, string Label)> routingModelOptions = new();
@@ -551,6 +714,27 @@
     private string? helpSaveMessage;
     private bool helpSaveIsError;
     private string helpIndexStatusText = "Index: not loaded yet.";
+
+    private List<App.Core.Storage.ModelProfile> modelProfiles = new();
+    private string profileEditId = "";
+    private string profileNameDraft = "";
+    private string profileChatDraft = "";
+    private string profileRoutingDraft = "";
+    private string profileImageDraft = "";
+    private string profileEditDraft = "";
+    private string profileTtsDraft = "";
+    private string profileSttDraft = "";
+    private string profileVoiceDraft = "";
+    private string profileVisionDraft = "";
+    private List<(string Id, string Label)> profileChatOptions = new();
+    private List<(string Id, string Label)> profileImageOptions = new();
+    private List<(string Id, string Label)> profileEditOptions = new();
+    private List<(string Id, string Label)> profileTtsOptions = new();
+    private List<(string Id, string Label)> profileSttOptions = new();
+    private List<(string Id, string Label)> profileVisionOptions = new();
+    private bool profileBusy;
+    private string? profileSaveMessage;
+    private bool profileSaveIsError;
 
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
@@ -577,7 +761,9 @@
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
         ReloadMemories();
+        maxOutputDraft = KeyStore.MaxOutputTokens;
         LoadToolRoutingDraft();
+        LoadModelProfilesDraft();
         await LoadHelpModelsDraft();
 
         if (AppEnvironment.IsMaui)
@@ -588,6 +774,34 @@
             LoadInstalledVersion();
             RefreshHomeserverStatus();
         }
+    }
+
+    private async Task SaveMaxOutputTokens()
+    {
+        maxOutputBusy = true;
+        maxOutputSaveMessage = null;
+        try
+        {
+            await KeyStore.SetMaxOutputTokensAsync(maxOutputDraft);
+            maxOutputDraft = KeyStore.MaxOutputTokens;
+            maxOutputSaveIsError = false;
+            maxOutputSaveMessage = $"Saved. Chat replies may use up to {maxOutputDraft:N0} output tokens.";
+        }
+        catch (Exception ex)
+        {
+            maxOutputSaveIsError = true;
+            maxOutputSaveMessage = ex.Message;
+        }
+        finally
+        {
+            maxOutputBusy = false;
+        }
+    }
+
+    private async Task ResetMaxOutputTokens()
+    {
+        maxOutputDraft = App.Core.Storage.KeyStoreDefaults.DefaultMaxOutputTokens;
+        await SaveMaxOutputTokens();
     }
 
     private void LoadToolRoutingDraft()
@@ -727,6 +941,176 @@
             helpBusy = false;
         }
     }
+
+    private void LoadModelProfilesDraft()
+    {
+        modelProfiles = KeyStore.ModelProfiles.ToList();
+        BuildProfileSlotOptions();
+        var active = KeyStore.ActiveModelProfileId;
+        if (!string.IsNullOrWhiteSpace(active) && modelProfiles.Any(p => p.Id == active))
+            profileEditId = active;
+        else
+            profileEditId = modelProfiles.FirstOrDefault()?.Id ?? "";
+        LoadProfileDraft();
+    }
+
+    private void BuildProfileSlotOptions()
+    {
+        List<ChatModelInfo> catalog;
+        try { catalog = ModelCatalog.GetAvailableModels(); }
+        catch { catalog = new(); }
+
+        profileChatOptions = catalog
+            .Where(m => !m.IsImageGeneration && !string.IsNullOrWhiteSpace(m.Id))
+            .Select(m => (m.Id, string.IsNullOrWhiteSpace(m.Label) ? m.Id : $"{m.Label}"))
+            .OrderBy(x => x.Item2, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        profileImageOptions = catalog
+            .Where(m => m.IsImageGeneration)
+            .Select(m => (m.Id, m.Label))
+            .ToList();
+        profileEditOptions = catalog
+            .Where(m => m.SupportsImageEdit || m.IsImageGeneration)
+            .Select(m => (m.Id, m.Label))
+            .ToList();
+
+        profileVisionOptions = catalog
+            .Where(m => m.SupportsVision && !m.IsImageGeneration)
+            .Select(m => (m.Id, m.Label))
+            .ToList();
+
+        profileTtsOptions = new();
+        profileSttOptions = new();
+        foreach (var m in KeyStore.LemonadeModelSettingsList.Where(x => x.IsTts))
+            profileTtsOptions.Add(("lemonade/" + m.Name, (string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label) + " (Lemonade)"));
+        foreach (var m in KeyStore.LemonadeModelSettingsList.Where(x => x.IsTranscription))
+            profileSttOptions.Add(("lemonade/" + m.Name, (string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label) + " (Lemonade)"));
+        foreach (var p in KeyStore.CloudProviders)
+        {
+            if (p.HasXaiTts || p.HasOpenAiAudio || p.Models.Any(m => m.IsTts))
+                profileTtsOptions.Add(("cloud/" + p.Id, p.DisplayName + " (TTS API)"));
+            if (p.HasXaiStt || p.HasOpenAiAudio || p.Models.Any(m => m.IsTranscription))
+                profileSttOptions.Add(("cloud/" + p.Id, p.DisplayName + " (STT API)"));
+        }
+    }
+
+    private void LoadProfileDraft()
+    {
+        var p = string.IsNullOrWhiteSpace(profileEditId) ? null : KeyStore.GetModelProfile(profileEditId);
+        profileNameDraft = p?.Name ?? "";
+        profileChatDraft = p?.ChatModelId ?? "";
+        profileRoutingDraft = p?.RoutingModelId ?? "";
+        profileImageDraft = p?.ImageModelId ?? "";
+        profileEditDraft = p?.EditModelId ?? "";
+        profileTtsDraft = p?.TtsModelId ?? "";
+        profileSttDraft = p?.SttModelId ?? "";
+        profileVoiceDraft = p?.Voice ?? "";
+        profileVisionDraft = p?.VisionProxyModelId ?? "";
+        profileSaveMessage = null;
+    }
+
+    private void StartNewProfile()
+    {
+        profileEditId = "";
+        profileNameDraft = "";
+        profileChatDraft = "";
+        profileRoutingDraft = "";
+        profileImageDraft = "";
+        profileEditDraft = "";
+        profileTtsDraft = "";
+        profileSttDraft = "";
+        profileVoiceDraft = "";
+        profileVisionDraft = "";
+        profileSaveMessage = null;
+    }
+
+    private async Task SaveModelProfile()
+    {
+        profileBusy = true;
+        profileSaveMessage = null;
+        try
+        {
+            var name = (profileNameDraft ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                profileSaveIsError = true;
+                profileSaveMessage = "Name is required.";
+                return;
+            }
+
+            var id = string.IsNullOrWhiteSpace(profileEditId)
+                ? App.Core.Cloud.CloudModelCatalogResolver.MakeProviderId(name, modelProfiles.Select(p => p.Id))
+                : profileEditId;
+            var profile = new App.Core.Storage.ModelProfile
+            {
+                Id = id,
+                Name = name,
+                ChatModelId = EmptyToNull(profileChatDraft),
+                RoutingModelId = EmptyToNull(profileRoutingDraft),
+                ImageModelId = EmptyToNull(profileImageDraft),
+                EditModelId = EmptyToNull(profileEditDraft),
+                TtsModelId = EmptyToNull(profileTtsDraft),
+                SttModelId = EmptyToNull(profileSttDraft),
+                Voice = EmptyToNull(profileVoiceDraft),
+                VisionProxyModelId = EmptyToNull(profileVisionDraft)
+            };
+            await KeyStore.UpsertModelProfileAsync(profile);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.ModelProfiles);
+            profileEditId = id;
+            modelProfiles = KeyStore.ModelProfiles.ToList();
+            profileSaveIsError = false;
+            profileSaveMessage = "Profile saved. Pick it at the top of the Chat model menu.";
+        }
+        catch (Exception ex)
+        {
+            profileSaveIsError = true;
+            profileSaveMessage = ex.Message;
+        }
+        finally
+        {
+            profileBusy = false;
+        }
+    }
+
+    private async Task DeleteModelProfile()
+    {
+        if (string.IsNullOrWhiteSpace(profileEditId))
+            return;
+        profileBusy = true;
+        try
+        {
+            await KeyStore.RemoveModelProfileAsync(profileEditId);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.ModelProfiles);
+            StartNewProfile();
+            modelProfiles = KeyStore.ModelProfiles.ToList();
+            profileSaveIsError = false;
+            profileSaveMessage = "Profile deleted.";
+        }
+        catch (Exception ex)
+        {
+            profileSaveIsError = true;
+            profileSaveMessage = ex.Message;
+        }
+        finally
+        {
+            profileBusy = false;
+        }
+    }
+
+    private async Task ActivateModelProfile()
+    {
+        if (string.IsNullOrWhiteSpace(profileEditId))
+            return;
+        await KeyStore.SetActiveModelProfileIdAsync(profileEditId);
+        await KeyStore.SetLastSelectedModelAsync(App.Core.Storage.ModelProfileId.ForPicker(profileEditId));
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.ModelProfiles);
+        profileSaveIsError = false;
+        profileSaveMessage = "This profile is now selected in Chat.";
+    }
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task SaveToolRouting()
     {
