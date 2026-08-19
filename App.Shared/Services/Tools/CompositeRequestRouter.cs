@@ -78,7 +78,9 @@ public sealed class CompositeRequestRouter : IRequestRouter
         if (mods.Count == 0)
             return false; // PureChat → try AI (incl. smart-home without wake word)
 
-        if (mods.Any(m => m.Equals("Lemonade", StringComparison.OrdinalIgnoreCase)))
+        if (mods.Any(m =>
+                m.Equals("Cloud", StringComparison.OrdinalIgnoreCase) ||
+                m.Equals("Lemonade", StringComparison.OrdinalIgnoreCase)))
             return true; // clear image path
 
         // Gallery-only or Native-only can miss multi-intent → AI

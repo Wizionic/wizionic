@@ -59,6 +59,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string AutoSyncLocalAiKey = "app-auto-sync-local-ai";
     private const string AutoSyncLemonadeKey = "app-auto-sync-lemonade";
     private const string AutoSyncCloudProvidersKey = "app-auto-sync-cloud-providers";
+    private const string AutoSyncModelProfilesKey = "app-auto-sync-model-profiles";
     private const string AutoSyncHomeAssistantKey = "app-auto-sync-home-assistant";
     private const string AutoSyncToolsKey = "app-auto-sync-tools";
     private const string AutoSyncSystemPromptKey = "app-auto-sync-system-prompt";
@@ -100,6 +101,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public bool AutoSyncLocalAi { get; private set; } = true;
     public bool AutoSyncLemonade { get; private set; } = true;
     public bool AutoSyncCloudProviders { get; private set; } = true;
+    public bool AutoSyncModelProfiles { get; private set; } = true;
     public bool AutoSyncHomeAssistant { get; private set; } = true;
     public bool AutoSyncTools { get; private set; } = true;
     public bool AutoSyncSystemPrompt { get; private set; } = true;
@@ -339,6 +341,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             AutoSyncLocalAi = await LoadBoolPrefAsync(AutoSyncLocalAiKey, defaultValue: true);
             AutoSyncLemonade = await LoadBoolPrefAsync(AutoSyncLemonadeKey, defaultValue: true);
             AutoSyncCloudProviders = await LoadBoolPrefAsync(AutoSyncCloudProvidersKey, defaultValue: true);
+            AutoSyncModelProfiles = await LoadBoolPrefAsync(AutoSyncModelProfilesKey, defaultValue: true);
             AutoSyncHomeAssistant = await LoadBoolPrefAsync(AutoSyncHomeAssistantKey, defaultValue: true);
             AutoSyncTools = await LoadBoolPrefAsync(AutoSyncToolsKey, defaultValue: true);
             AutoSyncSystemPrompt = await LoadBoolPrefAsync(AutoSyncSystemPromptKey, defaultValue: true);
@@ -557,6 +560,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         SetAutoSyncFlagAsync(AutoSyncLemonadeKey, v => AutoSyncLemonade = v, enabled);
     public Task SetAutoSyncCloudProvidersAsync(bool enabled) =>
         SetAutoSyncFlagAsync(AutoSyncCloudProvidersKey, v => AutoSyncCloudProviders = v, enabled);
+    public Task SetAutoSyncModelProfilesAsync(bool enabled) =>
+        SetAutoSyncFlagAsync(AutoSyncModelProfilesKey, v => AutoSyncModelProfiles = v, enabled);
     public Task SetAutoSyncHomeAssistantAsync(bool enabled) =>
         SetAutoSyncFlagAsync(AutoSyncHomeAssistantKey, v => AutoSyncHomeAssistant = v, enabled);
     public Task SetAutoSyncToolsAsync(bool enabled) =>
@@ -807,6 +812,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.AutoSyncLocalAi = AutoSyncLocalAi;
         _coordinator.AutoSyncLemonade = AutoSyncLemonade;
         _coordinator.AutoSyncCloudProviders = AutoSyncCloudProviders;
+        _coordinator.AutoSyncModelProfiles = AutoSyncModelProfiles;
         _coordinator.AutoSyncHomeAssistant = AutoSyncHomeAssistant;
         _coordinator.AutoSyncTools = AutoSyncTools;
         _coordinator.AutoSyncSystemPrompt = AutoSyncSystemPrompt;

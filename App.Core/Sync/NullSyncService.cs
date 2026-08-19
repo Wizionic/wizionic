@@ -29,6 +29,7 @@ public sealed class NullSyncService : ISyncService
     public bool AutoSyncLocalAi => true;
     public bool AutoSyncLemonade => true;
     public bool AutoSyncCloudProviders => true;
+    public bool AutoSyncModelProfiles => true;
     public bool AutoSyncHomeAssistant => true;
     public bool AutoSyncTools => true;
     public bool AutoSyncSystemPrompt => true;
@@ -70,6 +71,7 @@ public sealed class NullSyncService : ISyncService
     public Task SetAutoSyncLocalAiAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncLemonadeAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncCloudProvidersAsync(bool enabled) => Task.CompletedTask;
+    public Task SetAutoSyncModelProfilesAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncHomeAssistantAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncToolsAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncSystemPromptAsync(bool enabled) => Task.CompletedTask;

@@ -16,17 +16,20 @@ public sealed class LemonadeToolModule : IToolModule
     private readonly ILemonadeSpeechService _speech;
     private readonly IConversationMediaBuffer _media;
     private readonly IToolConversationContext _convoCtx;
+    private readonly IToolExecutionTrace _trace;
 
     public LemonadeToolModule(
         ILemonadeImageService images,
         ILemonadeSpeechService speech,
         IConversationMediaBuffer media,
-        IToolConversationContext convoCtx)
+        IToolConversationContext convoCtx,
+        IToolExecutionTrace trace)
     {
         _images = images;
         _speech = speech;
         _media = media;
         _convoCtx = convoCtx;
+        _trace = trace;
     }
 
     public string ModuleName => "Lemonade";
@@ -87,18 +90,25 @@ public sealed class LemonadeToolModule : IToolModule
         [Description("Optional size like 512x512 or 1024x1024.")] string? size = null,
         [Description("Optional inference steps (turbo models often use 4–9).")] int? steps = null)
     {
+        var model = _images.DefaultImageModel;
+        _trace.Record($"🍋 lemonade_generate_image(model={model ?? "?"})");
         var result = await _images.GenerateAsync(new LemonadeImageGenerateRequest(
             Prompt: prompt,
-            Model: _images.DefaultImageModel,
+            Model: model,
             Size: string.IsNullOrWhiteSpace(size) ? "512x512" : size!,
             Steps: steps));
 
         if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
-            return "Image generation failed: " + (result.Error ?? "unknown error");
+        {
+            var err = result.Error ?? "unknown error";
+            _trace.Record("   ❌ " + err);
+            return "Image generation failed: " + err;
+        }
 
         // Never return multi-MB base64 into the tool loop — small models OOM / crash the app.
         // ChatCompletionService attaches the buffered image to the UI result after the turn.
         var genId = BufferImage(result.Base64Png, "image/png", "generated-image.png", "lemonade_generate");
+        _trace.Record($"   ✅ Lemonade · {result.Model ?? model} → generation_id={genId}");
         return
             $"OK: image generated. generation_id={genId}. " +
             "The image is displayed to the user (do not re-output image data). " +
@@ -125,16 +135,23 @@ public sealed class LemonadeToolModule : IToolModule
             return "Edit failed: invalid image base64.";
         }
 
+        var model = _images.DefaultEditModel;
+        _trace.Record($"🍋 lemonade_edit_image(model={model ?? "?"})");
         var result = await _images.EditAsync(new LemonadeImageEditRequest(
             Prompt: prompt,
             ImagePngBytes: bytes,
-            Model: _images.DefaultEditModel,
+            Model: model,
             Size: string.IsNullOrWhiteSpace(size) ? "512x512" : size!));
 
         if (!result.Success || string.IsNullOrWhiteSpace(result.Base64Png))
-            return "Image edit failed: " + (result.Error ?? "unknown error");
+        {
+            var err = result.Error ?? "unknown error";
+            _trace.Record("   ❌ " + err);
+            return "Image edit failed: " + err;
+        }
 
         var genId = BufferImage(result.Base64Png, "image/png", "edited-image.png", "lemonade_edit");
+        _trace.Record($"   ✅ Lemonade · {result.Model ?? model} → generation_id={genId}");
         return
             $"OK: image edited. generation_id={genId}. " +
             "The image is displayed to the user (do not re-output image data). " +

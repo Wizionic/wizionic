@@ -24,6 +24,13 @@ public interface IKeyStore
 
     Task SetLastSelectedModelAsync(string modelId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Max new tokens for a chat reply (thinking + visible text). Default 16384.
+    /// Not a model context-window setting.
+    /// </summary>
+    int MaxOutputTokens { get; }
+    Task SetMaxOutputTokensAsync(int value, CancellationToken ct = default);
+
     /// <summary>How chat turns choose tool modules (Rules / Ai / Hybrid).</summary>
     ToolRoutingMode ToolRoutingMode { get; }
     /// <summary>Catalog model id for AI routing (e.g. lemonade/Qwen…); empty = Rules only.</summary>
@@ -36,9 +43,29 @@ public interface IKeyStore
     string? HelpEmbedModelId { get; }
     Task SetHelpModelsAsync(string? answerModelId, string? embedModelId, CancellationToken ct = default);
 
-    string GetKey(string providerId);
-    Task SetKeyAsync(string providerId, string key, CancellationToken ct = default);
-    Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default);
+    IReadOnlyList<ModelProfile> ModelProfiles { get; }
+    string? ActiveModelProfileId { get; }
+    ModelProfile? GetModelProfile(string id);
+    Task UpsertModelProfileAsync(ModelProfile profile, CancellationToken ct = default);
+    Task RemoveModelProfileAsync(string id, CancellationToken ct = default);
+    Task SetActiveModelProfileIdAsync(string? id, CancellationToken ct = default);
+    Task ReplaceModelProfilesAsync(IEnumerable<ModelProfile> profiles, string? activeId, CancellationToken ct = default);
+
+    IReadOnlyList<CloudProviderConfig> CloudProviders { get; }
+    CloudProviderConfig? GetCloudProvider(string id);
+    Task UpsertCloudProviderAsync(CloudProviderConfig provider, CancellationToken ct = default);
+    Task RemoveCloudProviderAsync(string id, CancellationToken ct = default);
+    Task ReplaceCloudProvidersAsync(IEnumerable<CloudProviderConfig> providers, CancellationToken ct = default);
+    Task SaveCloudModelSettingsAsync(string providerId, CloudModelSettings settings, CancellationToken ct = default);
+    Task SetCloudModalityDefaultsAsync(
+        string providerId,
+        string? imageModel = null,
+        string? editModel = null,
+        string? ttsModel = null,
+        string? sttModel = null,
+        string? voice = null,
+        CancellationToken ct = default);
+    Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default);
 
     string OllamaBaseUrl { get; }
     string OllamaChatEndpoint { get; }

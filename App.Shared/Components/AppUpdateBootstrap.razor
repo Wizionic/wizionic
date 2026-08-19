@@ -1,0 +1,156 @@
+@using App.Core.Connectors
+@using App.Core.Setup
+@using App.Core.Update
+@inject IUpdateService UpdateService
+@inject ISetupWizardHost SetupWizard
+@inject IServiceProvider Services
+@implements IDisposable
+
+@if (_showPrompt)
+{
+    <ConfirmDialog IsVisible="true"
+                   Title="Update available"
+                   Message="@_promptMessage"
+                   ConfirmText="@ConfirmLabel"
+                   CancelText="Later"
+                   Danger="false"
+                   OnConfirm="AcceptUpdateAsync"
+                   OnCancel="Dismiss" />
+}
+
+@code {
+    private UpdateCheckResult? _result;
+    private bool _showPrompt;
+    private bool _busy;
+    private bool _started;
+    private string _promptMessage = "";
+    private Action? _wizardChanged;
+
+    private string ConfirmLabel =>
+        _busy
+            ? "Working…"
+            : _result?.RequiresManualInstall == true
+                ? "Download installer"
+                : "Install and restart";
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender || _started || !AppEnvironment.IsMaui)
+            return;
+
+        _started = true;
+        _ = CheckWhenReadyAsync();
+    }
+
+    private async Task CheckWhenReadyAsync()
+    {
+        try
+        {
+            // Let the shell paint; don't sit on top of first-run setup.
+            await Task.Delay(2500);
+            await WaitForSetupWizardAsync();
+
+            var result = await UpdateService.CheckForUpdateAsync();
+            if (result.Status != UpdateCheckStatus.UpdateAvailable || result.Update is null)
+                return;
+
+            _result = result;
+            var next = result.Update.Version;
+            var current = result.CurrentVersion;
+            if (result.RequiresManualInstall)
+            {
+                _promptMessage = string.IsNullOrWhiteSpace(result.Message)
+                    ? $"Version {next} is available. Open the installer download now?"
+                    : result.Message.TrimEnd() + "\n\nOpen the installer download now?";
+            }
+            else if (string.IsNullOrWhiteSpace(current))
+            {
+                _promptMessage = $"Version {next} is available. Install it now? The app will restart.";
+            }
+            else
+            {
+                _promptMessage = $"Version {next} is available (you have {current}). Install it now? The app will restart.";
+            }
+
+            _showPrompt = true;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Update] Startup check failed: {ex.Message}");
+        }
+    }
+
+    private async Task WaitForSetupWizardAsync()
+    {
+        if (!SetupWizard.IsVisible)
+            return;
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Handler()
+        {
+            if (!SetupWizard.IsVisible)
+                tcs.TrySetResult();
+        }
+
+        _wizardChanged = Handler;
+        SetupWizard.OnChanged += Handler;
+        try
+        {
+            if (!SetupWizard.IsVisible)
+                return;
+            await tcs.Task;
+            await Task.Delay(600);
+        }
+        finally
+        {
+            SetupWizard.OnChanged -= Handler;
+            _wizardChanged = null;
+        }
+    }
+
+    private async Task AcceptUpdateAsync()
+    {
+        if (_busy || _result?.Update is null)
+            return;
+
+        _busy = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            if (_result.RequiresManualInstall)
+            {
+                var url = UpdateService.InstallerDownloadUrl;
+                if (!string.IsNullOrWhiteSpace(url)
+                    && Services.GetService(typeof(IUriLauncher)) is IUriLauncher launcher)
+                {
+                    await launcher.OpenAsync(url);
+                }
+
+                Dismiss();
+                return;
+            }
+
+            await UpdateService.DownloadAndInstallAsync(_result.Update);
+        }
+        catch (Exception ex)
+        {
+            _busy = false;
+            _promptMessage = "Could not install the update: " + ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void Dismiss()
+    {
+        _showPrompt = false;
+        _busy = false;
+    }
+
+    public void Dispose()
+    {
+        if (_wizardChanged != null)
+            SetupWizard.OnChanged -= _wizardChanged;
+    }
+}

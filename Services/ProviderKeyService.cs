@@ -1,11 +1,10 @@
-using App.Contracts;
 using App.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace App.Services;
 
 /// <summary>
-/// Manages per-user API keys for providers defined in ProviderCatalog.
+/// Manages per-user API keys stored on the host (unused by the current Cloud Providers page).
 /// </summary>
 public class ProviderKeyService
 {
@@ -51,8 +50,8 @@ public class ProviderKeyService
 
     public async Task SetKeyAsync(string providerId, string apiKey)
     {
-        if (ProviderCatalog.GetProvider(providerId) == null)
-            throw new ArgumentException($"Unknown provider '{providerId}'.");
+        if (string.IsNullOrWhiteSpace(providerId))
+            throw new ArgumentException("Provider id is required.", nameof(providerId));
 
         var user = await GetCurrentUserAsync();
 

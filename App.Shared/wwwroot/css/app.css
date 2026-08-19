@@ -2046,6 +2046,100 @@ button.btn-outline-secondary:hover:not(:disabled) {
 
 .app-nav--top .app-nav-account {
     order: 2;
+    position: relative;
+}
+
+.app-nav-account-menu-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 4px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+}
+
+.app-nav-account-menu-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.app-nav-account-menu-btn .bi {
+    font-size: 1.35rem;
+}
+
+.app-nav-account-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 1100;
+    min-width: 220px;
+    max-width: min(280px, calc(100vw - 16px));
+    padding: 6px 0;
+    background: var(--cf-bg-surface, var(--color-bg-surface, #fff));
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.app-nav-account-dropdown-item {
+    display: flex !important;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 !important;
+    padding: 10px 14px !important;
+    color: var(--color-text) !important;
+    text-decoration: none !important;
+    white-space: nowrap;
+    font-size: 0.92rem;
+    line-height: 1.2;
+    background: transparent;
+}
+
+.app-nav-account-dropdown-item:hover {
+    background: var(--topbar-toggle-bg-hover, rgba(0, 0, 0, 0.06)) !important;
+    text-decoration: none !important;
+}
+
+.app-nav-account-dropdown-item .bi {
+    font-size: 1.1rem !important;
+    width: 1.25rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.app-nav-account-dropdown-emoji {
+    width: 1.25rem;
+    text-align: center;
+    flex-shrink: 0;
+    font-size: 1.05rem;
+    line-height: 1;
+}
+
+@media (max-width: 640.98px) {
+    /* Narrow top bar: settings icons do not fit inline. Profile opens a dropdown instead. */
+    .app-nav--top .app-nav-secondary-toggle,
+    .app-nav--top .app-nav-secondary {
+        display: none !important;
+    }
+
+    .app-nav--top .app-nav-account-link {
+        display: none !important;
+    }
+
+    .app-nav--top .app-nav-account-menu-btn {
+        display: inline-flex;
+    }
+
+    .app-nav--top .app-nav-account-dropdown.is-open {
+        display: block;
+    }
 }
 
 .chat-wrapper.chat-panel-closed .chat-column {
@@ -2136,6 +2230,118 @@ button.btn-outline-secondary:hover:not(:disabled) {
 .bot-message-menu-popup {
     min-width: 160px;
     white-space: nowrap;
+}
+
+.chat-doc-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: min(240px, 100%);
+    min-height: 36px;
+    padding: 4px 28px 4px 8px;
+    border: 1px solid var(--cf-border, var(--color-border-strong, #ddd));
+    border-radius: 8px;
+    background: var(--cf-bg-subtle, var(--color-bg-subtle, #f5f5f5));
+    cursor: pointer;
+    position: relative;
+    text-align: left;
+    color: inherit;
+}
+.chat-doc-chip:hover {
+    border-color: var(--color-accent, #2563eb);
+}
+.chat-doc-chip i {
+    font-size: 1rem;
+    color: var(--cf-text-muted, #737373);
+    flex-shrink: 0;
+}
+.chat-doc-chip-meta {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.chat-doc-chip-name {
+    font-size: 0.75rem;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+.chat-doc-chip-size {
+    font-size: 0.65rem;
+    color: var(--cf-text-muted, #737373);
+}
+.chat-doc-chip-remove {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: #e11d48;
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    line-height: 14px;
+    cursor: pointer;
+    padding: 0;
+}
+.chat-text-preview {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 51;
+    width: min(720px, 94vw);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg-surface, #fff);
+    color: var(--color-text);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.35);
+    overflow: hidden;
+}
+.chat-text-preview-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--cf-border, #e5e5e5);
+}
+.chat-text-preview-header h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.chat-text-preview-header span {
+    font-size: 0.75rem;
+    color: var(--cf-text-muted, #737373);
+    flex-shrink: 0;
+}
+.chat-text-preview pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow: auto;
+    flex: 1;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--cf-bg-subtle, #f5f5f5);
+}
+.chat-text-preview-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    border-top: 1px solid var(--cf-border, #e5e5e5);
 }
 
 .chat-markdown { max-width: 100%; overflow-x: auto; }
@@ -3602,6 +3808,14 @@ body .top-left,
     text-decoration: none !important;
     display: flex !important;
     align-items: center !important;
+}
+
+/* Beat the rule above: mobile uses only the profile menu button, not the /account link. */
+@media (max-width: 640.98px) {
+    .top-row.app-nav .app-nav-account > a.app-nav-account-link,
+    .top-row > div:last-child .app-nav-account > a.app-nav-account-link {
+        display: none !important;
+    }
 }
 
 .top-row-right a,

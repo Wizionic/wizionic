@@ -63,8 +63,11 @@ public sealed class HelpEmbeddingClient
         || modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Direct /v1/chat/completions so we keep Lemonade/Ollama reasoning fields the OpenAI SDK drops,
-    /// send max_tokens (not only max_completion_tokens), and turn Qwen thinking off for Help.
+    /// Help-only completion. Do not reuse this for Chat.
+    /// Chat must keep thinking/streaming via ChatCompletionService (ME.AI).
+    /// This path exists so Ask-in-Help can read Lemonade/Ollama reasoning fields the OpenAI SDK
+    /// drops, send max_tokens (not only max_completion_tokens), and turn Qwen thinking off
+    /// for short factual answers. Forcing thinking off in Chat hid useful reasoning.
     /// </summary>
     public async Task<string> CompleteAsync(
         string modelId,

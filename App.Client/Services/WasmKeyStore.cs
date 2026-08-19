@@ -1,4 +1,5 @@
 using App.Core.Auth;
+using App.Core.Cloud;
 using App.Core.Connectors;
 using App.Core.Lemonade;
 using App.Core.Ollama;
@@ -19,7 +20,8 @@ namespace App.Client.Services;
 /// </summary>
 public class WasmKeyStore : IKeyStore
 {
-    private const string KeysStorageKey = "wasm-provider-keys";
+    private const string CloudProvidersKey = "wasm-cloud-providers";
+    private const string ModelProfilesKey = "wasm-model-profiles";
     private const string OllamaConfigKey = "wasm-ollama-config";
     private const string LemonadeConfigKey = "wasm-lemonade-config";
     private const string McpEnabledKey = "wasm-mcp-enabled-servers";
@@ -27,6 +29,7 @@ public class WasmKeyStore : IKeyStore
     private const string McpCustomConnectorsKey = "wasm-mcp-custom-connectors";
     private const string OAuthConnectorsKey = "wasm-oauth-connectors";
     private const string LastSelectedModelKey = "wasm-last-selected-model";
+    private const string MaxOutputTokensKey = "wasm-max-output-tokens";
     private const string ToolRoutingKey = "wasm-tool-routing";
     private const string HelpModelsKey = "wasm-help-models";
     private const string SystemPromptKey = "wasm-system-prompt";
@@ -39,8 +42,11 @@ public class WasmKeyStore : IKeyStore
     private readonly IAuthService _auth;
     private readonly IServiceScopeFactory _scopeFactory;
 
-    private Dictionary<string, string> _providerKeys = new();
+    private List<CloudProviderConfig> _cloudProviders = new();
+    private List<ModelProfile> _modelProfiles = new();
+    private string? _activeModelProfileId;
     private string _lastSelectedModel = "";
+    private int _maxOutputTokens = KeyStoreDefaults.DefaultMaxOutputTokens;
     private ToolRoutingMode _toolRoutingMode = ToolRoutingMode.Rules;
     private string? _toolRoutingModelId;
     private string? _helpAnswerModelId;
@@ -69,9 +75,13 @@ public class WasmKeyStore : IKeyStore
     {
         ResetInMemoryState();
 
-        var keysJson = await GetItemAsync(KeysStorageKey, ct);
-        if (!string.IsNullOrEmpty(keysJson))
-            _providerKeys = JsonSerializer.Deserialize<Dictionary<string, string>>(keysJson) ?? new();
+        var cloudJson = await GetItemAsync(CloudProvidersKey, ct);
+        if (!string.IsNullOrEmpty(cloudJson))
+        {
+            var loaded = JsonSerializer.Deserialize<List<CloudProviderConfig>>(cloudJson);
+            if (loaded != null)
+                _cloudProviders = loaded;
+        }
 
         var ollamaJson = await GetItemAsync(OllamaConfigKey, ct);
         if (!string.IsNullOrEmpty(ollamaJson))
@@ -118,6 +128,11 @@ public class WasmKeyStore : IKeyStore
             _oauthConnectors = await DeserializeOAuthConnectorsAsync(oauthJson, ct);
 
         _lastSelectedModel = await GetItemAsync(LastSelectedModelKey, ct) ?? "";
+
+        var maxOutRaw = await GetItemAsync(MaxOutputTokensKey, ct);
+        _maxOutputTokens = int.TryParse(maxOutRaw, out var parsedMaxOut)
+            ? KeyStoreDefaults.ClampMaxOutputTokens(parsedMaxOut)
+            : KeyStoreDefaults.DefaultMaxOutputTokens;
 
         var helpModelsJson = await GetItemAsync(HelpModelsKey, ct);
         if (!string.IsNullOrEmpty(helpModelsJson))
@@ -171,6 +186,28 @@ public class WasmKeyStore : IKeyStore
                 _userMemories = loaded;
         }
 
+        var profilesJson = await GetItemAsync(ModelProfilesKey, ct);
+        if (!string.IsNullOrEmpty(profilesJson))
+        {
+            try
+            {
+                var bag = JsonSerializer.Deserialize<ModelProfilesBag>(profilesJson);
+                if (bag?.Profiles != null)
+                {
+                    _modelProfiles = bag.Profiles;
+                    _activeModelProfileId = bag.ActiveId;
+                }
+            }
+            catch { /* keep empty */ }
+        }
+
+        var hadProfiles = !string.IsNullOrEmpty(profilesJson);
+        SeedModelProfilesIfEmpty();
+        if (_modelProfiles.Count > 0 && string.IsNullOrWhiteSpace(_activeModelProfileId))
+            _activeModelProfileId = _modelProfiles[0].Id;
+        if (!hadProfiles && _modelProfiles.Count > 0)
+            await SaveModelProfilesAsync(ct);
+
         var haJson = await GetItemAsync(HomeAssistantConfigKey, ct);
         if (!string.IsNullOrEmpty(haJson))
         {
@@ -182,8 +219,11 @@ public class WasmKeyStore : IKeyStore
 
     private void ResetInMemoryState()
     {
-        _providerKeys = new();
+        _cloudProviders = new();
+        _modelProfiles = new();
+        _activeModelProfileId = null;
         _lastSelectedModel = "";
+        _maxOutputTokens = KeyStoreDefaults.DefaultMaxOutputTokens;
         _helpAnswerModelId = null;
         _helpEmbedModelId = null;
         _systemPrompt = null;
@@ -350,6 +390,14 @@ public class WasmKeyStore : IKeyStore
             await SetItemAsync(LastSelectedModelKey, _lastSelectedModel, ct);
     }
 
+    public int MaxOutputTokens => _maxOutputTokens;
+
+    public async Task SetMaxOutputTokensAsync(int value, CancellationToken ct = default)
+    {
+        _maxOutputTokens = KeyStoreDefaults.ClampMaxOutputTokens(value);
+        await SetItemAsync(MaxOutputTokensKey, _maxOutputTokens.ToString(), ct);
+    }
+
     public ToolRoutingMode ToolRoutingMode => _toolRoutingMode;
     public string? ToolRoutingModelId => _toolRoutingModelId;
 
@@ -392,28 +440,258 @@ public class WasmKeyStore : IKeyStore
         public string? EmbedModelId { get; set; }
     }
 
-    public string GetKey(string providerId) =>
-        _providerKeys.GetValueOrDefault(providerId, "");
+    public IReadOnlyList<ModelProfile> ModelProfiles =>
+        _modelProfiles.Select(p => p.Clone()).ToList();
 
-    public async Task SetKeyAsync(string providerId, string key, CancellationToken ct = default)
+    public string? ActiveModelProfileId => _activeModelProfileId;
+
+    public ModelProfile? GetModelProfile(string id)
     {
-        if (string.IsNullOrWhiteSpace(key))
-            _providerKeys.Remove(providerId);
-        else
-            _providerKeys[providerId] = key.Trim();
-
-        var json = JsonSerializer.Serialize(_providerKeys);
-        await SetItemAsync(KeysStorageKey, json, ct);
+        if (string.IsNullOrWhiteSpace(id))
+            return null;
+        return _modelProfiles.FirstOrDefault(p =>
+            string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase))?.Clone();
     }
 
-    public async Task SaveAllKeysAsync(string groq, string gemini, string openrouter, CancellationToken ct = default)
+    public async Task UpsertModelProfileAsync(ModelProfile profile, CancellationToken ct = default)
     {
-        _providerKeys["groq"] = (groq ?? "").Trim();
-        _providerKeys["gemini"] = (gemini ?? "").Trim();
-        _providerKeys["openrouter"] = (openrouter ?? "").Trim();
+        if (profile == null || string.IsNullOrWhiteSpace(profile.Id))
+            return;
+        var clone = profile.Clone();
+        var idx = _modelProfiles.FindIndex(p =>
+            string.Equals(p.Id, clone.Id, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0)
+            _modelProfiles[idx] = clone;
+        else
+            _modelProfiles.Add(clone);
+        if (string.IsNullOrWhiteSpace(_activeModelProfileId))
+            _activeModelProfileId = clone.Id;
+        await SaveModelProfilesAsync(ct);
+    }
 
-        var json = JsonSerializer.Serialize(_providerKeys);
-        await SetItemAsync(KeysStorageKey, json, ct);
+    public async Task RemoveModelProfileAsync(string id, CancellationToken ct = default)
+    {
+        _modelProfiles.RemoveAll(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (string.Equals(_activeModelProfileId, id, StringComparison.OrdinalIgnoreCase))
+            _activeModelProfileId = _modelProfiles.FirstOrDefault()?.Id;
+        await SaveModelProfilesAsync(ct);
+    }
+
+    public async Task SetActiveModelProfileIdAsync(string? id, CancellationToken ct = default)
+    {
+        _activeModelProfileId = string.IsNullOrWhiteSpace(id) ? null : id.Trim();
+        await SaveModelProfilesAsync(ct);
+    }
+
+    public async Task ReplaceModelProfilesAsync(
+        IEnumerable<ModelProfile> profiles, string? activeId, CancellationToken ct = default)
+    {
+        _modelProfiles = (profiles ?? Array.Empty<ModelProfile>())
+            .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Id))
+            .Select(p => p.Clone())
+            .ToList();
+        _activeModelProfileId = string.IsNullOrWhiteSpace(activeId)
+            ? _modelProfiles.FirstOrDefault()?.Id
+            : activeId.Trim();
+        await SaveModelProfilesAsync(ct);
+    }
+
+    private async Task SaveModelProfilesAsync(CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(new ModelProfilesBag
+        {
+            ActiveId = _activeModelProfileId,
+            Profiles = _modelProfiles
+        });
+        await SetItemAsync(ModelProfilesKey, json, ct);
+    }
+
+    private void SeedModelProfilesIfEmpty()
+    {
+        if (_modelProfiles.Count > 0)
+            return;
+
+        var lemChat = GetLemonadeModelSettingsMap().Values
+            .FirstOrDefault(m => m.IsChatEligible);
+        if (lemChat != null
+            || !string.IsNullOrWhiteSpace(_lemonadeConfig.DefaultImageModel)
+            || !string.IsNullOrWhiteSpace(_lemonadeConfig.DefaultTtsModel))
+        {
+            _modelProfiles.Add(new ModelProfile
+            {
+                Id = "lemonade",
+                Name = "Lemonade",
+                ChatModelId = lemChat != null ? "lemonade/" + lemChat.Name : null,
+                ImageModelId = QualifyLemonade(_lemonadeConfig.DefaultImageModel),
+                EditModelId = QualifyLemonade(_lemonadeConfig.DefaultEditModel),
+                TtsModelId = QualifyLemonade(_lemonadeConfig.DefaultTtsModel),
+                SttModelId = QualifyLemonade(_lemonadeConfig.DefaultSttModel),
+                Voice = _lemonadeConfig.DefaultVoice
+            });
+        }
+
+        foreach (var cp in _cloudProviders)
+        {
+            var chat = cp.Models.FirstOrDefault(m => m.IsChatEligible);
+            var image = cp.DefaultImageModel ?? cp.Models.FirstOrDefault(m => m.IsImage || m.IsEdit)?.Name
+                        ?? cp.Models.FirstOrDefault(m => m.Name.Contains("imagine", StringComparison.OrdinalIgnoreCase))?.Name;
+            _modelProfiles.Add(new ModelProfile
+            {
+                Id = "cloud-" + cp.Id,
+                Name = string.IsNullOrWhiteSpace(cp.DisplayName) ? cp.Id : cp.DisplayName,
+                ChatModelId = chat != null ? CloudModelId.Format(cp.Id, chat.Name) : null,
+                ImageModelId = image != null ? CloudModelId.Format(cp.Id, image) : null,
+                EditModelId = cp.DefaultEditModel != null
+                    ? CloudModelId.Format(cp.Id, cp.DefaultEditModel)
+                    : null,
+                TtsModelId = cp.HasXaiTts || cp.HasOpenAiAudio ? "cloud/" + cp.Id : null,
+                SttModelId = cp.HasXaiStt || cp.HasOpenAiAudio ? "cloud/" + cp.Id : null,
+                Voice = cp.DefaultVoice
+            });
+        }
+    }
+
+    private static string? QualifyLemonade(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? null : "lemonade/" + name.Trim();
+
+    private sealed class ModelProfilesBag
+    {
+        public string? ActiveId { get; set; }
+        public List<ModelProfile> Profiles { get; set; } = new();
+    }
+
+    public IReadOnlyList<CloudProviderConfig> CloudProviders =>
+        _cloudProviders.Select(p => p.Clone()).ToList();
+
+    public CloudProviderConfig? GetCloudProvider(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return null;
+        var match = _cloudProviders.FirstOrDefault(p =>
+            string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+        return match?.Clone();
+    }
+
+    public async Task UpsertCloudProviderAsync(CloudProviderConfig provider, CancellationToken ct = default)
+    {
+        if (provider == null || string.IsNullOrWhiteSpace(provider.Id))
+            return;
+
+        provider.BaseUrl = CloudModelCatalogResolver.NormalizeBaseUrl(provider.BaseUrl);
+        var idx = _cloudProviders.FindIndex(p =>
+            string.Equals(p.Id, provider.Id, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0)
+            _cloudProviders[idx] = provider.Clone();
+        else
+            _cloudProviders.Add(provider.Clone());
+
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    public async Task RemoveCloudProviderAsync(string id, CancellationToken ct = default)
+    {
+        _cloudProviders.RemoveAll(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    public async Task ReplaceCloudProvidersAsync(IEnumerable<CloudProviderConfig> providers, CancellationToken ct = default)
+    {
+        _cloudProviders = (providers ?? Array.Empty<CloudProviderConfig>())
+            .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Id))
+            .Select(p =>
+            {
+                var clone = p.Clone();
+                clone.BaseUrl = CloudModelCatalogResolver.NormalizeBaseUrl(clone.BaseUrl);
+                return clone;
+            })
+            .ToList();
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    public async Task SaveCloudModelSettingsAsync(string providerId, CloudModelSettings settings, CancellationToken ct = default)
+    {
+        var provider = FindCloudProvider(providerId);
+        if (provider == null || string.IsNullOrWhiteSpace(settings.Name))
+            return;
+
+        settings.Name = settings.Name.Trim();
+        settings.Label = string.IsNullOrWhiteSpace(settings.Label) ? settings.Name : settings.Label.Trim();
+        settings.UserOverrideTools = true;
+        settings.UserOverrideVision = true;
+        settings.UserOverrideContext = true;
+        settings.UserOverrideImage = true;
+        settings.UserOverrideEdit = true;
+
+        var idx = provider.Models.FindIndex(m =>
+            string.Equals(m.Name, settings.Name, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0)
+            provider.Models[idx] = settings.Clone();
+        else
+            provider.Models.Add(settings.Clone());
+
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    public async Task SetCloudModalityDefaultsAsync(
+        string providerId,
+        string? imageModel = null,
+        string? editModel = null,
+        string? ttsModel = null,
+        string? sttModel = null,
+        string? voice = null,
+        CancellationToken ct = default)
+    {
+        var provider = FindCloudProvider(providerId);
+        if (provider == null)
+            return;
+
+        provider.DefaultImageModel = string.IsNullOrWhiteSpace(imageModel) ? null : imageModel.Trim();
+        provider.DefaultEditModel = string.IsNullOrWhiteSpace(editModel) ? null : editModel.Trim();
+        provider.DefaultTtsModel = string.IsNullOrWhiteSpace(ttsModel) ? null : ttsModel.Trim();
+        provider.DefaultSttModel = string.IsNullOrWhiteSpace(sttModel) ? null : sttModel.Trim();
+        provider.DefaultVoice = string.IsNullOrWhiteSpace(voice) ? null : voice.Trim();
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    public async Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default)
+    {
+        var provider = FindCloudProvider(providerId);
+        if (provider == null)
+            throw new InvalidOperationException($"Unknown cloud provider '{providerId}'.");
+
+        var discovered = await CloudModelCatalogResolver.DiscoverAsync(
+            http, provider.BaseUrl, provider.ApiKey, provider.Models, ct);
+
+        provider.Models = discovered.Models.Select(m => m.Clone()).ToList();
+        provider.Voices = discovered.Voices.ToList();
+        provider.HasOpenAiAudio = discovered.HasOpenAiAudio;
+        provider.HasXaiTts = discovered.HasXaiTts;
+        provider.HasXaiStt = discovered.HasXaiStt;
+        provider.HasXaiImageApi = discovered.HasXaiImageApi;
+        provider.DefaultImageModel = CloudModelCatalogResolver.PickDefault(
+            provider.DefaultImageModel, provider.Models, m => m.IsImage);
+        provider.DefaultEditModel = CloudModelCatalogResolver.PickDefault(
+            provider.DefaultEditModel, provider.Models, m => m.IsEdit);
+        provider.DefaultTtsModel = CloudModelCatalogResolver.PickDefault(
+            provider.DefaultTtsModel, provider.Models, m => m.IsTts);
+        provider.DefaultSttModel = CloudModelCatalogResolver.PickDefault(
+            provider.DefaultSttModel, provider.Models, m => m.IsTranscription);
+        if (string.IsNullOrWhiteSpace(provider.DefaultVoice) && provider.Voices.Count > 0)
+            provider.DefaultVoice = provider.Voices[0].VoiceId;
+
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    private CloudProviderConfig? FindCloudProvider(string id) =>
+        string.IsNullOrWhiteSpace(id)
+            ? null
+            : _cloudProviders.FirstOrDefault(p =>
+                string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    private async Task SaveCloudProvidersAsync(CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(_cloudProviders);
+        await SetItemAsync(CloudProvidersKey, json, ct);
     }
 
     public string OllamaBaseUrl => _ollamaConfig.BaseUrl ?? "http://localhost:11434";
@@ -438,20 +716,8 @@ public class WasmKeyStore : IKeyStore
             : null;
     }
 
-    public string? GetVisionProxyModelName()
-    {
-        var ollama = GetModelSettingsMap().Values
-            .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision);
-        if (ollama != null)
-            return "ollama/" + ollama.Name;
-
-        var lemonade = GetLemonadeModelSettingsMap().Values
-            .FirstOrDefault(m => m.IsVisionProxy && m.SupportsVision);
-        if (lemonade != null)
-            return "lemonade/" + lemonade.Name;
-
-        return null;
-    }
+    public string? GetVisionProxyModelName() =>
+        ModelProfileId.ResolveVisionProxyModelId(this);
 
     public OllamaModelSettings GetOrCreateOllamaModelSettings(string modelName)
     {

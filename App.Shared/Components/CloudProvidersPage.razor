@@ -6,29 +6,143 @@
 @inject IAuthService AuthService
 @using App.Shared.Services
 @using App.Core.Sync
+@using App.Core.Storage
+@using App.Core.Cloud
+@using App.Core.Auth
 
 <div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
 
-        <h4>Cloud Provider</h4>
+    <h4 class="help-heading">Cloud providers <HelpGlyph Topic="cloud-providers" /></h4>
 
-    <p style="color: var(--color-text-muted); font-size: 0.9em;">Provider keys are stored only in your browser and conversation history is stored is still stored encrypted locally in your browser but if you use cloud provider keys, of course mesages are sent to the cloud.</p>
+    <p style="color: var(--color-text-muted); font-size: 0.9em;">
+        Optional. Although Wizionic is built primarily for local AI you can still add any OpenAI-compatible endpoint to use with Wizionic and it's available features.
+        API Keys and generated data will still be saved and sync locally but please be aware message prompts are sent to the provider you configure.
+    </p>
 
-    <h3>Cloud Provider Keys with a generous Free Tier</h3>
-    <div style="display: grid; gap: 0.75rem; max-width: 500px;">
+    <h3>Add a cloud provider</h3>
+    <div style="display: grid; gap: 0.6rem; max-width: 560px;">
         <div>
-            <label>Groq API Key</label>
-            <input type="text" @bind="groqKey" placeholder="Get an API key from https://console.groq.com/ for access to multiple free models" class="form-control" />
+            <label>Template</label>
+            <select class="form-select" @bind="presetKey" @bind:after="OnPresetChanged">
+                <option value="">Custom — type name and URL</option>
+                @foreach (var preset in Presets)
+                {
+                    <option value="@preset.Name">@preset.Name</option>
+                }
+            </select>
+            <div style="font-size: 0.75em; color: var(--cf-text-muted); margin-top: 2px;">
+                Fills display name and base URL. You can still edit them. Endpoints should be OpenAI-compatible.
+            </div>
         </div>
         <div>
-            <label>Gemini API Key</label>
-            <input type="text" @bind="geminiKey" placeholder="Get an API key from https://aistudio.google.com/" class="form-control" />
+            <label>Display name</label>
+            <input type="text" @bind="formName" placeholder="xAI" class="form-control" />
         </div>
         <div>
-            <label>OpenRouter API Key</label>
-            <input type="text" @bind="openrouterKey" placeholder="Get an API key from https://openrouter.ai/ for access to multiple free models" class="form-control" />
+            <label>Base URL</label>
+            <input type="text" @bind="formBaseUrl" placeholder="https://api.x.ai/v1" class="form-control" />
+            <div style="font-size: 0.75em; color: var(--cf-text-muted); margin-top: 2px;">
+                OpenAI-compatible root, including <code>/v1</code> when the vendor uses it.
+            </div>
+        </div>
+        <div>
+            <label>API key</label>
+            <input type="password" @bind="formApiKey" placeholder="Bearer token" class="form-control" autocomplete="off" />
         </div>
     </div>
-    <button @onclick="SaveKeys" class="btn btn-primary" style="margin-top: 0.75rem;">Save Keys</button>
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem;">
+        <button type="button" class="btn btn-primary" @onclick="AddOrSaveProvider" disabled="@busy">
+            @(editingId == null ? "Add provider" : "Save provider")
+        </button>
+        <button type="button" class="btn btn-outline-primary" @onclick="AddAndRefresh" disabled="@busy">
+            @(busy && busyAction == "refresh-new" ? "Refreshing…" : "Save and refresh models")
+        </button>
+        @if (editingId != null)
+        {
+            <button type="button" class="btn btn-outline-secondary" @onclick="CancelEdit" disabled="@busy">Cancel</button>
+        }
+    </div>
+
+    <h3 style="margin-top: 1.75rem;">Providers</h3>
+    @if (!providers.Any())
+    {
+        <p style="color: var(--color-text-muted); font-size: 0.9em;">None yet. Add one above, then refresh models so they appear in Chat.</p>
+    }
+    else
+    {
+        <div class="ollama-model-list">
+            @foreach (var p in providers)
+            {
+                <div class="ollama-model-row @(expandedId == p.Id ? "is-active" : "")">
+                    <div class="ollama-model-row-main">
+                        <div class="ollama-model-row-title">@p.DisplayName</div>
+                        <div class="ollama-model-row-subtitle">@p.BaseUrl</div>
+                    </div>
+                    <div class="ollama-model-row-meta">
+                        <span class="ollama-vision-proxy-badge">@p.Models.Count model@(p.Models.Count == 1 ? "" : "s")</span>
+                        @foreach (var badge in ProviderBadges(p))
+                        {
+                            <span class="ollama-vision-proxy-badge">@badge</span>
+                        }
+                    </div>
+                    <div class="ollama-model-row-actions" style="display:flex; gap:0.25rem;">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleExpand(p.Id)" disabled="@busy">
+                            @(expandedId == p.Id ? "Hide" : "Models")
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => RefreshProvider(p.Id)" disabled="@busy">
+                            @(busy && busyAction == "refresh-" + p.Id ? "…" : "Refresh")
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => BeginEdit(p)" disabled="@busy">Edit</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveProvider(p.Id)" disabled="@busy">Delete</button>
+                    </div>
+                </div>
+
+                @if (expandedId == p.Id)
+                {
+                    <div style="padding: 0.75rem 0.85rem 1rem; border: 1px solid var(--color-border, #ddd); border-top: 0; border-radius: 0 0 8px 8px; margin-bottom: 0.5rem;">
+                        @if (!p.Models.Any())
+                        {
+                            <p style="font-size: 0.85em; color: var(--cf-text-muted); margin: 0;">No models yet. Click Refresh.</p>
+                        }
+                        else
+                        {
+                            @foreach (var m in p.Models)
+                            {
+                                <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; padding: 0.35rem 0; border-bottom: 1px solid var(--color-border, #eee);">
+                                    <div style="flex:1; min-width:140px;">
+                                        <div style="font-weight:600; font-size:0.9em;">@(string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label)</div>
+                                        @if (!string.Equals(m.Label, m.Name, StringComparison.Ordinal))
+                                        {
+                                            <div style="font-size:0.75em; color:var(--cf-text-muted);">@m.Name</div>
+                                        }
+                                    </div>
+                                    <label style="font-size:0.78em;"><input type="checkbox" checked="@m.SupportsTools" @onchange='e => ToggleModelFlag(p.Id, m, "tools", e)' /> Tools</label>
+                                    <label style="font-size:0.78em;"><input type="checkbox" checked="@m.SupportsVision" @onchange='e => ToggleModelFlag(p.Id, m, "vision", e)' /> Vision</label>
+                                    <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsImage" @onchange='e => ToggleModelFlag(p.Id, m, "image", e)' /> Image</label>
+                                    <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsEdit" @onchange='e => ToggleModelFlag(p.Id, m, "edit", e)' /> Edit</label>
+                                    <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsTts" @onchange='e => ToggleModelFlag(p.Id, m, "tts", e)' /> TTS</label>
+                                    <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsTranscription" @onchange='e => ToggleModelFlag(p.Id, m, "stt", e)' /> STT</label>
+                                </div>
+                            }
+                        }
+
+                        <p style="font-size: 0.8em; color: var(--cf-text-muted); margin: 0.75rem 0 0;">
+                            Assign this provider’s models to Chat on
+                            <a href="/settings">Settings → Model profiles</a>
+                            (image, edit, TTS, STT, voice, vision proxy).
+                        </p>
+                    </div>
+                }
+            }
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(feedback))
+    {
+        <div class="ollama-save-feedback @(feedbackIsError ? "is-error" : "is-success")" role="status" style="margin-top: 0.75rem; white-space: pre-wrap;">
+            @feedback
+        </div>
+    }
 
     <div style="margin-top: 1.5rem;">
         <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary">Back to Chat</button>
@@ -36,23 +150,244 @@
 </div>
 
 @code {
-    string groqKey = "";
-    string geminiKey = "";
-    string openrouterKey = "";
+    private static readonly (string Name, string DisplayName, string BaseUrl)[] Presets =
+    {
+        ("xAI", "xAI", "https://api.x.ai/v1"),
+        ("OpenAI", "OpenAI", "https://api.openai.com/v1"),
+        ("Anthropic", "Anthropic", "https://api.anthropic.com/v1"),
+        ("Google Gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
+        ("Qwen (Alibaba)", "Qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        ("DeepSeek", "DeepSeek", "https://api.deepseek.com/v1"),
+        ("OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1"),
+        ("Groq", "Groq", "https://api.groq.com/openai/v1"),
+        ("Perplexity", "Perplexity", "https://api.perplexity.ai/v1"),
+        ("Kimi (Moonshot AI)", "Kimi", "https://platform.kimi.ai/api/v1"),
+        ("Together AI", "Together AI", "https://api.together.xyz/v1"),
+        ("Fireworks AI", "Fireworks AI", "https://api.fireworks.ai/inference/v1"),
+        ("Mistral AI", "Mistral AI", "https://api.mistral.ai/v1"),
+        ("Cerebras", "Cerebras", "https://api.cerebras.ai/v1"),
+        ("NVIDIA NIM", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
+        ("Cloudflare Workers AI", "Cloudflare Workers AI", "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai")
+    };
+
+    List<CloudProviderConfig> providers = new();
+    string presetKey = "";
+    string formName = "";
+    string formBaseUrl = "https://api.x.ai/v1";
+    string formApiKey = "";
+    string? editingId;
+    string? expandedId;
+    bool busy;
+    string? busyAction;
+    string? feedback;
+    bool feedbackIsError;
 
     protected override async Task OnInitializedAsync()
     {
         await KeyStore.LoadAsync();
         await AuthService.LoadAsync();
-
-        groqKey = KeyStore.GetKey("groq");
-        geminiKey = KeyStore.GetKey("gemini");
-        openrouterKey = KeyStore.GetKey("openrouter");
+        Reload();
     }
 
-    async Task SaveKeys()
+    void Reload() => providers = KeyStore.CloudProviders.ToList();
+
+    void OnPresetChanged()
     {
-        await KeyStore.SaveAllKeysAsync( groqKey, geminiKey, openrouterKey);
+        if (string.IsNullOrWhiteSpace(presetKey))
+            return;
+        var preset = Presets.FirstOrDefault(p => p.Name == presetKey);
+        if (string.IsNullOrEmpty(preset.Name))
+            return;
+        formName = preset.DisplayName;
+        formBaseUrl = preset.BaseUrl;
+    }
+
+    void BeginEdit(CloudProviderConfig p)
+    {
+        editingId = p.Id;
+        formName = p.DisplayName;
+        formBaseUrl = p.BaseUrl;
+        formApiKey = p.ApiKey;
+        presetKey = Presets.FirstOrDefault(x =>
+            string.Equals(x.BaseUrl, p.BaseUrl, StringComparison.OrdinalIgnoreCase)).Name ?? "";
+        feedback = null;
+    }
+
+    void CancelEdit()
+    {
+        editingId = null;
+        formName = "";
+        formBaseUrl = "https://api.x.ai/v1";
+        formApiKey = "";
+        presetKey = "";
+    }
+
+    void ToggleExpand(string id) =>
+        expandedId = string.Equals(expandedId, id, StringComparison.OrdinalIgnoreCase) ? null : id;
+
+    async Task AddOrSaveProvider()
+    {
+        var saved = await PersistFormAsync();
+        if (saved != null)
+            SetFeedback($"Saved {saved.DisplayName}. Refresh models to list them in Chat.", error: false);
+    }
+
+    async Task AddAndRefresh()
+    {
+        busyAction = "refresh-new";
+        var saved = await PersistFormAsync();
+        if (saved == null)
+            return;
+        await RefreshProvider(saved.Id);
+    }
+
+    async Task<CloudProviderConfig?> PersistFormAsync()
+    {
+        var name = (formName ?? "").Trim();
+        var url = CloudModelCatalogResolver.NormalizeBaseUrl(formBaseUrl);
+        var key = (formApiKey ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            SetFeedback("Display name is required.", error: true);
+            return null;
+        }
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            SetFeedback("Base URL is required.", error: true);
+            return null;
+        }
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            SetFeedback("API key is required.", error: true);
+            return null;
+        }
+
+        CloudProviderConfig provider;
+        if (editingId != null)
+        {
+            var existing = KeyStore.GetCloudProvider(editingId);
+            if (existing == null)
+            {
+                SetFeedback("That provider is no longer saved.", error: true);
+                return null;
+            }
+            existing.DisplayName = name;
+            existing.BaseUrl = url;
+            existing.ApiKey = key;
+            provider = existing;
+        }
+        else
+        {
+            provider = new CloudProviderConfig
+            {
+                Id = CloudModelCatalogResolver.MakeProviderId(name, providers.Select(p => p.Id)),
+                DisplayName = name,
+                BaseUrl = url,
+                ApiKey = key
+            };
+        }
+
+        await KeyStore.UpsertCloudProviderAsync(provider);
+        await AfterSaveAsync();
+        Reload();
+        editingId = null;
+        formName = "";
+        formBaseUrl = url;
+        formApiKey = "";
+        presetKey = "";
+        expandedId = provider.Id;
+        return KeyStore.GetCloudProvider(provider.Id) ?? provider;
+    }
+
+    async Task RefreshProvider(string id)
+    {
+        busy = true;
+        busyAction ??= "refresh-" + id;
+        feedback = null;
+        try
+        {
+            using var discoverHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
+            await KeyStore.RefreshCloudProviderModelsAsync(id, discoverHttp);
+            await AfterSaveAsync();
+            Reload();
+            var p = KeyStore.GetCloudProvider(id);
+            var count = p?.Models.Count ?? 0;
+            SetFeedback($"Loaded {count} model{(count == 1 ? "" : "s")} from {p?.DisplayName ?? id}.", error: false);
+            expandedId = id;
+        }
+        catch (Exception ex)
+        {
+            SetFeedback(ex.Message, error: true);
+        }
+        finally
+        {
+            busy = false;
+            busyAction = null;
+        }
+    }
+
+    async Task RemoveProvider(string id)
+    {
+        await KeyStore.RemoveCloudProviderAsync(id);
+        if (string.Equals(expandedId, id, StringComparison.OrdinalIgnoreCase))
+            expandedId = null;
+        if (string.Equals(editingId, id, StringComparison.OrdinalIgnoreCase))
+            CancelEdit();
+        await AfterSaveAsync();
+        Reload();
+        SetFeedback("Provider removed.", error: false);
+    }
+
+    async Task ToggleModelFlag(string providerId, CloudModelSettings model, string flag, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        var draft = model.Clone();
+        switch (flag)
+        {
+            case "tools": draft.SupportsTools = on; break;
+            case "vision": draft.SupportsVision = on; break;
+            case "image": draft.IsImage = on; break;
+            case "edit": draft.IsEdit = on; break;
+            case "tts": draft.IsTts = on; break;
+            case "stt": draft.IsTranscription = on; break;
+        }
+        await KeyStore.SaveCloudModelSettingsAsync(providerId, draft);
+        await AfterSaveAsync();
+        Reload();
+    }
+
+    async Task SetDefault(string providerId, string slot, ChangeEventArgs e)
+    {
+        var p = KeyStore.GetCloudProvider(providerId);
+        if (p == null) return;
+        var value = e.Value?.ToString();
+        await KeyStore.SetCloudModalityDefaultsAsync(
+            providerId,
+            imageModel: slot == "image" ? value : p.DefaultImageModel,
+            editModel: slot == "edit" ? value : p.DefaultEditModel,
+            ttsModel: slot == "tts" ? value : p.DefaultTtsModel,
+            sttModel: slot == "stt" ? value : p.DefaultSttModel,
+            voice: slot == "voice" ? value : p.DefaultVoice);
+        await AfterSaveAsync();
+        Reload();
+    }
+
+    async Task AfterSaveAsync() =>
         await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.CloudProviders);
+
+    static IEnumerable<string> ProviderBadges(CloudProviderConfig p)
+    {
+        if (p.Models.Any(m => m.IsChatEligible)) yield return "Chat";
+        if (p.Models.Any(m => m.SupportsVision)) yield return "Vision";
+        if (p.Models.Any(m => m.IsImage)) yield return "Image";
+        if (p.Models.Any(m => m.IsEdit)) yield return "Edit";
+        if (p.HasXaiTts || p.Models.Any(m => m.IsTts)) yield return "TTS";
+        if (p.HasXaiStt || p.Models.Any(m => m.IsTranscription)) yield return "STT";
+    }
+
+    void SetFeedback(string message, bool error)
+    {
+        feedback = message;
+        feedbackIsError = error;
     }
 }

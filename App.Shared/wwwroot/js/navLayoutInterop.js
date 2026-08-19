@@ -113,6 +113,7 @@ window.appNavLayout = window.appNavLayout || {
 
     // --- Secondary settings cluster (WASM: AppTopBar is static, so @onclick never runs) ---
     _secondaryClickBound: false,
+    _accountMenuBound: false,
 
     applySecondaryUi: function (expanded) {
         const isExpanded = expanded !== false;
@@ -164,10 +165,60 @@ window.appNavLayout = window.appNavLayout || {
         this._secondaryClickBound = true;
     },
 
+    setAccountMenuOpen: function (open) {
+        const isOpen = open === true;
+        const menu = document.querySelector('[data-account-menu]');
+        const btn = document.querySelector('[data-wasm-account-menu]');
+        if (menu) {
+            menu.classList.toggle('is-open', isOpen);
+            if (isOpen)
+                menu.removeAttribute('hidden');
+            else
+                menu.setAttribute('hidden', '');
+        }
+        if (btn)
+            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    },
+
+    ensureAccountMenuDelegation: function () {
+        if (this._accountMenuBound) return;
+        const self = this;
+        document.addEventListener('click', function (event) {
+            const t = event.target;
+            if (!t || !t.closest) return;
+
+            const btn = t.closest('[data-wasm-account-menu]');
+            const menu = document.querySelector('[data-account-menu]');
+            if (btn) {
+                event.preventDefault();
+                event.stopPropagation();
+                const open = !(menu && menu.classList.contains('is-open'));
+                self.setAccountMenuOpen(open);
+                return;
+            }
+
+            if (menu && menu.classList.contains('is-open')) {
+                if (menu.contains(t) && t.closest('a'))
+                    self.setAccountMenuOpen(false);
+                else if (!menu.contains(t))
+                    self.setAccountMenuOpen(false);
+            }
+        }, true);
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape')
+                self.setAccountMenuOpen(false);
+        });
+        window.addEventListener('resize', function () {
+            self.setAccountMenuOpen(false);
+        });
+        this._accountMenuBound = true;
+    },
+
     applyEarly: function () {
         try {
             this.apply(this.getMode());
             this.ensureSecondaryClickDelegation();
+            this.ensureAccountMenuDelegation();
             // Defer one frame so static AppTopBar markup is present.
             const applyUi = () => {
                 try { this.applySecondaryUi(this.getPrefs().secondaryExpanded); } catch (e) { }
@@ -187,6 +238,7 @@ window.appNavLayout = window.appNavLayout || {
 // Bind immediately when the script loads (host shell + WASM).
 try {
     window.appNavLayout.ensureSecondaryClickDelegation();
+    window.appNavLayout.ensureAccountMenuDelegation();
 } catch (e) { }
 
 window.appHelp = window.appHelp || {};

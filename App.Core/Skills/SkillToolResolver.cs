@@ -18,6 +18,12 @@ public static class SkillToolResolver
         ["notes"] = "Notes",
         ["calendar"] = "Calendar",
         ["lemonade"] = "Lemonade",
+        ["cloud"] = "Cloud",
+        ["generate_image"] = "Cloud",
+        ["edit_image"] = "Cloud",
+        ["lemonade_generate_image"] = "Lemonade",
+        ["lemonade_edit_image"] = "Lemonade",
+        ["lemonade_text_to_speech"] = "Lemonade",
         ["native"] = "Native",
         ["homeassistant"] = "HomeAssistant",
         ["home-assistant"] = "HomeAssistant",
@@ -69,7 +75,7 @@ public static class SkillToolResolver
     /// </summary>
     public static readonly string[] DefaultModules =
     [
-        "Native", "Gallery", "Notes", "Calendar", "Lemonade", "HomeAssistant", "BrowserAgent"
+        "Native", "Gallery", "Notes", "Calendar", "Cloud", "Lemonade", "HomeAssistant", "BrowserAgent"
     ];
 
     public static Resolution Resolve(string? allowedTools)
@@ -107,7 +113,7 @@ public static class SkillToolResolver
             }
 
             // Pascal/camel module names as-is
-            if (token is "Gallery" or "Notes" or "Calendar" or "Lemonade" or "Native"
+            if (token is "Gallery" or "Notes" or "Calendar" or "Cloud" or "Lemonade" or "Native"
                 or "HomeAssistant" or "BrowserAgent")
             {
                 modules.Add(token);
@@ -147,6 +153,7 @@ public static class SkillToolResolver
         ("add_calendar_event", "add_calendar_event", "Calendar"),
         ("update_calendar_event", "update_calendar_event", "Calendar"),
         ("delete_calendar_event", "delete_calendar_event", "Calendar"),
+        ("Cloud", "Cloud (generate/edit image)", "Cloud"),
         ("Lemonade", "Lemonade (image/STT/TTS)", "Local AI"),
         ("Native", "Native (search, weather, time)", "Native"),
         ("search_web", "search_web", "Native"),

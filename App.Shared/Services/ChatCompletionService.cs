@@ -17,6 +17,7 @@ using StoreChatMessage = App.Core.Storage.ChatMessage;
 
 using App.Core.Browser;
 using App.Core.Chat;
+using App.Core.Cloud;
 using App.Core.Skills;
 using App.Core.SmartHome;
 using App.Core.Tools;
@@ -104,8 +105,8 @@ public sealed class ChatCompletionService : IChatCompletionService
             !string.IsNullOrWhiteSpace(modelInfo?.VisionProxyModelId ?? _catalog.GetProxiedVisionProxyModelId(modelId));
         bool includeImagesInHistory = supportsVision || serverVisionProxy;
 
-        // Cap runaway generations (repetition loops) unless a smaller limit is already set.
-        const int defaultMaxOutputTokens = 4096;
+        // Global cap (Settings → Reply length). Default 16k — not a Lemonade/model limit.
+        int defaultMaxOutputTokens = KeyStoreDefaults.ClampMaxOutputTokens(_keyStore.MaxOutputTokens);
         int messagesTrimmed = 0;
         int contextLimit = contextSize > 0 ? contextSize : 8192;
 
@@ -115,7 +116,8 @@ public sealed class ChatCompletionService : IChatCompletionService
 
             var (effectiveMessages, visionProxyTrace) = await ApplyVisionProxyAsync(
                 modelId, messages, currentUser, supportsVision, ct);
-            var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory);
+            int maxInlineChars = ResolveTextInlineCharBudget(contextLimit);
+            var chatHistory = BuildChatHistory(effectiveMessages, currentUser, includeImagesInHistory, maxInlineChars);
             PrependSystemPrompt(chatHistory);
 
             if (_browserPanel.IsOpen)
@@ -126,8 +128,10 @@ public sealed class ChatCompletionService : IChatCompletionService
                 contextLimit = contextSize;
             int reserveOutput = Math.Min(defaultMaxOutputTokens, Math.Max(512, contextLimit / 4));
             chatHistory = TrimHistoryToContext(chatHistory, contextLimit, reserveOutput, out messagesTrimmed);
+            chatHistory = ShrinkOversizedLastUserTurn(chatHistory, contextLimit, reserveOutput);
 
             _trace.Clear();
+            RecordTextAttachmentTrace(effectiveMessages, maxInlineChars);
             if (messagesTrimmed > 0)
             {
                 _trace.Record(
@@ -1218,7 +1222,8 @@ public sealed class ChatCompletionService : IChatCompletionService
     private static List<AiChatMessage> BuildChatHistory(
         IReadOnlyList<StoreChatMessage> messages,
         string? currentUser,
-        bool supportsVision)
+        bool supportsVision,
+        int maxInlineChars)
     {
         var chatHistory = new List<AiChatMessage>();
 
@@ -1231,7 +1236,7 @@ public sealed class ChatCompletionService : IChatCompletionService
             var roleStr = m.Role ?? (m.User == currentUser ? "user" : "assistant");
             var aiRole = roleStr.Equals("user", StringComparison.OrdinalIgnoreCase) ? ChatRole.User : ChatRole.Assistant;
 
-            if (aiRole == ChatRole.User && hasAttachments && supportsVision)
+            if (aiRole == ChatRole.User && hasAttachments)
             {
                 var contents = new List<AIContent>();
                 if (hasContent)
@@ -1239,15 +1244,34 @@ public sealed class ChatCompletionService : IChatCompletionService
 
                 foreach (var att in m.Attachments!)
                 {
-                    if (att.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-                        att.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
+                    byte[]? bytes = null;
+                    if (!string.IsNullOrWhiteSpace(att.DataBase64))
                     {
-                        try
+                        try { bytes = Convert.FromBase64String(att.DataBase64); }
+                        catch { /* skip bad base64 below */ }
+                    }
+
+                    var kind = ChatAttachmentClassifier.Classify(att.Name, att.ContentType, bytes);
+                    if (kind == ChatAttachmentKind.Text)
+                    {
+                        if (bytes != null && ChatAttachmentClassifier.TryDecodeText(bytes, out var text))
                         {
-                            var bytes = Convert.FromBase64String(att.DataBase64);
-                            contents.Add(new DataContent(bytes, att.ContentType));
+                            contents.Add(new TextContent(
+                                ChatAttachmentClassifier.FormatInlinedText(att.Name, text, maxInlineChars, out _)));
                         }
-                        catch { /* skip bad attachment */ }
+                        else
+                        {
+                            var label = string.IsNullOrWhiteSpace(att.Name) ? "file" : att.Name;
+                            contents.Add(new TextContent($"[Attached file: {label} — could not decode as text]"));
+                        }
+                    }
+                    else if (supportsVision && bytes != null &&
+                             (kind == ChatAttachmentKind.Image || kind == ChatAttachmentKind.Pdf))
+                    {
+                        var mime = string.IsNullOrWhiteSpace(att.ContentType)
+                            ? ChatAttachmentClassifier.GuessContentType(att.Name, att.ContentType)
+                            : att.ContentType;
+                        contents.Add(new DataContent(bytes, mime));
                     }
                 }
 
@@ -1261,6 +1285,50 @@ public sealed class ChatCompletionService : IChatCompletionService
         }
 
         return chatHistory;
+    }
+
+    private static int ResolveTextInlineCharBudget(int contextLimit)
+    {
+        if (contextLimit <= 0)
+            return ChatAttachmentClassifier.MaxInlinedChars;
+        // Half the window, converted with the same ~4 chars/token heuristic used for trim.
+        int halfWindowChars = Math.Max(4000, (contextLimit / 2) * 4);
+        return Math.Min(ChatAttachmentClassifier.MaxInlinedChars, halfWindowChars);
+    }
+
+    private void RecordTextAttachmentTrace(IReadOnlyList<StoreChatMessage> messages, int maxInlineChars)
+    {
+        StoreChatMessage? lastUser = null;
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(messages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                lastUser = messages[i];
+                break;
+            }
+        }
+
+        if (lastUser?.Attachments is not { Count: > 0 })
+            return;
+
+        foreach (var att in lastUser.Attachments)
+        {
+            if (ChatAttachmentClassifier.Classify(att.Name, att.ContentType) != ChatAttachmentKind.Text)
+                continue;
+
+            var name = string.IsNullOrWhiteSpace(att.Name) ? "file" : att.Name;
+            var size = ChatAttachmentClassifier.FormatSize(att.Size);
+            if (!ChatAttachmentClassifier.TryDecodeText(att.DataBase64, out var text))
+            {
+                _trace.Record($"📄 Attached {name}: could not decode as text.");
+                continue;
+            }
+
+            ChatAttachmentClassifier.FormatInlinedText(name, text, maxInlineChars, out var truncated);
+            _trace.Record(truncated
+                ? $"📄 Attached {name} ({size}) — truncated to {maxInlineChars:N0} characters."
+                : $"📄 Attached {name} ({size}).");
+        }
     }
 
     private static string CleanTextForLlm(string? text)
@@ -1287,33 +1355,33 @@ public sealed class ChatCompletionService : IChatCompletionService
 
             if (finalMsg != null)
             {
-                var text = string.Join("\n",
+                var text = StripThinkTags(string.Join("\n",
                     finalMsg.Contents
                         .OfType<TextContent>()
                         .Select(t => t.Text)
-                        .Where(t => !string.IsNullOrWhiteSpace(t)));
+                        .Where(t => !string.IsNullOrWhiteSpace(t))));
 
                 if (!string.IsNullOrWhiteSpace(text))
                     return text.Trim();
 
-                var reasoning = GetReasoningFromMessage(finalMsg);
+                var reasoning = StripThinkTags(GetReasoningFromMessage(finalMsg));
                 if (!string.IsNullOrWhiteSpace(reasoning))
                     return reasoning.Trim();
             }
         }
 
-        var fromRaw = TryExtractContentFieldFromObject(response.RawRepresentation);
+        var fromRaw = StripThinkTags(TryExtractContentFieldFromObject(response.RawRepresentation));
         if (!string.IsNullOrWhiteSpace(fromRaw))
             return fromRaw!;
 
         if (!ResponseRawHasToolCalls(response.RawRepresentation))
         {
-            var fromRawReasoning = TryExtractReasoningFieldFromObject(response.RawRepresentation);
+            var fromRawReasoning = StripThinkTags(TryExtractReasoningFieldFromObject(response.RawRepresentation));
             if (!string.IsNullOrWhiteSpace(fromRawReasoning))
                 return fromRawReasoning.Trim();
         }
 
-        var fallback = response.Text?.Trim();
+        var fallback = StripThinkTags(response.Text?.Trim());
         return string.IsNullOrWhiteSpace(fallback) ? "" : fallback;
     }
 
@@ -1727,8 +1795,9 @@ public sealed class ChatCompletionService : IChatCompletionService
             CancellationToken ct,
             DateTime requestStart)
     {
-        // Prefer streaming for local OpenAI-compatible endpoints and direct cloud keys.
-        // Server proxy currently has no SSE path.
+        // Chat always uses this ME.AI path (stream, then non-stream) for every provider,
+        // including Lemonade. Do not send chat through HelpEmbeddingClient — that client
+        // turns thinking off and is Help-only (see HelpEmbeddingClient.CompleteAsync).
         bool tryStream = onPartialText != null && !_catalog.IsProxiedModel(modelId);
 
         if (tryStream)
@@ -1925,6 +1994,58 @@ public sealed class ChatCompletionService : IChatCompletionService
         return system.Concat(rest).ToList();
     }
 
+    /// <summary>
+    /// If the last user turn is still over budget after dropping older messages
+    /// (typically a large attached file), shrink inlined attachment text.
+    /// </summary>
+    private static List<AiChatMessage> ShrinkOversizedLastUserTurn(
+        List<AiChatMessage> history,
+        int contextLimit,
+        int reserveOutput)
+    {
+        if (history.Count == 0 || contextLimit <= 0)
+            return history;
+
+        int budget = Math.Max(512, contextLimit - Math.Max(256, reserveOutput));
+        if (EstimateMessageListTokens(history) <= budget)
+            return history;
+
+        int lastUser = -1;
+        for (int i = history.Count - 1; i >= 0; i--)
+        {
+            if (history[i].Role == ChatRole.User)
+            {
+                lastUser = i;
+                break;
+            }
+        }
+
+        if (lastUser < 0)
+            return history;
+
+        var contents = history[lastUser].Contents.ToList();
+        for (int c = contents.Count - 1; c >= 0; c--)
+        {
+            if (EstimateMessageListTokens(history) <= budget)
+                break;
+            if (contents[c] is not TextContent tc || string.IsNullOrEmpty(tc.Text))
+                continue;
+            if (!tc.Text.StartsWith("[Attached file:", StringComparison.Ordinal))
+                continue;
+
+            int overTokens = EstimateMessageListTokens(history) - budget;
+            int keepChars = Math.Max(400, tc.Text.Length - overTokens * 4);
+            if (keepChars >= tc.Text.Length)
+                continue;
+
+            contents[c] = new TextContent(
+                tc.Text[..keepChars] + "\n\n… truncated further to fit the model context window.");
+            history[lastUser] = new AiChatMessage(ChatRole.User, contents);
+        }
+
+        return history;
+    }
+
     private bool ResolveLocalCapability(string modelId, bool tools)
     {
         if (modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
@@ -1947,6 +2068,14 @@ public sealed class ChatCompletionService : IChatCompletionService
             }
         }
 
+        if (CloudModelId.TryParse(modelId, out var cloudProviderId, out var cloudModelName))
+        {
+            var model = _keyStore.GetCloudProvider(cloudProviderId)?.Models
+                .FirstOrDefault(m => m.Name.Equals(cloudModelName, StringComparison.OrdinalIgnoreCase));
+            if (model != null)
+                return tools ? model.SupportsTools : model.SupportsVision;
+        }
+
         var caps = ProviderCatalog.GetCapabilitiesForModel(modelId);
         return tools ? caps.SupportsTools : caps.SupportsVision;
     }
@@ -1965,7 +2094,43 @@ public sealed class ChatCompletionService : IChatCompletionService
             return _keyStore.GetLemonadeModelSettings(name)?.ContextSize ?? 0;
         }
 
+        if (CloudModelId.TryParse(modelId, out var cloudProviderId, out var cloudModelName))
+        {
+            return _keyStore.GetCloudProvider(cloudProviderId)?.Models
+                .FirstOrDefault(m => m.Name.Equals(cloudModelName, StringComparison.OrdinalIgnoreCase))
+                ?.ContextSize ?? 0;
+        }
+
         return 0;
+    }
+
+    /// <summary>
+    /// Drop Qwen / DeepSeek &lt;think&gt; wrappers so the chat bubble shows the answer, not the chain of thought.
+    /// An unclosed opening tag means the model spent the whole token budget thinking — treat as empty.
+    /// </summary>
+    private static string? StripThinkTags(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return text;
+
+        var s = text.Trim();
+        const string open = "<think>";
+        const string close = "</think>";
+        var start = s.IndexOf(open, StringComparison.OrdinalIgnoreCase);
+        var end = s.IndexOf(close, StringComparison.OrdinalIgnoreCase);
+        if (start >= 0 && end > start)
+        {
+            var after = s[(end + close.Length)..].Trim();
+            if (!string.IsNullOrWhiteSpace(after))
+                return after;
+            var inner = s[(start + open.Length)..end].Trim();
+            return string.IsNullOrWhiteSpace(inner) ? "" : inner;
+        }
+
+        if (start == 0 && end < 0)
+            return "";
+
+        return s;
     }
 
     private async Task<(string Text, string? Source)> TryOllamaRawCompletionAsync(
@@ -2196,7 +2361,7 @@ public sealed class ChatCompletionService : IChatCompletionService
             string? text = null;
             if (message.TryGetProperty("content", out var contentEl))
             {
-                var content = contentEl.GetString();
+                var content = StripThinkTags(contentEl.GetString());
                 if (!string.IsNullOrWhiteSpace(content))
                     text = content;
             }
@@ -2207,7 +2372,7 @@ public sealed class ChatCompletionService : IChatCompletionService
                 {
                     if (IsReasoningFieldName(prop.Name))
                     {
-                        text = CoerceReasoningString(prop.Value);
+                        text = StripThinkTags(CoerceReasoningString(prop.Value));
                         if (!string.IsNullOrWhiteSpace(text)) break;
                     }
                 }

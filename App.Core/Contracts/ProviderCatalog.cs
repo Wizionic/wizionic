@@ -3,13 +3,11 @@ using System.Collections.Immutable;
 namespace App.Contracts;
 
 /// <summary>
-/// Static catalog of supported AI providers and their models.
-/// This is the source of truth for the UI model selector and the AiProviderService factory.
+/// Known local-model name patterns (Ollama and similar) for tool + vision badges.
+/// User-keyed cloud models live in <c>IKeyStore.CloudProviders</c>, not here.
 /// </summary>
 public static class ProviderCatalog
 {
-    public sealed record ModelDefinition(string Id, string Label, string Icon, bool SupportsTools = true, bool SupportsVision = false);
-
     /// <summary>
     /// Known local (Ollama and other local model runners) model name patterns and their capabilities.
     /// Used for dynamic models (user can pull any tag) so we can still show correct tool + vision badges in the UI.
@@ -54,77 +52,10 @@ public static class ProviderCatalog
         if (string.IsNullOrWhiteSpace(modelId))
             return (false, false);
 
-        var entry = GetModel(modelId);
-        if (entry.HasValue)
-        {
-            var m = entry.Value.Model;
-            return (m.SupportsTools, m.SupportsVision);
-        }
-
         var (matched, supportsTools, supportsVision) = GetLocalPatternCapabilities(modelId);
         if (matched)
             return (supportsTools, supportsVision);
 
         return (true, false);
     }
-
-    public sealed record ProviderDefinition(
-        string Id,
-        string DisplayName,
-        string Type,
-        string? BaseUrl,
-        ImmutableArray<ModelDefinition> Models);
-
-    public static readonly ImmutableArray<ProviderDefinition> Providers = ImmutableArray.Create(
-        new ProviderDefinition(
-            "groq",
-            "Groq",
-            "OpenAICompatible",
-            "https://api.groq.com/openai/v1/",
-            ImmutableArray.Create(
-                new ModelDefinition("llama-3.1-8b-instant", "Llama 3.1 8B", "⚡", SupportsTools: false),
-                new ModelDefinition("llama-3.3-70b-versatile", "Llama 3.3 70B", "🧠"),
-                new ModelDefinition("qwen/qwen3-32b", "Qwen3 32B", "🐉"),
-                new ModelDefinition("openai/gpt-oss-20b", "GPT-OSS 20B", "🔧"),
-                new ModelDefinition("openai/gpt-oss-120b", "GPT-OSS 120B", "🔧"),
-                new ModelDefinition("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", "🦙"),
-                new ModelDefinition("allam-2-7b", "Allam 2 7B", "🪶", SupportsTools: false)
-            )),
-
-        new ProviderDefinition(
-            "gemini",
-            "Google Gemini",
-            "OpenAICompatible",
-            "https://generativelanguage.googleapis.com/v1beta/openai/",
-            ImmutableArray.Create(
-                new ModelDefinition("gemini-2.5-flash", "Gemini 2.5 Flash", "✨", SupportsTools: true, SupportsVision: true)
-            )),
-
-        new ProviderDefinition(
-            "openrouter",
-            "OpenRouter",
-            "OpenAICompatible",
-            "https://openrouter.ai/api/v1/",
-            ImmutableArray.Create(
-                new ModelDefinition("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet (strong tools)", "🧠", SupportsVision: true),
-                new ModelDefinition("openai/gpt-4o", "GPT-4o", "🔧", SupportsVision: true),
-                new ModelDefinition("google/gemini-2.0-flash", "Gemini 2.0 Flash (via OR)", "✨", SupportsVision: true),
-                new ModelDefinition("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B Instruct", "🦙"),
-                new ModelDefinition("mistralai/mistral-large", "Mistral Large", "🌪️"),
-                new ModelDefinition("qwen/qwen2.5-72b-instruct", "Qwen2.5 72B", "🐉"),
-                new ModelDefinition("meta-llama/llama-3.2-3b-instruct:free", "Llama 3.2 3B (free tier)", "🆓", SupportsTools: false),
-                new ModelDefinition("google/gemini-2.0-flash:free", "Gemini 2.0 Flash (free on OR)", "🆓", SupportsTools: true, SupportsVision: true)
-            ))
-    );
-
-    public static readonly ImmutableDictionary<string, (ProviderDefinition Provider, ModelDefinition Model)> AllModelsById =
-        Providers
-            .SelectMany(p => p.Models.Select(m => (p, m)))
-            .ToImmutableDictionary(x => x.m.Id, x => (x.p, x.m));
-
-    public static ProviderDefinition? GetProvider(string providerId) =>
-        Providers.FirstOrDefault(p => p.Id == providerId);
-
-    public static (ProviderDefinition Provider, ModelDefinition Model)? GetModel(string modelId) =>
-        AllModelsById.TryGetValue(modelId, out var entry) ? entry : null;
 }

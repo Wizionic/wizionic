@@ -92,6 +92,7 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             SettingsSyncCategory.LocalAi => await ExportLocalAiAsync(ct),
             SettingsSyncCategory.Lemonade => await ExportLemonadeAsync(ct),
             SettingsSyncCategory.CloudProviders => ExportCloudProviders(),
+            SettingsSyncCategory.ModelProfiles => ExportModelProfiles(),
             SettingsSyncCategory.HomeAssistant => ExportHomeAssistant(),
             SettingsSyncCategory.Tools => ExportTools(),
             SettingsSyncCategory.SystemPrompt => ExportSystemPrompt(),
@@ -153,6 +154,9 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             case SettingsSyncCategory.CloudProviders:
                 await ApplyCloudProvidersAsync(payload.DataJson, ct);
                 break;
+            case SettingsSyncCategory.ModelProfiles:
+                await ApplyModelProfilesAsync(payload.DataJson, ct);
+                break;
             case SettingsSyncCategory.HomeAssistant:
                 await ApplyHomeAssistantAsync(payload.DataJson, ct);
                 break;
@@ -212,12 +216,17 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         return Task.FromResult(JsonSerializer.Serialize(dto, JsonOpts));
     }
 
+    private string ExportModelProfiles()
+    {
+        var dto = new ModelProfilesSyncDto(
+            _keys.ActiveModelProfileId,
+            _keys.ModelProfiles.Select(p => p.Clone()).ToList());
+        return JsonSerializer.Serialize(dto, JsonOpts);
+    }
+
     private string ExportCloudProviders()
     {
-        var dto = new CloudProvidersSyncDto(
-            _keys.GetKey("groq"),
-            _keys.GetKey("gemini"),
-            _keys.GetKey("openrouter"));
+        var dto = new CloudProvidersSyncDto(_keys.CloudProviders.Select(p => p.Clone()).ToList());
         return JsonSerializer.Serialize(dto, JsonOpts);
     }
 
@@ -372,11 +381,18 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         }
     }
 
+    private async Task ApplyModelProfilesAsync(string dataJson, CancellationToken ct)
+    {
+        var dto = JsonSerializer.Deserialize<ModelProfilesSyncDto>(dataJson, JsonOpts);
+        if (dto?.Profiles == null) return;
+        await _keys.ReplaceModelProfilesAsync(dto.Profiles, dto.ActiveId, ct);
+    }
+
     private async Task ApplyCloudProvidersAsync(string dataJson, CancellationToken ct)
     {
         var dto = JsonSerializer.Deserialize<CloudProvidersSyncDto>(dataJson, JsonOpts);
-        if (dto == null) return;
-        await _keys.SaveAllKeysAsync(dto.Groq ?? "", dto.Gemini ?? "", dto.OpenRouter ?? "", ct);
+        if (dto?.Providers == null) return;
+        await _keys.ReplaceCloudProvidersAsync(dto.Providers, ct);
     }
 
     private async Task ApplyHomeAssistantAsync(string dataJson, CancellationToken ct)
@@ -522,7 +538,9 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         string? DefaultSttModel,
         string? DefaultVoice);
 
-    private sealed record CloudProvidersSyncDto(string? Groq, string? Gemini, string? OpenRouter);
+    private sealed record ModelProfilesSyncDto(string? ActiveId, List<ModelProfile>? Profiles);
+
+    private sealed record CloudProvidersSyncDto(List<CloudProviderConfig>? Providers);
 
     private sealed record HomeAssistantSyncDto(string? BaseUrl, string? Token, string? AssistantName);
 

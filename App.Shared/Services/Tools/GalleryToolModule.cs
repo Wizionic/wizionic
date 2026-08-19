@@ -116,7 +116,8 @@ public sealed class GalleryToolModule : IToolModule
             {
                 Name = "save_to_gallery",
                 Description =
-                    "Save an image into a gallery album. Prefer generation_id from lemonade_generate_image / lemonade_edit_image " +
+                    "Save an image into a gallery album. Prefer generation_id from generate_image / edit_image " +
+                    "(or lemonade_generate_image / lemonade_edit_image) " +
                     "(or omit it to save the most recent image in this chat). " +
                     "album_name is fuzzy-matched to existing albums; a new album is created only if none match. " +
                     "Do not pass multi-MB image_base64 unless necessary."
