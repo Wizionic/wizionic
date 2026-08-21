@@ -79,14 +79,18 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         _nativeWindow = window.Handler?.PlatformView as Microsoft.UI.Xaml.Window;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _appWindow.Closing += OnClosing;
+        SubscribePowerResume();
 
-        if (HasStartMinimizedArg() && !_setup.ShouldAutoShow)
+        var restoreHidden = TrayRestoreFlag.ConsumeHidden();
+        if ((HasStartMinimizedArg() || restoreHidden) && !_setup.ShouldAutoShow)
         {
             try
             {
                 _appWindow.Hide();
                 IsHidden = true;
-                Console.WriteLine("[Desktop] start-minimized: hidden before activate");
+                Console.WriteLine(restoreHidden
+                    ? "[Desktop] tray-restore: hidden before activate"
+                    : "[Desktop] start-minimized: hidden before activate");
             }
             catch (Exception ex)
             {
@@ -171,6 +175,13 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     public Task AcknowledgeTrayHintAsync(CancellationToken ct = default)
         => PersistHintAsync(ct);
 
+    /// <summary>Sleep/lock resume: due tick + hub refresh. Does not unhide the window.</summary>
+    public void OnPowerResume()
+    {
+        Console.WriteLine("[Desktop] power resume");
+        _ = TickAfterShowAsync();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -234,6 +245,34 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     {
         var installed = _services.GetService<IUpdateService>()?.IsVelopackInstalled ?? false;
         WindowsStartupRegistration.Apply(StartWithWindows, StartMinimized, installed);
+    }
+
+    private void SubscribePowerResume()
+    {
+        try
+        {
+            Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Desktop] PowerModeChanged subscribe failed: {ex.Message}");
+        }
+    }
+
+    private void UnsubscribePowerResume()
+    {
+        try
+        {
+            Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        }
+        catch { /* ignore */ }
+    }
+
+    private void OnPowerModeChanged(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != Microsoft.Win32.PowerModes.Resume)
+            return;
+        OnPowerResume();
     }
 
     private static bool HasStartMinimizedArg()
@@ -324,6 +363,8 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
         try { WindowsSingleInstance.StopWaitLoop(); }
         catch (Exception ex) { Console.WriteLine($"[Desktop] stop wait loop: {ex.Message}"); }
+
+        UnsubscribePowerResume();
 
         if (_appWindow is not null)
         {

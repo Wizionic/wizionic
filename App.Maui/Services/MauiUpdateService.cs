@@ -4,7 +4,9 @@ using System.Text.Json.Serialization;
 using App.Core.Configuration;
 using App.Core.Homeserver;
 
+using App.Core.UI;
 using App.Core.Update;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Velopack.Sources;
@@ -22,11 +24,13 @@ public class MauiUpdateService : IUpdateService
     private readonly ILogger<MauiUpdateService> _logger;
     private readonly HttpClient _http;
     private readonly IHomeserverInstallService? _homeserver;
+    private readonly IServiceProvider _services;
 
     public MauiUpdateService(
         IAppServerEndpoint endpoint,
         ILogger<MauiUpdateService> logger,
         IHttpClientFactory httpClientFactory,
+        IServiceProvider services,
         IHomeserverInstallService? homeserver = null)
     {
         _endpoint = endpoint;
@@ -35,6 +39,7 @@ public class MauiUpdateService : IUpdateService
         _http.Timeout = TimeSpan.FromSeconds(30);
         if (!_http.DefaultRequestHeaders.UserAgent.Any())
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("Wizionic");
+        _services = services;
         _homeserver = homeserver;
     }
 
@@ -339,6 +344,19 @@ public class MauiUpdateService : IUpdateService
         }
 
         await mgr.DownloadUpdatesAsync(_pendingUpdateInfo);
+
+        try
+        {
+            var shell = _services.GetService<IDesktopShellService>();
+            if (shell is { IsHidden: true })
+                TrayRestoreFlag.WriteHidden();
+            shell?.PrepareForProcessExit();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Update] PrepareForProcessExit failed");
+        }
+
         mgr.ApplyUpdatesAndRestart(_pendingUpdateInfo);
     }
 

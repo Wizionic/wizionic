@@ -442,6 +442,24 @@ flowchart TB
 
 **Key files:** `App.Core/Skills/*`, `App.Core/Workflows/*`, `App.Shared/Services/Skills/*`, `App.Shared/Services/Workflows/*`, `SkillsPanel.razor`, `WorkflowsPanel.razor`, `WorkflowDueBootstrap.razor`, `App.Maui/Services/WorkflowDueHost.cs`
 
+### Windows desktop agent (tray)
+
+On Windows MAUI, **closing the window is not process exit** when close-to-tray is on (default). `AppWindow.Closing` is cancelled, the window is hidden, and a `Shell_NotifyIcon` tray icon remains. The process keeps DI, BlazorWebView, SignalR, SIPSorcery WebRTC, and `WorkflowDueHost`.
+
+| Gesture | Result |
+|---------|--------|
+| Taskbar X / Alt+F4 (close-to-tray on) | Hide to tray; sync + workflows keep running |
+| Tray **Quit** / Settings **Quit Wizionic** | `PrepareForProcessExit` (NIM_DELETE, stop due host) then process exit — sync and workflows stop |
+| Close-to-tray off | X exits the process (same as before tray) |
+
+The **Home Server** Windows Service is a separate process. It can stay up after Quit (auth, SignalR signaling, AI proxy) but it does **not** run workflows, hold encrypted chat/note bodies, or accept WebRTC DataChannel payloads. Other devices can sync with this PC only while the MAUI process is alive (including tray-resident).
+
+Workflows stay **device-local** (not moved to the homeserver, not synced). Due ticks: `WorkflowDueHost` on MAUI (all TFMs + Linux GirCore); `WorkflowDueBootstrap` on WASM. Sleep is best-effort: `PowerModeChanged` / `OnResume` fire an immediate `ProcessDueAsync`, but cron `IsDue` still matches the **current** minute only (`once` triggers still catch up).
+
+Optional **Start with Windows** writes HKCU Run to the Velopack root stub. `--start-minimized` is only on that Run command. Single-instance mutex prevents two SQLite writers. Velopack restart while hidden writes `tray-restore.flag` so the new process returns to the tray.
+
+**Key files:** `App.Maui/Platforms/Windows/WindowsDesktopHost.cs`, `WindowsTrayIcon.cs`, `WindowsSingleInstance.cs`, `WindowsStartupRegistration.cs`, `App.Maui/Services/WorkflowDueHost.cs`, `TrayRestoreFlag.cs`
+
 ---
 
 ## Tools page, MCP registry & OAuth connectors
@@ -875,6 +893,8 @@ flowchart TB
 ```
 
 **Rule of thumb:** if it is SDP, ICE, or “device X is online,” it may touch SignalR. If it is a notebook body, chat message, image, or calendar event, it must stay on the **DataChannel** between the two clients.
+
+A Windows MAUI process in the **system tray** stays a live WebRTC peer. Full **Quit** drops presence; the Home Server cannot stand in for DataChannel sync. See [Windows desktop agent (tray)](#windows-desktop-agent-tray).
 
 ### Sequence: connect peers, then sync one item
 

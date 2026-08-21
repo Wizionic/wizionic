@@ -26,6 +26,14 @@ public partial class MauiShell : Application
 		InitializeComponent();
 	}
 
+	protected override void OnResume()
+	{
+		base.OnResume();
+#if WINDOWS
+		_desktop?.OnPowerResume();
+#endif
+	}
+
 	/// <summary>Deep link / protocol activation (e.g. wizionic://oauth?oauth_session=...).</summary>
 	protected override void OnAppLinkRequestReceived(Uri uri)
 	{

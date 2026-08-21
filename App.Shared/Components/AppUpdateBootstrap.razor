@@ -1,8 +1,10 @@
 @using App.Core.Connectors
 @using App.Core.Setup
+@using App.Core.UI
 @using App.Core.Update
 @inject IUpdateService UpdateService
 @inject ISetupWizardHost SetupWizard
+@inject IDesktopShellService DesktopShell
 @inject IServiceProvider Services
 @implements IDisposable
 
@@ -71,6 +73,9 @@
             {
                 _promptMessage = $"Version {next} is available (you have {current}). Install it now? The app will restart.";
             }
+
+            if (DesktopShell.IsSupported && DesktopShell.IsHidden)
+                DesktopShell.Show();
 
             _showPrompt = true;
             await InvokeAsync(StateHasChanged);

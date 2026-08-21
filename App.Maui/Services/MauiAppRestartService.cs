@@ -20,7 +20,10 @@ public sealed class MauiAppRestartService : IAppRestartService
     {
         try
         {
-            _services.GetService<IDesktopShellService>()?.PrepareForProcessExit();
+            var shell = _services.GetService<IDesktopShellService>();
+            if (shell is { IsHidden: true })
+                TrayRestoreFlag.WriteHidden();
+            shell?.PrepareForProcessExit();
         }
         catch (Exception ex)
         {
