@@ -85,6 +85,14 @@ public static class MauiProgram
 			})
 			.Run();
 
+#if WINDOWS
+		if (!WindowsSingleInstance.TryAcquirePrimary())
+		{
+			WindowsSingleInstance.RequestShow();
+			Environment.Exit(0);
+		}
+#endif
+
 		AppEnvironment.SetMaui();
 
 		var builder = MauiApp.CreateBuilder();

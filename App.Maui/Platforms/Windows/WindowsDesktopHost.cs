@@ -72,6 +72,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         _tray = new WindowsTrayIcon();
         _tray.Attach(hwnd, Show, RequestQuit);
         _tray.SetTooltip(TooltipText());
+        WindowsSingleInstance.StartWaitLoop(Show, RequestQuit);
         Console.WriteLine("[Desktop] tray attached");
     }
 
@@ -202,6 +203,9 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         if (_prepared)
             return;
         _prepared = true;
+
+        try { WindowsSingleInstance.StopWaitLoop(); }
+        catch (Exception ex) { Console.WriteLine($"[Desktop] stop wait loop: {ex.Message}"); }
 
         if (_appWindow is not null)
         {
