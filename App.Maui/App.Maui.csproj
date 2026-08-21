@@ -125,6 +125,7 @@
     <!-- Windows Home Server service control (optional install path). -->
     <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
         <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.8" />
+        <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.8" />
         <!-- Title-bar + runtime AppWindow.SetIcon (MauiIcon alone does not set the caption icon). -->
         <None Include="Resources\AppIcon\appicon.ico" CopyToOutputDirectory="PreserveNewest" TargetPath="appicon.ico" />
         <None Include="Resources\AppIcon\app.png" CopyToOutputDirectory="PreserveNewest" TargetPath="app-appicon.png" />

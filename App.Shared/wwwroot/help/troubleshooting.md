@@ -29,6 +29,10 @@ Use the **account password**, not the email login code and not SMS.
 
 If 2FA is on, enter your password first. Then use the email code or the link to finish.
 
+## I closed the app but it is still in the tray
+
+On Windows, the close button **hides** Wizionic so sync and scheduled workflows keep running. Right-click the tray icon and choose **Quit**, or use **Settings → Desktop → Quit Wizionic**. Turn off **Close window to system tray** if you want X to exit.
+
 ## Updates (desktop)
 
 Official builds check [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest), not wizionic.com, for new installers.

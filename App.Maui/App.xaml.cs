@@ -5,16 +5,33 @@ namespace App.Maui;
 public partial class MauiShell : Application
 {
 	private readonly OAuthReturnBridge? _oauthReturn;
+#if WINDOWS
+	private readonly WindowsDesktopHost? _desktop;
+#endif
 
 	// DI-preferred ctor (OAuth deep-link handoff). Parameterless fallback for tooling.
-	public MauiShell(OAuthReturnBridge? oauthReturn = null)
+	public MauiShell(
+		OAuthReturnBridge? oauthReturn = null
+#if WINDOWS
+		, WindowsDesktopHost? desktop = null
+#endif
+		)
 	{
 #if WINDOWS
 		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
 		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
+		_desktop = desktop;
 #endif
 		_oauthReturn = oauthReturn;
 		InitializeComponent();
+	}
+
+	protected override void OnResume()
+	{
+		base.OnResume();
+#if WINDOWS
+		_desktop?.OnPowerResume();
+#endif
 	}
 
 	/// <summary>Deep link / protocol activation (e.g. wizionic://oauth?oauth_session=...).</summary>
@@ -48,7 +65,7 @@ public partial class MauiShell : Application
 	}
 
 #if WINDOWS
-	private static void OnWindowsWindowCreated(object? sender, EventArgs e)
+	private void OnWindowsWindowCreated(object? sender, EventArgs e)
 	{
 		if (sender is not Window window)
 			return;
@@ -63,7 +80,7 @@ public partial class MauiShell : Application
 		}
 	}
 
-	private static void ApplyWindowsAppWindowIcon(Window window)
+	private void ApplyWindowsAppWindowIcon(Window window)
 	{
 		var nativeWindow = window.Handler?.PlatformView as Microsoft.UI.Xaml.Window;
 		if (nativeWindow is null)
@@ -90,41 +107,16 @@ public partial class MauiShell : Application
 		if (appWindow is null)
 			return;
 
-		var iconPath = ResolveWindowsIconPath();
+		var iconPath = WindowsIconPath.Resolve();
 		if (iconPath is null)
-		{
 			Console.WriteLine("[Desktop] no appicon.ico found next to binary");
-			return;
+		else
+		{
+			appWindow.SetIcon(iconPath);
+			Console.WriteLine($"[Desktop] Windows AppWindow icon set from {iconPath}");
 		}
 
-		appWindow.SetIcon(iconPath);
-		Console.WriteLine($"[Desktop] Windows AppWindow icon set from {iconPath}");
-	}
-
-	private static string? ResolveWindowsIconPath()
-	{
-		var baseDir = AppContext.BaseDirectory;
-		var candidates = new[]
-		{
-			Path.Combine(baseDir, "appicon.ico"),
-			Path.Combine(baseDir, "Resources", "AppIcon", "appicon.ico"),
-			Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "Resources", "AppIcon", "appicon.ico")),
-		};
-
-		foreach (var path in candidates)
-		{
-			try
-			{
-				if (File.Exists(path))
-					return path;
-			}
-			catch
-			{
-				// skip
-			}
-		}
-
-		return null;
+		_desktop?.Attach(window, appWindow);
 	}
 #endif
 }

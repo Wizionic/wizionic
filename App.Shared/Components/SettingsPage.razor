@@ -6,6 +6,7 @@
 @inject App.Core.Homeserver.IHomeserverInstallService Homeserver
 @inject App.Core.Configuration.IAppServerEndpoint ServerEndpoint
 @inject App.Core.UI.IAppRestartService AppRestart
+@inject App.Core.UI.IDesktopShellService DesktopShell
 @inject App.Core.Setup.ISetupWizardHost SetupWizard
 @inject App.Shared.Services.ThemeService Theme
 @inject INavLayoutState NavLayout
@@ -115,6 +116,64 @@
             </div>
         }
     </div>
+
+    @if (DesktopShell.IsSupported)
+    {
+        <div class="settings-card">
+            <h3 class="help-heading" style="margin: 0 0 0.25rem;">Desktop <HelpGlyph Topic="settings-desktop" /></h3>
+            <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+                Sync and scheduled workflows keep running until you Quit. The Home Server service is separate.
+            </p>
+
+            <div class="ollama-toggle-row" style="border-top: none; margin-top: 0; padding-top: 0;">
+                <div>
+                    <label class="ollama-toggle-label">Close window to system tray</label>
+                    <p class="theme-setting-desc" style="margin: 0.15rem 0 0;">
+                        The close button hides Wizionic. Use Quit to stop sync and workflows.
+                    </p>
+                </div>
+                <label class="ollama-toggle">
+                    <input type="checkbox" checked="@DesktopShell.CloseToTray" @onchange="OnCloseToTrayChanged" />
+                    <span class="ollama-toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="ollama-toggle-row">
+                <div>
+                    <label class="ollama-toggle-label">Start with Windows</label>
+                    <p class="theme-setting-desc" style="margin: 0.15rem 0 0;">
+                        Launch at sign-in so this PC can stay online for other devices.
+                    </p>
+                </div>
+                <label class="ollama-toggle">
+                    <input type="checkbox" checked="@DesktopShell.StartWithWindows" @onchange="OnStartWithWindowsChanged" />
+                    <span class="ollama-toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="ollama-toggle-row">
+                <div>
+                    <label class="ollama-toggle-label">Start minimized at logon</label>
+                    <p class="theme-setting-desc" style="margin: 0.15rem 0 0;">
+                        Only used with Start with Windows. The Start menu icon always shows the window.
+                    </p>
+                </div>
+                <label class="ollama-toggle">
+                    <input type="checkbox"
+                           checked="@DesktopShell.StartMinimized"
+                           disabled="@(!DesktopShell.StartWithWindows)"
+                           @onchange="OnStartMinimizedChanged" />
+                    <span class="ollama-toggle-slider"></span>
+                </label>
+            </div>
+
+            <div style="margin-top: 1rem;">
+                <button type="button" class="btn btn-outline-danger btn-sm" @onclick="QuitDesktop">
+                    Quit Wizionic
+                </button>
+            </div>
+        </div>
+    }
 
     <!-- About you -->
     <div class="settings-card">
@@ -757,6 +816,11 @@
         Theme.OnChanged += OnThemeChangedFromService;
         if (AppEnvironment.IsMaui)
             NavLayout.OnChanged += OnNavLayoutChangedFromService;
+        if (DesktopShell.IsSupported)
+        {
+            DesktopShell.OnChanged += OnDesktopShellChanged;
+            await DesktopShell.AcknowledgeTrayHintAsync();
+        }
         await KeyStore.LoadAsync();
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
@@ -1334,6 +1398,7 @@
 
     private void OnThemeChangedFromService() => InvokeAsync(StateHasChanged);
     private void OnNavLayoutChangedFromService() => InvokeAsync(StateHasChanged);
+    private void OnDesktopShellChanged() => InvokeAsync(StateHasChanged);
 
 
 
@@ -1360,7 +1425,23 @@
         Theme.OnChanged -= OnThemeChangedFromService;
         if (AppEnvironment.IsMaui)
             NavLayout.OnChanged -= OnNavLayoutChangedFromService;
+        if (DesktopShell.IsSupported)
+            DesktopShell.OnChanged -= OnDesktopShellChanged;
     }
+
+    private async Task OnCloseToTrayChanged(ChangeEventArgs e)
+        => await DesktopShell.SetCloseToTrayAsync(IsChecked(e));
+
+    private async Task OnStartWithWindowsChanged(ChangeEventArgs e)
+        => await DesktopShell.SetStartWithWindowsAsync(IsChecked(e));
+
+    private async Task OnStartMinimizedChanged(ChangeEventArgs e)
+        => await DesktopShell.SetStartMinimizedAsync(IsChecked(e));
+
+    private void QuitDesktop() => DesktopShell.RequestQuit();
+
+    private static bool IsChecked(ChangeEventArgs e)
+        => e.Value is bool b ? b : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
 
     private void ReloadMemories() => memories = KeyStore.GetMemories().ToList();
 

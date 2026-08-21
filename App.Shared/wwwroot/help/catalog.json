@@ -12,6 +12,7 @@
     { "id": "settings", "title": "Settings", "file": "settings.md", "routes": ["/settings"], "audience": "howto" },
     { "id": "settings-login-server", "title": "Login server", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "login-server", "toc": false },
     { "id": "settings-appearance", "title": "Appearance", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "appearance", "toc": false },
+    { "id": "settings-desktop", "title": "Desktop (Windows)", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "desktop", "toc": false },
     { "id": "settings-about-you", "title": "About you", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "about-you", "toc": false },
     { "id": "settings-memories", "title": "Memories", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "memories", "toc": false },
     { "id": "settings-reply-length", "title": "Reply length", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "reply-length", "toc": false },
