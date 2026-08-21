@@ -1,15 +1,32 @@
 using System.Diagnostics;
 using App.Core.UI;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace App.Maui.Services;
 
 /// <summary>Relaunch this desktop process (Windows exe or Linux AppImage) and exit.</summary>
 public sealed class MauiAppRestartService : IAppRestartService
 {
+    private readonly IServiceProvider _services;
+
+    public MauiAppRestartService(IServiceProvider services)
+    {
+        _services = services;
+    }
+
     public bool CanRestart => true;
 
     public void Restart()
     {
+        try
+        {
+            _services.GetService<IDesktopShellService>()?.PrepareForProcessExit();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Restart] PrepareForProcessExit failed: {ex.Message}");
+        }
+
         try
         {
             var path = Environment.GetEnvironmentVariable("APPIMAGE");

@@ -107,6 +107,16 @@ public partial class MainPage : ContentPage
         if (services == null)
             return;
 
+#if WINDOWS
+        // Hide-to-tray must not look like Quit for the embedded browser.
+        var desktop = services.GetService<WindowsDesktopHost>();
+        if (desktop is not null && !desktop.IsQuitRequested)
+        {
+            Console.WriteLine("[Desktop] skipping browser clear-on-exit (not quitting)");
+            return;
+        }
+#endif
+
         var platform = services.GetRequiredService<BrowserWebViewPlatformService>();
         await platform.ApplyClearOnExitAsync();
     }

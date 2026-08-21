@@ -117,6 +117,7 @@ public static class MauiProgram
 		var app = builder.Build();
 		RestoreAuthCookies(app.Services);
 		app.Services.GetRequiredService<WorkflowDueHost>().Start();
+		_ = StartMauiSyncAsync(app.Services);
 		// Warm OAuth interceptor so in-app browser navigations are watched before first Tools click.
 		_ = app.Services.GetService<MauiOAuthInterceptor>();
 		return app;
@@ -184,6 +185,7 @@ public static class MauiProgram
 		var provider = services.BuildServiceProvider();
 		RestoreAuthCookies(provider);
 		provider.GetRequiredService<WorkflowDueHost>().Start();
+		_ = StartMauiSyncAsync(provider);
 		return provider;
 	}
 #endif
@@ -237,6 +239,12 @@ public static class MauiProgram
 		services.AddSingleton<IAppServerEndpoint>(sp => sp.GetRequiredService<MauiAppServerEndpoint>());
 		services.AddSingleton<MauiAppRestartService>();
 		services.AddSingleton<IAppRestartService>(sp => sp.GetRequiredService<MauiAppRestartService>());
+#if WINDOWS
+		services.AddSingleton<WindowsDesktopHost>();
+		services.AddSingleton<IDesktopShellService>(sp => sp.GetRequiredService<WindowsDesktopHost>());
+#else
+		services.AddSingleton<IDesktopShellService>(_ => NullDesktopShellService.Instance);
+#endif
 
 		services.AddSingleton<ThemeService>();
 		services.AddSingleton<SqliteSettingsDatabase>();
@@ -420,5 +428,26 @@ public static class MauiProgram
 		var serverOptions = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppServerOptions>>().Value;
 		cookieStore.Configure(serverOptions);
 		cookieStore.EnsureLoadedAsync().GetAwaiter().GetResult();
+	}
+
+	/// <summary>
+	/// Hub connect without waiting on first Blazor render (hide-to-tray / start-minimized).
+	/// <see cref="App.Shared.Components.SyncConnectionBootstrap"/> still owns login-while-running.
+	/// </summary>
+	private static async Task StartMauiSyncAsync(IServiceProvider sp)
+	{
+		try
+		{
+			var auth = sp.GetRequiredService<IAuthService>();
+			var sync = sp.GetRequiredService<ISyncService>();
+			await auth.LoadAsync();
+			await sync.InitializeAsync();
+			if (auth.IsAuthenticated)
+				await sync.EnsureConnectedAndRegisteredAsync();
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[MauiSync] startup connect failed: {ex.Message}");
+		}
 	}
 }
