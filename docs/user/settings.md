@@ -19,6 +19,14 @@ The website always uses its own origin.
 
 Theme follows a palette or the OS. On desktop you can put the main icons on the **top** or as a **left** rail.
 
+## Desktop (Windows) {#desktop}
+
+Closing the window hides Wizionic to the system tray so **sync** and **scheduled workflows** keep running. Right-click the tray icon (or Settings → Quit Wizionic) to fully exit.
+
+Optional **Start with Windows** launches at sign-in. **Start minimized at logon** only applies to that login launch; clicking the app in the Start menu always shows the window. These settings stay on this PC (they are not synced).
+
+The Home Server Windows service is separate: it can stay running after you Quit, but it does not run workflows or hold chat/note bodies.
+
 ## About you {#about-you}
 
 Optional name and occupation injected into the system prompt when customization is on. Stored on this device (and synced if you enable settings sync).

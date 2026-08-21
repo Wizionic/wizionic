@@ -17,6 +17,7 @@ public interface IDesktopShellService
     Task SetCloseToTrayAsync(bool enabled, CancellationToken ct = default);
     Task SetStartWithWindowsAsync(bool enabled, CancellationToken ct = default);
     Task SetStartMinimizedAsync(bool enabled, CancellationToken ct = default);
+    Task AcknowledgeTrayHintAsync(CancellationToken ct = default);
 
     void Show();
     void HideToTray();

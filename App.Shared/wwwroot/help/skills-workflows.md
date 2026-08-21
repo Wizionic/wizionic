@@ -17,6 +17,8 @@ A workflow is a **device-local schedule** that runs a skill. Workflows are **not
 
 Check the workflow tab for next-run time and the run log after something fires.
 
+On Windows desktop, close-to-tray keeps this device online so scheduled workflows still fire until you Quit.
+
 ## If a skill “has no tools”
 
 The skill’s `allowed-tools` must match modules that are actually available (for example Browser tools only exist in the desktop app).

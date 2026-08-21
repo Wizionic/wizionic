@@ -1,6 +1,9 @@
+using App.Core.Setup;
 using App.Core.Sync;
 using App.Core.UI;
+using App.Core.Update;
 using App.Maui.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 
@@ -8,14 +11,22 @@ namespace App.Maui;
 
 /// <summary>
 /// Windows close-to-tray host. Attach is internal (not on <see cref="IDesktopShellService"/>).
-/// Close-to-tray is hard-coded ON until Settings persistence (PR 4).
+/// Close-to-tray defaults ON until SQLite prefs load.
 /// </summary>
 public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 {
+    public const string CloseToTrayKey = "app-close-to-tray";
+    public const string StartWithWindowsKey = "app-start-with-windows";
+    public const string StartMinimizedKey = "app-start-minimized";
+    public const string TrayHintShownKey = "app-tray-hint-shown";
+
     private const string BalloonText = "Wizionic is still running. Right-click the tray icon to Quit.";
 
     private readonly WorkflowDueHost _due;
     private readonly ISyncService _sync;
+    private readonly SqliteSettingsDatabase _db;
+    private readonly ISetupWizardHost _setup;
+    private readonly IServiceProvider _services;
     private readonly object _gate = new();
 
     private Window? _mauiWindow;
@@ -27,20 +38,29 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     private bool _prepared;
     private bool _attached;
     private bool _balloonShown;
+    private bool _hintPersisted;
     private bool _disposed;
 
-    public WindowsDesktopHost(WorkflowDueHost due, ISyncService sync)
+    public WindowsDesktopHost(
+        WorkflowDueHost due,
+        ISyncService sync,
+        SqliteSettingsDatabase db,
+        ISetupWizardHost setup,
+        IServiceProvider services)
     {
         _due = due;
         _sync = sync;
+        _db = db;
+        _setup = setup;
+        _services = services;
         _sync.OnChanged += OnSyncChanged;
     }
 
     public bool IsSupported => true;
     public bool IsHidden { get; private set; }
     public bool CloseToTray { get; private set; } = true;
-    public bool StartWithWindows => false;
-    public bool StartMinimized => false;
+    public bool StartWithWindows { get; private set; }
+    public bool StartMinimized { get; private set; } = true;
     public bool IsQuitRequested => _quitRequested;
 
     public event Action? OnChanged;
@@ -60,6 +80,20 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _appWindow.Closing += OnClosing;
 
+        if (HasStartMinimizedArg() && !_setup.ShouldAutoShow)
+        {
+            try
+            {
+                _appWindow.Hide();
+                IsHidden = true;
+                Console.WriteLine("[Desktop] start-minimized: hidden before activate");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Desktop] start-minimized hide failed: {ex.Message}");
+            }
+        }
+
         var hwnd = _nativeWindow is null
             ? IntPtr.Zero
             : WinRT.Interop.WindowNative.GetWindowHandle(_nativeWindow);
@@ -74,6 +108,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         _tray.SetTooltip(TooltipText());
         WindowsSingleInstance.StartWaitLoop(Show, RequestQuit);
         Console.WriteLine("[Desktop] tray attached");
+        _ = LoadPrefsAsync();
     }
 
     public void Show()
@@ -109,16 +144,32 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         InvokeOnUi(PrepareForProcessExitCore);
     }
 
-    public Task SetCloseToTrayAsync(bool enabled, CancellationToken ct = default)
+    public async Task SetCloseToTrayAsync(bool enabled, CancellationToken ct = default)
     {
         CloseToTray = enabled;
+        await _db.SetStringAsync(CloseToTrayKey, enabled ? "1" : "0", ct);
         OnChanged?.Invoke();
-        return Task.CompletedTask;
     }
 
-    public Task SetStartWithWindowsAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
+    public async Task SetStartWithWindowsAsync(bool enabled, CancellationToken ct = default)
+    {
+        StartWithWindows = enabled;
+        await _db.SetStringAsync(StartWithWindowsKey, enabled ? "1" : "0", ct);
+        ApplyRunKey();
+        OnChanged?.Invoke();
+    }
 
-    public Task SetStartMinimizedAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
+    public async Task SetStartMinimizedAsync(bool enabled, CancellationToken ct = default)
+    {
+        StartMinimized = enabled;
+        await _db.SetStringAsync(StartMinimizedKey, enabled ? "1" : "0", ct);
+        if (StartWithWindows)
+            ApplyRunKey();
+        OnChanged?.Invoke();
+    }
+
+    public Task AcknowledgeTrayHintAsync(CancellationToken ct = default)
+        => PersistHintAsync(ct);
 
     public void Dispose()
     {
@@ -128,6 +179,73 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         try { _sync.OnChanged -= OnSyncChanged; }
         catch { /* ignore */ }
         PrepareForProcessExitCore();
+    }
+
+    private async Task LoadPrefsAsync()
+    {
+        try
+        {
+            var close = await _db.GetStringAsync(CloseToTrayKey);
+            if (close == "0")
+                CloseToTray = false;
+            else if (close == "1")
+                CloseToTray = true;
+
+            StartWithWindows = await _db.GetStringAsync(StartWithWindowsKey) == "1";
+
+            var minimized = await _db.GetStringAsync(StartMinimizedKey);
+            if (minimized == "0")
+                StartMinimized = false;
+            else if (minimized == "1" || minimized is null)
+                StartMinimized = true;
+
+            _hintPersisted = await _db.GetStringAsync(TrayHintShownKey) == "1";
+            if (_hintPersisted)
+                _balloonShown = true;
+
+            OnChanged?.Invoke();
+            Console.WriteLine(
+                $"[Desktop] prefs closeToTray={CloseToTray} startWithWindows={StartWithWindows} startMinimized={StartMinimized}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Desktop] prefs load failed: {ex.Message}");
+        }
+    }
+
+    private async Task PersistHintAsync(CancellationToken ct = default)
+    {
+        if (_hintPersisted)
+            return;
+        _hintPersisted = true;
+        _balloonShown = true;
+        try
+        {
+            await _db.SetStringAsync(TrayHintShownKey, "1", ct);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Desktop] hint persist failed: {ex.Message}");
+            _hintPersisted = false;
+        }
+    }
+
+    private void ApplyRunKey()
+    {
+        var installed = _services.GetService<IUpdateService>()?.IsVelopackInstalled ?? false;
+        WindowsStartupRegistration.Apply(StartWithWindows, StartMinimized, installed);
+    }
+
+    private static bool HasStartMinimizedArg()
+    {
+        foreach (var arg in Environment.GetCommandLineArgs())
+        {
+            if (arg.Equals("--start-minimized", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("--tray", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -161,7 +279,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         if (!_balloonShown && _tray is not null)
         {
             if (_tray.ShowBalloon("Wizionic", BalloonText))
-                _balloonShown = true;
+                _ = PersistHintAsync();
         }
 
         Console.WriteLine("[Desktop] hidden to tray");

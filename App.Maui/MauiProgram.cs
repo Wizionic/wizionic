@@ -76,6 +76,10 @@ public static class MauiProgram
 							CreateNoWindow = true
 						};
 						System.Diagnostics.Process.Start(psi)?.WaitForExit(5000);
+#if WINDOWS
+						WindowsStartupRegistration.Delete();
+						WindowsSingleInstance.RequestQuit();
+#endif
 					}
 				}
 				catch

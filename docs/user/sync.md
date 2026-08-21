@@ -14,6 +14,8 @@ Signed-in devices see each other through the Wizionic server (presence only). **
 3. Choose what to sync (chats, notes, gallery, calendar, selected settings).
 4. Pick a peer and sync. Only changed items are sent.
 
+On Windows desktop, close-to-tray keeps this device online so other devices can still sync until you Quit.
+
 ## Login server (desktop)
 
 The desktop app can use wizionic.com or a **Home Server** on this PC (`http://localhost:5150`). Set that under Settings → Login server. Pointing at the wrong host is a common reason 2FA or new APIs “do not exist.”

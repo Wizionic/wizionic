@@ -23,6 +23,7 @@ public sealed class NullDesktopShellService : IDesktopShellService
     public Task SetCloseToTrayAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
     public Task SetStartWithWindowsAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
     public Task SetStartMinimizedAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
+    public Task AcknowledgeTrayHintAsync(CancellationToken ct = default) => Task.CompletedTask;
 
     public void Show() { }
     public void HideToTray() { }
