@@ -116,6 +116,7 @@ public static class MauiProgram
 
 		var app = builder.Build();
 		RestoreAuthCookies(app.Services);
+		app.Services.GetRequiredService<WorkflowDueHost>().Start();
 		// Warm OAuth interceptor so in-app browser navigations are watched before first Tools click.
 		_ = app.Services.GetService<MauiOAuthInterceptor>();
 		return app;
@@ -182,6 +183,7 @@ public static class MauiProgram
 
 		var provider = services.BuildServiceProvider();
 		RestoreAuthCookies(provider);
+		provider.GetRequiredService<WorkflowDueHost>().Start();
 		return provider;
 	}
 #endif
@@ -264,6 +266,7 @@ public static class MauiProgram
 		services.AddSingleton<App.Core.Skills.ISkillRunner, App.Shared.Services.Skills.SkillRunner>();
 		services.AddSingleton<App.Core.Workflows.IWorkflowStore, App.Shared.Services.Workflows.PreferencesWorkflowStore>();
 		services.AddSingleton<App.Core.Workflows.IWorkflowOrchestrator, App.Shared.Services.Workflows.WorkflowOrchestrator>();
+		services.AddSingleton<WorkflowDueHost>();
 		services.AddSingleton<SettingsSyncStore>();
 		services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
 		services.AddSingleton<SipsorceryWebRtcTransport>();

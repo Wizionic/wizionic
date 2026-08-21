@@ -9,6 +9,8 @@
 
     protected override void OnInitialized()
     {
+        // MAUI (all TFMs) + Linux GirCore: WorkflowDueHost owns the loop.
+        if (AppEnvironment.IsMaui) return;
         if (Orchestrator is null) return;
         _cts = new CancellationTokenSource();
         _loop = RunLoopAsync(_cts.Token);

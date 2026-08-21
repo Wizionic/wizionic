@@ -386,7 +386,7 @@ Thin custom YAML **`wizionic.workflow/v1`** (not a full CNCF Open Workflow engin
 | **Store** | `IWorkflowStore` (local preferences) |
 | **Runtime** | `IWorkflowOrchestrator` → model resolve → `ISkillRunner` with `Source=workflow` |
 | **UI** | Tools → **Workflows** tab (form editor + raw YAML); Calendar sidebar + schedule dialog |
-| **Due runs** | Best-effort while app is open: `WorkflowDueBootstrap` ticks every ~1 min (`ProjectCalendarsAsync` + `ProcessDueAsync`); also on Calendar open / Workflows refresh |
+| **Due runs** | Best-effort while the process is running: `WorkflowDueHost` (MAUI, all TFMs + Linux) ticks every ~1 min (`ProjectCalendarsAsync` + `ProcessDueAsync`); WASM uses `WorkflowDueBootstrap`. Also on Calendar open / Workflows refresh |
 | **Calendar edit** | Workflow occurrences open a **schedule** dialog (start + repeat only), not the full event form |
 | **Sync** | **Device-local only** — workflow definitions are **not** a WebRTC settings category; the Workflows calendar (`IsWorkflowCalendar`) and events with `WorkflowId` are **excluded** from calendar sync so the same schedule does not fire on every device |
 
@@ -397,7 +397,7 @@ flowchart TB
   subgraph triggers["Triggers (this device only)"]
     Cron["Cron / once schedule"]
     Manual["Run now · Workflows UI"]
-    Tick["WorkflowDueBootstrap<br/>~1 min while app open"]
+    Tick["WorkflowDueHost (MAUI) / WorkflowDueBootstrap (WASM)<br/>~1 min while process running"]
     ChatSkill["Chat /skill-name"]
     RunDlg["Skills Run dialog"]
   end
@@ -440,7 +440,7 @@ flowchart TB
 
 **Hierarchy (product UI):** Tools (built-in + installed) → Skills (procedures over tools) → Workflows (schedules that call one skill). Skills **do** sync across devices; workflows **do not**.
 
-**Key files:** `App.Core/Skills/*`, `App.Core/Workflows/*`, `App.Shared/Services/Skills/*`, `App.Shared/Services/Workflows/*`, `SkillsPanel.razor`, `WorkflowsPanel.razor`, `WorkflowDueBootstrap.razor`
+**Key files:** `App.Core/Skills/*`, `App.Core/Workflows/*`, `App.Shared/Services/Skills/*`, `App.Shared/Services/Workflows/*`, `SkillsPanel.razor`, `WorkflowsPanel.razor`, `WorkflowDueBootstrap.razor`, `App.Maui/Services/WorkflowDueHost.cs`
 
 ---
 
