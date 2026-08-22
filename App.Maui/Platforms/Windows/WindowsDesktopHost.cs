@@ -334,7 +334,10 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         if (_quitRequested)
             return;
 
-        if (MauiWindowCount() > 1)
+        // Use our tracked list, not Application.Windows: during Closing the MAUI
+        // collection may already have dropped this window, which would look like
+        // "last window" and hide-to-tray instead of closing an extra view.
+        if (_windows.Count > 1)
         {
             if (ReferenceEquals(sender, _appWindow))
                 RebindTrayAwayFrom(sender);
@@ -487,9 +490,6 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
     private void Untrack(AppWindow appWindow)
         => _windows.RemoveAll(w => ReferenceEquals(w.App, appWindow));
-
-    private static int MauiWindowCount()
-        => Application.Current?.Windows.Count ?? 1;
 
     private void BindTray(IntPtr hwnd)
     {
