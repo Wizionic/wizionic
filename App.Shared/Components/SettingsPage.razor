@@ -184,7 +184,10 @@
                 </label>
             </div>
 
-            <div style="margin-top: 1rem;">
+            <div style="margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="OpenNewDesktopWindow">
+                    New window
+                </button>
                 <button type="button" class="btn btn-outline-danger btn-sm" @onclick="QuitDesktop">
                     Quit Wizionic
                 </button>
@@ -1456,6 +1459,8 @@
         => await DesktopShell.SetStartMinimizedAsync(IsChecked(e));
 
     private void QuitDesktop() => DesktopShell.RequestQuit();
+
+    private void OpenNewDesktopWindow() => DesktopShell.OpenNewWindow();
 
     private static bool IsChecked(ChangeEventArgs e)
         => e.Value is bool b ? b : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);

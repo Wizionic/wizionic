@@ -17,15 +17,17 @@ internal sealed class WindowsTrayIcon : IDisposable
     private NativeMethods.SUBCLASSPROC? _proc;
     private Action? _onShow;
     private Action? _onQuit;
+    private Action? _onNewWindow;
     private string _tooltip = "Wizionic";
     private bool _disposed;
 
-    public void Attach(IntPtr hwnd, Action onShow, Action onQuit)
+    public void Attach(IntPtr hwnd, Action onShow, Action onQuit, Action? onNewWindow = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _hwnd = hwnd;
         _onShow = onShow;
         _onQuit = onQuit;
+        _onNewWindow = onNewWindow;
         _taskbarCreated = NativeMethods.RegisterWindowMessage("TaskbarCreated");
         _hIcon = LoadTrayIcon();
         _proc = WndProc;
@@ -193,6 +195,7 @@ internal sealed class WindowsTrayIcon : IDisposable
         try
         {
             NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)NativeMethods.ID_SHOW, "Show Wizionic");
+            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)NativeMethods.ID_NEW, "New window");
             NativeMethods.AppendMenu(menu, NativeMethods.MF_SEPARATOR, UIntPtr.Zero, null);
             NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)NativeMethods.ID_QUIT, "Quit");
 
@@ -210,6 +213,8 @@ internal sealed class WindowsTrayIcon : IDisposable
 
             if (cmd == NativeMethods.ID_SHOW)
                 _onShow?.Invoke();
+            else if (cmd == NativeMethods.ID_NEW)
+                _onNewWindow?.Invoke();
             else if (cmd == NativeMethods.ID_QUIT)
                 _onQuit?.Invoke();
         }

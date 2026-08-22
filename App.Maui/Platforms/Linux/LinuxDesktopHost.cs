@@ -26,6 +26,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 	private Adw.Application? _application;
 	private Adw.ApplicationWindow? _window;
+	private readonly List<Adw.ApplicationWindow> _windows = [];
 	private SynchronizationContext? _glibContext;
 	private LinuxTrayIcon? _tray;
 	private bool _closeHooked;
@@ -84,6 +85,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 		_application = application;
 		_window = window;
 		_glibContext = SynchronizationContext.Current;
+		Track(window);
 
 		_window.OnCloseRequest += OnCloseRequest;
 		_closeHooked = true;
@@ -91,7 +93,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 		_restoreHidden = TrayRestoreFlag.ConsumeHidden();
 
 		_tray = new LinuxTrayIcon();
-		_tray.Start(Show, RequestQuit, OnTrayRegistered);
+		_tray.Start(Show, RequestQuit, OnTrayRegistered, OpenNewWindow);
 		_tray.SetTooltip(TooltipText());
 		Console.WriteLine("[Desktop] tray starting");
 		_ = LoadPrefsAsync();
@@ -100,6 +102,17 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 	public void Show() => InvokeOnUi(ShowCore);
 
 	public void HideToTray() => InvokeOnUi(HideToTrayCore);
+
+	public void OpenNewWindow() => InvokeOnUi(OpenNewWindowCore);
+
+	internal void AttachExtra(Adw.ApplicationWindow window)
+	{
+		if (_disposed || _quitRequested)
+			return;
+		Track(window);
+		window.OnCloseRequest += OnCloseRequest;
+		Console.WriteLine("[Desktop] additional window attached");
+	}
 
 	public void RequestQuit()
 	{
@@ -166,7 +179,19 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 	private bool OnCloseRequest(Gtk.Window sender, EventArgs args)
 	{
-		if (_quitRequested || !CloseToTray || !CanHideToTray)
+		if (_quitRequested)
+		{
+			ReleaseHoldIfNeeded();
+			return false;
+		}
+
+		if (_windows.Count > 1)
+		{
+			Untrack(sender);
+			return false;
+		}
+
+		if (!CloseToTray || !CanHideToTray)
 		{
 			ReleaseHoldIfNeeded();
 			return false;
@@ -174,6 +199,19 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 		HideToTrayCore();
 		return true;
+	}
+
+	private void OpenNewWindowCore()
+	{
+		if (_quitRequested)
+			return;
+		if (IsHidden)
+		{
+			ShowCore();
+			return;
+		}
+
+		Program.OpenAdditionalWindow();
 	}
 
 	private void OnTrayRegistered(bool registered)
@@ -346,12 +384,12 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 			return;
 		_prepared = true;
 
-		if (_window is not null && _closeHooked)
+		foreach (var w in _windows.ToArray())
 		{
-			try { _window.OnCloseRequest -= OnCloseRequest; }
+			try { w.OnCloseRequest -= OnCloseRequest; }
 			catch { /* ignore */ }
-			_closeHooked = false;
 		}
+		_closeHooked = false;
 
 		try { _sync.OnChanged -= OnSyncChanged; }
 		catch { /* ignore */ }
@@ -380,8 +418,11 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 		InvokeOnUi(() =>
 		{
-			try { _window?.Destroy(); }
-			catch { /* already closing */ }
+			foreach (var w in _windows.ToArray())
+			{
+				try { w.Destroy(); }
+				catch { /* already closing */ }
+			}
 
 			try { _application?.Quit(); }
 			catch (Exception ex) { Console.WriteLine($"[Desktop] Quit: {ex.Message}"); }
@@ -392,6 +433,22 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 	private string TooltipText()
 		=> _sync.IsConnected ? "Wizionic — Connected" : "Wizionic — Offline";
+
+	private void Track(Adw.ApplicationWindow window)
+	{
+		if (_windows.Any(w => ReferenceEquals(w, window)))
+			return;
+		_windows.Add(window);
+	}
+
+	private void Untrack(Gtk.Window sender)
+	{
+		try { sender.OnCloseRequest -= OnCloseRequest; }
+		catch { /* ignore */ }
+		_windows.RemoveAll(w => ReferenceEquals(w, sender));
+		if (ReferenceEquals(_window, sender))
+			_window = _windows.Count > 0 ? _windows[^1] : null;
+	}
 
 	private static bool HasStartMinimizedArg()
 	{

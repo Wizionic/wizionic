@@ -9,8 +9,9 @@ namespace App.Maui;
 internal sealed class LinuxTrayIcon : IDisposable
 {
 	private const int MenuShowId = 1;
-	private const int MenuSepId = 2;
-	private const int MenuQuitId = 3;
+	private const int MenuNewId = 2;
+	private const int MenuSepId = 3;
+	private const int MenuQuitId = 4;
 
 	private readonly object _gate = new();
 	private Connection? _connection;
@@ -20,6 +21,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 	private string? _serviceName;
 	private Action? _onShow;
 	private Action? _onQuit;
+	private Action? _onNewWindow;
 	private Action<bool>? _onRegistered;
 	private string _tooltip = "Wizionic";
 	private bool _started;
@@ -31,7 +33,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 		get { lock (_gate) return _registered; }
 	}
 
-	public void Start(Action onShow, Action onQuit, Action<bool> onRegistered)
+	public void Start(Action onShow, Action onQuit, Action<bool> onRegistered, Action? onNewWindow = null)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		lock (_gate)
@@ -43,6 +45,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 
 		_onShow = onShow;
 		_onQuit = onQuit;
+		_onNewWindow = onNewWindow;
 		_onRegistered = onRegistered;
 		_ = RunAsync();
 	}
@@ -120,7 +123,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 		{
 			_item ??= new StatusNotifierItemObject(OnActivate);
 			_item.SetTooltip(_tooltip);
-			_menu ??= new DbusMenuObject(OnActivate, OnQuit);
+			_menu ??= new DbusMenuObject(OnActivate, OnQuit, OnNewWindow);
 
 			if (_serviceName is null)
 			{
@@ -167,6 +170,8 @@ internal sealed class LinuxTrayIcon : IDisposable
 	private void OnActivate() => _onShow?.Invoke();
 
 	private void OnQuit() => _onQuit?.Invoke();
+
+	private void OnNewWindow() => _onNewWindow?.Invoke();
 
 	private void NotifyRegistered(bool value)
 	{
@@ -305,14 +310,16 @@ internal sealed class LinuxTrayIcon : IDisposable
 	{
 		private readonly Action _onShow;
 		private readonly Action _onQuit;
+		private readonly Action _onNewWindow;
 		private Action<(uint, int)>? _layoutUpdated;
 
 		public ObjectPath ObjectPath { get; } = new(LinuxStatusNotifierNames.MenuPath);
 
-		public DbusMenuObject(Action onShow, Action onQuit)
+		public DbusMenuObject(Action onShow, Action onQuit, Action onNewWindow)
 		{
 			_onShow = onShow;
 			_onQuit = onQuit;
+			_onNewWindow = onNewWindow;
 		}
 
 		public Task<(uint, (int, IDictionary<string, object>, object[]))> GetLayoutAsync(
@@ -321,6 +328,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 			object[] children =
 			[
 				LayoutItem(MenuShowId, LabelProps("Show Wizionic")),
+				LayoutItem(MenuNewId, LabelProps("New window")),
 				LayoutItem(MenuSepId, SepProps()),
 				LayoutItem(MenuQuitId, LabelProps("Quit"))
 			];
@@ -341,6 +349,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 				var props = id switch
 				{
 					MenuShowId => LabelProps("Show Wizionic"),
+					MenuNewId => LabelProps("New window"),
 					MenuSepId => SepProps(),
 					MenuQuitId => LabelProps("Quit"),
 					0 => new Dictionary<string, object> { ["children-display"] = "submenu" },
@@ -357,6 +366,7 @@ internal sealed class LinuxTrayIcon : IDisposable
 			var props = id switch
 			{
 				MenuShowId => LabelProps("Show Wizionic"),
+				MenuNewId => LabelProps("New window"),
 				MenuSepId => SepProps(),
 				MenuQuitId => LabelProps("Quit"),
 				_ => new Dictionary<string, object>()
@@ -370,6 +380,8 @@ internal sealed class LinuxTrayIcon : IDisposable
 			{
 				if (id == MenuShowId)
 					_onShow();
+				else if (id == MenuNewId)
+					_onNewWindow();
 				else if (id == MenuQuitId)
 					_onQuit();
 			}

@@ -27,6 +27,8 @@ public interface IDesktopShellService
 
     void Show();
     void HideToTray();
+    /// <summary>Windows: extra MAUI window in this process. Linux: no-op.</summary>
+    void OpenNewWindow();
     void RequestQuit();
     void PrepareForProcessExit();
 }

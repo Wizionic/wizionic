@@ -32,6 +32,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     private Window? _mauiWindow;
     private AppWindow? _appWindow;
     private Microsoft.UI.Xaml.Window? _nativeWindow;
+    private readonly List<TrackedWindow> _windows = new();
     private DispatcherQueue? _dispatcher;
     private WindowsTrayIcon? _tray;
     private bool _quitRequested;
@@ -68,18 +69,29 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
     internal void Attach(Window window, AppWindow appWindow)
     {
+        bool first;
         lock (_gate)
         {
-            if (_attached || _disposed)
+            if (_disposed)
                 return;
+            first = !_attached;
             _attached = true;
+        }
+
+        var native = window.Handler?.PlatformView as Microsoft.UI.Xaml.Window;
+        Track(window, appWindow, native);
+        appWindow.Closing += OnClosing;
+        _dispatcher ??= DispatcherQueue.GetForCurrentThread();
+
+        if (!first)
+        {
+            Console.WriteLine("[Desktop] additional window attached");
+            return;
         }
 
         _mauiWindow = window;
         _appWindow = appWindow;
-        _nativeWindow = window.Handler?.PlatformView as Microsoft.UI.Xaml.Window;
-        _dispatcher = DispatcherQueue.GetForCurrentThread();
-        _appWindow.Closing += OnClosing;
+        _nativeWindow = native;
         SubscribePowerResume();
 
         var restoreHidden = TrayRestoreFlag.ConsumeHidden();
@@ -108,10 +120,8 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
             return;
         }
 
-        _tray = new WindowsTrayIcon();
-        _tray.Attach(hwnd, Show, RequestQuit);
-        _tray.SetTooltip(TooltipText());
-        WindowsSingleInstance.StartWaitLoop(Show, RequestQuit);
+        BindTray(hwnd);
+        WindowsSingleInstance.StartWaitLoop(OnSecondLaunch, RequestQuit);
         Console.WriteLine("[Desktop] tray attached");
         _ = LoadPrefsAsync();
     }
@@ -124,6 +134,11 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     public void HideToTray()
     {
         InvokeOnUi(HideToTrayCore);
+    }
+
+    public void OpenNewWindow()
+    {
+        InvokeOnUi(OpenNewWindowCore);
     }
 
     public void RequestQuit()
@@ -288,9 +303,51 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         return false;
     }
 
+    private void OnSecondLaunch()
+    {
+        if (IsHidden)
+            Show();
+        else
+            OpenNewWindow();
+    }
+
+    private void OpenNewWindowCore()
+    {
+        if (_quitRequested)
+            return;
+
+        if (IsHidden)
+        {
+            ShowCore();
+            return;
+        }
+
+        if (Application.Current is MauiShell shell)
+        {
+            shell.OpenAdditionalWindow();
+            Console.WriteLine("[Desktop] opened additional window");
+        }
+    }
+
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_quitRequested || !CloseToTray)
+        if (_quitRequested)
+            return;
+
+        // Use our tracked list, not Application.Windows: during Closing the MAUI
+        // collection may already have dropped this window, which would look like
+        // "last window" and hide-to-tray instead of closing an extra view.
+        if (_windows.Count > 1)
+        {
+            if (ReferenceEquals(sender, _appWindow))
+                RebindTrayAwayFrom(sender);
+            Untrack(sender);
+            try { sender.Closing -= OnClosing; }
+            catch { /* ignore */ }
+            return;
+        }
+
+        if (!CloseToTray)
             return;
 
         args.Cancel = true;
@@ -367,9 +424,9 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
         UnsubscribePowerResume();
 
-        if (_appWindow is not null)
+        foreach (var tracked in _windows.ToArray())
         {
-            try { _appWindow.Closing -= OnClosing; }
+            try { tracked.App.Closing -= OnClosing; }
             catch { /* ignore */ }
         }
 
@@ -416,6 +473,51 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
     private string TooltipText()
         => _sync.IsConnected ? "Wizionic — Connected" : "Wizionic — Offline";
+
+    private sealed class TrackedWindow
+    {
+        public required Window Maui { get; init; }
+        public required AppWindow App { get; init; }
+        public Microsoft.UI.Xaml.Window? Native { get; init; }
+    }
+
+    private void Track(Window window, AppWindow appWindow, Microsoft.UI.Xaml.Window? native)
+    {
+        if (_windows.Any(w => ReferenceEquals(w.App, appWindow)))
+            return;
+        _windows.Add(new TrackedWindow { Maui = window, App = appWindow, Native = native });
+    }
+
+    private void Untrack(AppWindow appWindow)
+        => _windows.RemoveAll(w => ReferenceEquals(w.App, appWindow));
+
+    private void BindTray(IntPtr hwnd)
+    {
+        try { _tray?.Dispose(); }
+        catch { /* ignore */ }
+        _tray = new WindowsTrayIcon();
+        _tray.Attach(hwnd, Show, RequestQuit, OpenNewWindow);
+        _tray.SetTooltip(TooltipText());
+    }
+
+    private void RebindTrayAwayFrom(AppWindow closing)
+    {
+        var next = _windows.FirstOrDefault(w => !ReferenceEquals(w.App, closing));
+        if (next is null)
+            return;
+
+        _mauiWindow = next.Maui;
+        _appWindow = next.App;
+        _nativeWindow = next.Native;
+        var hwnd = next.Native is null
+            ? IntPtr.Zero
+            : WinRT.Interop.WindowNative.GetWindowHandle(next.Native);
+        if (hwnd == IntPtr.Zero)
+            return;
+
+        BindTray(hwnd);
+        Console.WriteLine("[Desktop] tray rebound to remaining window");
+    }
 
     private void InvokeOnUi(Action action)
     {
