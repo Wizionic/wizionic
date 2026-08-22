@@ -71,17 +71,7 @@ public static class Program
 
 		if (_window is not null)
 		{
-			_serviceProvider?.GetService<IDesktopShellService>()?.Show();
-			try
-			{
-				_window.SetVisible(true);
-				_window.Present();
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"[Desktop] second activate present failed: {ex.Message}");
-			}
-
+			_serviceProvider?.GetService<IDesktopShellService>()?.OpenNewWindow();
 			return;
 		}
 
@@ -179,6 +169,72 @@ public static class Program
 		GC.KeepAlive(_serviceProvider);
 		GC.KeepAlive(OnActivateHandler);
 		GC.KeepAlive(LifetimeRoots);
+	}
+
+	/// <summary>
+	/// Extra Adwaita window in this process (Blazor only — native WebKit overlays stay on the first window).
+	/// </summary>
+	public static void OpenAdditionalWindow()
+	{
+		if (_application is null || _serviceProvider is null)
+			return;
+
+		try
+		{
+			var window = Adw.ApplicationWindow.New(_application);
+			window.Title = "Wizionic";
+			window.SetDefaultSize(1280, 800);
+			window.Decorated = true;
+			window.Deletable = true;
+			window.Resizable = true;
+			LifetimeRoots.Add(window);
+
+			var webView = new BlazorWebView(_serviceProvider);
+#if DEBUG
+			webView.GetSettings().EnableDeveloperExtras = true;
+#endif
+			LifetimeRoots.Add(webView);
+
+			var headerBar = Adw.HeaderBar.New();
+			headerBar.ShowTitle = true;
+			headerBar.ShowEndTitleButtons = true;
+			headerBar.ShowStartTitleButtons = true;
+			headerBar.DecorationLayout = ":minimize,maximize,close";
+			try
+			{
+				var iconPath = LinuxDesktopIcon.ResolveIconPathPublic();
+				if (iconPath is not null)
+				{
+					var logo = Gtk.Image.NewFromFile(iconPath);
+					logo.SetPixelSize(22);
+					logo.SetMarginStart(6);
+					logo.SetMarginEnd(4);
+					headerBar.PackStart(logo);
+					LifetimeRoots.Add(logo);
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"[Desktop] extra header logo failed: {ex.Message}");
+			}
+
+			LifetimeRoots.Add(headerBar);
+
+			var toolbarView = Adw.ToolbarView.New();
+			toolbarView.AddTopBar(headerBar);
+			toolbarView.SetContent(webView);
+			LifetimeRoots.Add(toolbarView);
+			window.SetContent(toolbarView);
+			LinuxDesktopIcon.Apply(window);
+
+			_serviceProvider.GetRequiredService<LinuxDesktopHost>().AttachExtra(window);
+			window.Present();
+			Console.WriteLine("[Desktop] additional window presented");
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Desktop] OpenAdditionalWindow failed: {ex.Message}");
+		}
 	}
 
 	private static void OnShutdown(Gio.Application sender, EventArgs args)

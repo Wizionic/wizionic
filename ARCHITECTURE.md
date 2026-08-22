@@ -468,7 +468,8 @@ On Linux GirCore (Adwaita + WebKit), close-to-tray matches Windows when a **Stat
 
 | Gesture | Result |
 |---------|--------|
-| HeaderBar close (close-to-tray on **and** watcher present) | Hide; tray icon Show / Quit; sync + workflows keep running |
+| HeaderBar close (close-to-tray on **and** watcher present) | Last window hides; extra windows close only. Tray Show / Quit; sync + workflows keep running |
+| Second launcher activate | One process: restore if tray-hidden, otherwise **new window** (Blazor-only extras; native WebKit overlays stay on the first window) |
 | Tray **Quit** / Settings **Quit Wizionic** | `Release()`, unexport SNI, stop due host, `Application.Quit()` |
 | No StatusNotifier watcher (stock GNOME without AppIndicator) | Close still quits; log `[Tray] no StatusNotifier watcher` |
 | Second launcher click | Same Gio app (`com.wizionic.app`); existing window is presented (never a second DI graph) |

@@ -185,12 +185,9 @@
             </div>
 
             <div style="margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem;">
-                @if (OperatingSystem.IsWindows())
-                {
-                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="OpenNewDesktopWindow">
-                        New window
-                    </button>
-                }
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="OpenNewDesktopWindow">
+                    New window
+                </button>
                 <button type="button" class="btn btn-outline-danger btn-sm" @onclick="QuitDesktop">
                     Quit Wizionic
                 </button>
