@@ -460,6 +460,21 @@ Optional **Start with Windows** writes HKCU Run to the Velopack root stub. `--st
 
 **Key files:** `App.Maui/Platforms/Windows/WindowsDesktopHost.cs`, `WindowsTrayIcon.cs`, `WindowsSingleInstance.cs`, `WindowsStartupRegistration.cs`, `App.Maui/Services/WorkflowDueHost.cs`, `TrayRestoreFlag.cs`
 
+### Linux desktop agent (tray)
+
+On Linux GirCore (Adwaita + WebKit), close-to-tray matches Windows when a **StatusNotifier** watcher is on the session bus (`org.kde.StatusNotifierWatcher`). KDE Plasma and Linux Mint Cinnamon (`xapp-sn-watcher`) provide that. HeaderBar / WM close is cancelled (`OnCloseRequest` returns true), the window is `SetVisible(false)`, and `Gio.Application.Hold()` keeps the process alive so DI, WebKit, SignalR, SIPSorcery, and `WorkflowDueHost` continue.
+
+| Gesture | Result |
+|---------|--------|
+| HeaderBar close (close-to-tray on **and** watcher present) | Hide; tray icon Show / Quit; sync + workflows keep running |
+| Tray **Quit** / Settings **Quit Wizionic** | `Release()`, unexport SNI, stop due host, `Application.Quit()` |
+| No StatusNotifier watcher (stock GNOME without AppIndicator) | Close still quits; log `[Tray] no StatusNotifier watcher` |
+| Second launcher click | Same Gio app (`com.wizionic.app`); existing window is presented (never a second DI graph) |
+
+Optional **Start with session** writes `~/.config/autostart/com.wizionic.app.desktop` (not `wizionic-homeserver.desktop`). `--start-minimized` is only on that Exec line. AppImage autostart uses `$APPIMAGE`, never the fuse mount. Velopack restart while hidden uses the same `tray-restore.flag`.
+
+**Key files:** `App.Maui/Platforms/Linux/LinuxDesktopHost.cs`, `LinuxTrayIcon.cs`, `LinuxAutostartRegistration.cs`, `App.Maui/Platforms/Linux/Program.cs`
+
 ---
 
 ## Tools page, MCP registry & OAuth connectors

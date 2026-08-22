@@ -144,6 +144,7 @@
         <PackageReference Include="GirCore.WebKit-6.0" Version="0.7.0-preview.2" />
         <PackageReference Include="GirCore.Adw-1" Version="0.7.0-preview.2" />
         <PackageReference Include="GirCore.Gtk-4.0" Version="0.7.0-preview.2" />
+        <PackageReference Include="Tmds.DBus" Version="0.94.2" />
         <PackageReference Include="Microsoft.AspNetCore.Components.WebView" Version="10.0.0" />
         <!-- Dock/taskbar icon: full-res mascot (MauiIcon's appicon.png is a tiny generated stub). -->
         <None Include="Resources\AppIcon\app.png" CopyToOutputDirectory="PreserveNewest" TargetPath="app-appicon.png" />

@@ -129,20 +129,30 @@
                 <div>
                     <label class="ollama-toggle-label">Close window to system tray</label>
                     <p class="theme-setting-desc" style="margin: 0.15rem 0 0;">
-                        The close button hides Wizionic. Use Quit to stop sync and workflows.
+                        @if (!DesktopShell.CanHideToTray)
+                        {
+                            <text>No system tray service on this desktop (close will quit).</text>
+                        }
+                        else
+                        {
+                            <text>The close button hides Wizionic. Use Quit to stop sync and workflows.</text>
+                        }
                     </p>
                 </div>
                 <label class="ollama-toggle">
-                    <input type="checkbox" checked="@DesktopShell.CloseToTray" @onchange="OnCloseToTrayChanged" />
+                    <input type="checkbox"
+                           checked="@DesktopShell.CloseToTray"
+                           disabled="@(!DesktopShell.CanHideToTray)"
+                           @onchange="OnCloseToTrayChanged" />
                     <span class="ollama-toggle-slider"></span>
                 </label>
             </div>
 
             <div class="ollama-toggle-row">
                 <div>
-                    <label class="ollama-toggle-label">Start with Windows</label>
+                    <label class="ollama-toggle-label">@(OperatingSystem.IsLinux() ? "Start with session" : "Start with Windows")</label>
                     <p class="theme-setting-desc" style="margin: 0.15rem 0 0;">
-                        Launch at sign-in so this PC can stay online for other devices.
+                        Launch at login so this PC can stay online for other devices.
                     </p>
                 </div>
                 <label class="ollama-toggle">
@@ -155,7 +165,14 @@
                 <div>
                     <label class="ollama-toggle-label">Start minimized at logon</label>
                     <p class="theme-setting-desc" style="margin: 0.15rem 0 0;">
-                        Only used with Start with Windows. The Start menu icon always shows the window.
+                        @if (OperatingSystem.IsLinux())
+                        {
+                            <text>Only used with Start with session. The app launcher always shows the window.</text>
+                        }
+                        else
+                        {
+                            <text>Only used with Start with Windows. The Start menu icon always shows the window.</text>
+                        }
                     </p>
                 </div>
                 <label class="ollama-toggle">

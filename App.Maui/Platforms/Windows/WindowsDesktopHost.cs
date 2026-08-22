@@ -61,6 +61,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     public bool CloseToTray { get; private set; } = true;
     public bool StartWithWindows { get; private set; }
     public bool StartMinimized { get; private set; } = true;
+    public bool CanHideToTray => true;
     public bool IsQuitRequested => _quitRequested;
 
     public event Action? OnChanged;

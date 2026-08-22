@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using App.Core.UI;
 using App.Maui.Services.Linux;
 using Microsoft.Extensions.DependencyInjection;
 using WebKit.BlazorWebView.GirCore;
@@ -67,6 +68,22 @@ public static class Program
 	private static void OnActivate(Gio.Application sender, EventArgs args)
 	{
 		var app = (Adw.Application)sender;
+
+		if (_window is not null)
+		{
+			_serviceProvider?.GetService<IDesktopShellService>()?.Show();
+			try
+			{
+				_window.SetVisible(true);
+				_window.Present();
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"[Desktop] second activate present failed: {ex.Message}");
+			}
+
+			return;
+		}
 
 		_window = Adw.ApplicationWindow.New(app);
 		_window.Title = "Wizionic";
@@ -142,6 +159,16 @@ public static class Program
 
 		// Dock / launch-bar icon (MauiIcon does not apply on plain net10.0 Linux).
 		LinuxDesktopIcon.Apply(_window);
+
+		try
+		{
+			_serviceProvider.GetRequiredService<LinuxDesktopHost>()
+				.Attach(app, _window);
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Desktop] LinuxDesktopHost.Attach failed: {ex.Message}");
+		}
 
 		_window.Present();
 

@@ -31,7 +31,9 @@ If 2FA is on, enter your password first. Then use the email code or the link to 
 
 ## I closed the app but it is still in the tray
 
-On Windows, the close button **hides** Wizionic so sync and scheduled workflows keep running. Right-click the tray icon and choose **Quit**, or use **Settings → Desktop → Quit Wizionic**. Turn off **Close window to system tray** if you want X to exit.
+On Windows and Linux desktop, the close button **hides** Wizionic so sync and scheduled workflows keep running. Right-click the tray icon and choose **Quit**, or use **Settings → Desktop → Quit Wizionic**. Turn off **Close window to system tray** if you want X to exit.
+
+On Linux, KDE Plasma and Linux Mint Cinnamon show the tray icon. Stock GNOME often has no StatusNotifier watcher: close then **really quits** (or install the AppIndicator / KStatusNotifierItem extension).
 
 ## Updates (desktop)
 
