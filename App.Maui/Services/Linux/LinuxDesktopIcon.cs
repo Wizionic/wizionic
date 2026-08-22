@@ -214,6 +214,9 @@ internal static class LinuxDesktopIcon
 		_ = sourceIconPath;
 	}
 
+	/// <summary>Public resolve for autostart <c>Exec=</c> (AppImage / apphost / dotnet dll).</summary>
+	public static string? ResolveExecPathPublic() => ResolveExecPath();
+
 	private static string? ResolveExecPath()
 	{
 		var baseDir = AppContext.BaseDirectory;

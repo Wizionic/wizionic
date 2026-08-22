@@ -19,13 +19,15 @@ The website always uses its own origin.
 
 Theme follows a palette or the OS. On desktop you can put the main icons on the **top** or as a **left** rail.
 
-## Desktop (Windows) {#desktop}
+## Desktop {#desktop}
 
-Closing the window hides Wizionic to the system tray so **sync** and **scheduled workflows** keep running. Right-click the tray icon (or Settings → Quit Wizionic) to fully exit.
+On Windows and Linux desktop, closing the window hides Wizionic to the system tray so **sync** and **scheduled workflows** keep running. Right-click the tray icon (or Settings → Quit Wizionic) to fully exit.
 
-Optional **Start with Windows** launches at sign-in. **Start minimized at logon** only applies to that login launch; clicking the app in the Start menu always shows the window. These settings stay on this PC (they are not synced).
+Optional **Start with Windows** (Linux: **Start with session**) launches at sign-in. **Start minimized at logon** only applies to that login launch; clicking the app in the Start menu / application launcher always shows the window. These settings stay on this PC (they are not synced).
 
-The Home Server Windows service is separate: it can stay running after you Quit, but it does not run workflows or hold chat/note bodies.
+If Linux has no system-tray service (typical stock GNOME without the AppIndicator extension), close still quits so you are not left with a hidden process and no icon. KDE Plasma and Linux Mint Cinnamon show the icon.
+
+The Home Server service is separate: it can stay running after you Quit, but it does not run workflows or hold chat/note bodies.
 
 ## About you {#about-you}
 

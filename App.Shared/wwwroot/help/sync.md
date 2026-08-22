@@ -14,7 +14,7 @@ Signed-in devices see each other through the Wizionic server (presence only). **
 3. Choose what to sync (chats, notes, gallery, calendar, selected settings).
 4. Pick a peer and sync. Only changed items are sent.
 
-On Windows desktop, close-to-tray keeps this device online so other devices can still sync until you Quit.
+On Windows and Linux desktop, close-to-tray keeps this device online so other devices can still sync until you Quit.
 
 ## Login server (desktop)
 

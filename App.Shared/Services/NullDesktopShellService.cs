@@ -13,6 +13,7 @@ public sealed class NullDesktopShellService : IDesktopShellService
     public bool CloseToTray => false;
     public bool StartWithWindows => false;
     public bool StartMinimized => false;
+    public bool CanHideToTray => false;
 
     public event Action? OnChanged
     {

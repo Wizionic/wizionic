@@ -161,6 +161,11 @@ public static class MauiProgram
 					// ignore — update continues
 				}
 			})
+			.OnBeforeUninstallFastCallback(_ =>
+			{
+				try { LinuxAutostartRegistration.Delete(); }
+				catch { /* uninstall continues */ }
+			})
 			.Run();
 		AppEnvironment.SetMaui();
 
@@ -254,6 +259,9 @@ public static class MauiProgram
 #if WINDOWS
 		services.AddSingleton<WindowsDesktopHost>();
 		services.AddSingleton<IDesktopShellService>(sp => sp.GetRequiredService<WindowsDesktopHost>());
+#elif LINUX_DESKTOP
+		services.AddSingleton<LinuxDesktopHost>();
+		services.AddSingleton<IDesktopShellService>(sp => sp.GetRequiredService<LinuxDesktopHost>());
 #else
 		services.AddSingleton<IDesktopShellService>(_ => NullDesktopShellService.Instance);
 #endif
