@@ -101,6 +101,8 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 	public void HideToTray() => InvokeOnUi(HideToTrayCore);
 
+	public void OpenNewWindow() => Show();
+
 	public void RequestQuit()
 	{
 		if (_quitRequested)

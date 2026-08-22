@@ -43,6 +43,9 @@ public partial class MauiShell : Application
 	}
 
 	protected override Window CreateWindow(IActivationState? activationState)
+		=> CreateDesktopWindow();
+
+	internal Window CreateDesktopWindow()
 	{
 		var window = new Window(new MainPage()) { Title = "Wizionic" };
 
@@ -65,6 +68,9 @@ public partial class MauiShell : Application
 	}
 
 #if WINDOWS
+	internal void OpenAdditionalWindow()
+		=> OpenWindow(CreateDesktopWindow());
+
 	private void OnWindowsWindowCreated(object? sender, EventArgs e)
 	{
 		if (sender is not Window window)

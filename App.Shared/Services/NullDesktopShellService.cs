@@ -28,6 +28,7 @@ public sealed class NullDesktopShellService : IDesktopShellService
 
     public void Show() { }
     public void HideToTray() { }
+    public void OpenNewWindow() { }
     public void RequestQuit() { }
     public void PrepareForProcessExit() { }
 }

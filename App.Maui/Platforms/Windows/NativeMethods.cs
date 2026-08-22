@@ -41,6 +41,7 @@ internal static class NativeMethods
 
     public const uint ID_SHOW = 1;
     public const uint ID_QUIT = 2;
+    public const uint ID_NEW = 3;
 
     public const nuint TraySubclassId = 0x57495A01;
 

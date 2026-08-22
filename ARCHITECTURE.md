@@ -448,15 +448,17 @@ On Windows MAUI, **closing the window is not process exit** when close-to-tray i
 
 | Gesture | Result |
 |---------|--------|
-| Taskbar X / Alt+F4 (close-to-tray on) | Hide to tray; sync + workflows keep running |
+| Taskbar X / Alt+F4 (close-to-tray on) | Last window hides to tray; extra windows close only. Sync + workflows keep running |
+| Second Start-menu launch | One process: restore if tray-hidden, otherwise **new window** (notes vs browser side by side) |
+| Tray **New window** / Settings | Extra MAUI window in this process (not a second `Wizionic.exe`) |
 | Tray **Quit** / Settings **Quit Wizionic** | `PrepareForProcessExit` (NIM_DELETE, stop due host) then process exit — sync and workflows stop |
-| Close-to-tray off | X exits the process (same as before tray) |
+| Close-to-tray off | X on the last window exits the process |
 
 The **Home Server** Windows Service is a separate process. It can stay up after Quit (auth, SignalR signaling, AI proxy) but it does **not** run workflows, hold encrypted chat/note bodies, or accept WebRTC DataChannel payloads. Other devices can sync with this PC only while the MAUI process is alive (including tray-resident).
 
 Workflows stay **device-local** (not moved to the homeserver, not synced). Due ticks: `WorkflowDueHost` on MAUI (all TFMs + Linux GirCore); `WorkflowDueBootstrap` on WASM. Sleep is best-effort: `PowerModeChanged` / `OnResume` fire an immediate `ProcessDueAsync`, but cron `IsDue` still matches the **current** minute only (`once` triggers still catch up).
 
-Optional **Start with Windows** writes HKCU Run to the Velopack root stub. `--start-minimized` is only on that Run command. Single-instance mutex prevents two SQLite writers. Velopack restart while hidden writes `tray-restore.flag` so the new process returns to the tray.
+Optional **Start with Windows** writes HKCU Run to the Velopack root stub. `--start-minimized` is only on that Run command. Single-instance mutex prevents two SQLite writers; extra views are extra **windows**, not extra processes. Velopack restart while hidden writes `tray-restore.flag` so the new process returns to the tray.
 
 **Key files:** `App.Maui/Platforms/Windows/WindowsDesktopHost.cs`, `WindowsTrayIcon.cs`, `WindowsSingleInstance.cs`, `WindowsStartupRegistration.cs`, `App.Maui/Services/WorkflowDueHost.cs`, `TrayRestoreFlag.cs`
 
