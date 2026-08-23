@@ -282,7 +282,9 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         var savedName = await _js.InvokeAsync<string?>("localStorage.getItem", DeviceNameKey);
         if (!string.IsNullOrWhiteSpace(savedName))
         {
-            MyDeviceName = savedName;
+            MyDeviceName = RepairMojibakeDeviceName(savedName);
+            if (!string.Equals(MyDeviceName, savedName, StringComparison.Ordinal))
+                await _js.InvokeVoidAsync("localStorage.setItem", DeviceNameKey, MyDeviceName);
         }
         else
         {
@@ -593,8 +595,14 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         else if (ua.Contains("Firefox/", StringComparison.OrdinalIgnoreCase)) browser = "Firefox";
         else if (ua.Contains("Safari/", StringComparison.OrdinalIgnoreCase) && !ua.Contains("Chrome", StringComparison.OrdinalIgnoreCase)) browser = "Safari";
 
-        return $"{browser} â€¢ {os}";
+        return $"{browser} \u2022 {os}";
     }
+
+    /// <summary>
+    /// Older builds wrote UTF-8 U+2022 (bullet) as Windows-1252 mojibake "â€¢".
+    /// </summary>
+    private static string RepairMojibakeDeviceName(string name) =>
+        name.Replace("\u00E2\u20AC\u00A2", "\u2022", StringComparison.Ordinal);
 
     /// <summary>
     /// Connects (if not already) and registers this device with the server.

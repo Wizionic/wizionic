@@ -275,9 +275,16 @@
             {
                 <div class="sync-muted-text" style="margin-bottom:8px;">
                     Used: <strong>@FormatBytes(_quotaSnapshot.AppUsageBytes)</strong>
+                    (chat @FormatBytes(_quotaSnapshot.ChatHistoryBytes),
+                    notes @FormatBytes(_quotaSnapshot.NotesBytes),
+                    gallery @FormatBytes(_quotaSnapshot.GalleryBytes))
                     · Capacity: <strong>@FormatBytes(_quotaSnapshot.AvailableCapacityBytes)</strong>
                     · Your limit: <strong>@FormatBytes(_quotaSnapshot.EffectiveLimitBytes)</strong>
                     (@_quotaPercent.ToString("0")%)
+                    @if (_quotaSnapshot.OtherBytes > 0)
+                    {
+                        <span> · On disk (SQLite overhead): @FormatBytes(_quotaSnapshot.OtherBytes)</span>
+                    }
                 </div>
                 <div style="height:8px;background:var(--color-bg-muted,#eee);border-radius:4px;overflow:hidden;margin-bottom:12px;">
                     <div style="height:100%;width:@QuotaBarPercent()%;background:var(--primary-blue,#4a90d9);"></div>

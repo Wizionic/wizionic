@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using App.Core.Sync;
 using SIPSorcery.Net;
 
@@ -22,7 +25,9 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
     };
 
     private readonly ConcurrentDictionary<string, PeerEntry> _peers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, List<string>> _orphanIce = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _peerGate = new(1, 1);
+    private static readonly Regex IceHostRegex = new(@"candidate:\S+\s+\d+\s+\S+\s+\d+\s+(\S+)\s+\d+\s+typ", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public async Task CreatePeerConnectionAsync(string peerId, IWebRtcTransportCallbacks callbacks, CancellationToken ct = default)
     {
@@ -40,12 +45,26 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
             var entry = new PeerEntry(pc, callbacks);
             _peers[peerId] = entry;
 
+            if (_orphanIce.TryRemove(peerId, out var orphan) && orphan.Count > 0)
+                entry.IceQueue.AddRange(orphan);
+
             pc.onicecandidate += iceCandidate =>
             {
                 if (iceCandidate == null || entry.SuppressCallbacks) return;
                 try
                 {
                     var json = iceCandidate.toJSON();
+                    if (string.IsNullOrWhiteSpace(json))
+                        return;
+                    if (!json.TrimStart().StartsWith('{'))
+                    {
+                        json = JsonSerializer.Serialize(new
+                        {
+                            candidate = json,
+                            sdpMid = "0",
+                            sdpMLineIndex = 0
+                        });
+                    }
                     _ = callbacks.OnIceCandidateAsync(peerId, json, CancellationToken.None);
                 }
                 catch (Exception ex)
@@ -108,7 +127,7 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
             if (!_peers.TryGetValue(peerId, out var entry))
                 return null;
 
-            var offer = entry.Pc.createOffer(null);
+            var offer = entry.Pc.createOffer(new RTCOfferOptions { X_WaitForIceGatheringToComplete = true });
             await entry.Pc.setLocalDescription(offer);
             return SerializeSessionDescription(offer);
         }
@@ -126,7 +145,7 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
             if (!_peers.TryGetValue(peerId, out var entry))
                 return null;
 
-            var answer = entry.Pc.createAnswer();
+            var answer = entry.Pc.createAnswer(new RTCAnswerOptions { X_WaitForIceGatheringToComplete = true });
             await entry.Pc.setLocalDescription(answer);
             return SerializeSessionDescription(answer);
         }
@@ -179,7 +198,8 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
         {
             if (!_peers.TryGetValue(peerId, out var entry))
             {
-                Console.WriteLine($"[SipsorceryWebRtc] addIceCandidate: no connection for {peerId}");
+                var bucket = _orphanIce.GetOrAdd(peerId, _ => []);
+                bucket.Add(candidateJson);
                 return;
             }
 
@@ -302,18 +322,75 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
 
     private static async Task AddIceCandidateInternalAsync(PeerEntry entry, string candidateJson)
     {
-        try
+        foreach (var json in ExpandMdnsCandidates(candidateJson))
         {
-            var candidate = JsonSerializer.Deserialize<RTCIceCandidateInit>(candidateJson, JsonOpts);
-            if (candidate != null)
+            try
+            {
+                var candidate = JsonSerializer.Deserialize<RTCIceCandidateInit>(json, JsonOpts);
+                if (candidate == null)
+                    continue;
                 entry.Pc.addIceCandidate(candidate);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SipsorceryWebRtc] addIceCandidate parse failed: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SipsorceryWebRtc] addIceCandidate failed: {ex.Message}");
+            }
         }
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Chromium hides LAN IPs as *.local mDNS. SIPSorcery cannot resolve those, so ICE never
+    /// completes on the same PC / same LAN. Duplicate the candidate with each local IPv4.
+    /// </summary>
+    private static List<string> ExpandMdnsCandidates(string candidateJson)
+    {
+        var list = new List<string> { candidateJson };
+        try
+        {
+            using var doc = JsonDocument.Parse(candidateJson);
+            if (!doc.RootElement.TryGetProperty("candidate", out var candProp))
+                return list;
+            var line = candProp.GetString() ?? "";
+            var match = IceHostRegex.Match(line);
+            if (!match.Success)
+                return list;
+            var host = match.Groups[1].Value;
+            if (!host.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+                return list;
+
+            foreach (var ip in LocalIPv4Addresses())
+            {
+                var rewritten = line.Replace(host, ip, StringComparison.OrdinalIgnoreCase);
+                var obj = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(candidateJson);
+                if (obj == null) continue;
+                obj["candidate"] = JsonSerializer.SerializeToElement(rewritten);
+                list.Add(JsonSerializer.Serialize(obj));
+            }
+        }
+        catch
+        {
+            // keep original
+        }
+
+        return list;
+    }
+
+    private static IEnumerable<string> LocalIPv4Addresses()
+    {
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up)
+                continue;
+            if (nic.NetworkInterfaceType is NetworkInterfaceType.Loopback)
+                continue;
+            foreach (var addr in nic.GetIPProperties().UnicastAddresses)
+            {
+                if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
+                    yield return addr.Address.ToString();
+            }
+        }
     }
 
     private async Task FlushIceQueueAsync(PeerEntry entry)

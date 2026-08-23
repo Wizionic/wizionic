@@ -1,5 +1,6 @@
 using System.Text.Json;
 using App.Core.Connectors;
+using App.Core.Lemonade;
 using App.Core.Skills;
 using App.Core.Storage;
 using App.Core.Sync;
@@ -119,21 +120,70 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             return false;
 
         var localTicks = await GetTimestampAsync(payload.Category, ct);
-        if (localTicks <= 0)
+        var remoteTicks = payload.UpdatedTicks;
+
+        // Explicit later save always wins. 0/1 means "never saved on that device".
+        if (remoteTicks > localTicks)
             return true;
 
-        if (payload.UpdatedTicks > localTicks)
-            return true;
-
-        if (payload.UpdatedTicks < localTicks)
+        if (remoteTicks < localTicks)
             return false;
 
-        // Same clock: accept if content differs (fingerprint mismatch).
+        // Same clock, both never-touched: do not let a peer's factory defaults
+        // overwrite a device that already has real Lemonade/Ollama config.
         var local = await ExportAsync(payload.Category, ct);
         if (local == null)
             return true;
 
-        return !string.Equals(local.DataJson, payload.DataJson, StringComparison.Ordinal);
+        if (string.Equals(local.DataJson, payload.DataJson, StringComparison.Ordinal))
+            return false;
+
+        if (localTicks <= 1
+            && HasSubstantialSettings(local.DataJson, payload.Category)
+            && !HasSubstantialSettings(payload.DataJson, payload.Category))
+            return false;
+
+        return localTicks > 1;
+    }
+
+    /// <summary>
+    /// True when the blob looks like a user-configured category rather than an empty default.
+    /// </summary>
+    private bool HasSubstantialSettings(string? dataJson, string category)
+    {
+        if (string.IsNullOrWhiteSpace(dataJson) || dataJson is "{}" or "[]" or "null")
+            return false;
+
+        try
+        {
+            if (string.Equals(category, SettingsSyncCategory.Lemonade, StringComparison.Ordinal))
+            {
+                var dto = JsonSerializer.Deserialize<LemonadeSyncDto>(dataJson, JsonOpts);
+                if (dto == null) return false;
+                var url = LemonadeModelCatalogResolver.NormalizeBaseUrl(dto.BaseUrl);
+                if (!string.Equals(url, "http://localhost:13305", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (!string.IsNullOrWhiteSpace(dto.ApiKey)) return true;
+                return dto.Models is { Count: > 0 };
+            }
+
+            if (string.Equals(category, SettingsSyncCategory.LocalAi, StringComparison.Ordinal))
+            {
+                var dto = JsonSerializer.Deserialize<LocalAiSyncDto>(dataJson, JsonOpts);
+                if (dto == null) return false;
+                var url = (dto.BaseUrl ?? "").Trim().TrimEnd('/');
+                if (!string.IsNullOrWhiteSpace(url)
+                    && !string.Equals(url, "http://localhost:11434", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                return dto.Models is { Count: > 0 };
+            }
+        }
+        catch
+        {
+            // Fall through to length heuristic.
+        }
+
+        return dataJson.Length > 120;
     }
 
     public async Task ApplyAsync(SettingsSyncPayload payload, CancellationToken ct = default)
@@ -510,15 +560,24 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         if (dto == null || _js == null)
             return;
 
-        if (_theme != null && !string.IsNullOrWhiteSpace(dto.Theme))
-            await _theme.SetThemeAsync(dto.Theme, _js, ct);
-
-        if (_navLayout != null && !string.IsNullOrWhiteSpace(dto.NavLayout))
+        try
         {
-            var mode = Enum.TryParse<NavLayoutMode>(dto.NavLayout, ignoreCase: true, out var parsed)
-                ? parsed
-                : NavLayoutMode.Top;
-            await _navLayout.SetModeAsync(mode, _js, ct);
+            if (_theme != null && !string.IsNullOrWhiteSpace(dto.Theme))
+                await _theme.SetThemeAsync(dto.Theme, _js, ct);
+
+            if (_navLayout != null && !string.IsNullOrWhiteSpace(dto.NavLayout))
+            {
+                var mode = Enum.TryParse<NavLayoutMode>(dto.NavLayout, ignoreCase: true, out var parsed)
+                    ? parsed
+                    : NavLayoutMode.Top;
+                await _navLayout.SetModeAsync(mode, _js, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Blazor Hybrid can throw when appearance JS runs off the WebView dispatcher
+            // (e.g. a DataChannel callback). The blob is already persisted.
+            SyncDebugLog.Info($"Appearance JS apply skipped: {ex.Message}");
         }
     }
 

@@ -73,25 +73,21 @@ public sealed class MauiStorageQuotaService : IStorageQuotaService
         var galleryLegacy = await _history.SumContentLengthAsync("album_content", ct);
         var gallery = galleryImages + galleryLegacy;
 
-        long fileBytes = 0;
+        // On-disk size of the app data DB only (not help_rag.db / other files under AppData).
+        long dbBytes = 0;
         try
         {
-            if (Directory.Exists(_dataRoot))
-            {
-                foreach (var file in Directory.EnumerateFiles(_dataRoot, "*", SearchOption.AllDirectories))
-                {
-                    try { fileBytes += new FileInfo(file).Length; }
-                    catch { /* skip */ }
-                }
-            }
+            dbBytes = FileSizeIfExists(_history.DatabasePath)
+                      + FileSizeIfExists(_history.DatabasePath + "-wal")
+                      + FileSizeIfExists(_history.DatabasePath + "-shm");
         }
         catch { /* ignore */ }
 
-        // App "used" for quota enforcement = max(sum of live content, on-disk file size)
-        // so freelist/SQLite overhead is visible until Compact, but deletes still drop content sum immediately.
+        // "Used" on the Sync page is live encrypted content so deletes drop immediately.
+        // OtherBytes is SQLite file overhead (WAL / freelist) until Compact.
         var contentSum = chat + notes + gallery;
-        var usage = Math.Max(contentSum, fileBytes);
-        var other = Math.Max(0, usage - contentSum);
+        var usage = contentSum;
+        var other = Math.Max(0, dbBytes - contentSum);
 
         long free = 0;
         var source = "unknown";
@@ -134,5 +130,17 @@ public sealed class MauiStorageQuotaService : IStorageQuotaService
         if (additionalBytes <= 0) return true;
         var snap = await GetSnapshotAsync(ct);
         return snap.AppUsageBytes + additionalBytes <= snap.EffectiveLimitBytes;
+    }
+
+    private static long FileSizeIfExists(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 }

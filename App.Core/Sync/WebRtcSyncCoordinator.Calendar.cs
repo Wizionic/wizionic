@@ -304,7 +304,7 @@ public sealed partial class WebRtcSyncCoordinator
 
         if (type == "calendar-sync-ack" && itemId != null)
         {
-            HandleGenericItemAck("calendar-sync-ack", itemId, peerId);
+            await HandleGenericItemAckAsync("calendar-sync-ack", itemId, peerId);
             return true;
         }
 
@@ -332,7 +332,7 @@ public sealed partial class WebRtcSyncCoordinator
 
         if (type == "calendar-event-sync-ack" && itemId != null)
         {
-            HandleGenericItemAck("calendar-event-sync-ack", itemId, peerId);
+            await HandleGenericItemAckAsync("calendar-event-sync-ack", itemId, peerId);
             return true;
         }
 
@@ -350,7 +350,7 @@ public sealed partial class WebRtcSyncCoordinator
 
         if (type == "calendar-delete-ack" && itemId != null)
         {
-            HandleGenericItemAck("calendar-delete-ack", itemId, peerId);
+            await HandleGenericItemAckAsync("calendar-delete-ack", itemId, peerId);
             return true;
         }
 
@@ -368,7 +368,7 @@ public sealed partial class WebRtcSyncCoordinator
 
         if (type == "calendar-event-delete-ack" && itemId != null)
         {
-            HandleGenericItemAck("calendar-event-delete-ack", itemId, peerId);
+            await HandleGenericItemAckAsync("calendar-event-delete-ack", itemId, peerId);
             return true;
         }
 
