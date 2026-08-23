@@ -1053,6 +1053,17 @@ A **Home Server** install uses its own DB path (not overwritten by desktop app u
 
 ---
 
+## UI copy (keep the chrome short)
+
+Settings and setup pages stay **clean and short**: labels, one-line leads, and `?` glyphs. How-to, caveats, and step lists belong in in-app Help (`docs/user/` + `App.Shared/wwwroot/help/`), not as paragraphs under every field.
+
+When adding or changing a page:
+
+- Prefer a `HelpGlyph` on the heading (and on any field that needs a procedure, e.g. Home Assistant’s long-lived token).
+- Put the procedure in the matching article with an `{#anchor}` and a catalog topic (`toc: false` for subsections).
+- Edit **both** `docs/user/` and `wwwroot/help/` (or copy the folder).
+- Do not re-paste the help article into the Razor page. If the UI feels wordy, move the text to Help.
+
 ## In-app Help and optional RAG
 
 Help is **browse-first**. Articles ship inside the app (no model required to read them). Optional **Ask** retrieves a few chunks from those articles and answers with a user-chosen chat model. Chat history, notes, and `ARCHITECTURE.md` are never indexed.
@@ -1182,7 +1193,7 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | `Components/ToolsPage.razor` | `/tools` | Tabs: Skills (SKILL.md) + Tools (OAuth catalog + MCP registry) |
  | `Components/SkillsPanel.razor` | (in `/tools`) | Create/upload/edit/run Agent Skills |
  | `Components/SetupWizard.razor` | (overlay) | MAUI: optional Home Server / Lemonade / Ollama install |
- | `Components/HomeAssistantPage.razor` | `/home-assistant` | HA URL, token, wake word, device list (MAUI) |
+ | `Components/HomeAssistantPage.razor` | `/home-assistant` | HA URL, token (`?` → help), area-grouped devices (MAUI). Wake word lives in Settings → Voice. |
  | `Components/EmbeddedBrowser.razor` | (in `/chat` split) | Embedded browser chrome, PWA toolbar (MAUI) |
  | `Components/ThemeBootstrap.razor` | (layout) | Applies saved theme on load |
  | `Layout/AppLayout.razor` | - | Main cohesive layout for both WASM & MAUI |

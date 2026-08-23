@@ -32,4 +32,11 @@ public sealed class NullSmartHomeService : ISmartHomeService
 
     public Task<string> ListLightEntitiesAsync(CancellationToken ct = default) =>
         Task.FromResult("Smart home integration is not available on this platform.");
+
+    public Task<HaInstanceInfo> GetInstanceInfoAsync(CancellationToken ct = default) =>
+        Task.FromResult(new HaInstanceInfo(
+            false, null, null, null, "Smart home integration is not available on this platform."));
+
+    public Task<IReadOnlyList<HaDeviceRow>> GetDeviceRowsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<HaDeviceRow>>([]);
 }

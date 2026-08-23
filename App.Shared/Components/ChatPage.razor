@@ -538,6 +538,18 @@
                             </button>
                         }
 
+                        @if (ShowSpeechActions && IsSttAvailable && IsTtsAvailable)
+                        {
+                            <button type="button"
+                                    class="action-btn @(voiceModeOn ? "mic-recording" : "")"
+                                    title="@(voiceModeOn ? "Voice mode on — click to stop" : $"Voice mode — listen for “{KeyStore.AssistantName}”")"
+                                    disabled="@(isSending && !voiceModeOn)"
+                                    @onclick="ToggleVoiceModeAsync"
+                                    style="@(voiceModeOn ? "color:#e11d48;" : null)">
+                                <i class="bi @(voiceModeOn ? "bi-soundwave" : "bi-soundwave")"></i>
+                            </button>
+                        }
+
                         @if (ShowSpeechActions && IsTtsAvailable)
                         {
                             <button type="button"
@@ -546,13 +558,6 @@
                                     @onclick="() => autoSpeakReplies = !autoSpeakReplies"
                                     style="@(autoSpeakReplies ? "color:var(--color-accent, #2563eb);" : null)">
                                 <i class="bi @(autoSpeakReplies ? "bi-volume-up-fill" : "bi-volume-mute")"></i>
-                            </button>
-                            <button type="button"
-                                    class="action-btn"
-                                    title="Read last assistant reply aloud"
-                                    disabled="@(isSending || ttsBusyIndex != null)"
-                                    @onclick="SpeakLastAssistantMessageAsync">
-                                <i class="bi bi-soundwave"></i>
                             </button>
                         }
 
@@ -571,12 +576,18 @@
                         {
                             <button id="chat-send-btn"
                                     class="send-btn"
-                                    @onclick="Send">
+                                    @onclick="() => Send()">
                                 <i class="bi bi-arrow-up-circle-fill"></i>
                             </button>
                         }
                     </div>
-                    @if (isMicRecording)
+                    @if (voiceModeOn)
+                    {
+                        <div style="font-size:0.75em; color:#e11d48; padding:2px 8px 6px;">
+                            @(voiceStatusMessage ?? $"Listening for “{KeyStore.AssistantName}”… pause when you finish speaking.")
+                        </div>
+                    }
+                    else if (isMicRecording)
                     {
                         <div style="font-size:0.75em; color:#e11d48; padding:2px 8px 6px;">
                             Recording… click the mic again to stop and transcribe@(SttModelHint is { } sttHint ? $" with {sttHint}" : "").
@@ -1079,6 +1090,13 @@
     int? ttsBusyIndex;
     string? ttsStatusMessage;
     CancellationTokenSource? _ttsCts;
+
+    bool voiceModeOn;
+    bool voiceAwaitingWake = true;
+    bool voiceBusy;
+    DateTime voiceSessionUntilUtc;
+    string? voiceStatusMessage;
+    DotNetObjectReference<ChatPage>? _voiceDotNetRef;
 
     string ImageSizeString => $"{imageWidth}x{imageHeight}";
 
@@ -1906,7 +1924,7 @@
 
     async Task ToggleMicRecording()
     {
-        if (isMicTranscribing || isSending)
+        if (isMicTranscribing || isSending || voiceModeOn)
             return;
 
         if (isMicRecording)
@@ -2134,11 +2152,14 @@
         _ttsCts?.Cancel();
         _sendCts?.Cancel();
         try { _ = JS.InvokeVoidAsync("appMicCancel"); } catch { }
+        try { _ = JS.InvokeVoidAsync("appVoiceListenStop"); } catch { }
         try { _ = JS.InvokeVoidAsync("appStopAudio"); } catch { }
 
         dotNetRef?.Dispose();
         _reorderDotNetRef?.Dispose();
         _reorderDotNetRef = null;
+        _voiceDotNetRef?.Dispose();
+        _voiceDotNetRef = null;
     }
 
     static bool IsImageOnlyAssistantMessage(ChatMessage msg)
@@ -2177,7 +2198,198 @@
         StateHasChanged();
     }
 
-    async Task SpeakMessageAsync(int index)
+    async Task ToggleVoiceModeAsync()
+    {
+        if (voiceModeOn)
+        {
+            await StopVoiceModeAsync();
+            return;
+        }
+
+        if (!IsSttAvailable || !IsTtsAvailable)
+        {
+            micStatusIsError = true;
+            micStatusMessage = "Voice mode needs both speech-to-text and text-to-speech (Lemonade or a cloud speech model).";
+            return;
+        }
+
+        if (isMicRecording)
+            await StopMicAndTranscribeAsync();
+
+        _voiceDotNetRef ??= DotNetObjectReference.Create(this);
+        try
+        {
+            var start = await JS.InvokeAsync<MicStartResult>("appVoiceListenStart", _voiceDotNetRef, new
+            {
+                silenceMs = 1100,
+                minSpeechMs = 350
+            });
+            if (start is not { Ok: true })
+            {
+                micStatusIsError = true;
+                micStatusMessage = start?.Error ?? "Could not start voice mode.";
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            micStatusIsError = true;
+            micStatusMessage = "Voice mode error: " + ex.Message;
+            return;
+        }
+
+        voiceModeOn = true;
+        voiceAwaitingWake = true;
+        voiceSessionUntilUtc = DateTime.MinValue;
+        voiceStatusMessage = $"Listening for “{KeyStore.AssistantName}”…";
+        micStatusMessage = null;
+        StateHasChanged();
+    }
+
+    async Task StopVoiceModeAsync()
+    {
+        voiceModeOn = false;
+        voiceBusy = false;
+        voiceAwaitingWake = true;
+        voiceStatusMessage = null;
+        try { await JS.InvokeVoidAsync("appVoiceListenStop"); } catch { }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnVoiceSpeechStart()
+    {
+        if (!voiceModeOn || voiceBusy || isSending)
+            return;
+        voiceStatusMessage = "Heard you — pause when the command is done.";
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnVoiceUtterance(string base64, int durationMs) =>
+        InvokeAsync(() => HandleVoiceUtteranceAsync(base64, durationMs));
+
+    async Task HandleVoiceUtteranceAsync(string base64, int durationMs)
+    {
+        if (!voiceModeOn || voiceBusy || isSending || isMicTranscribing)
+            return;
+        if (string.IsNullOrWhiteSpace(base64) || durationMs < 250)
+            return;
+
+        var followUps = KeyStore.GetUserProfile().VoiceFollowUpWithoutWake;
+        var name = KeyStore.AssistantName;
+        var sessionLive = followUps && DateTime.UtcNow <= voiceSessionUntilUtc;
+
+        // Ambient music / long noise: don't STT unless we're in a follow-up window.
+        if (durationMs > 8000 && !sessionLive)
+            return;
+
+        voiceBusy = true;
+        try { await JS.InvokeVoidAsync("appVoiceSetMuted", true); } catch { }
+        voiceStatusMessage = "Transcribing…";
+        StateHasChanged();
+
+        try
+        {
+            byte[] wavBytes;
+            try { wavBytes = Convert.FromBase64String(base64); }
+            catch
+            {
+                voiceStatusMessage = "Could not decode speech.";
+                return;
+            }
+
+            var transcript = await TranscribeWavBytesAsync(wavBytes);
+            if (string.IsNullOrWhiteSpace(transcript))
+            {
+                voiceStatusMessage = $"Listening for “{name}”…";
+                return;
+            }
+
+            var heardWake = ContextualRequestRouter.ContainsWakeWord(transcript, name);
+            var remainder = HomeAssistantFallback.StripWakeWord(transcript, name).Trim().Trim(',', '.', '!', '?');
+            var toSend = transcript.Trim();
+
+            if (!heardWake && !sessionLive)
+            {
+                voiceStatusMessage = $"Listening for “{name}”…";
+                return;
+            }
+
+            if (heardWake && string.IsNullOrWhiteSpace(remainder))
+            {
+                if (followUps)
+                {
+                    voiceAwaitingWake = false;
+                    voiceSessionUntilUtc = DateTime.UtcNow.AddSeconds(30);
+                    voiceStatusMessage = "Go ahead.";
+                    return;
+                }
+
+                voiceStatusMessage = $"Listening for “{name}”…";
+                return;
+            }
+
+            if (!heardWake && sessionLive && !string.IsNullOrWhiteSpace(name))
+                toSend = name + ", " + toSend;
+
+            if (followUps)
+            {
+                voiceAwaitingWake = false;
+                voiceSessionUntilUtc = DateTime.UtcNow.AddSeconds(30);
+            }
+            else
+            {
+                voiceAwaitingWake = true;
+                voiceSessionUntilUtc = DateTime.MinValue;
+            }
+
+            voiceStatusMessage = "Sending…";
+            StateHasChanged();
+            await Send(toSend);
+        }
+        catch (Exception ex)
+        {
+            voiceStatusMessage = "Voice error: " + ex.Message;
+        }
+        finally
+        {
+            voiceBusy = false;
+            if (voiceModeOn && !isSending)
+            {
+                try { await JS.InvokeVoidAsync("appVoiceSetMuted", false); } catch { }
+                if (string.IsNullOrWhiteSpace(voiceStatusMessage) || voiceStatusMessage == "Sending…" || voiceStatusMessage == "Transcribing…")
+                    voiceStatusMessage = $"Listening for “{KeyStore.AssistantName}”…";
+            }
+            StateHasChanged();
+        }
+    }
+
+    async Task<string?> TranscribeWavBytesAsync(byte[] wavBytes)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        if (UseCloudSpeech && SpeechCloudProviderId != null)
+        {
+            var sttSlot = ModelProfileId.ResolveSttModelId(KeyStore);
+            ModelProfileId.TryCloudProvider(sttSlot, out _, out var sttModel);
+            var result = await CloudSpeech.TranscribeAsync(new CloudTranscriptionRequest(
+                ProviderId: SpeechCloudProviderId,
+                WavBytes: wavBytes,
+                Model: sttModel ?? CloudSpeech.DefaultSttModel(SpeechCloudProviderId),
+                Language: null,
+                FileName: "voice-mode.wav"), cts.Token);
+            return result.Success ? result.Text : null;
+        }
+
+        var local = await LemonadeSpeech.TranscribeAsync(new LemonadeTranscriptionRequest(
+            WavBytes: wavBytes,
+            Model: LemonadeSpeech.DefaultSttModel,
+            Language: null,
+            FileName: "voice-mode.wav"), cts.Token);
+        return local.Success ? local.Text : null;
+    }
+
+    async Task SpeakMessageAsync(int index, bool waitForEnd = false)
     {
         if (!IsTtsAvailable)
             return;
@@ -2244,7 +2456,8 @@
                 contentType = result.ContentType ?? "audio/mpeg";
             }
 
-            var play = await JS.InvokeAsync<string>("appPlayAudioBase64", audioB64, contentType);
+            var playFn = waitForEnd ? "appPlayAudioBase64Wait" : "appPlayAudioBase64";
+            var play = await JS.InvokeAsync<string>(playFn, audioB64, contentType);
             if (play != "ok")
                 ttsStatusMessage = "Playback failed: " + play;
         }
@@ -2712,11 +2925,14 @@
         StateHasChanged();
     }
 
-    async Task Send()
+    async Task Send(string? overrideText = null)
     {
-        string currentMessage = "";
-        try { currentMessage = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
-        catch { /* ignore */ }
+        string currentMessage = overrideText ?? "";
+        if (string.IsNullOrWhiteSpace(currentMessage))
+        {
+            try { currentMessage = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
+            catch { /* ignore */ }
+        }
 
         _slashSuggestions = new();
 
@@ -2824,11 +3040,37 @@
             var wasStopped = statsLine?.Contains("stopped", StringComparison.OrdinalIgnoreCase) == true
                              || accumulated.Contains("Generation stopped", StringComparison.OrdinalIgnoreCase);
 
-            if (!wasStopped && autoSpeakReplies && IsTtsAvailable && !hasOmniAudio &&
+            if (!wasStopped && (voiceModeOn || autoSpeakReplies) && IsTtsAvailable && !hasOmniAudio &&
                 !string.IsNullOrWhiteSpace(accumulated) &&
                 !accumulated.StartsWith("Error calling provider", StringComparison.OrdinalIgnoreCase))
             {
-                _ = SpeakMessageAsync(botIndex);
+                if (voiceModeOn)
+                {
+                    voiceStatusMessage = "Speaking…";
+                    StateHasChanged();
+                    try { await JS.InvokeVoidAsync("appVoiceSetMuted", true); } catch { }
+                    await SpeakMessageAsync(botIndex, waitForEnd: true);
+                    if (voiceModeOn)
+                    {
+                        var followUps = KeyStore.GetUserProfile().VoiceFollowUpWithoutWake;
+                        if (followUps)
+                        {
+                            voiceSessionUntilUtc = DateTime.UtcNow.AddSeconds(30);
+                            voiceAwaitingWake = false;
+                        }
+                        else
+                        {
+                            voiceSessionUntilUtc = DateTime.MinValue;
+                            voiceAwaitingWake = true;
+                        }
+                        voiceStatusMessage = $"Listening for “{KeyStore.AssistantName}”…";
+                        try { await JS.InvokeVoidAsync("appVoiceSetMuted", false); } catch { }
+                    }
+                }
+                else
+                {
+                    _ = SpeakMessageAsync(botIndex);
+                }
             }
             else if (!wasStopped && hasOmniAudio && resultAtts != null)
             {

@@ -42,6 +42,10 @@ Full write-up: [`ARCHITECTURE.md`](ARCHITECTURE.md) (repo root; not a public sit
 - **Do not `git push`, create a GitHub PR, or force-update a remote branch unless the user explicitly says to push or that the work is ready.**
 - Leave the working tree in place so the user can inspect and make small edits in Visual Studio / VS Code first.
 
+## UI
+
+Keep settings and setup **short**. Labels and a one-line lead are enough; procedures go in Help (`docs/user/` and the copy in `App.Shared/wwwroot/help/`). Wire a `HelpGlyph` on new headings (and on fields that need steps, like Home Assistant’s long-lived token). Do not duplicate help articles as Razor paragraphs. See **UI copy** in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ## Constraints & gotchas
 
 - No unit tests — manual validation via running app is the primary testing approach.

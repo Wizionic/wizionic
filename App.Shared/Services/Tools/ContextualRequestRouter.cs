@@ -98,6 +98,18 @@ public sealed class ContextualRequestRouter : IRequestRouter
                     includeMcp: true,
                     source: "Rules");
             }
+
+            // Device-control language (play music on AVR, kitchen light, …) without repeating the wake word.
+            if (MessageSuggestsHomeAssistant(message))
+            {
+                var modules = new List<string> { "HomeAssistant", "Native" };
+                return RequestRoute.WithModules(
+                    modules,
+                    "Home Assistant device intent",
+                    targetModule: "HomeAssistant",
+                    includeMcp: true,
+                    source: "Rules");
+            }
         }
 
         // Hard route: browser panel open
@@ -505,8 +517,7 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
     /// <summary>
     /// Smart-home control language without requiring the HA wake word.
-    /// Used by the AI router fallback so pure AI/Hybrid can open HomeAssistant tools.
-    /// Rules-only mode still requires the wake word / active session (avoids false HA on every chat).
+    /// Used by Rules (device intent) and by the AI router fallback.
     /// </summary>
     public static bool MessageSuggestsHomeAssistant(string message)
     {
@@ -520,12 +531,23 @@ public sealed class ContextualRequestRouter : IRequestRouter
             || m.Contains("switch") || m.Contains("outlet") || m.Contains("plug")
             || m.Contains("thermostat") || m.Contains("climate") || m.Contains("hvac")
             || m.Contains("temperature set") || m.Contains("set temperature")
-            || m.Contains("media player") || m.Contains("tv ") || m.Contains(" tv")
+            || m.Contains("media player") || m.Contains("media_player")
+            || m.Contains("tv ") || m.Contains(" tv")
             || m.Contains("volume") || m.Contains("mute") || m.Contains("unmute")
             || m.Contains("cover") || m.Contains("blinds") || m.Contains("garage")
             || m.Contains("lock the") || m.Contains("unlock") || m.Contains("door lock")
             || m.Contains("vacuum") || m.Contains("scene ") || m.Contains("activate scene")
-            || m.Contains("home assistant") || m.Contains("smart home"))
+            || m.Contains("home assistant") || m.Contains("smart home")
+            || m.Contains("avr") || m.Contains("receiver") || m.Contains("soundbar")
+            || m.Contains("sound bar") || m.Contains("denon") || m.Contains("sonos")
+            || m.Contains("yamaha") || m.Contains("heos") || m.Contains("chromecast")
+            || m.Contains("shield") || m.Contains("speaker") || m.Contains("stereo"))
+            return true;
+
+        // Play/pause/stop media on a house device
+        if ((m.Contains("play") || m.Contains("pause") || m.Contains("resume") || m.Contains("stop"))
+            && (m.Contains("music") || m.Contains("song") || m.Contains("media")
+                || m.Contains("on my") || m.Contains("on the")))
             return true;
 
         // Actions commonly paired with HA

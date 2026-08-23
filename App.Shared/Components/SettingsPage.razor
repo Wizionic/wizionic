@@ -117,6 +117,36 @@
         }
     </div>
 
+    <!-- Voice / wake word (used with or without Home Assistant) -->
+    <div class="settings-card">
+        <h3 class="help-heading" style="margin: 0 0 0.25rem;">Voice <HelpGlyph Topic="settings-voice" /></h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+            Assistant name is the wake word for Voice mode in Chat.
+            Two or more syllables works better for example — e.g. <code>Hey Bro</code> or <code>Wizionic</code>.
+        </p>
+        <label>Assistant name (wake word)</label>
+        <input type="text"
+               class="form-control"
+               maxlength="48"
+               autocomplete="off"
+               spellcheck="false"
+               @bind="profileDraft.AssistantName"
+               placeholder="Home" />
+        <div class="ollama-toggle-row" style="margin-top: 0.85rem;">
+            <div>
+                <label class="ollama-toggle-label">Keep listening after a command (30s)</label>
+
+            </div>
+            <label class="ollama-toggle">
+                <input type="checkbox" @bind="profileDraft.VoiceFollowUpWithoutWake" />
+                <span class="ollama-toggle-slider"></span>
+            </label>
+        </div>
+        <div style="margin-top: 0.75rem;">
+            <button type="button" @onclick="SaveProfile" class="btn btn-outline-secondary btn-sm">Save voice settings</button>
+        </div>
+    </div>
+
     @if (DesktopShell.IsSupported)
     {
         <div class="settings-card">
@@ -324,10 +354,6 @@
     <!-- Reply length -->
     <div class="settings-card" style="margin-top: 1rem;">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Reply length <HelpGlyph Topic="settings-reply-length" /></h3>
-        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
-            Maximum new tokens the model may generate in one chat reply (includes hidden thinking on models that reason first).
-            This is an app limit, not the model’s context window. Default is 16,384.
-        </p>
         <label>Max output tokens</label>
         <input type="number"
                class="form-control form-control-sm"
@@ -359,13 +385,6 @@
     <!-- Tool routing -->
     <div class="settings-card" style="margin-top: 1rem;">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Tool routing <HelpGlyph Topic="tool-routing" /></h3>
-        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
-            Decides which tool modules (Native, Lemonade, Gallery, etc.) are attached before the chat model runs.
-            <strong>Rules</strong> is instant and free.
-            <strong>Hybrid</strong> uses rules for clear cases and a small model for ambiguous multi-intent messages.
-            <strong>AI Router</strong> always classifies with the routing model (falls back to rules on failure).
-        </p>
-
         <label>Mode</label>
         <select class="form-select form-select-sm" style="max-width: 20rem;" @bind="routingModeDraft">
             <option value="Rules">Rules only (default)</option>
@@ -416,11 +435,6 @@
 
     <div class="settings-card" style="margin-top: 1rem;">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Model profiles <HelpGlyph Topic="settings-model-profiles" /></h3>
-        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
-            A profile is a named stack: chat model plus image, edit, speech, routing, and vision proxy.
-            Chat lists profiles at the top of the model menu. Palette, mic, and Speak use these slots — not “whatever provider the chat model belongs to.”
-        </p>
-
         <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
             <select class="form-select form-select-sm" style="max-width: 16rem;" @bind="profileEditId" @bind:after="LoadProfileDraft">
                 <option value="">— new profile —</option>
@@ -538,11 +552,6 @@
 
     <div class="settings-card" style="margin-top: 1rem;">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Help answers <HelpGlyph Topic="settings-help-answers" /></h3>
-        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
-            Optional. Ask in Help uses this chat model and shipped help articles only.
-            A cloud model will send those excerpts and your question to that provider.
-            Browse still works with the model off.
-        </p>
         <label>Answer model</label>
         <select class="form-select form-select-sm" style="max-width: 28rem;" @bind="helpAnswerDraft">
             <option value="">Off — browse only</option>
@@ -582,8 +591,7 @@
     <!-- System prompt -->
     <h3 class="help-heading" style="margin: 1.25rem 0 0.5rem;">System prompt <HelpGlyph Topic="settings-system-prompt" /></h3>
     <p style="color: var(--color-text-muted); font-size: 0.85em; margin-bottom: 0.5rem;">
-        Sent as a system message at the start of each chat request. It is not saved in conversation history or synced to other devices.
-        Use <code>{{datetime}}</code> to insert the current local date and time when a message is sent.
+        Sent as a system message at the start of each chat request. 
     </p>
 
     <textarea @bind="systemPromptDraft"
@@ -614,8 +622,7 @@
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
             <h4>Home Server</h4>
             <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
-                Optional local login server and website. Updates replace program files only —
-                your SQLite login database (stable app data path) is never overwritten.
+                Optional local login server and website app.
             </p>
             <div style="margin: 0.5rem 0; color: var(--color-text-muted); font-size: 0.95em;">
                 Status: <strong>@(homeserverStatusText ?? "…")</strong>
@@ -1473,7 +1480,7 @@
         {
             await KeyStore.SetUserProfileAsync( profileDraft);
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Profile);
-            await ShowSaveFeedbackAsync("About-you settings saved.", isError: false);
+            await ShowSaveFeedbackAsync("Voice and about-you settings saved.", isError: false);
         }
         catch (Exception ex)
         {

@@ -1037,8 +1037,11 @@ public sealed class ChatCompletionService : IChatCompletionService
         sb.AppendLine("2. Optionally GetEntityState to confirm current state.");
         sb.AppendLine("3. Lights: ControlLight (include brightness and color when the user asks).");
         sb.AppendLine("4. Media players (play/pause/volume/source): ControlMediaPlayer — volume_percent is 0-100 (e.g. 50 → half volume).");
-        sb.AppendLine("5. Everything else: CallService(domain, service, service_data JSON with entity_id).");
-        sb.AppendLine("6. If unsure of service names, call ListServices(domain).");
+        sb.AppendLine("5. Climate: ControlClimate (set_temperature / set_hvac_mode / on / off).");
+        sb.AppendLine("6. Covers (garage, blinds): ControlCover (open / close / stop / set_position).");
+        sb.AppendLine("7. Scenes: ActivateScene. Scripts: RunScript.");
+        sb.AppendLine("8. Everything else: CallService(domain, service, service_data JSON with entity_id).");
+        sb.AppendLine("9. If unsure of service names, call ListServices(domain). Search includes area/room names.");
         sb.AppendLine();
         sb.AppendLine("SECONDARY: ProcessConversation sends natural language to HA Assist (good for area phrases). If Assist fails, use ListEntities + CallService/ControlMediaPlayer. Never claim success without a tool result.");
         sb.AppendLine();
@@ -1048,9 +1051,9 @@ public sealed class ChatCompletionService : IChatCompletionService
         sb.AppendLine("- light: ControlLight with state on/off, optional brightness 0-255, color name or #hex");
         sb.AppendLine("- media_player: ControlMediaPlayer (play/pause/stop/on/off/volume/select_source); or CallService volume_set with volume_level 0.0-1.0");
         sb.AppendLine("- switch: turn_on / turn_off");
-        sb.AppendLine("- climate: set_temperature, set_hvac_mode");
-        sb.AppendLine("- cover: open_cover, close_cover, stop_cover");
-        sb.AppendLine("- scene / script: turn_on");
+        sb.AppendLine("- climate: ControlClimate; or CallService set_temperature / set_hvac_mode");
+        sb.AppendLine("- cover: ControlCover (open/close/stop/set_position)");
+        sb.AppendLine("- scene: ActivateScene; script: RunScript");
         sb.AppendLine("- fan: turn_on, turn_off, set_percentage; lock: lock, unlock");
 
         var summary = _keyStore.HomeAssistantDeviceSummary;
@@ -1069,6 +1072,10 @@ public sealed class ChatCompletionService : IChatCompletionService
                 sb.AppendLine($"Last media_player (use for volume/play/pause follow-ups): {session.LastMediaPlayerEntity}.");
             if (!string.IsNullOrWhiteSpace(session.LastLightEntity))
                 sb.AppendLine($"Last light (use for light follow-ups): {session.LastLightEntity}.");
+            if (!string.IsNullOrWhiteSpace(session.LastClimateEntity))
+                sb.AppendLine($"Last climate (use for thermostat follow-ups): {session.LastClimateEntity}.");
+            if (!string.IsNullOrWhiteSpace(session.LastCoverEntity))
+                sb.AppendLine($"Last cover (garage/blinds follow-ups): {session.LastCoverEntity}.");
             if (!string.IsNullOrWhiteSpace(session.LastEntityActedOn))
                 sb.AppendLine($"Most recent entity: {session.LastEntityActedOn}.");
             if (!string.IsNullOrWhiteSpace(session.LastAction))
@@ -1099,6 +1106,14 @@ public sealed class ChatCompletionService : IChatCompletionService
                 entity = ExtractTraceParam(line, "entity") ?? entity;
                 action = ExtractTraceParam(line, "state") ?? action;
             }
+            else if (line.Contains("control_climate", StringComparison.OrdinalIgnoreCase)
+                     || line.Contains("control_cover", StringComparison.OrdinalIgnoreCase)
+                     || line.Contains("activate_scene", StringComparison.OrdinalIgnoreCase)
+                     || line.Contains("run_script", StringComparison.OrdinalIgnoreCase))
+            {
+                entity = ExtractTraceParam(line, "entity") ?? entity;
+                action = ExtractTraceParam(line, "action") ?? action;
+            }
             else if (line.Contains("call_service", StringComparison.OrdinalIgnoreCase))
             {
                 var svcMatch = Regex.Match(line, @"call_service\(([^,\)]+)", RegexOptions.IgnoreCase);
@@ -1124,7 +1139,31 @@ public sealed class ChatCompletionService : IChatCompletionService
         }
 
         _sessions.RecordToolInvocation(conversationId, "HomeAssistant", entity, action);
+        _ = RefreshHomeAssistantCatalogQuietlyAsync();
     }
+
+    private async Task RefreshHomeAssistantCatalogQuietlyAsync()
+    {
+        try
+        {
+            if (!_smartHome.IsConfigured)
+                return;
+            var summary = await _smartHome.BuildDeviceCatalogAsync();
+            if (string.IsNullOrWhiteSpace(summary) || HomeAssistantServiceIsFailure(summary))
+                return;
+            await _keyStore.UpdateHomeAssistantDeviceSummaryAsync(summary);
+        }
+        catch
+        {
+            // Catalog refresh is best-effort; do not fail the chat turn.
+        }
+    }
+
+    private static bool HomeAssistantServiceIsFailure(string summary) =>
+        summary.StartsWith("HA error", StringComparison.OrdinalIgnoreCase)
+        || summary.StartsWith("Connection", StringComparison.OrdinalIgnoreCase)
+        || summary.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase)
+        || summary.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase);
 
     private static string? ExtractTraceParam(string line, string paramName)
     {

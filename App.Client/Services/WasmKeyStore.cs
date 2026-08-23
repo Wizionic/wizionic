@@ -35,6 +35,7 @@ public class WasmKeyStore : IKeyStore
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
     private const string UserMemoriesKey = "wasm-user-memories";
+    private const string AssistantNameKey = "wasm-assistant-name";
     private const string HomeAssistantConfigKey = "wasm-home-assistant-config";
     private const string EncPrefix = "enc:";
 
@@ -215,6 +216,12 @@ public class WasmKeyStore : IKeyStore
             if (loaded != null)
                 _homeAssistantConfig = loaded;
         }
+
+        var storedName = await GetItemAsync(AssistantNameKey, ct);
+        if (!string.IsNullOrWhiteSpace(storedName))
+            _userProfile.AssistantName = storedName.Trim();
+
+        await MigrateAssistantNameFromHomeAssistantAsync(ct);
     }
 
     private void ResetInMemoryState()
@@ -292,14 +299,21 @@ public class WasmKeyStore : IKeyStore
 
     public async Task SetUserProfileAsync(UserProfileSettings profile, CancellationToken ct = default)
     {
+        var name = (profile.AssistantName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            name = (_userProfile.AssistantName ?? "").Trim();
+
         _userProfile = new UserProfileSettings
         {
             CustomizationEnabled = profile.CustomizationEnabled,
             PreferredName = (profile.PreferredName ?? "").Trim(),
-            Occupation = (profile.Occupation ?? "").Trim()
+            Occupation = (profile.Occupation ?? "").Trim(),
+            AssistantName = name,
+            VoiceFollowUpWithoutWake = profile.VoiceFollowUpWithoutWake
         };
         var json = JsonSerializer.Serialize(_userProfile);
         await SetItemAsync(UserProfileKey, json, ct);
+        await PersistAssistantNameKeyAsync(name, ct);
     }
 
     public IReadOnlyList<UserMemory> GetMemories() =>
@@ -1532,25 +1546,71 @@ public class WasmKeyStore : IKeyStore
 
     public string HomeAssistantBaseUrl => _homeAssistantConfig.BaseUrl ?? "";
     public string HomeAssistantToken => _homeAssistantConfig.Token ?? "";
-    public string HomeAssistantAssistantName =>
-        string.IsNullOrWhiteSpace(_homeAssistantConfig.AssistantName)
-            ? "Home"
-            : _homeAssistantConfig.AssistantName.Trim();
+    public string HomeAssistantAssistantName => AssistantName;
     public string HomeAssistantDeviceSummary => _homeAssistantConfig.CachedDeviceSummary ?? "";
     public DateTime? HomeAssistantDeviceSummaryUpdatedAt => _homeAssistantConfig.DeviceSummaryUpdatedAt;
 
+    public string AssistantName
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(_userProfile.AssistantName))
+                return _userProfile.AssistantName.Trim();
+            var ha = (_homeAssistantConfig.AssistantName ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(ha)
+                && !ha.Equals(KeyStoreDefaults.DefaultAssistantName, StringComparison.OrdinalIgnoreCase))
+                return ha;
+            return KeyStoreDefaults.DefaultAssistantName;
+        }
+    }
+
+    public Task SetAssistantNameAsync(string name, CancellationToken ct = default)
+    {
+        var next = _userProfile.Clone();
+        next.AssistantName = (name ?? "").Trim();
+        return SetUserProfileAsync(next, ct);
+    }
+
     public async Task SetHomeAssistantConfigAsync(string baseUrl, string token, string assistantName, CancellationToken ct = default)
     {
+        var incoming = (assistantName ?? "").Trim();
         _homeAssistantConfig = new HomeAssistantConfig
         {
             BaseUrl = baseUrl?.Trim().TrimEnd('/') ?? "",
             Token = HomeAssistantCredentials.NormalizeToken(token),
-            AssistantName = string.IsNullOrWhiteSpace(assistantName) ? "Home" : assistantName.Trim(),
+            AssistantName = incoming,
             CachedDeviceSummary = _homeAssistantConfig.CachedDeviceSummary,
             DeviceSummaryUpdatedAt = _homeAssistantConfig.DeviceSummaryUpdatedAt
         };
         var json = JsonSerializer.Serialize(_homeAssistantConfig);
         await SetItemAsync(HomeAssistantConfigKey, json, ct);
+
+        // Never stamp the old HA default "Home" over a saved wake word.
+        if (string.IsNullOrWhiteSpace(_userProfile.AssistantName)
+            && !string.IsNullOrWhiteSpace(incoming)
+            && !incoming.Equals(KeyStoreDefaults.DefaultAssistantName, StringComparison.OrdinalIgnoreCase))
+        {
+            await SetAssistantNameAsync(incoming, ct);
+        }
+    }
+
+    private async Task PersistAssistantNameKeyAsync(string name, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            await RemoveItemAsync(AssistantNameKey, ct);
+        else
+            await SetItemAsync(AssistantNameKey, name.Trim(), ct);
+    }
+
+    private async Task MigrateAssistantNameFromHomeAssistantAsync(CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_userProfile.AssistantName))
+            return;
+        var ha = (_homeAssistantConfig.AssistantName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(ha)
+            || ha.Equals(KeyStoreDefaults.DefaultAssistantName, StringComparison.OrdinalIgnoreCase))
+            return;
+        await SetAssistantNameAsync(ha, ct);
     }
 
     public async Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default)

@@ -56,6 +56,8 @@ dotnet publish "App.Maui\App.Maui.csproj" `
     -o $MauiOutput
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Default Velopack Setup.exe is per-user (%LocalAppData%\Wizionic) — no admin.
+# Do not add a machine-wide / Program Files flag: unsigned + UAC + MOTW is three warnings.
 vpk pack `
     --packId "Wizionic" `
     --packTitle "Wizionic" `
@@ -65,6 +67,17 @@ vpk pack `
     --mainExe Wizionic.exe `
     --outputDir $ReleasesDir
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# install.ps1 (irm | iex). Checksums for the Setup.exe are SHA256SUMS on the GitHub Release.
+$installScript = Join-Path $PSScriptRoot "install.ps1"
+if (-not (Test-Path -LiteralPath $installScript)) {
+    throw "scripts/install.ps1 is missing"
+}
+Copy-Item -LiteralPath $installScript -Destination (Join-Path $ReleasesDir "install.ps1") -Force
+New-Item -ItemType Directory -Force -Path "wwwroot\releases\windows" | Out-Null
+Copy-Item -LiteralPath $installScript -Destination "wwwroot\releases\windows\install.ps1" -Force
+Copy-Item -LiteralPath $installScript -Destination "wwwroot\install.ps1" -Force
+Write-Host "Wrote install.ps1 to $ReleasesDir"
 
 if (-not $SkipHomeserver) {
     Write-Host "Building Windows Home Server package..."

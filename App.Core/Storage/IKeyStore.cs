@@ -135,9 +135,14 @@ public interface IKeyStore
 
     string HomeAssistantBaseUrl { get; }
     string HomeAssistantToken { get; }
+    /// <summary>Same as <see cref="AssistantName"/>; kept for existing HA routing call sites.</summary>
     string HomeAssistantAssistantName { get; }
     string HomeAssistantDeviceSummary { get; }
     DateTime? HomeAssistantDeviceSummaryUpdatedAt { get; }
     Task SetHomeAssistantConfigAsync(string baseUrl, string token, string assistantName, CancellationToken ct = default);
     Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default);
+
+    /// <summary>Voice-mode wake word and HA chat address. Independent of Home Assistant install.</summary>
+    string AssistantName { get; }
+    Task SetAssistantNameAsync(string name, CancellationToken ct = default);
 }

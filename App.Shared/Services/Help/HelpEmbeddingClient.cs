@@ -118,6 +118,64 @@ public sealed class HelpEmbeddingClient
                 : $"The model returned an empty answer (finish_reason={finish}).");
     }
 
+    /// <summary>
+    /// Short classification call for the tool router. Turns Qwen thinking off so the
+    /// visible content is JSON instead of an empty ME.AI <c>ChatResponse.Text</c>.
+    /// </summary>
+    public async Task<string> CompleteRouterAsync(
+        string modelId,
+        string system,
+        string user,
+        CancellationToken ct = default)
+    {
+        var (baseUrl, apiKey, model) = Resolve(modelId);
+        var url = baseUrl.TrimEnd('/') + "/chat/completions";
+        var messages = new object[]
+        {
+            new { role = "system", content = system },
+            new { role = "user", content = user }
+        };
+
+        var withJson = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["max_tokens"] = 256,
+            ["max_completion_tokens"] = 256,
+            ["temperature"] = 0,
+            ["enable_thinking"] = false,
+            ["chat_template_kwargs"] = new Dictionary<string, object?> { ["enable_thinking"] = false },
+            ["response_format"] = new Dictionary<string, object?> { ["type"] = "json_object" }
+        };
+        var thinkingOff = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["max_tokens"] = 256,
+            ["max_completion_tokens"] = 256,
+            ["temperature"] = 0,
+            ["enable_thinking"] = false,
+            ["chat_template_kwargs"] = new Dictionary<string, object?> { ["enable_thinking"] = false }
+        };
+        var simple = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["max_tokens"] = 256,
+            ["temperature"] = 0
+        };
+
+        var (ok, body) = await PostJsonAsync(url, apiKey, withJson, ct);
+        if (!ok && LooksLikeUnknownField(body))
+            (ok, body) = await PostJsonAsync(url, apiKey, thinkingOff, ct);
+        if (!ok && LooksLikeUnknownField(body))
+            (ok, body) = await PostJsonAsync(url, apiKey, simple, ct);
+        if (!ok)
+            throw new InvalidOperationException($"Router completion failed: {Trim(body)}");
+
+        return ParseCompletionText(body) ?? "";
+    }
+
     internal static string ParseCompletionText(string body)
     {
         if (string.IsNullOrWhiteSpace(body))

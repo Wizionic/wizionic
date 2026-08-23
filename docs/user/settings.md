@@ -31,6 +31,12 @@ If Linux has no system-tray service (typical stock GNOME without the AppIndicato
 
 The Home Server service is separate: it can stay running after you Quit, but it does not run workflows or hold chat/note bodies.
 
+## Voice {#voice}
+
+**Assistant name** is the wake word for Voice mode in Chat (soundwave button). If Home Assistant is connected on the desktop app, the same name addresses smart-home commands (`Hey Bro, turn off the kitchen light`). Two or more syllables work better than a short common word. Stored on this device (and synced with **About you**).
+
+Voice mode listens for the wake word, captures until you pause, sends the command, and speaks the reply. By default it then waits for the wake word again so it does not transcribe music or background noise. Optional **Keep listening after a command** allows ~30s of follow-ups without the name. The mic button is still push-to-talk dictation into the box.
+
 ## About you {#about-you}
 
 Optional name and occupation injected into the system prompt when customization is on. Stored on this device (and synced if you enable settings sync).

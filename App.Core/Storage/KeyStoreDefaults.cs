@@ -8,6 +8,11 @@ public static class KeyStoreDefaults
     public const int MinMaxOutputTokens = 256;
     public const int MaxMaxOutputTokens = 131_072;
 
+    public const string DefaultAssistantName = "Home";
+
+    public static string NormalizeAssistantName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? DefaultAssistantName : name.Trim();
+
     public static int ClampMaxOutputTokens(int value)
     {
         if (value <= 0)
@@ -34,7 +39,7 @@ public static class KeyStoreDefaults
         - Gallery: list_gallery_albums, list_recent_chat_images, save_to_gallery. Prefer generation_id from a just-created image.
         - Cloud image (when a cloud chat model is selected and that provider has an image model): generate_image, edit_image. Prefer these over Lemonade.
         - Lemonade (local, when configured and not superseded by cloud image tools): lemonade_generate_image, lemonade_edit_image, lemonade_text_to_speech. Images appear in chat automatically; call save_to_gallery only if the user asked to keep one.
-        - Desktop only, when configured: Home Assistant (list/control entities, lights, media, services) and the embedded browser (NavigateTo, GetPageContent, ClickElement, FillField).
+        - Desktop only, when configured: Home Assistant (list/control entities, lights, media, climate, covers, scenes, scripts) and the embedded browser (NavigateTo, GetPageContent, ClickElement, FillField).
         - MCP servers and OAuth connectors (Gmail, Calendar, GitHub, Notion, Stripe, etc.) only if the user enabled them. Prefer the smallest set of tools that finishes the request.
 
         **Style**
