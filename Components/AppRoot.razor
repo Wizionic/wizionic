@@ -1213,6 +1213,16 @@
         // The actual (encrypted) history blob travels directly over the RTCDataChannel.
         // --------------------------------------------------------------------
         window._webrtcConnections = {};
+        window._webrtcPendingIce = {};
+
+        // Never invoke .NET from inside createOffer/setLocalDescription/setRemoteDescription.
+        // Blazor WASM deadlocks and ICE/DataChannel events are lost (answer applied, no channel).
+        const webrtcNotify = (dotnetRef, method, ...args) => {
+            setTimeout(() => {
+                try { dotnetRef.invokeMethodAsync(method, ...args); }
+                catch (e) { console.warn('[WebRTC]', method, 'failed', e); }
+            }, 0);
+        };
 
         window.webrtcCreatePeerConnection = async (dotnetRef, peerId) => {
             // Close any existing connection for this peer before starting a new handshake.
@@ -1228,7 +1238,7 @@
 
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                    dotnetRef.invokeMethodAsync('OnIceCandidate', peerId, JSON.stringify(event.candidate));
+                    webrtcNotify(dotnetRef, 'OnIceCandidate', peerId, JSON.stringify(event.candidate));
                 }
             };
 
@@ -1237,23 +1247,31 @@
                 window._webrtcConnections[peerId].dataChannel = dc;
                 dc.onopen = () => {
                     console.log('[WebRTC] DataChannel open (receiver)');
-                    dotnetRef.invokeMethodAsync('OnDataChannelOpen', peerId);
+                    webrtcNotify(dotnetRef, 'OnDataChannelOpen', peerId);
                 };
                 dc.onmessage = (e) => {
-                    dotnetRef.invokeMethodAsync('OnDataReceived', peerId, e.data);
+                    webrtcNotify(dotnetRef, 'OnDataReceived', peerId, e.data);
                 };
                 dc.onclose = () => {
-                    dotnetRef.invokeMethodAsync('OnDataChannelClose', peerId);
+                    webrtcNotify(dotnetRef, 'OnDataChannelClose', peerId);
                 };
+                if (dc.readyState === 'open')
+                    webrtcNotify(dotnetRef, 'OnDataChannelOpen', peerId);
             };
 
             pc.onconnectionstatechange = () => {
                 console.log('[WebRTC] Connection state for', peerId, pc.connectionState);
                 const state = pc.connectionState;
                 if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                    dotnetRef.invokeMethodAsync('OnWebRtcConnectionStateChange', peerId, state);
+                    webrtcNotify(dotnetRef, 'OnWebRtcConnectionStateChange', peerId, state);
                 }
             };
+
+            const pending = window._webrtcPendingIce[peerId];
+            if (pending && pending.length) {
+                window._webrtcConnections[peerId].iceQueue.push(...pending);
+                window._webrtcPendingIce[peerId] = [];
+            }
             return true;
         };
 
@@ -1264,14 +1282,34 @@
             entry.dataChannel = dc;
             dc.onopen = () => {
                 console.log('[WebRTC] DataChannel open (sender)');
-                entry.dotnetRef.invokeMethodAsync('OnDataChannelOpen', peerId);
+                webrtcNotify(entry.dotnetRef, 'OnDataChannelOpen', peerId);
             };
             dc.onmessage = (e) => {
-                entry.dotnetRef.invokeMethodAsync('OnDataReceived', peerId, e.data);
+                webrtcNotify(entry.dotnetRef, 'OnDataReceived', peerId, e.data);
             };
             dc.onclose = () => {
-                entry.dotnetRef.invokeMethodAsync('OnDataChannelClose', peerId);
+                webrtcNotify(entry.dotnetRef, 'OnDataChannelClose', peerId);
             };
+            if (dc.readyState === 'open')
+                webrtcNotify(entry.dotnetRef, 'OnDataChannelOpen', peerId);
+        };
+
+        window.webrtcWaitIceGathering = (peerId) => {
+            const entry = window._webrtcConnections[peerId];
+            if (!entry) return Promise.resolve();
+            const pc = entry.pc;
+            if (pc.iceGatheringState === 'complete') return Promise.resolve();
+            return new Promise((resolve) => {
+                const t = setTimeout(resolve, 2500);
+                const onState = () => {
+                    if (pc.iceGatheringState === 'complete') {
+                        clearTimeout(t);
+                        pc.removeEventListener('icegatheringstatechange', onState);
+                        resolve();
+                    }
+                };
+                pc.addEventListener('icegatheringstatechange', onState);
+            });
         };
 
         window.webrtcCreateOffer = async (peerId) => {
@@ -1279,7 +1317,8 @@
             if (!entry) return null;
             const offer = await entry.pc.createOffer();
             await entry.pc.setLocalDescription(offer);
-            return JSON.stringify(offer);
+            await window.webrtcWaitIceGathering(peerId);
+            return JSON.stringify(entry.pc.localDescription);
         };
 
         window.webrtcFlushIceQueue = async (peerId) => {
@@ -1317,13 +1356,15 @@
             if (!entry) return null;
             const answer = await entry.pc.createAnswer();
             await entry.pc.setLocalDescription(answer);
-            return JSON.stringify(answer);
+            await window.webrtcWaitIceGathering(peerId);
+            return JSON.stringify(entry.pc.localDescription);
         };
 
         window.webrtcAddIceCandidate = async (peerId, candidateJson) => {
             const entry = window._webrtcConnections[peerId];
             if (!entry) {
-                console.warn('[WebRTC] addIceCandidate: no connection for', peerId);
+                window._webrtcPendingIce[peerId] = window._webrtcPendingIce[peerId] || [];
+                window._webrtcPendingIce[peerId].push(candidateJson);
                 return;
             }
             if (!entry.remoteDescSet) {
@@ -1332,7 +1373,7 @@
                 return;
             }
             try {
-                const cand = JSON.parse(candidateJson);
+                const cand = typeof candidateJson === 'string' ? JSON.parse(candidateJson) : candidateJson;
                 await entry.pc.addIceCandidate(new RTCIceCandidate(cand));
             } catch (e) { console.warn('[WebRTC] addIceCandidate', e); }
         };

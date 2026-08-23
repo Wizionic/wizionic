@@ -991,9 +991,9 @@ sequenceDiagram
 ### Phase 2 — Data sync (WebRTC DataChannel)
 1. Initiator (`WasmSyncService` / `MauiSyncService` + `WebRtcSyncCoordinator`) opens a WebRTC peer connection; **offer/answer/ICE** via SignalR.
 2. WASM: JS `RTCPeerConnection` helpers; MAUI: SIPSorcery WebRTC.
-3. **Manifest exchange** first: both sides send fingerprints (`SyncFingerprint`); only changed items transfer.
+3. **Manifest exchange** first: both sides send fingerprints (`SyncFingerprint`); only changed items transfer. Matching fingerprints are enough — `LastUpdated` clock skew does not re-send gallery images. Peer-online auto-sync includes chats, notes, gallery, **calendar**, and bookmarks/apps when those toggles are on.
 4. Encrypted content never touches the central server—JSON over the DataChannel (chunked for large blobs).
-5. Receiver decrypts with the shared per-user key and writes to local stores; UI refreshes via store change events.
+5. Receiver decrypts with the shared per-user key and writes to local stores; UI refreshes via store change events. Handshake (ICE) and ack timers are separate; the ack window starts after the payload is sent.
 
 ### Sync item kinds (`SyncItemKind`)
 

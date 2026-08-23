@@ -8,6 +8,7 @@
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IAuthService AuthService
+@implements IDisposable
 
 <div class="lemonade-page">
     <div class="lemonade-page-header">
@@ -304,10 +305,39 @@
     {
         await KeyStore.LoadAsync();
         await AuthService.LoadAsync();
+        ReloadFromKeyStore();
+        SettingsSync.OnSettingsChanged += OnSettingsSynced;
+        SyncService.OnSettingsChanged += OnSettingsSynced;
+    }
+
+    void ReloadFromKeyStore()
+    {
         lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
         lemonadeApiKey = KeyStore.LemonadeApiKey ?? "";
         SyncEmbedUrl();
         ReloadAll();
+    }
+
+    void OnSettingsSynced()
+    {
+        // Apply already updated this KeyStore instance. Do not LoadAsync here —
+        // WasmKeyStore.LoadAsync resets in-memory config to localhost first.
+        _ = InvokeAsync(() =>
+        {
+            ReloadFromKeyStore();
+            StateHasChanged();
+            return Task.CompletedTask;
+        });
+    }
+
+    public void Dispose()
+    {
+        SettingsSync.OnSettingsChanged -= OnSettingsSynced;
+        SyncService.OnSettingsChanged -= OnSettingsSynced;
+        _saveFeedbackCts?.Cancel();
+        _saveFeedbackCts?.Dispose();
+        _pageFeedbackCts?.Cancel();
+        _pageFeedbackCts?.Dispose();
     }
 
     void SyncEmbedUrl()
@@ -359,6 +389,7 @@
         {
             await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
             await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
             lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
             SyncEmbedUrl();
             ReloadEmbed();
@@ -386,6 +417,7 @@
         try
         {
             await KeyStore.RefreshLemonadeModelsFromServerAsync(Http, lemonadeBaseUrl, lemonadeApiKey);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
             lemonadeBaseUrl = KeyStore.LemonadeBaseUrl;
             lemonadeApiKey = KeyStore.LemonadeApiKey ?? "";
             SyncEmbedUrl();
@@ -422,6 +454,7 @@
             await KeyStore.SetLemonadeBaseUrlAsync(lemonadeBaseUrl);
             await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
             await KeyStore.AddLemonadeModelAsync(newLemonadeModel);
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
             ReloadAll();
             newLemonadeModel = "";
         }
@@ -472,6 +505,7 @@
     {
         if (editingLemonadeName == null) return;
         await KeyStore.RemoveLemonadeModelAsync(editingLemonadeName);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
         ReloadAll();
         CloseLemonadeEditor();
     }
