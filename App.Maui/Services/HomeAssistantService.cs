@@ -29,6 +29,16 @@ public sealed class HomeAssistantService : ISmartHomeService
     private const int MaxCatalogChars = 10_000;
     private const int MaxListLines = 200;
     private const int MaxEntitiesPerDomainInCatalog = 40;
+    private const string NotConfigured =
+        "Home Assistant is not configured. Add base URL and token on the Home Assistant page.";
+
+    private static readonly HashSet<string> ToggleDomains = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "light", "switch", "fan", "input_boolean", "cover", "lock", "remote", "siren", "humidifier"
+    };
+
+    private const string AreasTemplate =
+        "{% for a in areas() %}{{ a }}|{{ area_name(a) }}|{% for e in area_entities(a) %}{{ e }},{% endfor %}\n{% endfor %}";
 
     private readonly IKeyStore _keyStore;
     private readonly ILogger<HomeAssistantService> _logger;
@@ -78,7 +88,7 @@ public sealed class HomeAssistantService : ISmartHomeService
         CancellationToken ct = default)
     {
         if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return "Home Assistant is not configured. Add base URL and token in Settings.";
+            return NotConfigured;
 
         if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(service))
             return "Domain and service are required (e.g. media_player / media_play).";
@@ -94,7 +104,7 @@ public sealed class HomeAssistantService : ISmartHomeService
     public Task<string> GetEntityStateAsync(string entityId, CancellationToken ct = default)
     {
         if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return Task.FromResult("Home Assistant is not configured. Add base URL and token in Settings.");
+            return Task.FromResult(NotConfigured);
 
         return GetEntityStateAsync(url, token, entityId, ct);
     }
@@ -105,86 +115,135 @@ public sealed class HomeAssistantService : ISmartHomeService
     public Task<string> ListEntitiesAsync(string? domain = null, string? search = null, CancellationToken ct = default) =>
         ListEntitiesCoreAsync(domain, search, ct);
 
-    public async Task<string> BuildDeviceCatalogAsync(CancellationToken ct = default)
+    public async Task<HaInstanceInfo> GetInstanceInfoAsync(CancellationToken ct = default)
     {
         if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return "Home Assistant is not configured. Add base URL and token in Settings.";
+            return new HaInstanceInfo(false, null, null, null, NotConfigured);
 
-        var fetch = await FetchStatesJsonAsync(url, token, ct, "BuildDeviceCatalog");
-        if (IsHaFailure(fetch))
-            return fetch;
+        var raw = await SendAsync(HttpMethod.Get, $"{url}/api/config", token, content: null, ct, "GetConfig");
+        if (IsHaFailure(raw))
+            return new HaInstanceInfo(false, null, null, null, raw);
 
         try
         {
-            using var doc = JsonDocument.Parse(fetch);
-            var byDomain = new SortedDictionary<string, List<EntitySnapshot>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var entity in doc.RootElement.EnumerateArray())
-            {
-                if (!TryParseEntity(entity, out var snap))
-                    continue;
-
-                var domainName = DomainOf(snap.EntityId);
-                if (!ControllableDomains.Contains(domainName))
-                    continue;
-
-                if (!byDomain.TryGetValue(domainName, out var list))
-                {
-                    list = [];
-                    byDomain[domainName] = list;
-                }
-
-                list.Add(snap);
-            }
-
-            if (byDomain.Count == 0)
-                return "No controllable entities found in Home Assistant.";
-
-            foreach (var list in byDomain.Values)
-                list.Sort((a, b) => string.Compare(a.FriendlyName, b.FriendlyName, StringComparison.OrdinalIgnoreCase));
-
-            var sb = new StringBuilder();
-            var total = byDomain.Sum(kv => kv.Value.Count);
-            sb.AppendLine($"Home Assistant controllable devices ({total} entities, {byDomain.Count} domains):");
-            sb.AppendLine("Use ListEntities(domain, search) for full/filtered lists. Prefer CallService or ControlLight to act.");
-
-            foreach (var (domainName, list) in byDomain)
-            {
-                sb.AppendLine();
-                sb.AppendLine($"{domainName} ({list.Count}):");
-                var take = Math.Min(list.Count, MaxEntitiesPerDomainInCatalog);
-                for (var i = 0; i < take; i++)
-                {
-                    var e = list[i];
-                    sb.AppendLine($"  • {e.FriendlyName} → {e.EntityId} ({e.State})");
-                }
-
-                if (list.Count > take)
-                    sb.AppendLine($"  … and {list.Count - take} more (call ListEntities domain=\"{domainName}\")");
-            }
-
-            var catalog = sb.ToString().TrimEnd();
-            if (catalog.Length <= MaxCatalogChars)
-                return catalog;
-
-            // Truncate carefully: keep domain headers + counts, drop entity lines.
-            var compact = new StringBuilder();
-            compact.AppendLine($"Home Assistant controllable devices ({total} entities, {byDomain.Count} domains) — catalog truncated for size.");
-            compact.AppendLine("Call ListEntities with domain and/or search to resolve devices.");
-            foreach (var (domainName, list) in byDomain)
-                compact.AppendLine($"  • {domainName}: {list.Count} entity(ies)");
-            return compact.ToString().TrimEnd();
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            var location = root.TryGetProperty("location_name", out var loc) ? loc.GetString() : null;
+            var version = root.TryGetProperty("version", out var ver) ? ver.GetString() : null;
+            var tz = root.TryGetProperty("time_zone", out var tzEl) ? tzEl.GetString() : null;
+            return new HaInstanceInfo(true, location, version, tz, null);
         }
         catch (Exception ex)
         {
-            return $"Could not parse Home Assistant states: {ex.Message}";
+            return new HaInstanceInfo(false, null, null, null, $"Could not parse Home Assistant config: {ex.Message}");
         }
+    }
+
+    public async Task<IReadOnlyList<HaDeviceRow>> GetDeviceRowsAsync(CancellationToken ct = default)
+    {
+        if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
+            return [];
+
+        var (ok, _, entities) = await LoadEntitiesAsync(url, token, ct, "GetDeviceRows");
+        if (!ok)
+            return [];
+
+        var areas = await LoadAreasAsync(url, token, ct);
+        ApplyAreas(entities, areas);
+
+        return entities
+            .Where(e => ControllableDomains.Contains(DomainOf(e.EntityId)))
+            .OrderBy(e => e.AreaName ?? "zzz", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => DomainOf(e.EntityId), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => e.FriendlyName, StringComparer.OrdinalIgnoreCase)
+            .Select(e => new HaDeviceRow(
+                e.EntityId,
+                e.FriendlyName,
+                DomainOf(e.EntityId),
+                e.State,
+                e.AreaName,
+                ToggleDomains.Contains(DomainOf(e.EntityId))))
+            .ToList();
+    }
+
+    public async Task<string> BuildDeviceCatalogAsync(CancellationToken ct = default)
+    {
+        if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
+            return NotConfigured;
+
+        var (ok, error, entities) = await LoadEntitiesAsync(url, token, ct, "BuildDeviceCatalog");
+        if (!ok)
+            return error ?? "Could not load Home Assistant entities.";
+
+        var areas = await LoadAreasAsync(url, token, ct);
+        ApplyAreas(entities, areas);
+
+        var controllable = entities.Where(e => ControllableDomains.Contains(DomainOf(e.EntityId))).ToList();
+        if (controllable.Count == 0)
+            return "No controllable entities found in Home Assistant.";
+
+        var byDomain = controllable
+            .GroupBy(e => DomainOf(e.EntityId), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Home Assistant controllable devices ({controllable.Count} entities, {byDomain.Count} domains):");
+        sb.AppendLine("Use ListEntities(domain, search) for full/filtered lists. Search matches friendly name, entity_id, and area.");
+
+        if (areas.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Areas ({areas.Count}):");
+            foreach (var area in areas.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).Take(40))
+            {
+                var names = area.EntityIds
+                    .Select(id => controllable.FirstOrDefault(e => e.EntityId.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                    .Where(e => e is not null)
+                    .Take(8)
+                    .Select(e => e!.FriendlyName);
+                var listed = string.Join(", ", names);
+                sb.AppendLine(string.IsNullOrWhiteSpace(listed)
+                    ? $"  • {area.Name}"
+                    : $"  • {area.Name} → {listed}");
+            }
+        }
+
+        foreach (var group in byDomain)
+        {
+            var list = group.OrderBy(e => e.FriendlyName, StringComparer.OrdinalIgnoreCase).ToList();
+            sb.AppendLine();
+            sb.AppendLine($"{group.Key} ({list.Count}):");
+            var take = Math.Min(list.Count, MaxEntitiesPerDomainInCatalog);
+            for (var i = 0; i < take; i++)
+            {
+                var e = list[i];
+                var areaBit = string.IsNullOrWhiteSpace(e.AreaName) ? "" : $" [{e.AreaName}]";
+                sb.AppendLine($"  • {e.FriendlyName}{areaBit} → {e.EntityId} ({e.State})");
+            }
+
+            if (list.Count > take)
+                sb.AppendLine($"  … and {list.Count - take} more (call ListEntities domain=\"{group.Key}\")");
+        }
+
+        var catalog = sb.ToString().TrimEnd();
+        if (catalog.Length <= MaxCatalogChars)
+            return catalog;
+
+        var compact = new StringBuilder();
+        compact.AppendLine($"Home Assistant controllable devices ({controllable.Count} entities, {byDomain.Count} domains) — catalog truncated for size.");
+        compact.AppendLine("Call ListEntities with domain and/or search (including area names) to resolve devices.");
+        if (areas.Count > 0)
+            compact.AppendLine($"Areas: {string.Join(", ", areas.Select(a => a.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).Take(24))}");
+        foreach (var group in byDomain)
+            compact.AppendLine($"  • {group.Key}: {group.Count()} entity(ies)");
+        return compact.ToString().TrimEnd();
     }
 
     public async Task<string> ListServicesAsync(string? domain = null, CancellationToken ct = default)
     {
         if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return "Home Assistant is not configured. Add base URL and token in Settings.";
+            return NotConfigured;
 
         var json = await SendAsync(HttpMethod.Get, $"{url}/api/services", token, content: null, ct, "ListServices");
         if (IsHaFailure(json))
@@ -255,7 +314,7 @@ public sealed class HomeAssistantService : ISmartHomeService
     public async Task<string> ProcessConversationAsync(string text, string? conversationId = null, CancellationToken ct = default)
     {
         if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return "Home Assistant is not configured. Add base URL and token in Settings.";
+            return NotConfigured;
 
         if (string.IsNullOrWhiteSpace(text))
             return "Conversation text is required.";
@@ -289,6 +348,68 @@ public sealed class HomeAssistantService : ISmartHomeService
         return await SendAsync(HttpMethod.Get, $"{url}/api/states", token, content: null, ct, operation);
     }
 
+    private async Task<List<HaAreaInfo>> LoadAreasAsync(string url, string token, CancellationToken ct)
+    {
+        try
+        {
+            var raw = await SendAsync(
+                HttpMethod.Post,
+                $"{url}/api/template",
+                token,
+                JsonContent.Create(new { template = AreasTemplate }),
+                ct,
+                "ListAreas");
+            if (IsHaFailure(raw) || string.IsNullOrWhiteSpace(raw))
+                return [];
+
+            var areas = new List<HaAreaInfo>();
+            foreach (var line in raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = line.Split('|', 3);
+                if (parts.Length < 2)
+                    continue;
+                var id = parts[0].Trim();
+                var name = parts[1].Trim();
+                if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
+                    continue;
+                var entityIds = parts.Length < 3
+                    ? Array.Empty<string>()
+                    : parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                areas.Add(new HaAreaInfo(id, name, entityIds));
+            }
+
+            return areas;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void ApplyAreas(List<EntitySnapshot> entities, List<HaAreaInfo> areas)
+    {
+        if (areas.Count == 0)
+            return;
+
+        var byEntity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var area in areas)
+        {
+            foreach (var id in area.EntityIds)
+                byEntity[id] = area.Name;
+        }
+
+        for (var i = 0; i < entities.Count; i++)
+        {
+            var e = entities[i];
+            if (!byEntity.TryGetValue(e.EntityId, out var areaName))
+                continue;
+            var extra = string.IsNullOrWhiteSpace(e.ExtraSearchText)
+                ? areaName
+                : $"{e.ExtraSearchText} {areaName}";
+            entities[i] = e with { ExtraSearchText = extra, AreaName = areaName };
+        }
+    }
+
     private async Task<(bool Ok, string? Error, List<EntitySnapshot> Entities)> LoadEntitiesAsync(
         string url, string token, CancellationToken ct, string operation)
     {
@@ -317,11 +438,14 @@ public sealed class HomeAssistantService : ISmartHomeService
     private async Task<string> ListEntitiesCoreAsync(string? domain, string? search, CancellationToken ct)
     {
         if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return "Home Assistant is not configured. Add base URL and token in Settings.";
+            return NotConfigured;
 
         var (ok, error, entities) = await LoadEntitiesAsync(url, token, ct, "ListEntities");
         if (!ok)
             return error ?? "Could not load Home Assistant entities.";
+
+        var areas = await LoadAreasAsync(url, token, ct);
+        ApplyAreas(entities, areas);
 
         var filtered = FilterEntities(entities, domain, search, controllableOnly: string.IsNullOrWhiteSpace(domain));
         if (filtered.Count == 0)
@@ -360,6 +484,7 @@ public sealed class HomeAssistantService : ISmartHomeService
             q = q.Where(e => terms.All(term =>
                 e.EntityId.Contains(term, StringComparison.OrdinalIgnoreCase) ||
                 e.FriendlyName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                (e.AreaName is not null && e.AreaName.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
                 (e.ExtraSearchText is not null && e.ExtraSearchText.Contains(term, StringComparison.OrdinalIgnoreCase))));
         }
 
@@ -391,7 +516,10 @@ public sealed class HomeAssistantService : ISmartHomeService
             if (string.IsNullOrWhiteSpace(domain))
                 sb.AppendLine($"[{group.Key}]");
             foreach (var e in group)
-                sb.AppendLine($"  • {e.FriendlyName} → {e.EntityId} (currently {e.State})");
+            {
+                var areaBit = string.IsNullOrWhiteSpace(e.AreaName) ? "" : $" [{e.AreaName}]";
+                sb.AppendLine($"  • {e.FriendlyName}{areaBit} → {e.EntityId} (currently {e.State})");
+            }
         }
 
         if (total > shown)
@@ -721,5 +849,10 @@ public sealed class HomeAssistantService : ISmartHomeService
         return string.Join(" | ", parts);
     }
 
-    private sealed record EntitySnapshot(string EntityId, string FriendlyName, string State, string? ExtraSearchText);
+    private sealed record EntitySnapshot(
+        string EntityId,
+        string FriendlyName,
+        string State,
+        string? ExtraSearchText,
+        string? AreaName = null);
 }

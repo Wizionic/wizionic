@@ -474,6 +474,7 @@ static string ReleaseContentType(string path) =>
         ".zip" => "application/zip",
         ".json" => "application/json",
         ".sh" => "text/x-shellscript; charset=utf-8",
+        ".ps1" => "text/plain; charset=utf-8",
         _ => "application/octet-stream"
     };
 
@@ -531,6 +532,45 @@ app.MapMethods("/install.sh", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
     }
 
     return Results.File(safePath, contentType, fileDownloadName: "install.sh");
+});
+
+// irm https://wizionic.com/install.ps1 | iex
+app.MapMethods("/install.ps1", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
+{
+    var safePath = ResolveReleaseFile(Path.Combine("windows", "install.ps1"));
+    if (safePath is null)
+    {
+        foreach (var candidate in new[]
+                 {
+                     "/app/wwwroot/install.ps1",
+                     Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "install.ps1"),
+                     Path.Combine(Directory.GetCurrentDirectory(), "install.ps1"),
+                     Path.Combine(Directory.GetCurrentDirectory(), "scripts", "install.ps1"),
+                     Path.Combine(AppContext.BaseDirectory, "wwwroot", "install.ps1"),
+                     Path.Combine(AppContext.BaseDirectory, "scripts", "install.ps1"),
+                 })
+        {
+            if (File.Exists(candidate))
+            {
+                safePath = candidate;
+                break;
+            }
+        }
+    }
+
+    if (safePath is null)
+        return Results.NotFound("Windows install script not found. Publish install.ps1 to the releases volume.");
+
+    ctx.Response.Headers.CacheControl = "no-cache";
+    var contentType = "text/plain; charset=utf-8";
+    if (HttpMethods.IsHead(ctx.Request.Method))
+    {
+        ctx.Response.ContentType = contentType;
+        ctx.Response.ContentLength = new FileInfo(safePath).Length;
+        return Results.Empty;
+    }
+
+    return Results.File(safePath, contentType, fileDownloadName: "install.ps1");
 });
 
 app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks, TwoFactorAuthService twoFactor) =>

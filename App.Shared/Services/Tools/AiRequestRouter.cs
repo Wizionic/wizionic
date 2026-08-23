@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using App.Core.Storage;
+using App.Shared.Services.Help;
 using Microsoft.Extensions.AI;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
@@ -13,9 +14,9 @@ namespace App.Shared.Services.Tools;
 /// </summary>
 public sealed class AiRequestRouter
 {
-    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(12);
-    /// <summary>Thinking models (Qwen) may burn tokens on reasoning before JSON — allow headroom.</summary>
-    private const int MaxOutputTokens = 384;
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(20);
+    /// <summary>With thinking off, a short JSON object is enough.</summary>
+    private const int MaxOutputTokens = 256;
 
     private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -25,15 +26,18 @@ public sealed class AiRequestRouter
     private readonly ChatModelCatalogService _catalog;
     private readonly IKeyStore _keyStore;
     private readonly ContextualRequestRouter _rules;
+    private readonly HelpEmbeddingClient _localComplete;
 
     public AiRequestRouter(
         ChatModelCatalogService catalog,
         IKeyStore keyStore,
-        ContextualRequestRouter rules)
+        ContextualRequestRouter rules,
+        HelpEmbeddingClient localComplete)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
         _rules = rules ?? throw new ArgumentNullException(nameof(rules));
+        _localComplete = localComplete ?? throw new ArgumentNullException(nameof(localComplete));
     }
 
     public async Task<RequestRoute> ClassifyAsync(
@@ -66,17 +70,38 @@ public sealed class AiRequestRouter
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(DefaultTimeout);
 
-            var client = _catalog.GetChatClientForModel(modelId);
             var prompt = BuildPrompt(message, available);
-            var history = new List<AiChatMessage>
+            string text;
+            if (_localComplete.SupportsDirectChat(modelId))
             {
-                new(ChatRole.System, SystemPrompt),
-                new(ChatRole.User, prompt)
-            };
-            var options = new ChatOptions { MaxOutputTokens = MaxOutputTokens };
+                // Raw Lemonade/Ollama HTTP with enable_thinking=false. ME.AI leaves
+                // ChatResponse.Text empty on Qwen thinking models (0.8B/4B).
+                text = await _localComplete.CompleteRouterAsync(
+                    modelId, SystemPrompt, prompt, timeoutCts.Token);
+            }
+            else
+            {
+                var client = _catalog.GetChatClientForModel(modelId);
+                var history = new List<AiChatMessage>
+                {
+                    new(ChatRole.System, SystemPrompt),
+                    new(ChatRole.User, prompt)
+                };
+                var options = new ChatOptions
+                {
+                    MaxOutputTokens = MaxOutputTokens,
+                    Temperature = 0,
+                    ResponseFormat = ChatResponseFormat.Json
+                };
+                options.AdditionalProperties ??= new();
+                options.AdditionalProperties["enable_thinking"] = false;
+                options.AdditionalProperties["chat_template_kwargs"] =
+                    new Dictionary<string, object?> { ["enable_thinking"] = false };
 
-            var response = await client.GetResponseAsync(history, options, timeoutCts.Token);
-            var text = ExtractText(response);
+                var response = await client.GetResponseAsync(history, options, timeoutCts.Token);
+                text = ExtractText(response);
+            }
+
             var parsed = TryParseRoute(text, available, sourceLabel);
             if (parsed != null)
                 return MergeHardConstraints(parsed, fallback, available, sourceLabel);
@@ -154,32 +179,38 @@ public sealed class AiRequestRouter
             source: sourceLabel + "→HA-heuristic");
     }
 
-    /// <summary>HA / Browser hard routes from rules (wake word / session) always win.</summary>
+    /// <summary>
+    /// Keep the AI classification. If rules saw a wake word / open browser, still attach those modules.
+    /// </summary>
     private static RequestRoute MergeHardConstraints(
         RequestRoute ai,
         RequestRoute rules,
         IReadOnlyList<string> available,
         string sourceLabel)
     {
-        if (rules.TargetModule is "HomeAssistant" or "BrowserAgent")
-        {
-            var modules = new List<string>(rules.Modules);
-            foreach (var m in ai.Modules)
-            {
-                if (available.Contains(m, StringComparer.OrdinalIgnoreCase)
-                    && !modules.Contains(m, StringComparer.OrdinalIgnoreCase))
-                    modules.Add(m);
-            }
+        if (rules.TargetModule is not ("HomeAssistant" or "BrowserAgent"))
+            return ai;
 
-            return RequestRoute.WithModules(
-                modules,
-                ai.Reason ?? rules.Reason ?? "AI + session/wake",
-                targetModule: rules.TargetModule,
-                includeMcp: true,
-                source: sourceLabel + "→AI+session");
+        var modules = new List<string>(ai.Modules);
+        foreach (var m in rules.Modules)
+        {
+            if (available.Contains(m, StringComparer.OrdinalIgnoreCase)
+                && !modules.Contains(m, StringComparer.OrdinalIgnoreCase))
+                modules.Add(m);
         }
 
-        return ai;
+        var target = ai.TargetModule ?? rules.TargetModule;
+        if (target != null
+            && available.Contains(target, StringComparer.OrdinalIgnoreCase)
+            && !modules.Contains(target, StringComparer.OrdinalIgnoreCase))
+            modules.Insert(0, target);
+
+        return RequestRoute.WithModules(
+            modules.Count > 0 ? modules : rules.Modules,
+            ai.Reason ?? rules.Reason ?? "AI classification",
+            targetModule: target,
+            includeMcp: true,
+            source: sourceLabel + "→AI");
     }
 
     private static string SystemPrompt =>
@@ -320,9 +351,13 @@ public sealed class AiRequestRouter
     {
         var t = text.Trim();
 
-        // Drop common thinking wrappers
-        t = Regex.Replace(t, @"<think>[\s\S]*?</think>", " ", RegexOptions.IgnoreCase);
-        t = Regex.Replace(t, @"<reasoning>[\s\S]*?</reasoning>", " ", RegexOptions.IgnoreCase);
+        // Prefer visible content after thinking, not the chain-of-thought.
+        var thinkEnd = t.LastIndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+        if (thinkEnd >= 0)
+            t = t[(thinkEnd + "</think>".Length)..].Trim();
+        var reasonEnd = t.LastIndexOf("</reasoning>", StringComparison.OrdinalIgnoreCase);
+        if (reasonEnd >= 0)
+            t = t[(reasonEnd + "</reasoning>".Length)..].Trim();
 
         if (t.StartsWith("```", StringComparison.Ordinal))
         {
@@ -336,7 +371,15 @@ public sealed class AiRequestRouter
         var start = t.IndexOf('{');
         var end = t.LastIndexOf('}');
         if (start < 0 || end <= start)
-            return null;
+        {
+            // JSON lived only inside <think>…</think>
+            start = text.IndexOf('{');
+            end = text.LastIndexOf('}');
+            if (start < 0 || end <= start)
+                return null;
+            return text[start..(end + 1)];
+        }
+
         return t[start..(end + 1)];
     }
 

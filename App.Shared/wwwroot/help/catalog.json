@@ -13,6 +13,7 @@
     { "id": "settings-login-server", "title": "Login server", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "login-server", "toc": false },
     { "id": "settings-appearance", "title": "Appearance", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "appearance", "toc": false },
     { "id": "settings-desktop", "title": "Desktop", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "desktop", "toc": false },
+    { "id": "settings-voice", "title": "Voice", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "voice", "toc": false },
     { "id": "settings-about-you", "title": "About you", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "about-you", "toc": false },
     { "id": "settings-memories", "title": "Memories", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "memories", "toc": false },
     { "id": "settings-reply-length", "title": "Reply length", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "reply-length", "toc": false },
@@ -25,6 +26,9 @@
     { "id": "account", "title": "Account, password, and 2FA", "file": "account-password-2fa.md", "routes": ["/", "/account", "/login"], "audience": "howto" },
     { "id": "privacy-data", "title": "What stays on this device", "file": "privacy-data.md", "routes": ["/privacy"], "audience": "reference" },
     { "id": "desktop", "title": "Desktop: browser and Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true },
+    { "id": "home-assistant", "title": "Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "home-assistant" },
+    { "id": "home-assistant-token", "title": "Long-lived access token", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "token", "toc": false },
+    { "id": "home-assistant-devices", "title": "Home Assistant devices", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "devices", "toc": false },
     { "id": "troubleshooting", "title": "Troubleshooting", "file": "troubleshooting.md", "routes": [], "audience": "howto" }
   ]
 }

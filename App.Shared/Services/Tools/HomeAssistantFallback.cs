@@ -160,6 +160,66 @@ public static class HomeAssistantFallback
             }
         }
 
+        // --- Climate / thermostat ---
+        var tempMatch = Regex.Match(
+            text,
+            @"\b(?:set|turn|change|make)\b.{0,40}?\b(?:temp(?:erature)?|thermostat|climate|heat|ac|hvac)\b.{0,40}?\b(?:to|at)\s*(-?\d{1,3}(?:\.\d)?)",
+            RegexOptions.IgnoreCase);
+        if (!tempMatch.Success)
+        {
+            tempMatch = Regex.Match(
+                text,
+                @"\b(?:temp(?:erature)?|thermostat)\b.{0,20}?\b(?:to|at)\s*(-?\d{1,3}(?:\.\d)?)",
+                RegexOptions.IgnoreCase);
+        }
+
+        if (tempMatch.Success && double.TryParse(tempMatch.Groups[1].Value, out var tempVal))
+        {
+            var climateEntity = ResolveEntity(text, "climate", session.LastClimateEntity, deviceCatalog);
+            if (!string.IsNullOrWhiteSpace(climateEntity))
+            {
+                var label = DisplayName(climateEntity, deviceCatalog);
+                trace.Record($"🏠 structured_fallback climate.set_temperature(entity=\"{climateEntity}\", temperature={tempVal})");
+                var result = await ha.CallServiceAsync(
+                    "climate",
+                    "set_temperature",
+                    new Dictionary<string, object?> { ["entity_id"] = climateEntity, ["temperature"] = tempVal },
+                    ct);
+                if (!IsFailure(result))
+                {
+                    trace.Record($"   ✅ {Truncate(result.Replace('\n', ' '), 300)}");
+                    return ($"Set {label} to {tempVal}.", climateEntity, "set_temperature");
+                }
+
+                trace.Record($"   ❌ {Truncate(result, 300)}");
+            }
+        }
+
+        // --- Covers / garage / blinds ---
+        var coverClose = Regex.IsMatch(text, @"\b(close|shut)\b.+\b(garage|cover|blind|shade|curtain|door)\b", RegexOptions.IgnoreCase)
+                         || Regex.IsMatch(text, @"\b(garage|cover|blind|shade|curtain).+\b(close|shut)\b", RegexOptions.IgnoreCase);
+        var coverOpen = Regex.IsMatch(text, @"\b(open)\b.+\b(garage|cover|blind|shade|curtain|door)\b", RegexOptions.IgnoreCase)
+                        || Regex.IsMatch(text, @"\b(garage|cover|blind|shade|curtain).+\bopen\b", RegexOptions.IgnoreCase);
+        if (coverOpen || coverClose)
+        {
+            var coverEntity = ResolveEntity(text, "cover", session.LastCoverEntity, deviceCatalog);
+            if (!string.IsNullOrWhiteSpace(coverEntity))
+            {
+                var service = coverClose ? "close_cover" : "open_cover";
+                var label = DisplayName(coverEntity, deviceCatalog);
+                trace.Record($"🏠 structured_fallback {service}(entity=\"{coverEntity}\")");
+                var result = await ha.CallServiceAsync(
+                    "cover", service, new Dictionary<string, object?> { ["entity_id"] = coverEntity }, ct);
+                if (!IsFailure(result))
+                {
+                    trace.Record($"   ✅ {Truncate(result.Replace('\n', ' '), 300)}");
+                    return ($"{(coverClose ? "Closed" : "Opened")} {label}.", coverEntity, service);
+                }
+
+                trace.Record($"   ❌ {Truncate(result, 300)}");
+            }
+        }
+
         return (null, null, null);
     }
 

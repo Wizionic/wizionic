@@ -13,6 +13,9 @@ public sealed class RoutingSession
     /// <summary>Last media_player.* entity successfully controlled in this conversation.</summary>
     public string? LastMediaPlayerEntity { get; set; }
 
+    public string? LastClimateEntity { get; set; }
+    public string? LastCoverEntity { get; set; }
+
     public bool IsActive(string module, TimeSpan ttl)
     {
         if (LastActiveModule != module || !LastToolCallAt.HasValue)

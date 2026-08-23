@@ -444,3 +444,171 @@ window.appStopAudio = function () {
         return false;
     }
 };
+
+window.appPlayAudioBase64Wait = function (base64, mimeType) {
+    return new Promise(async function (resolve) {
+        try {
+            const play = await window.appPlayAudioBase64(base64, mimeType);
+            if (play !== 'ok' || !window.__appAudioEl) {
+                resolve(play);
+                return;
+            }
+            const audio = window.__appAudioEl;
+            const done = function () {
+                audio.onended = null;
+                audio.onerror = null;
+                resolve('ok');
+            };
+            audio.addEventListener('ended', done, { once: true });
+            audio.addEventListener('error', function () { resolve('playback error'); }, { once: true });
+        } catch (e) {
+            resolve((e && e.message) ? e.message : 'failed');
+        }
+    });
+};
+
+window.__appVoice = window.__appVoice || {
+    stream: null, ctx: null, processor: null, source: null,
+    listening: false, muted: false, speaking: false,
+    chunks: [], lastLoudAt: 0, speechStartedAt: 0, dotNet: null,
+    inputSampleRate: 48000
+};
+
+window.appVoiceListenStart = async function (dotNetRef, options) {
+    const state = window.__appVoice;
+    options = options || {};
+    const silenceMs = options.silenceMs || 1100;
+    const minSpeechMs = options.minSpeechMs || 350;
+    const startRms = options.startRms || 0.02;
+    const stopRms = options.stopRms || 0.011;
+
+    if (state.listening) {
+        state.dotNet = dotNetRef || state.dotNet;
+        return { ok: true, already: true };
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+        });
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx();
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        state.stream = stream;
+        state.ctx = ctx;
+        state.source = source;
+        state.processor = processor;
+        state.inputSampleRate = ctx.sampleRate;
+        state.dotNet = dotNetRef;
+        state.listening = true;
+        state.muted = false;
+        state.speaking = false;
+        state.chunks = [];
+        state.lastLoudAt = 0;
+        state.speechStartedAt = 0;
+
+        processor.onaudioprocess = function (e) {
+            if (!state.listening) return;
+            const input = e.inputBuffer.getChannelData(0);
+            if (state.muted) return;
+
+            let sum = 0;
+            for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+            const rms = Math.sqrt(sum / input.length);
+            const now = performance.now();
+
+            if (rms >= startRms) {
+                if (!state.speaking) {
+                    state.speaking = true;
+                    state.speechStartedAt = now;
+                    state.chunks = [];
+                    if (state.dotNet) {
+                        try { state.dotNet.invokeMethodAsync('OnVoiceSpeechStart'); } catch (err) { }
+                    }
+                }
+                state.lastLoudAt = now;
+                state.chunks.push(new Float32Array(input));
+                return;
+            }
+
+            if (!state.speaking) return;
+            state.chunks.push(new Float32Array(input));
+            if (rms >= stopRms)
+                state.lastLoudAt = now;
+
+            if (now - state.lastLoudAt < silenceMs) return;
+
+            const durationMs = now - state.speechStartedAt;
+            const chunks = state.chunks;
+            state.speaking = false;
+            state.chunks = [];
+            if (durationMs < minSpeechMs || chunks.length === 0) return;
+            flushVoiceUtterance(state, chunks, durationMs);
+        };
+
+        source.connect(processor);
+        var silent = ctx.createGain();
+        silent.gain.value = 0;
+        processor.connect(silent);
+        silent.connect(ctx.destination);
+        return { ok: true, sampleRate: ctx.sampleRate };
+    } catch (e) {
+        console.warn('appVoiceListenStart failed', e);
+        await window.appVoiceListenStop();
+        return { ok: false, error: (e && e.message) ? e.message : String(e) };
+    }
+};
+
+function flushVoiceUtterance(state, chunks, durationMs) {
+    try {
+        let total = 0;
+        for (let i = 0; i < chunks.length; i++) total += chunks[i].length;
+        const merged = new Float32Array(total);
+        let offset = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            merged.set(chunks[i], offset);
+            offset += chunks[i].length;
+        }
+        const targetRate = 16000;
+        const resampled = window.__appResampleFloat(merged, state.inputSampleRate || 48000, targetRate);
+        const wav = window.__appEncodeWav(resampled, targetRate);
+        const b64 = window.__appArrayBufferToBase64(wav.buffer);
+        if (state.dotNet) {
+            state.dotNet.invokeMethodAsync('OnVoiceUtterance', b64, Math.round((resampled.length / targetRate) * 1000));
+        }
+    } catch (e) {
+        console.warn('flushVoiceUtterance failed', e);
+    }
+}
+
+window.appVoiceSetMuted = function (muted) {
+    const state = window.__appVoice;
+    state.muted = !!muted;
+    if (state.muted) {
+        state.speaking = false;
+        state.chunks = [];
+    }
+};
+
+window.appVoiceListenStop = async function () {
+    const state = window.__appVoice;
+    state.listening = false;
+    state.speaking = false;
+    state.muted = false;
+    state.dotNet = null;
+    try {
+        if (state.processor) {
+            state.processor.disconnect();
+            state.processor.onaudioprocess = null;
+        }
+        if (state.source) state.source.disconnect();
+        if (state.ctx && state.ctx.state !== 'closed') await state.ctx.close();
+        if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+    } catch (e) { }
+    state.processor = null;
+    state.source = null;
+    state.ctx = null;
+    state.stream = null;
+    state.chunks = [];
+};

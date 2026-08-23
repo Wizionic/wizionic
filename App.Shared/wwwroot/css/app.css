@@ -6532,6 +6532,28 @@ body .message-bot,
     color: color-mix(in srgb, var(--color-success-fg, #14532d) 78%, transparent);
 }
 
+.login-download-note {
+    margin: 0.45rem 0 0.15rem;
+    font-size: 0.8em;
+    line-height: 1.4;
+    color: color-mix(in srgb, var(--color-success-fg, #14532d) 78%, transparent);
+}
+
+.login-download-details {
+    margin-top: 0.55rem;
+    font-size: 0.8em;
+}
+
+.login-download-details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--color-success-fg, #14532d);
+}
+
+.login-download-details p {
+    margin: 0.4rem 0;
+}
+
 .login-download-btn {
     margin-top: 0.15rem;
 }
@@ -7149,6 +7171,74 @@ body.note-list-reordering {
     margin: 0;
     max-height: 40vh;
     overflow: auto;
+}
+
+.ha-status {
+    margin: 0 0 0.85rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: 6px;
+    font-size: 0.85em;
+    border: 1px solid var(--color-border, #ddd);
+    background: var(--color-bg-subtle, #f6f7f9);
+}
+
+.ha-status--ok {
+    border-color: color-mix(in srgb, var(--color-success-border, #22c55e) 55%, transparent);
+    background: var(--color-success-bg, #ecfdf3);
+    color: var(--color-success-fg, #14532d);
+}
+
+.ha-status--err,
+.ha-status--warn {
+    border-color: #f5c2c7;
+    background: #fff0f0;
+    color: #9f1239;
+}
+
+.ha-wake-note {
+    color: var(--color-text-muted);
+    font-size: 0.8em;
+    margin: 0 0 1rem;
+    line-height: 1.45;
+}
+
+.ha-area {
+    margin-bottom: 0.85rem;
+}
+
+.ha-area-title {
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    margin-bottom: 0.35rem;
+}
+
+.ha-device-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--color-border, #eee);
+}
+
+.ha-device-meta {
+    min-width: 0;
+}
+
+.ha-device-name {
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
+.ha-device-id {
+    font-size: 0.72em;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 @media (max-width: 900px) {

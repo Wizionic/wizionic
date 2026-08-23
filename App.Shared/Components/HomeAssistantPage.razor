@@ -4,15 +4,19 @@
 @inject App.Core.SmartHome.ISmartHomeService SmartHome
 @inject NavigationManager Nav
 @using App.Core.SmartHome
+@using App.Core.Storage
 @using App.Core.Sync
 @using App.Shared.Services
+@implements IDisposable
 
 <div class="embed-split-page">
     <div class="embed-split-header">
         <div>
-            <h4 class="embed-split-title">Home Assistant</h4>
+            <h4 class="embed-split-title help-heading">Home Assistant <HelpGlyph Topic="home-assistant" /></h4>
             <p class="embed-split-lead">
-                Connect Wizionic to your Home Assistant instance. Control devices by addressing your assistant by name in chat.
+                Connect Wizionic to your Home Assistant install on this PC’s Network.
+                Address devices in chat or Voice mode with
+                <strong>@assistantName</strong>.
             </p>
         </div>
         <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="@(() => Nav.NavigateTo("/chat"))">
@@ -21,24 +25,49 @@
     </div>
 
     <div class="embed-split-body">
-        <!-- Left: configuration -->
         <div class="embed-split-config">
-            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Assistant name</label>
-            <input type="text"
-                   class="form-control form-control-sm"
-                   style="margin-bottom: 0.25rem;"
-                   autocomplete="off"
-                   spellcheck="false"
-                   placeholder="Home"
-                   value="@assistantNameDraft"
-                   @oninput="OnAssistantNameChanged"
-                   @onchange="OnAssistantNameChanged" />
-            <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 1rem;">
-                Say this name to control devices. Examples:
-                <code>@(string.IsNullOrWhiteSpace(assistantNameDraft) ? "Home" : assistantNameDraft), turn off the kitchen light</code>
-                or
-                <code>@(string.IsNullOrWhiteSpace(assistantNameDraft) ? "Home" : assistantNameDraft), play music on the living room receiver</code>.
-                Follow-ups like <em>make it blue</em> work for 15 minutes after a successful command in the same chat.
+            @if (!AppEnvironment.IsMaui)
+            {
+                <div class="ha-status ha-status--warn">
+                    Smart-home control runs in the Windows and Linux apps over your LAN. This browser page cannot reach Home Assistant.
+                </div>
+            }
+
+            <div class="ha-status @(instanceInfo is { Ok: true } ? "ha-status--ok" : instanceInfo is { Ok: false } ? "ha-status--err" : "")">
+                @if (instanceInfo is { Ok: true })
+                {
+                    <strong>Connected</strong>
+                    @if (!string.IsNullOrWhiteSpace(instanceInfo.LocationName))
+                    {
+                        <span> · @instanceInfo.LocationName</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(instanceInfo.Version))
+                    {
+                        <span> · HA @instanceInfo.Version</span>
+                    }
+                    @if (deviceSummaryUpdatedAt.HasValue)
+                    {
+                        <span> · refreshed @deviceSummaryUpdatedAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(instanceInfo?.Error))
+                {
+                    <span>@instanceInfo.Error</span>
+                }
+                else if (SmartHome.IsConfigured)
+                {
+                    <span>Saved — test the connection to load live status.</span>
+                }
+                else
+                {
+                    <span>Not connected. Enter your Home Assistant URL and a long-lived access token.</span>
+                }
+            </div>
+
+            <p class="ha-wake-note">
+                Wake word / assistant name is <strong>@assistantName</strong>
+                (<a href="/settings">change in Settings → Voice</a>).
+                Say it in chat or Voice mode to control devices. 
             </p>
 
             <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Base URL</label>
@@ -52,22 +81,32 @@
                    @oninput="OnHaBaseUrlChanged"
                    @onchange="OnHaBaseUrlChanged" />
             <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 0.75rem;">
-                Example: <code>http://192.168.4.23:8123</code> — the right pane embeds this URL.
+                Example: <code>http://192.168.4.23:8123</code> — the right pane embeds this URL on desktop.
             </p>
 
-            <label style="display: block; font-size: 0.9em; margin-bottom: 0.25rem;">Long-lived access token</label>
+            <label class="help-heading" style="display: flex; align-items: center; font-size: 0.9em; margin-bottom: 0.25rem;">
+                Long-lived access token
+                <HelpGlyph Topic="home-assistant-token" />
+            </label>
             <input type="password"
                    class="form-control form-control-sm"
-                   style="margin-bottom: 0.75rem;"
+                   style="margin-bottom: 0.35rem;"
                    autocomplete="off"
                    value="@haTokenDraft"
                    @oninput="OnHaTokenChanged"
                    @onchange="OnHaTokenChanged" />
 
+
             <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                 <button type="button" class="btn btn-primary btn-sm" @onclick="SaveHomeAssistant" disabled="@haBusy">Save</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="TestHomeAssistant" disabled="@haBusy">
-                    @(haBusy ? "Testing..." : "Test connection")
+                    @(haBusy ? "Working…" : "Test connection")
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="RefreshDevices" disabled="@(haBusy || !SmartHome.IsConfigured)">
+                    Refresh devices
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="DisconnectHomeAssistant" disabled="@(haBusy || !SmartHome.IsConfigured)">
+                    Disconnect
                 </button>
             </div>
 
@@ -81,23 +120,43 @@
                 </div>
             }
 
-            @if (!string.IsNullOrWhiteSpace(deviceSummary))
+            @if (deviceRows.Count > 0)
             {
-                <div style="margin-top: 1.25rem;">
-                    <h5 style="margin: 0 0 0.5rem;">Known devices</h5>
-                    <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0 0 0.5rem;">
-                        Controllable entities grouped by domain (lights, media players, switches, climate, etc.).
-                        @if (deviceSummaryUpdatedAt.HasValue)
-                        {
-                            <span> Last refreshed @deviceSummaryUpdatedAt.Value.ToLocalTime().ToString("MMM d, HH:mm").</span>
-                        }
-                    </p>
-                    <pre class="device-summary-pre">@deviceSummary</pre>
+                <div class="ha-device-list" style="margin-top: 1.25rem;">
+                    <h5 class="help-heading" style="margin: 0 0 0.5rem;">Devices <HelpGlyph Topic="home-assistant-devices" /></h5>
+
+                    @foreach (var areaGroup in deviceRows
+                        .GroupBy(r => string.IsNullOrWhiteSpace(r.AreaName) ? "Other" : r.AreaName!)
+                        .OrderBy(g => g.Key == "Other" ? "zzz" : g.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <div class="ha-area">
+                            <div class="ha-area-title">@areaGroup.Key</div>
+                            @foreach (var row in areaGroup
+                                .OrderBy(r => r.Domain, StringComparer.OrdinalIgnoreCase)
+                                .ThenBy(r => r.FriendlyName, StringComparer.OrdinalIgnoreCase))
+                            {
+                                <div class="ha-device-row">
+                                    <div class="ha-device-meta">
+                                        <div class="ha-device-name">@row.FriendlyName</div>
+                                        <div class="ha-device-id">@row.EntityId · @row.State</div>
+                                    </div>
+                                    @if (row.CanToggle)
+                                    {
+                                        <button type="button"
+                                                class="btn btn-sm @(IsOnState(row) ? "btn-primary" : "btn-outline-secondary")"
+                                                disabled="@haBusy"
+                                                @onclick="() => ToggleDevice(row)">
+                                            @(IsOnState(row) ? "On" : "Off")
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
             }
         </div>
 
-        <!-- Right: Home Assistant UI embed -->
         <div class="embed-split-pane">
             @if (string.IsNullOrWhiteSpace(embedUrl))
             {
@@ -141,21 +200,18 @@
 </div>
 
 @code {
-    private string assistantNameDraft = "Home";
+    private string assistantName = KeyStoreDefaults.DefaultAssistantName;
     private string haBaseUrlDraft = "";
     private string haTokenDraft = "";
     private string? haFeedback;
     private bool haFeedbackIsError;
     private bool haBusy;
-    private string deviceSummary = "";
     private DateTime? deviceSummaryUpdatedAt;
-
+    private HaInstanceInfo? instanceInfo;
+    private List<HaDeviceRow> deviceRows = [];
     private string embedUrl = "";
+    private CancellationTokenSource? _pollCts;
 
-    /// <summary>
-    /// Home Assistant defaults to X-Frame-Options: SAMEORIGIN, so an iframe is always blank.
-    /// Only the desktop native WebView overlay can show the dashboard.
-    /// </summary>
     private bool CanEmbed
     {
         get
@@ -175,16 +231,17 @@
     protected override async Task OnInitializedAsync()
     {
         await KeyStore.LoadAsync();
-        assistantNameDraft = KeyStore.HomeAssistantAssistantName;
+        assistantName = KeyStore.AssistantName;
         haBaseUrlDraft = KeyStore.HomeAssistantBaseUrl;
         haTokenDraft = KeyStore.HomeAssistantToken;
-        deviceSummary = KeyStore.HomeAssistantDeviceSummary;
         deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
         SyncEmbedUrl();
-    }
+        if (SmartHome.IsConfigured)
+            await LoadLiveAsync(refreshCatalog: false);
 
-    private void OnAssistantNameChanged(ChangeEventArgs e) =>
-        assistantNameDraft = e.Value?.ToString() ?? "";
+        _pollCts = new CancellationTokenSource();
+        _ = PollDevicesAsync(_pollCts.Token);
+    }
 
     private void OnHaBaseUrlChanged(ChangeEventArgs e)
     {
@@ -218,10 +275,10 @@
         StateHasChanged();
         try
         {
-            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
+            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, KeyStore.AssistantName);
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.HomeAssistant);
             SyncEmbedUrl();
-            await RefreshDeviceSummaryAsync();
+            await LoadLiveAsync(refreshCatalog: true);
             haFeedback = "Home Assistant settings saved.";
             haFeedbackIsError = false;
         }
@@ -256,16 +313,17 @@
             var result = await SmartHome.TestConnectionAsync(haBaseUrlDraft, haTokenDraft);
             if (result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) ||
                 result.StartsWith("Enter both", StringComparison.OrdinalIgnoreCase) ||
-                result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase))
+                result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase) ||
+                result.StartsWith("Smart home", StringComparison.OrdinalIgnoreCase))
             {
                 haFeedback = result;
                 haFeedbackIsError = true;
                 return;
             }
 
-            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, assistantNameDraft);
+            await KeyStore.SetHomeAssistantConfigAsync(haBaseUrlDraft, haTokenDraft, KeyStore.AssistantName);
             SyncEmbedUrl();
-            await RefreshDeviceSummaryAsync();
+            await LoadLiveAsync(refreshCatalog: true);
             haFeedback = "Connected to Home Assistant successfully.";
             haFeedbackIsError = false;
         }
@@ -281,17 +339,149 @@
         }
     }
 
-    private async Task RefreshDeviceSummaryAsync()
+    private async Task RefreshDevices()
     {
-        var summary = await SmartHome.BuildDeviceCatalogAsync();
-        if (!summary.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) &&
-            !summary.StartsWith("Connection", StringComparison.OrdinalIgnoreCase) &&
-            !summary.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase) &&
-            !summary.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase))
+        haBusy = true;
+        haFeedback = null;
+        StateHasChanged();
+        try
         {
-            await KeyStore.UpdateHomeAssistantDeviceSummaryAsync(summary);
-            deviceSummary = summary;
-            deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
+            await LoadLiveAsync(refreshCatalog: true);
+            haFeedback = deviceRows.Count > 0
+                ? $"Loaded {deviceRows.Count} device(s)."
+                : "No controllable devices found.";
+            haFeedbackIsError = false;
         }
+        catch (Exception ex)
+        {
+            haFeedback = ex.Message;
+            haFeedbackIsError = true;
+        }
+        finally
+        {
+            haBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DisconnectHomeAssistant()
+    {
+        haBusy = true;
+        StateHasChanged();
+        try
+        {
+            await KeyStore.SetHomeAssistantConfigAsync("", "", KeyStore.AssistantName);
+            await KeyStore.UpdateHomeAssistantDeviceSummaryAsync("");
+            await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.HomeAssistant);
+            instanceInfo = null;
+            deviceRows = [];
+            deviceSummaryUpdatedAt = null;
+            haFeedback = "Disconnected. Token and URL removed from this device.";
+            haFeedbackIsError = false;
+        }
+        catch (Exception ex)
+        {
+            haFeedback = ex.Message;
+            haFeedbackIsError = true;
+        }
+        finally
+        {
+            haBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadLiveAsync(bool refreshCatalog)
+    {
+        assistantName = KeyStore.AssistantName;
+        instanceInfo = await SmartHome.GetInstanceInfoAsync();
+        if (refreshCatalog)
+        {
+            var summary = await SmartHome.BuildDeviceCatalogAsync();
+            if (!summary.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) &&
+                !summary.StartsWith("Connection", StringComparison.OrdinalIgnoreCase) &&
+                !summary.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase) &&
+                !summary.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase))
+            {
+                await KeyStore.UpdateHomeAssistantDeviceSummaryAsync(summary);
+                deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
+            }
+        }
+
+        var rows = await SmartHome.GetDeviceRowsAsync();
+        deviceRows = rows.ToList();
+        deviceSummaryUpdatedAt = KeyStore.HomeAssistantDeviceSummaryUpdatedAt;
+    }
+
+    private async Task ToggleDevice(HaDeviceRow row)
+    {
+        haBusy = true;
+        StateHasChanged();
+        try
+        {
+            var on = IsOnState(row);
+            string domain = row.Domain;
+            string service;
+            if (domain.Equals("cover", StringComparison.OrdinalIgnoreCase))
+                service = on ? "close_cover" : "open_cover";
+            else if (domain.Equals("lock", StringComparison.OrdinalIgnoreCase))
+                service = on ? "unlock" : "lock";
+            else
+                service = on ? "turn_off" : "turn_on";
+
+            var result = await SmartHome.CallServiceAsync(domain, service, new { entity_id = row.EntityId });
+            if (result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) ||
+                result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase))
+            {
+                haFeedback = result;
+                haFeedbackIsError = true;
+            }
+            else
+            {
+                haFeedback = null;
+                await LoadLiveAsync(refreshCatalog: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            haFeedback = ex.Message;
+            haFeedbackIsError = true;
+        }
+        finally
+        {
+            haBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static bool IsOnState(HaDeviceRow row)
+    {
+        var s = (row.State ?? "").Trim().ToLowerInvariant();
+        return s is "on" or "open" or "opening" or "locked" or "home" or "heat" or "cool" or "heat_cool" or "auto";
+    }
+
+    private async Task PollDevicesAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(20), ct);
+                if (!SmartHome.IsConfigured || haBusy)
+                    continue;
+                await LoadLiveAsync(refreshCatalog: false);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // page closed
+        }
+    }
+
+    public void Dispose()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
     }
 }

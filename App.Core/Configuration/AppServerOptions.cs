@@ -17,6 +17,9 @@ public class AppServerOptions
         $"{GitHubRepoUrl}/releases/latest/download/{assetFileName}";
 
     public static string LatestWindowsSetupUrl => GitHubLatestDownloadUrl("Wizionic-win-Setup.exe");
+    public static string LatestWindowsInstallScriptUrl => GitHubLatestDownloadUrl("install.ps1");
+    public const string HostedWindowsInstallScriptUrl = "https://wizionic.com/install.ps1";
+    public static string LatestSha256SumsUrl => GitHubLatestDownloadUrl("SHA256SUMS");
     public static string LatestLinuxAppImageUrl => GitHubLatestDownloadUrl("Wizionic.AppImage");
     public static string LatestLinuxInstallScriptUrl => GitHubLatestDownloadUrl("install.sh");
     public static string HomeserverWinManifestUrl => GitHubLatestDownloadUrl("homeserver-win-latest.json");

@@ -47,4 +47,13 @@ public interface ISmartHomeService
     /// Prefer <see cref="ListEntitiesAsync"/> with domain "light" for new code.
     /// </summary>
     Task<string> ListLightEntitiesAsync(CancellationToken ct = default);
+
+    /// <summary>GET /api/config — location name, version, time zone.</summary>
+    Task<HaInstanceInfo> GetInstanceInfoAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Controllable entities with optional area names (for the Home Assistant page).
+    /// </summary>
+    Task<IReadOnlyList<HaDeviceRow>> GetDeviceRowsAsync(CancellationToken ct = default);
 }
+

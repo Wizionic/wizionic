@@ -21,15 +21,31 @@
             {
                 <div class="login-download-badge">Recommended for this device</div>
             }
-            <div class="login-download-title">
-                <a href="@AppServerOptions.LatestWindowsSetupUrl">
-                    Download Wizionic App for Windows
-                </a>
+            <div class="login-download-title">Install Wizionic App for Windows</div>
+            <p class="login-download-desc">Windows 10 and 11. PowerShell (per-user, no administrator):</p>
+            <div class="login-install-cmd-row">
+                <pre class="login-install-cmd" id="windows-install-cmd"><code>@WindowsInstallCommand</code></pre>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyWindowsInstallCommand">
+                    @(_windowsInstallCopied ? "Copied" : "Copy")
+                </button>
             </div>
-            <p class="login-download-desc">Windows installer (.exe) — Windows 10 and 11.</p>
-            <a class="btn btn-primary btn-sm login-download-btn" href="@AppServerOptions.LatestWindowsSetupUrl">
-                Download for Windows
-            </a>
+            <p class="login-download-note">
+                Windows builds are not code-signed yet. SmartScreen will warn if you download the .exe in a browser.
+            </p>
+            <div class="login-download-links">
+                <a href="@(AppServerOptions.GitHubRepoUrl)/blob/main/scripts/install.ps1">inspect script</a>
+                <span class="login-download-sep">·</span>
+                <a href="/install.ps1">install.ps1</a>
+            </div>
+            <details class="login-download-details">
+                <summary>Or download the installer</summary>
+                <p>Edge: Keep → … → Keep anyway. SmartScreen: More info → Run anyway.</p>
+                <div class="login-download-links">
+                    <a href="@AppServerOptions.LatestWindowsSetupUrl">Wizionic-win-Setup.exe</a>
+                    <span class="login-download-sep">·</span>
+                    <a href="@AppServerOptions.LatestSha256SumsUrl">SHA256SUMS</a>
+                </div>
+            </details>
         </div>
 
         <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : _detectedOs == "windows" ? "login-download-card--muted" : null)">
@@ -458,8 +474,10 @@
     /// </summary>
     [Parameter] public bool RedirectUnauthenticatedAccountToRoot { get; set; } = true;
 
+    private const string WindowsInstallCommand = "irm " + AppServerOptions.HostedWindowsInstallScriptUrl + " | iex";
     private const string LinuxInstallCommand = "curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install.sh | bash";
 
+    private bool _windowsInstallCopied;
     private bool _linuxInstallCopied;
     private bool _showPasswordForm;
     private bool _showTwoFactorForm;
@@ -504,15 +522,21 @@
     private const string TfMaskedKey = "wizionic.tf.masked";
     private const string TfEmailKey = "wizionic.tf.email";
 
-    private async Task CopyLinuxInstallCommand()
+    private Task CopyWindowsInstallCommand() => CopyInstallCommand(WindowsInstallCommand, windows: true);
+
+    private Task CopyLinuxInstallCommand() => CopyInstallCommand(LinuxInstallCommand, windows: false);
+
+    private async Task CopyInstallCommand(string command, bool windows)
     {
         try
         {
-            await JS.InvokeVoidAsync("navigator.clipboard.writeText", LinuxInstallCommand);
-            _linuxInstallCopied = true;
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", command);
+            if (windows) _windowsInstallCopied = true;
+            else _linuxInstallCopied = true;
             StateHasChanged();
             await Task.Delay(2000);
-            _linuxInstallCopied = false;
+            if (windows) _windowsInstallCopied = false;
+            else _linuxInstallCopied = false;
             StateHasChanged();
         }
         catch

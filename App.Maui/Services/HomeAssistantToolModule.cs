@@ -31,6 +31,10 @@ public sealed class HomeAssistantToolModule : IToolModule
             AIFunctionFactory.Create(ListLights),
             AIFunctionFactory.Create(ControlLight),
             AIFunctionFactory.Create(ControlMediaPlayer),
+            AIFunctionFactory.Create(ControlClimate),
+            AIFunctionFactory.Create(ControlCover),
+            AIFunctionFactory.Create(ActivateScene),
+            AIFunctionFactory.Create(RunScript),
             AIFunctionFactory.Create(GetEntityState),
             AIFunctionFactory.Create(CallService),
             AIFunctionFactory.Create(ListServices),
@@ -176,6 +180,130 @@ public sealed class HomeAssistantToolModule : IToolModule
             return $"Set volume on {entityId} to {Math.Clamp(volumePercent!.Value, 0, 100)}%.\n{result}";
 
         return $"Media player {entityId}: {service} succeeded.\n{result}";
+    }
+
+    [Description(
+        "Control a Home Assistant climate entity (thermostat, HVAC). " +
+        "Prefer this over CallService for temperature and HVAC mode. " +
+        "If entity_id is unknown, call ListEntities(domain='climate', search=...) first.")]
+    private async Task<string> ControlClimate(
+        [Description("Climate entity_id, e.g. 'climate.living_room'")] string entityId,
+        [Description("Action: set_temperature, set_hvac_mode, off, or on")] string action,
+        [Description("Target temperature when action is set_temperature")] double? temperature = null,
+        [Description("HVAC mode when action is set_hvac_mode: heat, cool, heat_cool, auto, off, fan_only, dry")] string? hvacMode = null)
+    {
+        if (string.IsNullOrWhiteSpace(entityId))
+            return "Entity ID is required. Call ListEntities(domain='climate') first.";
+
+        var act = (action ?? "").Trim().ToLowerInvariant();
+        _trace.Record($"🏠 control_climate(entity=\"{entityId}\", action=\"{act}\", temp={temperature?.ToString() ?? ""})");
+
+        string service;
+        var data = new Dictionary<string, object?> { ["entity_id"] = entityId.Trim() };
+        switch (act)
+        {
+            case "set_temperature":
+            case "temperature":
+                if (!temperature.HasValue)
+                    return "temperature is required when action is set_temperature.";
+                service = "set_temperature";
+                data["temperature"] = temperature.Value;
+                break;
+            case "set_hvac_mode":
+            case "hvac_mode":
+            case "mode":
+                if (string.IsNullOrWhiteSpace(hvacMode))
+                    return "hvac_mode is required when action is set_hvac_mode.";
+                service = "set_hvac_mode";
+                data["hvac_mode"] = hvacMode.Trim().ToLowerInvariant();
+                break;
+            case "off":
+            case "turn_off":
+                service = "turn_off";
+                break;
+            case "on":
+            case "turn_on":
+                service = "turn_on";
+                break;
+            default:
+                return "Action must be one of: set_temperature, set_hvac_mode, off, on.";
+        }
+
+        var result = await _ha.CallServiceAsync("climate", service, data);
+        TraceResult(result);
+        return IsSuccess(result) ? $"Climate {entityId}: {service} succeeded.\n{result}" : result;
+    }
+
+    [Description(
+        "Control a Home Assistant cover (garage, blinds, curtains, shade). " +
+        "If entity_id is unknown, call ListEntities(domain='cover', search=...) first.")]
+    private async Task<string> ControlCover(
+        [Description("Cover entity_id, e.g. 'cover.garage_door'")] string entityId,
+        [Description("Action: open, close, stop, or set_position")] string action,
+        [Description("Position 0-100 when action is set_position (0=closed, 100=open)")] int? position = null)
+    {
+        if (string.IsNullOrWhiteSpace(entityId))
+            return "Entity ID is required. Call ListEntities(domain='cover') first.";
+
+        var act = (action ?? "").Trim().ToLowerInvariant();
+        _trace.Record($"🏠 control_cover(entity=\"{entityId}\", action=\"{act}\")");
+
+        string service;
+        var data = new Dictionary<string, object?> { ["entity_id"] = entityId.Trim() };
+        switch (act)
+        {
+            case "open":
+            case "open_cover":
+                service = "open_cover";
+                break;
+            case "close":
+            case "close_cover":
+                service = "close_cover";
+                break;
+            case "stop":
+            case "stop_cover":
+                service = "stop_cover";
+                break;
+            case "set_position":
+            case "position":
+                if (!position.HasValue)
+                    return "position (0-100) is required when action is set_position.";
+                service = "set_cover_position";
+                data["position"] = Math.Clamp(position.Value, 0, 100);
+                break;
+            default:
+                return "Action must be one of: open, close, stop, set_position.";
+        }
+
+        var result = await _ha.CallServiceAsync("cover", service, data);
+        TraceResult(result);
+        return IsSuccess(result) ? $"Cover {entityId}: {service} succeeded.\n{result}" : result;
+    }
+
+    [Description("Activate a Home Assistant scene. If entity_id is unknown, ListEntities(domain='scene', search=...) first.")]
+    private async Task<string> ActivateScene(
+        [Description("Scene entity_id, e.g. 'scene.movie_time'")] string entityId)
+    {
+        if (string.IsNullOrWhiteSpace(entityId))
+            return "Entity ID is required. Call ListEntities(domain='scene') first.";
+
+        _trace.Record($"🏠 activate_scene(entity=\"{entityId}\")");
+        var result = await _ha.CallServiceAsync("scene", "turn_on", new { entity_id = entityId.Trim() });
+        TraceResult(result);
+        return IsSuccess(result) ? $"Activated scene {entityId}.\n{result}" : result;
+    }
+
+    [Description("Run a Home Assistant script. If entity_id is unknown, ListEntities(domain='script', search=...) first.")]
+    private async Task<string> RunScript(
+        [Description("Script entity_id, e.g. 'script.good_night'")] string entityId)
+    {
+        if (string.IsNullOrWhiteSpace(entityId))
+            return "Entity ID is required. Call ListEntities(domain='script') first.";
+
+        _trace.Record($"🏠 run_script(entity=\"{entityId}\")");
+        var result = await _ha.CallServiceAsync("script", "turn_on", new { entity_id = entityId.Trim() });
+        TraceResult(result);
+        return IsSuccess(result) ? $"Ran script {entityId}.\n{result}" : result;
     }
 
     [Description("Get the current state of any Home Assistant entity (light, switch, media_player, sensor, climate, cover, etc.).")]

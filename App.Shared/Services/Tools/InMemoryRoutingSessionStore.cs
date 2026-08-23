@@ -29,6 +29,10 @@ public sealed class InMemoryRoutingSessionStore : IRoutingSessionStore
                 session.LastMediaPlayerEntity = entityId;
             else if (entityId.StartsWith("light.", StringComparison.OrdinalIgnoreCase))
                 session.LastLightEntity = entityId;
+            else if (entityId.StartsWith("climate.", StringComparison.OrdinalIgnoreCase))
+                session.LastClimateEntity = entityId;
+            else if (entityId.StartsWith("cover.", StringComparison.OrdinalIgnoreCase))
+                session.LastCoverEntity = entityId;
         }
 
         session.LastAction = action;

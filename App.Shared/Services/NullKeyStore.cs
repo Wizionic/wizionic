@@ -158,7 +158,7 @@ public sealed class NullKeyStore : IKeyStore
 
     public string HomeAssistantBaseUrl => "";
     public string HomeAssistantToken => "";
-    public string HomeAssistantAssistantName => "";
+    public string HomeAssistantAssistantName => AssistantName;
     public string HomeAssistantDeviceSummary => "";
     public DateTime? HomeAssistantDeviceSummaryUpdatedAt => null;
     public Task SetHomeAssistantConfigAsync(
@@ -166,4 +166,7 @@ public sealed class NullKeyStore : IKeyStore
         Task.CompletedTask;
     public Task UpdateHomeAssistantDeviceSummaryAsync(string summary, CancellationToken ct = default) =>
         Task.CompletedTask;
+
+    public string AssistantName => KeyStoreDefaults.DefaultAssistantName;
+    public Task SetAssistantNameAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
 }

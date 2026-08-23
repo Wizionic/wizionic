@@ -404,6 +404,39 @@
                 return true;
             } catch (e) { return false; }
         };
+        window.appPlayAudioBase64Wait = window.appPlayAudioBase64Wait || function (base64, mimeType) {
+            return new Promise(async function (resolve) {
+                try {
+                    const play = await window.appPlayAudioBase64(base64, mimeType);
+                    if (play !== 'ok' || !window.__appAudioEl) { resolve(play); return; }
+                    const audio = window.__appAudioEl;
+                    audio.addEventListener('ended', function () { resolve('ok'); }, { once: true });
+                    audio.addEventListener('error', function () { resolve('playback error'); }, { once: true });
+                } catch (e) { resolve((e && e.message) ? e.message : 'failed'); }
+            });
+        };
+        window.__appVoice = window.__appVoice || { listening: false, muted: false, speaking: false, chunks: [], dotNet: null };
+        window.appVoiceSetMuted = function (muted) {
+            window.__appVoice.muted = !!muted;
+            if (window.__appVoice.muted) { window.__appVoice.speaking = false; window.__appVoice.chunks = []; }
+        };
+        window.appVoiceListenStop = async function () {
+            const state = window.__appVoice;
+            state.listening = false; state.dotNet = null; state.chunks = [];
+            try {
+                if (state.processor) { state.processor.disconnect(); state.processor.onaudioprocess = null; }
+                if (state.source) state.source.disconnect();
+                if (state.ctx && state.ctx.state !== 'closed') await state.ctx.close();
+                if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+            } catch (e) { }
+            state.processor = state.source = state.ctx = state.stream = null;
+        };
+        window.appVoiceListenStart = window.appVoiceListenStart || async function (dotNetRef, options) {
+            if (typeof window.appMicStart !== 'function')
+                return { ok: false, error: 'Microphone helpers not loaded.' };
+            // Prefer Shared chatInterop.js implementation when present.
+            return { ok: false, error: 'Voice listen requires chatInterop.js.' };
+        };
 
         // --------------------------------------------------------------------
         // AES-GCM helpers for WASM localStorage / IndexedDB encryption and for
