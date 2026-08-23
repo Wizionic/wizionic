@@ -192,13 +192,32 @@ Results are stored as **attachments** on assistant messages (PNG base64). Copy /
 
 - `ILemonadeSpeechService` — record mic (JS WAV interop) → Lemonade **transcription** model (e.g. Whisper).
 - Mic button on the input toolbar when STT is available (not on pure image models).
-- Transcript fills the chat textarea for send.
+- Transcript fills the chat textarea for send (push-to-talk dictation).
 
 ### Text-to-speech (TTS)
 
-- Same speech service → Lemonade **TTS** model (e.g. Kokoro).
-- Toolbar: auto-speak replies toggle + “read last reply”; per-message **Speak** / bot or user ⋮ **Read aloud**.
-- Playback via JS (`appPlayAudioBase64`); Omni may already attach audio — prefer Omni audio over client TTS when present.
+- Same speech service → Lemonade **TTS** model (e.g. Kokoro). Cloud speech uses `ICloudSpeechService` when the profile’s STT/TTS slots are cloud.
+- Toolbar: auto-speak replies toggle. Per-message **Speak**.
+- Playback via JS (`appPlayAudioBase64` / `appPlayAudioBase64Wait`); Omni may already attach audio — prefer Omni audio over client TTS when present.
+
+### Voice mode (wake word)
+
+Soundwave control on Chat (needs both STT and TTS). Not the same as push-to-talk mic.
+
+```
+listen (mic open, echoCancellation)
+  → energy VAD in chatInterop.js (`appVoiceListenStart`)
+  → speech end = ~1.1s silence
+  → STT that utterance
+  → require wake word (`IKeyStore.AssistantName`) unless Settings → Voice “Keep listening after a command”
+  → Send() the same chat path (HA routing, tools, fallbacks)
+  → TTS the reply with mic muted
+  → listen for the wake word again
+```
+
+Default: **every command needs the wake word** so AVR music / background noise is not transcribed. Optional `UserProfileSettings.VoiceFollowUpWithoutWake` allows ~30s of follow-ups. Utterances longer than 8s are ignored unless that follow-up window is open.
+
+**Wake word storage:** `IKeyStore.AssistantName` on the **profile** (`UserProfileSettings.AssistantName`) plus a dedicated key `wasm-assistant-name`. `HomeAssistantAssistantName` is an alias for routing call sites. Do **not** stamp the old HA-blob default `"Home"` over a saved name. Syncs with settings category **Profile**. UI: Settings → Voice. Help: `settings-voice`.
 
 ### Omni collections
 
@@ -239,9 +258,9 @@ Dumping every tool schema into a small local model inflates prefill and can degr
 
 | Mode (`ToolRoutingMode` in `IKeyStore`) | Behavior |
 |----------------------------------------|----------|
-| **Rules** (default) | `ContextualRequestRouter` heuristics only — wake word / HA session stickiness, browser panel, Notes/Gallery/Calendar/image/utility keywords. Zero router model cost. |
-| **AI** | `AiRequestRouter` asks a configured **routing model** (`ToolRoutingModelId`, e.g. a small Lemonade/Ollama chat model) to return JSON module names. No tools on the router call. Falls back to rules on timeout / parse failure. HA session stickiness is **off** so weather after lights still reclassifies. |
-| **Hybrid** | Rules first; if the route is “strong” (HA wake word, browser panel, clear Lemonade image intent) keep it. Otherwise call the AI router (covers PureChat, Gallery-only, multi-intent). Without a routing model configured, Hybrid/AI degrade to Rules. |
+| **Rules** (default) | `ContextualRequestRouter` heuristics only — wake word / HA session stickiness / **device-intent keywords** (lights, play music, AVR, Denon, climate, covers, …), browser panel, Notes/Gallery/Calendar/image/utility. Zero router model cost. |
+| **AI** | `AiRequestRouter` asks a configured **routing model** (`ToolRoutingModelId`) for JSON module names. No tools on the router call. For `lemonade/*` and `ollama/*`, classification uses `HelpEmbeddingClient.CompleteRouterAsync` (`enable_thinking: false`, short `max_tokens`) so Qwen thinking models do not return empty / non-JSON `ChatResponse.Text`. Cloud routing models still use ME.AI (`ChatResponseFormat.Json`). Falls back to rules (and an HA device-intent heuristic) on timeout / parse failure. HA session stickiness is **off** so weather after lights still reclassifies. A successful classify is traced as `AI→AI`. |
+| **Hybrid** | Rules first; if the route is “strong” (HA wake word or device intent, browser panel, clear Lemonade image intent) keep it. Otherwise call the AI router. Without a routing model configured, Hybrid/AI degrade to Rules. |
 
 ```mermaid
 flowchart TD
@@ -516,94 +535,106 @@ Optional **Start with session** writes `~/.config/autostart/com.wizionic.app.des
 
 ## Home Assistant (MAUI)
 
-Wizionic can agentically control a local Home Assistant instance from the MAUI desktop app. Configuration lives at `/home-assistant` (`HomeAssistantPage.razor`); the chat window drives devices once a long-lived access token and base URL are saved.
+Wizionic can agentically control a local Home Assistant instance from the **Windows/Linux desktop app**. Configuration lives at `/home-assistant` (`HomeAssistantPage.razor`). Chat and Voice mode drive devices once a long-lived access token and base URL are saved. WASM uses `NullSmartHomeService` (no LAN control); the website does not host this page.
+
+The HA page is a **companion** (status + area-grouped device toggles + embed), not a long form. How-to lives in Help (`desktop-browser-ha.md`; glyphs `home-assistant`, `home-assistant-token`, `home-assistant-devices`).
 
 ### Configuration & storage
 
 | Setting | Stored in | Purpose |
 |---------|-----------|---------|
 | Base URL | `IKeyStore.HomeAssistantBaseUrl` | e.g. `http://192.168.4.23:8123` |
-| Long-lived token | `IKeyStore.HomeAssistantToken` | Bearer token from HA Profile → Security |
-| Assistant name (wake word) | `IKeyStore.HomeAssistantAssistantName` | Default `Home` — user addresses this name in chat |
-| Device summary cache | `IKeyStore.HomeAssistantDeviceSummary` | Cleartext multi-domain controllable entity catalog refreshed on save/test |
+| Long-lived token | `IKeyStore.HomeAssistantToken` | Bearer token from HA Profile → Security (Help `?` on the field) |
+| Device summary cache | `IKeyStore.HomeAssistantDeviceSummary` | Cleartext catalog (domains + **areas**) refreshed on save/test/tool success and while the HA page is open |
+| Assistant name (wake word) | `IKeyStore.AssistantName` / `UserProfileSettings.AssistantName` + key `wasm-assistant-name` | Settings → Voice. Default display `Home`. `HomeAssistantAssistantName` is an alias. **Not** owned by the HA blob. |
 
-Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in SQLite via `SqliteKeyStore` (`HomeAssistantConfig` DTO). The settings page calls `ISmartHomeService.TestConnectionAsync` and `BuildDeviceCatalogAsync` to validate and refresh the device list.
+Credentials are normalized by `HomeAssistantCredentials` (Core) and persisted in `HomeAssistantConfig` (SQLite / localStorage). Do not migrate HA’s old default `"Home"` over a saved wake word. Profile sync carries the name; HA sync carries URL/token only.
+
+The page calls `TestConnectionAsync`, `GetInstanceInfoAsync` (`GET /api/config` — location name, version), `GetDeviceRowsAsync` (entities + areas), and `BuildDeviceCatalogAsync`. Lights/switches/covers/locks can be toggled on the page via `CallService`. **Disconnect** clears URL/token on this device.
 
 ### Core contracts
 
 | Interface / type | Location | Role |
 |------------------|----------|------|
-| `ISmartHomeService` | `App.Core/SmartHome/` | `TestConnectionAsync`, `CallServiceAsync`, `GetEntityStateAsync`, `ListEntitiesAsync`, `BuildDeviceCatalogAsync`, `ListServicesAsync`, `ProcessConversationAsync`, `ListLightEntitiesAsync` |
+| `ISmartHomeService` | `App.Core/SmartHome/` | Test, CallService, GetEntityState, ListEntities, BuildDeviceCatalog, ListServices, ProcessConversation, ListLights, **GetInstanceInfo**, **GetDeviceRows** |
+| `HaInstanceInfo` / `HaDeviceRow` / `HaAreaInfo` | `App.Core/SmartHome/HaModels.cs` | Status strip + area-grouped UI rows |
 | `HomeAssistantCredentials` | `App.Core/SmartHome/` | URL/token normalization |
-| `HomeAssistantConfig` | `App.Core/Storage/` | DTO for key store persistence |
+| `HomeAssistantConfig` | `App.Core/Storage/` | URL/token (+ legacy `AssistantName` field, not source of truth) |
 
 ### MAUI implementation
 
-`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Wizionic server or browser DevTools. It hits standard HA REST endpoints with `Authorization: Bearer {token}`:
+`HomeAssistantService` (MAUI) is a direct LAN `HttpClient` — calls never go through the Wizionic server or browser DevTools. `Authorization: Bearer {token}`. Proxy is disabled (`UseProxy = false`) to avoid LAN hangs.
 
 | Endpoint | Use |
 |----------|-----|
 | `GET /api/` | Connection test |
-| `GET /api/states` | Entity discovery + multi-domain catalog |
+| `GET /api/config` | Location name, version, time zone (status strip) |
+| `GET /api/states` | Entity discovery + catalog |
 | `GET /api/states/{entity_id}` | Single entity state |
-| `GET /api/services` | List services (optional filter by domain) |
+| `GET /api/services` | List services (optional domain filter) |
 | `POST /api/services/{domain}/{service}` | Control any device |
+| `POST /api/template` | Areas via Jinja `areas()` / `area_name()` / `area_entities()` (degrade if templates off) |
 | `POST /api/conversation/process` | Secondary Assist natural-language path |
 
-Proxy is disabled (`UseProxy = false`) to avoid LAN hangs.
+**Control strategy:** Wizionic’s selected model is the agent. REST tools (`ListEntities` → convenience tools / `CallService`) are the primary path. Area names are folded into entity search text so “kitchen lights” resolves without websocket.
 
-**Control strategy:** Wizionic’s selected model (Ollama or cloud) is the agent. REST tools (`ListEntities` → `CallService` / `ControlLight` / `ControlMediaPlayer`) are the primary path so any controllable domain works for any user’s HA install.
-
-**Hybrid enforcement when the model skips tools** (common with small VL models):
+**When the model skips tools** (common with small VL models):
 
 1. First completion with HA tools available  
-2. Tool-required retry via the same function-invocation client  
-3. **Structured REST fallback** (`HomeAssistantFallback`) — parse volume/media/light intents and call HA services directly using catalog name match + domain-specific session entities (`LastMediaPlayerEntity` / `LastLightEntity`). Fixes “first volume works, follow-up fails” without relying on the model.  
-4. **Clean Assist fallback** — `POST /api/conversation/process` with natural language only (friendly names, no raw `entity_id`s, no wrong-domain last entity, strip fillers like “now” that confuse Assist)  
-5. If all fail → honest failure message (never keep a hallucinated “volume has been set”)
+2. Tool-required retry  
+3. **Structured REST fallback** (`HomeAssistantFallback`) — volume/media/light **and** climate setpoints / cover open-close, using catalog match + session entities (`LastMediaPlayerEntity` / `LastLightEntity` / `LastClimateEntity` / `LastCoverEntity`)  
+4. **Clean Assist fallback** — `POST /api/conversation/process` (friendly names only)  
+5. Honest failure if all fail (never keep a hallucinated “volume has been set”)
 
-`ProcessConversation` remains available as a model-callable tool; the auto path does not depend on the model choosing it. Small vision models (e.g. 4B VL) are weaker at multi-arg tool calls — structured fallback + Assist + `ControlMediaPlayer` mitigate that; stronger instruct models remain best for reliability.
+After a successful HA tool call, the device catalog is refreshed in the background.
 
 ### How chat triggers Home Assistant
 
 ```
-User message in ChatPage
+User message (typed or Voice mode)
         │
         ▼
-ContextualRequestRouter.ClassifyRequest()
+CompositeRequestRouter (Rules / AI / Hybrid)
         ├── HomeAssistant module available (IsConfigured)?
-        ├── Wake word present?  e.g. "Home, turn off kitchen light"
-        │       OR active HA session in this conversation (15 min TTL)?
-        └── Yes → route TargetModule = "HomeAssistant"
+        ├── Wake word (IKeyStore.AssistantName)?
+        │       OR Rules-mode 15 min HA session?
+        │       OR MessageSuggestsHomeAssistant (lights, play music, AVR, Denon, climate, covers, …)?
+        └── Yes → TargetModule = HomeAssistant
         │
         ▼
 ChatCompletionService
-        ├── Tool set = HomeAssistant tools + Native tools only
-        ├── System prompt: BuildHomeAssistantPrompt() (device summary + session context)
-        ├── Model calls tools via UseFunctionInvocation
-        └── On success → IRoutingSessionStore records invocation (enables follow-ups)
+        ├── Tools = HomeAssistant + Native (+ MCP when the route includes them)
+        ├── System prompt: BuildHomeAssistantPrompt() (catalog + session)
+        ├── Model function-invocation
+        └── On success → IRoutingSessionStore + catalog refresh
 ```
 
-**Wake word:** `ContextualRequestRouter.ContainsWakeWord` matches the configured assistant name as a whole word (regex word boundary). Multi-word names use substring match.
+**Wake word:** `ContextualRequestRouter.ContainsWakeWord` — whole word for single-token names; substring for multi-word (`Hey Bro`).
 
-**Follow-ups:** After a successful HA tool call, follow-up messages like *"make it blue"* work for **15 minutes** in the same conversation without repeating the wake word (`InMemoryRoutingSessionStore` + `RoutingSession.SessionTtl`).
+**Chat follow-ups:** After a successful HA tool call, *"make it blue"* works for **15 minutes** in that conversation (`RoutingSession.SessionTtl`). Voice mode is separate: by default it still requires the wake word every spoken command.
 
-**Enforcement:** If the model replies without calling HA tools but claims it changed a device, `ChatCompletionService` retries with a tool-required prompt and may replace the response with an honest failure message.
+**Enforcement:** If the model claims it changed a device without tools, retry / fallback / honest failure.
 
 ### Agent tools (function names exposed to the model)
 
 | Tool | Purpose | Example user intent |
 |------|---------|---------------------|
-| `ListEntities` | Discover entities by domain and/or search (primary discovery) | "Home, what media players do you see?" / find Denon by name |
-| `ListLights` | Alias for light listing | "Home, what lights do you know?" |
-| `ControlLight` | Turn on/off, brightness (0–255), color name or hex | "Home, turn off the kitchen light" / "make it blue" |
-| `ControlMediaPlayer` | play/pause/stop/on/off/volume (0–100%)/select_source | "Home, set volume to 50" / play on AVR |
-| `GetEntityState` | Read any entity state JSON | "Home, is the garage door open?" |
-| `CallService` | Generic `domain.service` with JSON `service_data` (primary control) | Switches, climate, covers, scenes, advanced media |
-| `ListServices` | List HA services for a domain | When unsure of service names for an integration |
-| `ProcessConversation` | HA Assist NLU (`/api/conversation/process`) — secondary + auto-fallback | Area phrases; app also calls Assist if model skips tools |
+| `ListEntities` | Discover by domain and/or search (includes **area** names) | “what media players do you see?” / kitchen |
+| `ListLights` | Alias for light listing | “what lights do you know?” |
+| `ControlLight` | On/off, brightness 0–255, color name or hex | “turn off the kitchen light” |
+| `ControlMediaPlayer` | play/pause/stop/on/off/volume 0–100%/select_source | “play music on the Denon” |
+| `ControlClimate` | set_temperature / set_hvac_mode / on / off | “set the thermostat to 70” |
+| `ControlCover` | open / close / stop / set_position | “close the garage” |
+| `ActivateScene` | `scene.turn_on` | “activate movie time” |
+| `RunScript` | `script.turn_on` | “run good night” |
+| `GetEntityState` | Read any entity | “is the garage open?” |
+| `CallService` | Generic `domain.service` + JSON `service_data` | Anything without a convenience tool |
+| `ListServices` | Services for a domain | When unsure of the service name |
+| `ProcessConversation` | HA Assist NLU — secondary + auto-fallback | Area phrases |
 
-**Key files:** `HomeAssistantPage.razor`, `HomeAssistantService.cs`, `HomeAssistantToolModule.cs`, `ContextualRequestRouter.cs`, `ChatCompletionService.cs` (`BuildHomeAssistantPrompt`, `RecordHomeAssistantSessionIfNeeded`)
+**Out of scope (later):** HA websocket live bus, camera snapshots → Gallery, history/logbook, notify.
+
+**Key files:** `HomeAssistantPage.razor`, `HomeAssistantService.cs`, `HomeAssistantToolModule.cs`, `HomeAssistantFallback.cs`, `HaModels.cs`, `ContextualRequestRouter.cs`, `AiRequestRouter.cs`, `ChatCompletionService.cs` (`BuildHomeAssistantPrompt`, `RecordHomeAssistantSessionIfNeeded`), Settings → Voice, `docs/user/desktop-browser-ha.md`
 
 ---
 
@@ -987,11 +1018,11 @@ Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
 | `lemonade` | Lemonade URL, key, modality defaults, models |
 | `cloud-providers` | User API keys (encrypted at rest on each device) |
 | `model-profiles` | Named chat/image/speech stacks |
-| `home-assistant` | HA URL/token/assistant name (desktop) |
+| `home-assistant` | HA URL + token (desktop). Wake word is **not** in this blob. |
+| `profile` | About-you fields **and** assistant name / voice follow-up flag |
 | `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens (auto-sync toggle on Sync page) |
 | `skills` | User SKILL.md library (markdown + enabled flags); auto-sync toggle on Sync page |
 | `system-prompt` | Custom system prompt |
-| `profile` | About-you profile fields |
 | `memories` | User memory list |
 | `appearance` | Theme + nav layout preferences |
 
@@ -1178,14 +1209,14 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | File | Route (approx) | Description |
  |------|---------------|-------------|
  | `Components/LoginPage.razor` | `/` | Landing, magic-link login, guest continue, login server URL |
- | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, streaming, Lemonade image/STT/TTS, context compact, password-protect chats |
+ | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, streaming, Lemonade image/STT/TTS, **Voice mode** (wake word), context compact, password-protect chats |
  | `Components/NotesPage.razor` | `/notes` | Notebooks, Quill entries, floating add button |
  | `Components/GalleryPage.razor` | `/gallery` | Albums, grid, lightbox, password-protect, save-from-chat |
  | `Components/CalendarPage.razor` | `/calendar` | Multi-calendar Day/Week/Month/Year, ICS import/export |
  | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets (incl. gallery/calendar/settings), AI server pick |
  | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults, tool routing model |
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | Add OpenAI-compatible cloud providers (name, base URL, key); refresh models |
- | `Components/SettingsPage.razor` | `/settings` | Profile, system prompt, help answer/embed models, preferences, setup wizard entry |
+ | `Components/SettingsPage.razor` | `/settings` | Voice (wake word), profile, system prompt, help answer/embed models, preferences, setup wizard entry |
  | `Components/HelpPage.razor` | `/help` | Full-page help (browse + optional Ask) |
  | `Components/HelpView.razor` | (in `/help` + modal) | TOC, articles, Ask box, citations |
  | `Components/HelpPanel.razor` | (overlay) | Centered resizable help modal |
@@ -1220,7 +1251,8 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | `Services/Tools/CompositeToolProvider.cs` | Composes `IToolModule` + MCP + connectors |
  | `Services/Tools/CompositeRequestRouter.cs` | Rules / AI / Hybrid entry point |
  | `Services/Tools/ContextualRequestRouter.cs` | Keyword / wake-word / panel heuristics |
- | `Services/Tools/AiRequestRouter.cs` | Small-model module classifier |
+ | `Services/Tools/AiRequestRouter.cs` | Small-model module classifier (local: `CompleteRouterAsync` with thinking off) |
+ | `Services/Tools/HomeAssistantFallback.cs` | Structured REST recovery when the chat model skips HA tools |
  | `Services/SettingsSyncStore.cs` | Settings category export/import for WebRTC |
  | `Services/Help/HelpCatalogService.cs` | Embedded help catalog + markdown |
  | `Services/Help/HelpAskService.cs` | Keyword/vector retrieve + help completion |
@@ -1251,7 +1283,8 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | `Sync/SyncItemKind.cs` | Conversation, Note, Album, Calendar, Settings, … |
  | `Sync/SettingsSyncCategory.cs` | Stable settings blob ids |
  | `Homeserver/IHomeserverInstallService.cs` | Desktop Home Server install |
- | `SmartHome/ISmartHomeService.cs` | Home Assistant REST client contract |
+ | `SmartHome/ISmartHomeService.cs` | Home Assistant REST client contract (incl. instance info + device rows) |
+ | `SmartHome/HaModels.cs` | `HaInstanceInfo`, `HaDeviceRow`, `HaAreaInfo` |
  | `Browser/IBrowserAgentService.cs` | Embedded WebView navigation & script eval |
  | `Browser/IBrowserContext.cs` | Agent tool bridge for browser control |
  | `Tools/IRoutingSessionStore.cs` | Per-conversation HA follow-up session (15 min TTL) |
@@ -1293,7 +1326,8 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  13. For **tools / MCP / OAuth connectors** → `ToolsPage.razor`, `McpToolSource`, `OpenApiConnectorToolSource`, `CompositeToolProvider`, OAuth broker endpoints, SQLite `Connectors` / `OAuthProviders`.
  13b. For **Agent Skills (SKILL.md)** → `App.Core/Skills/*`, `SkillRunner`, `SkillsPanel.razor`, `ISkillStore`, settings sync category `skills`.
  14. For **setup wizard / Home Server / local installers** → `SetupWizard.razor`, `IHomeserverInstallService`, Lemonade/Ollama install services (MAUI).
- 15. For **Home Assistant** → `ISmartHomeService` (Core), `HomeAssistantPage.razor`, `HomeAssistantToolModule`, routers, `ChatCompletionService`.
+ 15. For **Home Assistant** → `ISmartHomeService`, `HaModels`, `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `HomeAssistantFallback`, routers, `ChatCompletionService`, Settings → Voice (`IKeyStore.AssistantName`), Help `desktop-browser-ha.md`.
+ 15b. For **Voice mode** → `ChatPage.razor`, `chatInterop.js` (`appVoiceListenStart`), `UserProfileSettings.VoiceFollowUpWithoutWake`.
  16. For **embedded browser (Windows)** → `MainPage.xaml`, `MauiBrowserAgentService`, `BrowserOverlayService`, `BrowserAgentToolModule`, `EmbeddedBrowser.razor`, `browserInterop.js`.
  17. For **embedded browser / shell (Linux)** → `Platforms/Linux/Program.cs`, `Services/Linux/*`, `WebKit.BlazorWebView.GirCore`, `MauiProgram.CreateLinuxServiceProvider`, section [Linux Desktop](#linux-desktop-maui-project-net100).
  18. For **themes / MAUI chrome** → `ThemeService`, `themeInterop.js`, `SettingsPage.razor`, `NavLayoutService`.
@@ -1301,4 +1335,4 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
 
 ---
 
-*Last updated: August 2026 — ARCHITECTURE.md at repo root (not public wwwroot); mermaid sync + workflow orchestration + Rules/AI/Hybrid diagrams; Agent Skills + device-local Workflows; Tools marketplace; Gallery/Calendar; Lemonade dual local AI; HA; embedded browser.*
+*Last updated: August 2026 — ARCHITECTURE.md at repo root (not public wwwroot). HA companion page + areas + convenience tools; wake word on Profile/Voice (not HA blob); Voice mode; AI router thinking-off path; UI copy in Help.*
