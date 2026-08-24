@@ -13,6 +13,8 @@
 @inject IGuestDataMigrationService GuestMigration
 @inject INotesSyncBridge SyncBridge
 @inject ISidebarState SidebarState
+@inject INotesChatHandoff NotesChatHandoff
+@inject IChatPanelState ChatPanel
 
 <WasmSidebarSync />
 
@@ -89,8 +91,8 @@
                         @if (msg.DeletedAt is null)
                         {
                             <div class="message-row" style="margin-bottom: 32px; display: flex; justify-content:  flex-start;">
-                                    <div style="position: relative; display: inline-flex; flex-direction: column; align-items: flex-end; max-width: 100%;margin-bottom: 10px;">
-                                    <div class="note-response-actions" style="position: absolute; top: -20px; right: 8px;  padding: 4px 10px; border-radius: 8px; display: flex; gap: 8px; z-index: 2; border: 1px solid rgba(0,0,0,0.05);">
+                                    <div class="note-entry-wrap @(isEditing ? "note-editing" : "")">
+                                    <div class="note-response-actions" @onclick:stopPropagation="true">
                                         @if (isEditing)
                                         {
                                             <button type="button" class="menu-button note-action-btn" @onclick="() => SaveEdit(capturedIndex)" title="Save">
@@ -164,19 +166,55 @@
                                             </div>
                                         }
                                     </div>
-                                    <div class="message-bot @(isEditing ? "note-editing" : "")">
+                                    <div class="message-bot @(isEditing ? "note-editing" : "")"
+                                         @onclick="() => OnNoteBodyClick(capturedIndex)"
+                                         @onclick:stopPropagation="true">
                                         @if (isEditing)
                                         {
                                             <QuillEditor @ref="quillEditor"
                                                          @key="@($"note-edit-{activeNoteId}-{capturedIndex}-{editSessionKey}")"
                                                          InitialHtml="@editingInitialHtml"
-                                                         HtmlChanged="OnEditHtmlChanged" />
+                                                         HtmlChanged="OnEditHtmlChanged">
+                                                <ToolbarContent>
+                                                    <select class="ql-header">
+                                                        <option selected=""></option>
+                                                        <option value="1"></option>
+                                                        <option value="2"></option>
+                                                        <option value="3"></option>
+                                                    </select>
+                                                    <span class="ql-formats">
+                                                        <button type="button" class="ql-bold"></button>
+                                                        <button type="button" class="ql-italic"></button>
+                                                        <button type="button" class="ql-underline"></button>
+                                                        <button type="button" class="ql-strike"></button>
+                                                    </span>
+                                                    <span class="ql-formats">
+                                                        <select class="ql-color"></select>
+                                                        <select class="ql-background"></select>
+                                                    </span>
+                                                    <span class="ql-formats">
+                                                        <button type="button" class="ql-list" value="ordered"></button>
+                                                        <button type="button" class="ql-list" value="bullet"></button>
+                                                    </span>
+                                                    <span class="ql-formats">
+                                                        <button type="button" class="ql-link"></button>
+                                                        <button type="button" class="ql-image"></button>
+                                                    </span>
+                                                    <span class="ql-formats">
+                                                        <button type="button" class="note-ai-toolbar-btn" title="Edit with AI"
+                                                                @onclick="OpenCurrentNoteInChat"
+                                                                @onclick:stopPropagation="true">
+                                                            <i class="bi bi-stars"></i>
+                                                        </button>
+                                                    </span>
+                                                </ToolbarContent>
+                                            </QuillEditor>
                                         }
                                         else if (NoteContentFormatter.IsHtml(msg.ContentFormat))
                                         {
                                             <div class="ql-snow note-quill-display">
                                                 <div class="ql-editor">
-                                                    @((MarkupString)msg.Content)
+                                                    @((MarkupString)NoteContentFormatter.ToQuillHtml(msg.Content))
                                                 </div>
                                             </div>
                                         }
@@ -418,7 +456,19 @@
 
         if (notes.Any())
         {
-            activeNoteId = notes.OrderByDescending(n => n.LastUpdated).First().Id;
+            try
+            {
+                await UiStorageNamespace.ApplyAsync(JS, AuthService);
+                var lastId = await JS.InvokeAsync<string>("appNotesUi.getLastNotebookId");
+                if (!string.IsNullOrEmpty(lastId) && notes.Any(n => n.Id == lastId))
+                    activeNoteId = lastId;
+            }
+            catch
+            {
+                // JS interop may be unavailable during a rare prerender.
+            }
+
+            activeNoteId ??= notes.OrderByDescending(n => n.LastUpdated).First().Id;
             await LoadNote(activeNoteId);
         }
 
@@ -538,7 +588,17 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || !AppEnvironment.IsMaui)
+        if (!firstRender)
+            return;
+
+        _reorderDotNetRef ??= DotNetObjectReference.Create(this);
+        try
+        {
+            await JS.InvokeVoidAsync("appNotesUi.bindSaveHotkey", _reorderDotNetRef);
+        }
+        catch { /* notes UI module may be missing during static render */ }
+
+        if (!AppEnvironment.IsMaui)
             return;
 
         try
@@ -565,6 +625,12 @@
 
         Nav.LocationChanged -= OnLocationChanged;
 
+        try
+        {
+            await JS.InvokeVoidAsync("appNotesUi.unbindSaveHotkey");
+        }
+        catch { /* page may already be torn down */ }
+
         if (_sidebarStateChangedHandler != null)
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
 
@@ -586,17 +652,17 @@
 
     private void OnEditHtmlChanged(string html) => _activeEditDraftHtml = html;
 
-    private async Task CommitActiveEditAsync(bool persistToStore = false)
+    private async Task<bool> ApplyDraftToEditingMessageAsync()
     {
         if (editingMessageIndex is not int index || index < 0 || index >= currentNoteMessages.Count)
-            return;
+            return false;
 
         string? html = _activeEditDraftHtml;
         if (html is null && quillEditor is not null)
             html = await quillEditor.GetHTML();
 
         if (html is null)
-            return;
+            return false;
 
         if (IsBlankQuillHtml(html))
             html = "";
@@ -605,6 +671,14 @@
             currentNoteMessages[index],
             content: html,
             contentFormat: NoteContentFormatter.FormatHtml);
+        _activeEditDraftHtml = html;
+        return true;
+    }
+
+    private async Task CommitActiveEditAsync(bool persistToStore = false)
+    {
+        if (!await ApplyDraftToEditingMessageAsync())
+            return;
 
         CancelEdit();
 
@@ -612,13 +686,55 @@
             await SaveCurrent();
     }
 
+    [JSInvokable]
+    public async Task OnNotesSaveHotkey()
+    {
+        if (editingMessageIndex is int index)
+            await SaveEdit(index);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenCurrentNoteInChat()
+    {
+        if (string.IsNullOrEmpty(activeNoteId) || editingMessageIndex is not int index)
+            return;
+        if (index < 0 || index >= currentNoteMessages.Count)
+            return;
+
+        await ApplyDraftToEditingMessageAsync();
+        await SaveCurrent();
+
+        var msg = currentNoteMessages[index];
+        var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
+        NotesChatHandoff.SetEditWithAiRequest(new NotesChatHandoffPayload(
+            NotebookId: activeNoteId,
+            NotebookTitle: note?.Title ?? "Untitled",
+            EntryId: msg.ItemId,
+            Html: msg.Content ?? ""));
+
+        CancelEdit();
+        ChatPanel.IsOpen = true;
+        if (AppEnvironment.IsMaui)
+        {
+            try { await SidebarState.SetCollapsedAsync(false, JS); }
+            catch { /* sidebar init may be unavailable */ }
+        }
+
+        Nav.NavigateTo("/chat?noteEdit=1");
+    }
+
+    private Task OnNoteBodyClick(int index) => StartEdit(index);
+
     private async Task StartEdit(int index)
     {
         if (index < 0 || index >= currentNoteMessages.Count)
             return;
 
-        if (editingMessageIndex != index)
-            await CommitActiveEditAsync(persistToStore: true);
+        if (editingMessageIndex == index)
+            return;
+
+        CloseEntryMenu();
+        await CommitActiveEditAsync(persistToStore: true);
 
         var msg = currentNoteMessages[index];
         editingMessageIndex = index;
@@ -850,6 +966,7 @@
 
         activeNoteId = id;
         currentNoteMessages = new List<ChatMessage> { firstEntry };
+        await PersistLastNotebookIdAsync(id);
         await NoteStore.SaveNoteAsync(id, currentNoteMessages);
         await NoteStore.UpdateIndexAfterSaveAsync(id, title, currentNoteMessages);
         notes = await NoteStore.LoadIndexAsync();
@@ -965,9 +1082,19 @@
         await SidebarState.CollapseIfMobileAsync(JS);
     }
 
+    private async Task PersistLastNotebookIdAsync(string? id)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("appNotesUi.setLastNotebookId", id ?? "");
+        }
+        catch { /* JS interop may be unavailable */ }
+    }
+
     private async Task LoadNote(string id)
     {
         activeNoteId = id;
+        await PersistLastNotebookIdAsync(id);
         var note = notes.FirstOrDefault(n => n.Id == id);
         if (note?.IsPasswordProtected == true && !unlockedNoteIds.Contains(id))
         {
@@ -1123,6 +1250,10 @@
             {
                 activeNoteId = notes.OrderByDescending(n => n.LastUpdated).First().Id;
                 await LoadNote(activeNoteId);
+            }
+            else
+            {
+                await PersistLastNotebookIdAsync(null);
             }
         }
         StateHasChanged();

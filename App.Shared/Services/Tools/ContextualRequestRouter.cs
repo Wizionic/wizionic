@@ -474,7 +474,9 @@ public sealed class ContextualRequestRouter : IRequestRouter
             || m.Contains("to the last one") || m.Contains("to the last entry")
             || m.Contains("to that entry") || m.Contains("to the entry")
             || m.Contains("update the entry") || m.Contains("edit the entry")
-            || m.Contains("add to the latest") || m.Contains("add to the last"))
+            || m.Contains("add to the latest") || m.Contains("add to the last")
+            || m.Contains("update_note_entry") || m.Contains("save it back")
+            || m.Contains("save back") || m.Contains("this note") || m.Contains("the note"))
             return true;
 
         // "journal" as notebook synonym only with action verbs (avoids "journal article")

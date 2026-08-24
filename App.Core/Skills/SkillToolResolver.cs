@@ -42,6 +42,7 @@ public static class SkillToolResolver
         ["create_notebook"] = "Notes",
         ["add_note_entry"] = "Notes",
         ["append_to_note_entry"] = "Notes",
+        ["update_note_entry"] = "Notes",
         ["add_note"] = "Notes",
         ["list_notes"] = "Notes",
 
@@ -146,6 +147,7 @@ public static class SkillToolResolver
         ("create_notebook", "create_notebook", "Notes"),
         ("add_note_entry", "add_note_entry", "Notes"),
         ("append_to_note_entry", "append_to_note_entry", "Notes"),
+        ("update_note_entry", "update_note_entry", "Notes"),
         ("list_note_entries", "list_note_entries", "Notes"),
         ("Calendar", "Calendar (all)", "Calendar"),
         ("list_calendars", "list_calendars", "Calendar"),

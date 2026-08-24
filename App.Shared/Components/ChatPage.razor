@@ -38,6 +38,7 @@
 @inject INoteStore NoteStore
 @inject IGalleryStore GalleryStore
 @inject IGalleryChatHandoff GalleryChatHandoff
+@inject INotesChatHandoff NotesChatHandoff
 @inject IConversationMediaBuffer MediaBuffer
 @inject IStorageQuotaService StorageQuota
 @inject ISidebarState SidebarState
@@ -135,7 +136,17 @@
                     @if (msg.DeletedAt is null)
                     {
                     <div class="message-row">
-                        @if ((msg.User == currentUser) || msg.Role == "user")
+                        @if (NotesChatContext.TryParse(msg, out var noteCtx))
+                        {
+                            <div class="note-chat-context-card">
+                                <div class="note-chat-context-title">
+                                    <i class="bi bi-journal-text"></i>
+                                    Working with note — @noteCtx.NotebookTitle
+                                </div>
+                                <div class="note-chat-context-preview">@NotesChatContext.PreviewPlain(noteCtx)</div>
+                            </div>
+                        }
+                        else if ((msg.User == currentUser) || msg.Role == "user")
                         {
                             <div class="message-me">
                                 <div class="message-bot-menu" @onclick:stopPropagation>
@@ -1456,7 +1467,9 @@
             ? "Describe the image to generate…"
             : BrowserPanel.IsOpen
                 ? "Ask about this page, or say 'navigate to...'"
-                : "How can I help you?";
+                : messages.Any(NotesChatContext.Is)
+                    ? "Ask AI to edit this note…"
+                    : "How can I help you?";
 
     private string ChatColumnStyle
     {
@@ -1553,9 +1566,32 @@
         var lastId = await ConversationStore.GetLastConvoIdAsync();
         await InvokeAsync(StateHasChanged);
 
-        // Gallery "Edit with AI" → new chat with the image attached (skip last-convo restore).
+        // Notes / Gallery "Edit with AI" → new chat (skip last-convo restore).
+        var fromNoteEdit = NotesChatHandoff.TryTakeEditWithAiRequest(out var notePayload);
         var fromGalleryEdit = GalleryChatHandoff.TryTakeEditWithAiRequest(out var editImage);
-        if (fromGalleryEdit && editImage != null)
+        if (fromNoteEdit && notePayload != null)
+        {
+            ChatPanel.IsOpen = true;
+            await NewConversation();
+            messages.Add(NotesChatContext.CreateMessage(notePayload));
+            try
+            {
+                await ConversationStore.SetConversationTitleAsync(
+                    activeConvoId!,
+                    "Note: " + (string.IsNullOrWhiteSpace(notePayload.NotebookTitle) ? "Untitled" : notePayload.NotebookTitle));
+            }
+            catch { /* title is optional */ }
+            await SaveCurrentConvo();
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                var uri = Nav.ToAbsoluteUri(Nav.Uri);
+                if (uri.Query.Contains("noteEdit", StringComparison.OrdinalIgnoreCase))
+                    Nav.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace: true);
+            }
+            catch { /* ignore */ }
+        }
+        else if (fromGalleryEdit && editImage != null)
         {
             ChatPanel.IsOpen = true;
             await NewConversation();

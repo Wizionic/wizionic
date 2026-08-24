@@ -45,5 +45,14 @@ public static class UiStorageNamespace
         {
             // Sidebar interop is WASM-oriented; MAUI may not expose it.
         }
+
+        try
+        {
+            await js.InvokeVoidAsync("appNotesUi.setStoragePrefix", ct, prefix);
+        }
+        catch
+        {
+            // Notes UI module may not be loaded yet during early render.
+        }
     }
 }
