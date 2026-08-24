@@ -50,16 +50,12 @@ App/
 
 ## Authentication & Encryption
 
-### Guest mode
-- No cookie. `WasmAuthService` generates a per-browser **guest encryption key** in IndexedDB (`guest-encryption-key`).
-- Data namespace: `wasmchat-` (conversations and notes).
-
-### Logged-in mode
-- User requests magic link → email via Brevo → `/magic-login?token=...` sets a **persistent** `AppAuth` cookie (survives browser restarts; renewed on activity via sliding expiration; cleared only on explicit sign-out).
+### Sign-in required
+- App features (chat, notes, gallery, calendar, tools, settings, local AI, sync) are unavailable until the user has an account. The first successful magic-link for a new email creates the account.
+- User requests magic link → email via Brevo → `/magic-login?token=...` sets a **persistent** `AppAuth` cookie (survives browser restarts; renewed on activity via sliding expiration; cleared only on explicit sign-out). Password and optional 2FA are alternatives.
 - WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie sent automatically, same origin).
 - Per-user **server encryption key** (random, protected at rest in SQLite via ASP.NET Data Protection).
-- Data namespace: `u-{userId}-`.
-- On login, `WasmGuestDataMigrationService` re-encrypts guest IndexedDB data into the authenticated namespace.
+- Data namespace: `u-{userId}-`. Signed-out UI prefs may still use a historical `wasmchat-` prefix so they never land on authenticated keys.
 
 ### At-rest encryption
 - Conversation, note, gallery image, and calendar event **content blobs** are AES-256-GCM encrypted before local write (`WasmCryptoService` + JS helpers on WASM; native crypto on MAUI).
@@ -1209,7 +1205,7 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  
  | File | Route (approx) | Description |
  |------|---------------|-------------|
- | `Components/LoginPage.razor` | `/` | Landing, magic-link login, guest continue, login server URL |
+ | `Components/LoginPage.razor` | `/` | Landing, magic-link / password / 2FA sign-in (required), login server URL |
  | `Components/ChatPage.razor` | `/chat` | Main chat UI, sidebar, attachments, streaming, Lemonade image/STT/TTS, **Voice mode** (wake word), context compact, password-protect chats |
  | `Components/NotesPage.razor` | `/notes` | Notebooks, Quill entries, floating add button |
  | `Components/GalleryPage.razor` | `/gallery` | Albums, grid, lightbox, password-protect, save-from-chat |

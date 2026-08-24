@@ -60,6 +60,8 @@
             }
         }
 
+        @if (Auth.IsAuthenticated)
+        {
         <div class="app-nav-primary">
             @if (AppEnvironment.IsMaui)
             {
@@ -128,10 +130,11 @@
                 }
             }
         </div>
+        }
     </div>
 
     <div class="app-nav-right">
-        @if (AppEnvironment.IsMaui)
+        @if (Auth.IsAuthenticated && AppEnvironment.IsMaui)
         {
             <button type="button"
                     class="topbar-toggle-btn app-nav-secondary-toggle"
@@ -148,7 +151,7 @@
                 }
             </button>
         }
-        else
+        else if (Auth.IsAuthenticated)
         {
             @* WASM: AppTopBar is static — Blazor @onclick does not run; JS uses data-wasm-secondary-toggle. *@
             <button type="button"
@@ -167,7 +170,7 @@
 
         @* Always render the cluster on WASM so JS can show/hide without a Blazor re-render.
            Default collapsed (display:none); applySecondaryFromStorage may expand if saved. *@
-        @if (AppEnvironment.IsMaui)
+        @if (Auth.IsAuthenticated && AppEnvironment.IsMaui)
         {
             @if (NavLayout.SecondaryExpanded)
             {
@@ -176,7 +179,7 @@
                 </div>
             }
         }
-        else
+        else if (Auth.IsAuthenticated)
         {
             <div class="app-nav-secondary" style="display:none" data-secondary-expanded="0">
                 @SecondarySettingsLinks
@@ -185,9 +188,11 @@
 
 
         <div class="app-nav-account">
-            <a href="/account" class="app-nav-account-link" title="Account / Login">
+            <a href="@(Auth.IsAuthenticated || !AppEnvironment.IsMaui ? "/account" : "/login")" class="app-nav-account-link" title="Account / Login">
                 <i class="bi bi-person-circle"></i>
             </a>
+            @if (Auth.IsAuthenticated)
+            {
             <button type="button"
                     class="app-nav-account-menu-btn"
                     data-wasm-account-menu="true"
@@ -235,6 +240,7 @@
                     <span>Help</span>
                 </a>
             </div>
+            }
         </div>
     </div>
 </div>
@@ -286,6 +292,7 @@
     private Action? _notesPanelChangedHandler;
     private Action? _sidebarStateChangedHandler;
     private Action? _navLayoutChangedHandler;
+    private Action? _authChangedHandler;
 
     private bool _showNavContextMenu;
     private string _navContextMenuStyle = "";
@@ -336,8 +343,9 @@
         }
     }
     private bool ShowSidebarToggle =>
-        IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
-        || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));
+        Auth.IsAuthenticated
+        && (IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
+        || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true)));
 
     protected override void OnInitialized()
     {
@@ -355,6 +363,9 @@
 
         _navLayoutChangedHandler = () => InvokeAsync(StateHasChanged);
         NavLayout.OnChanged += _navLayoutChangedHandler;
+
+        _authChangedHandler = () => InvokeAsync(StateHasChanged);
+        Auth.OnChanged += _authChangedHandler;
 
         Nav.LocationChanged += OnLocationChanged;
         SyncPanelStateFromRoute();
@@ -580,6 +591,9 @@
 
         if (_navLayoutChangedHandler != null)
             NavLayout.OnChanged -= _navLayoutChangedHandler;
+
+        if (_authChangedHandler != null)
+            Auth.OnChanged -= _authChangedHandler;
 
         return ValueTask.CompletedTask;
     }

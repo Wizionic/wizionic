@@ -96,7 +96,6 @@ window.appNotesReorder = window.appNotesReorder || {
 // Last-selected notebook + Ctrl/Cmd+S while the Notes page is mounted.
 window.appNotesUi = window.appNotesUi || (function () {
     const BASE_STORAGE_KEY = 'app-last-notebook-id';
-    const GUEST_PREFIX = 'wasmchat-';
 
     let storagePrefix = '';
     let saveHandler = null;
@@ -136,9 +135,6 @@ window.appNotesUi = window.appNotesUi || (function () {
         const fallbacks = [];
         if (key !== BASE_STORAGE_KEY)
             fallbacks.push(BASE_STORAGE_KEY);
-        const guestKey = GUEST_PREFIX + BASE_STORAGE_KEY;
-        if (key !== guestKey)
-            fallbacks.push(guestKey);
 
         for (const fallback of fallbacks) {
             value = readStorage(fallback);

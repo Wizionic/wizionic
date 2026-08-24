@@ -9,6 +9,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- WASM login on phone, tablet, Mac, or Chromebook recommends installing as a PWA, with Help steps for Chrome, Safari, Samsung Internet, Firefox, and Edge.
+- Desktop sign-in: **More options** picks public wizionic.com or a local Home Server (same restart prompt as Settings).
 - `scripts/install.ps1` (also `https://wizionic.com/install.ps1`): download `Wizionic-win-Setup.exe`, verify `SHA256SUMS`, `Unblock-File`, run the per-user Velopack installer.
 - Home Assistant page: connection status, area-grouped devices with toggles, climate/cover/scene/script tools, room names in search via HA templates.
 - Chat **Voice mode** (soundwave): listen for the assistant-name wake word, end on pause, send, speak the reply. Works without Home Assistant as normal chat.
@@ -24,6 +26,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Sign-in is required. Unauthenticated visitors only see the login landing page (and legal pages); chat, notes, gallery, and other app features are gated. Guest IndexedDB / guest-key migration is removed. Existing signed-in data under `u-{userId}-` is unchanged.
 - Windows install on README and the login page now leads with `irm … | iex` instead of a browser `.exe` download. Unsigned Edge downloads still hit Mark of the Web / SmartScreen.
 
 ### Fixed

@@ -36,7 +36,6 @@ If you create an account on wizionic.com, the server may store:
 
 - Chat, notes, gallery, and calendar **content** (encrypted before it is written to IndexedDB or SQLite)
 - Metadata such as titles and dates is stored in cleartext locally so the sidebar can list items quickly
-- Guest data under the `wasmchat-` namespace
 - Authenticated local data under `u-{userId}-`
 - Cloud provider API keys in the on-device key store (they can sync between your devices over WebRTC)
 - User OAuth *access* tokens and MCP tokens in the on-device key store
@@ -91,7 +90,7 @@ The product does not include an advertising SDK or a third-party analytics suite
 ## Account deletion and local wipe
 
 - **Hosted account:** email daniellgoodwin@protonmail.com from the address on the account and ask for deletion. I will delete the server-side user row and related server records.
-- **Local data:** sign out, then clear the app's local data (browser site data / IndexedDB for WASM; uninstall or delete the app data directory on desktop). Guest data never leaves the device unless you later sign in and choose to migrate it.
+- **Local data:** sign out, then clear the app's local data (browser site data / IndexedDB for WASM; uninstall or delete the app data directory on desktop).
 
 ## Children
 

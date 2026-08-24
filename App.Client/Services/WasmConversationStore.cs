@@ -74,33 +74,6 @@ public class WasmConversationStore : IConversationStore
         var ns = GetPrefix();
         var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
 
-        if (_auth.IsAuthenticated)
-        {
-            try
-            {
-                var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
-                var legacy = allMetas
-                    .Where(m => !string.IsNullOrEmpty(m.@namespace) &&
-                                (m.@namespace.StartsWith("wasmchat-") || m.@namespace.StartsWith("e-")) &&
-                                m.@namespace != ns)
-                    .ToList();
-
-                var currentIds = metas.Select(m => m.id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                foreach (var lm in legacy)
-                {
-                    if (!currentIds.Contains(lm.id))
-                    {
-                        metas.Add(lm);
-                        currentIds.Add(lm.id);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WasmConvStore] Legacy meta recovery skipped: {ex.Message}");
-            }
-        }
-
         var live = metas.Where(m => string.IsNullOrEmpty(m.deletedAt)).ToList();
 
         // Backfill stable sort orders once so sync-driven lastUpdated changes do not reshuffle the sidebar.
@@ -198,19 +171,7 @@ public class WasmConversationStore : IConversationStore
     {
         var ns = GetPrefix();
         var metas = await _js.InvokeAsync<List<StoredMeta>>("idbGetMetasByNamespace", ns);
-        var meta = metas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
-        if (meta != null)
-            return meta;
-
-        try
-        {
-            var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
-            return allMetas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
-        }
-        catch
-        {
-            return null;
-        }
+        return metas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task PersistContentFingerprintAsync(StoredMeta meta, string title, string fingerprint, string? deletedAt)
@@ -259,20 +220,6 @@ public class WasmConversationStore : IConversationStore
         });
 
         await _js.InvokeVoidAsync("idbDeleteConvoContent", existing?.key ?? metaKey);
-
-        try
-        {
-            var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
-            foreach (var m in allMetas.Where(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase)))
-            {
-                if (!string.IsNullOrEmpty(m.key))
-                    await _js.InvokeVoidAsync("idbDeleteConvoContent", m.key);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WasmConvStore] Legacy content cleanup for {id}: {ex.Message}");
-        }
 
         return deletedAt;
     }
@@ -330,20 +277,6 @@ public class WasmConversationStore : IConversationStore
         var ns = GetPrefix();
         var fullKey = ns + ConvoPrefix + id;
         var json = await ReadContentAsync(fullKey);
-        if (string.IsNullOrEmpty(json))
-        {
-            try
-            {
-                var allMetas = await _js.InvokeAsync<List<StoredMeta>>("idbGetAllMetas");
-                var meta = allMetas.FirstOrDefault(m => string.Equals(m.id, id, StringComparison.OrdinalIgnoreCase));
-                if (meta != null && !string.IsNullOrEmpty(meta.key) && meta.key != fullKey)
-                    json = await ReadContentAsync(meta.key);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WasmConvStore] Legacy content key lookup failed for {id}: {ex.Message}");
-            }
-        }
 
         if (string.IsNullOrEmpty(json))
             return new List<ChatMessage>();

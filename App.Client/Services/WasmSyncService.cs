@@ -22,8 +22,7 @@ namespace App.Client.Services;
 /// The same connection will later carry WebRTC signaling messages (Phase 2) without
 /// ever sending actual chat history blobs through the server.
 /// 
-/// Only users who have logged in with email (WasmAuthService.IsAuthenticated) get
-/// a meaningful device list. Guest sessions do not participate in cross-device sync.
+/// Only signed-in users (IAuthService.IsAuthenticated) get a live device list.
 /// </summary>
 public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 {
@@ -614,7 +613,6 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
 
         if (!_auth.IsAuthenticated || string.IsNullOrEmpty(_auth.Email))
         {
-            // Guests do not get a live device list.
             return;
         }
 

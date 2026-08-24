@@ -1,0 +1,39 @@
+@using App.Core.Auth
+@inject IAuthService Auth
+@inject NavigationManager Nav
+@implements IDisposable
+
+@code {
+    private Action? _authChangedHandler;
+    private bool _ready;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _authChangedHandler = () => _ = InvokeAsync(Enforce);
+        Auth.OnChanged += _authChangedHandler;
+        Nav.LocationChanged += OnLocationChanged;
+        await Auth.LoadAsync();
+        _ready = true;
+        Enforce();
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => Enforce();
+
+    private void Enforce()
+    {
+        if (!_ready || Auth.IsAuthenticated)
+            return;
+
+        if (UnsignedAppRoutes.IsAllowed(Nav))
+            return;
+
+        Nav.NavigateTo(UnsignedAppRoutes.LoginPath, replace: true);
+    }
+
+    public void Dispose()
+    {
+        if (_authChangedHandler is not null)
+            Auth.OnChanged -= _authChangedHandler;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

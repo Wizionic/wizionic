@@ -69,7 +69,7 @@ window.appTheme = window.appTheme || {
 
     applyEarly: function () {
         try {
-            // Before auth is known, use guest prefix if set; otherwise legacy/unprefixed key.
+            // Before auth is known, use the signed-out prefix if set; otherwise the unprefixed key.
             const saved = this.getTheme();
             this.apply(saved);
         } catch (e) { }
@@ -131,5 +131,40 @@ window.appPlatform = function () {
             || '';
     } catch (e) {
         return navigator.userAgent || '';
+    }
+};
+
+// windows | linux | mac | android | ios | ipad | chromeos | unknown
+window.appClientOs = function () {
+    try {
+        var ua = (navigator.userAgent || '').toLowerCase();
+        var platform = '';
+        try {
+            platform = ((navigator.userAgentData && navigator.userAgentData.platform)
+                || navigator.platform
+                || '').toLowerCase();
+        } catch (e) {
+            platform = (navigator.platform || '').toLowerCase();
+        }
+        var touch = navigator.maxTouchPoints || 0;
+
+        if (ua.indexOf('android') >= 0)
+            return 'android';
+        if (ua.indexOf('iphone') >= 0 || ua.indexOf('ipod') >= 0)
+            return 'ios';
+        // iPadOS 13+ often reports as Macintosh with touch.
+        if (ua.indexOf('ipad') >= 0 || ((platform.indexOf('mac') >= 0 || ua.indexOf('mac') >= 0) && touch > 1))
+            return 'ipad';
+        if (ua.indexOf('cros') >= 0 || platform.indexOf('cros') >= 0)
+            return 'chromeos';
+        if (platform.indexOf('win') >= 0 || ua.indexOf('windows') >= 0)
+            return 'windows';
+        if (platform.indexOf('mac') >= 0 || ua.indexOf('mac') >= 0)
+            return 'mac';
+        if (platform.indexOf('linux') >= 0 || ua.indexOf('linux') >= 0 || ua.indexOf('x11') >= 0)
+            return 'linux';
+        return 'unknown';
+    } catch (e) {
+        return 'unknown';
     }
 };

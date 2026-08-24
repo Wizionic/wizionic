@@ -1,9 +1,11 @@
 @page "/"
 @inject NavigationManager Nav
+@inject IAuthService Auth
 
 @code {
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        Nav.NavigateTo("/chat", replace: true);
+        await Auth.LoadAsync();
+        Nav.NavigateTo(Auth.IsAuthenticated ? "/chat" : "/login", replace: true);
     }
 }

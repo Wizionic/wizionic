@@ -23,6 +23,6 @@ Full legal text: [Privacy](/privacy) and [Terms](/terms).
 - SMS codes via Twilio if you enrolled a number
 - Tool-proxy and model-proxy traffic you actually trigger
 
-## Guest vs signed in
+## Signed-in data
 
-Guest data uses a `wasmchat-` prefix. After login, data can move under `u-{userId}-`. Guest data never leaves the device unless you sign in and migrate it.
+App data is stored under `u-{userId}-` on this device. Sign-in is required; there is no guest workspace.

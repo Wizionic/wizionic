@@ -6,7 +6,11 @@ namespace App.Core.Storage;
 
 public static class StorageNamespace
 {
-    /// <summary>Guest / signed-out local data prefix (matches historical chat/note isolation).</summary>
+    /// <summary>
+    /// Signed-out isolation prefix (historical guest namespace). Not a product mode.
+    /// App data for signed-in users is always <c>u-{userId}-</c>; this prefix only
+    /// keeps pre-login UI prefs (theme/nav) off authenticated keys.
+    /// </summary>
     public const string GuestPrefix = "wasmchat-";
 
     public static string GetPrefix(IAuthService auth)
@@ -22,7 +26,7 @@ public static class StorageNamespace
         return GuestPrefix;
     }
 
-    /// <summary>Per-user/guest storage key: <c>{prefix}{baseKey}</c>.</summary>
+    /// <summary>Per-user storage key: <c>{prefix}{baseKey}</c>.</summary>
     public static string PrefixedKey(IAuthService auth, string baseKey) =>
         GetPrefix(auth) + baseKey;
 
