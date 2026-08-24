@@ -28,7 +28,6 @@
 @inject IConversationStore ConversationStore
 @inject IChatModelCatalog ModelCatalog
 @inject IAuthService AuthService
-@inject IGuestDataMigrationService GuestMigration
 @inject ISyncService SyncService
 @inject IChatCompletionService ChatCompletionService
 @inject ILemonadeImageService LemonadeImages
@@ -1624,7 +1623,7 @@
 
         await InvokeAsync(StateHasChanged);
 
-        // Phase 3 — background: guest migration, proxied models, sync hub.
+        // Phase 3 — background: proxied models, sync hub.
         _ = CompleteChatInitInBackgroundAsync();
     }
 
@@ -1646,9 +1645,6 @@
     {
         try
         {
-            if (AuthService.IsAuthenticated)
-                await GuestMigration.MigrateIfNeededAsync();
-
             await ModelCatalog.RefreshAsync();
             ReloadModelListFromCatalog(preferRemote: true);
             // Keep gallery-edit model if we still have a pending image attachment.

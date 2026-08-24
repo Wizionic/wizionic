@@ -13,7 +13,7 @@ public static class OAuthEndpoints
     {
         var group = endpoints.MapGroup("/api/oauth");
 
-        // Start: public so guest users can also connect if they want; secrets stay server-side.
+        // Start requires a signed-in session; secrets stay server-side.
         group.MapGet("/{provider}/start", async (
             string provider,
             string? connector,
@@ -33,7 +33,7 @@ public static class OAuthEndpoints
                 return Results.BadRequest(new { message = error ?? "Could not start OAuth." });
 
             return Results.Redirect(authorizeUrl);
-        });
+        }).RequireAuthorization();
 
         group.MapGet("/{provider}/callback", async (
             string provider,

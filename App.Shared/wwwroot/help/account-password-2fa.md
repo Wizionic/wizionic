@@ -10,7 +10,7 @@ title: Account, password, and 2FA
 - **Login code (email)** — we email a code and a link. Fine when 2FA is off.
 - **Password** — if you set one. Faster than waiting for email.
 
-Guest mode needs no account. Sign in when you want the same encryption key on more than one device.
+Sign in is required. The same account (and encryption key) is what lets other devices decrypt your data.
 
 ## Password
 

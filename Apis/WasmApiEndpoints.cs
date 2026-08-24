@@ -33,10 +33,8 @@ namespace App.Apis;
 /// web search and page summarization without browser CORS problems. The real work happens
 /// on the server (reusing the same AppTools as the interactive server chat).
 ///
-/// The /api/auth/request-magic-link endpoint (and all /api/tools/*) are deliberately public
-/// so that WASM clients work fully without an email login (guest / local-only mode).
-/// The identity + key + provider-key endpoints remain protected by the cookie set by the
-/// /magic-login handler.
+/// /api/tools/* requires the same AppAuth cookie as /api/auth/me. Public auth endpoints
+/// (magic-link, verify-code, password, 2FA, logout) stay unauthenticated so sign-in works.
 /// 
 /// The server never stores WASM conversation history (per design).
 /// 
@@ -222,12 +220,7 @@ public static class WasmApiEndpoints
         });
 
         var group = endpoints.MapGroup("/api").RequireAuthorization();
-
-        // Tool endpoints are intentionally *not* under the authorized group.
-        // They are app-level free tools (search, summarize) and should work even
-        // for unauthenticated WASM users (e.g. pure local Ollama without login).
-        // The main /api/* (auth/me, keys, encryption-key) remain protected.
-        var toolsGroup = endpoints.MapGroup("/api/tools");
+        var toolsGroup = endpoints.MapGroup("/api/tools").RequireAuthorization();
 
         group.MapGet("/auth/me", async (ClaimsPrincipal user, KeyProtectionService protector, AppDbContext db, ITwilioVerifyService twilio) =>
         {
@@ -474,8 +467,6 @@ public static class WasmApiEndpoints
         // (using the exact same AppTools code as the interactive server chat).
         // Results flow back to the model through the normal tool-calling loop.
         // 
-        // Note: these are intentionally on a non-authorized subgroup so that
-        // even local/unauthenticated WASM users (pure Ollama etc.) can use agentic tools.
         toolsGroup.MapPost("/web-search", async (WebSearchRequest req) =>
         {
             return await App.Services.Tools.AppTools.SearchWeb(req.Query, req.MaxResults ?? 5);

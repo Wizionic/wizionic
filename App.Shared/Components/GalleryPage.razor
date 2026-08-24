@@ -15,7 +15,6 @@
 @inject IConversationStore ConversationStore
 @inject IChatMediaLibrary ChatMedia
 @inject IAuthService AuthService
-@inject IGuestDataMigrationService GuestMigration
 @inject IGallerySyncBridge SyncBridge
 @inject IStorageQuotaService StorageQuota
 @inject ISidebarState SidebarState
@@ -548,8 +547,6 @@
     protected override async Task OnInitializedAsync()
     {
         await AuthService.LoadAsync();
-        if (AuthService.IsAuthenticated)
-            await GuestMigration.MigrateIfNeededAsync();
 
         albums = await EnsureMyMediaAndLoadIndexAsync();
 

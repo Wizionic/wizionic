@@ -3241,6 +3241,16 @@ html[data-nav-layout="left"] {
     box-sizing: border-box;
 }
 
+/* Signed-out: only the account/login control stays in the bar (WASM bar is partly static). */
+.app-shell[data-authenticated="0"] .app-nav-primary,
+.app-shell[data-authenticated="0"] .app-nav-secondary,
+.app-shell[data-authenticated="0"] .app-nav-secondary-toggle,
+.app-shell[data-authenticated="0"] .topbar-sidebar-toggle,
+.app-shell[data-authenticated="0"] .app-nav-account-menu-btn,
+.app-shell[data-authenticated="0"] .app-nav-account-dropdown {
+    display: none !important;
+}
+
 html[data-nav-layout="left"] .app-shell {
     flex-direction: row;
 }
@@ -6671,6 +6681,20 @@ html[data-theme="nord"] {
     color: var(--color-success-fg, #14532d);
 }
 
+.login-download-title.help-heading {
+    flex-wrap: wrap;
+}
+
+.login-download-title .help-glyph {
+    color: inherit;
+    opacity: 0.7;
+}
+
+.login-download-title .help-glyph:hover,
+.login-download-title .help-glyph:focus-visible {
+    opacity: 1;
+}
+
 .login-download-title a {
     color: inherit;
     font-weight: 600;
@@ -6793,6 +6817,10 @@ html[data-theme="nord"] {
     margin: 0.55rem 0 0;
     font-size: 0.8em;
     color: var(--color-text-muted);
+}
+
+.login-more-options {
+    margin-top: 1.5rem;
 }
 
 .site-legal-footer {
@@ -8450,6 +8478,10 @@ html[data-theme="nord"] .cal-week-dayhead.today .cal-week-date {
     margin: 0.65rem 0 0;
 }
 
+.help-view-mobile-bar {
+    display: none;
+}
+
 .help-view-sidebar {
     min-height: 0;
     overflow: auto;
@@ -8641,8 +8673,72 @@ html[data-theme="nord"] .cal-week-dayhead.today .cal-week-date {
 }
 
 @media (max-width: 720px) {
-    .help-view { grid-template-columns: 1fr; }
-    .help-modal .help-view { grid-template-rows: auto minmax(0, 1fr); }
-    .help-modal { width: min(100%, 520px) !important; height: min(86vh, 640px) !important; }
+    .help-overlay {
+        padding: 0.5rem;
+        align-items: stretch;
+    }
+
+    .help-modal {
+        width: 100% !important;
+        height: min(94vh, 100%) !important;
+        max-width: none;
+        max-height: none;
+        border-radius: 12px;
+    }
+
+    .help-modal-resize {
+        display: none;
+    }
+
+    .help-view {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .help-modal .help-view {
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .help-view-mobile-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-shrink: 0;
+        padding-bottom: 0.45rem;
+    }
+
+    .help-view-toc-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .help-view-sidebar {
+        display: none;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    .help-view-article {
+        min-height: 0;
+        overflow: auto;
+    }
+
+    .help-view--toc-open .help-view-sidebar {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    .help-view--toc-open .help-view-toc {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+    }
+
+    .help-view--toc-open .help-view-article {
+        display: none;
+    }
 }
 

@@ -1,10 +1,13 @@
 @inherits LayoutComponentBase
 @implements IDisposable
 @inject INavLayoutState NavLayout
+@inject IAuthService Auth
+@inject NavigationManager Nav
 
 <ThemeBootstrap />
 <NavLayoutBootstrap />
 <AppNavigationBootstrap />
+<AuthGate />
 <SyncConnectionBootstrap />
 <WorkflowDueBootstrap />
 <SetupWizard />
@@ -14,15 +17,19 @@
     <HelpPanel />
 }
 
-<div class="app-shell" data-nav-layout="@NavLayoutModeString">
+<div class="app-shell" data-nav-layout="@NavLayoutModeString" data-authenticated="@(Auth.IsAuthenticated ? "1" : "0")">
     <AppTopBar />
     <div class="app-body">
-        @Body
+        @if (Auth.IsAuthenticated || UnsignedAppRoutes.IsAllowed(Nav))
+        {
+            @Body
+        }
     </div>
 </div>
 
 @code {
     private Action? _navLayoutChangedHandler;
+    private Action? _authChangedHandler;
 
     private string NavLayoutModeString =>
         NavLayout.Mode == NavLayoutMode.Left ? "left" : "top";
@@ -31,11 +38,20 @@
     {
         _navLayoutChangedHandler = () => InvokeAsync(StateHasChanged);
         NavLayout.OnChanged += _navLayoutChangedHandler;
+        _authChangedHandler = () => InvokeAsync(StateHasChanged);
+        Auth.OnChanged += _authChangedHandler;
+        Nav.LocationChanged += OnLocationChanged;
     }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) =>
+        _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
+        Nav.LocationChanged -= OnLocationChanged;
         if (_navLayoutChangedHandler != null)
             NavLayout.OnChanged -= _navLayoutChangedHandler;
+        if (_authChangedHandler != null)
+            Auth.OnChanged -= _authChangedHandler;
     }
 }

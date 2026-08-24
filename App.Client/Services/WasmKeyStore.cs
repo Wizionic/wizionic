@@ -15,7 +15,7 @@ namespace App.Client.Services;
 
 /// <summary>
 /// Browser localStorage implementation of <see cref="IKeyStore"/>.
-/// Settings are stored under a per-user (or guest) prefix so multi-account
+/// Settings are stored under a per-user prefix so multi-account
 /// use on the same browser does not share Ollama keys, MCP config, etc.
 /// </summary>
 public class WasmKeyStore : IKeyStore

@@ -10,7 +10,6 @@
 @inject NavigationManager Nav
 @inject INoteStore NoteStore
 @inject IAuthService AuthService
-@inject IGuestDataMigrationService GuestMigration
 @inject INotesSyncBridge SyncBridge
 @inject ISidebarState SidebarState
 @inject INotesChatHandoff NotesChatHandoff
@@ -449,8 +448,6 @@
     protected override async Task OnInitializedAsync()
     {
         await AuthService.LoadAsync();
-        if (AuthService.IsAuthenticated)
-            await GuestMigration.MigrateIfNeededAsync();
 
         notes = await NoteStore.LoadIndexAsync();
 

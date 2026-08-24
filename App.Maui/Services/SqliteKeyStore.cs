@@ -14,7 +14,7 @@ namespace App.Maui.Services;
 
 /// <summary>
 /// SQLite-backed implementation of <see cref="IKeyStore"/> for MAUI.
-/// Settings are stored under a per-user (or guest) prefix for multi-account isolation.
+/// Settings are stored under a per-user prefix for multi-account isolation.
 /// </summary>
 public class SqliteKeyStore : IKeyStore
 {

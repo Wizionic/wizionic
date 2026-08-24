@@ -1,7 +1,6 @@
 @using App.Core.Auth
 @using App.Core.Configuration
 @inject IAuthService Auth
-@inject IGuestDataMigrationService? GuestMigration
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
@@ -13,10 +12,23 @@
     @if (!AppEnvironment.IsMaui)
     {
     <div class="login-lead">
-        Download the Wizionic app to use private local AI.
+        @(RecommendPwa
+            ? "Install Wizionic on this device so it opens like an app."
+            : "Download the Wizionic app to use private local AI.")
     </div>
     <div class="login-download-stack">
-        <div class="login-download-card @(_detectedOs == "windows" ? "login-download-card--active" : _detectedOs == "linux" ? "login-download-card--muted" : null)">
+        @if (RecommendPwa)
+        {
+            <div class="login-download-card login-download-card--active">
+                <div class="login-download-badge">Recommended for this device</div>
+                <div class="login-download-title help-heading">
+                    Install as a Progressive Web App (PWA)
+                    <HelpGlyph Topic="@PwaHelpTopic" />
+                </div>
+                <p class="login-download-desc">@PwaLead</p>
+            </div>
+        }
+        <div class="login-download-card @(_detectedOs == "windows" ? "login-download-card--active" : RecommendPwa || _detectedOs == "linux" ? "login-download-card--muted" : null)">
             @if (_detectedOs == "windows")
             {
                 <div class="login-download-badge">Recommended for this device</div>
@@ -48,7 +60,7 @@
             </details>
         </div>
 
-        <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : _detectedOs == "windows" ? "login-download-card--muted" : null)">
+        <div class="login-download-card @(_detectedOs == "linux" ? "login-download-card--active" : RecommendPwa || _detectedOs == "windows" ? "login-download-card--muted" : null)">
             @if (_detectedOs == "linux")
             {
                 <div class="login-download-badge">Recommended for this device</div>
@@ -71,7 +83,7 @@
     }
     @if (!(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)) && string.IsNullOrEmpty(twoFactorChallengeId))
     {
-    <p style="color: var(--color-text-muted);">Login to sync your encrypted data and settings across devices:
+    <p style="color: var(--color-text-muted);">Sign in to use Wizionic. A new email creates your account.
     </p>
     }
 
@@ -451,6 +463,37 @@
 
     }
 
+    @if (AppEnvironment.IsMaui && !(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)))
+    {
+        <div class="login-more-options">
+            @if (!_showLoginServerOptions)
+            {
+                <button type="button"
+                        class="btn btn-link p-0"
+                        style="font-size:0.95rem;"
+                        @onclick="() => _showLoginServerOptions = true">
+                    More options
+                </button>
+            }
+            else
+            {
+                <h3 class="help-heading" style="font-size:1.05rem; margin:0 0 0.35rem 0;">
+                    Login server <HelpGlyph Topic="settings-login-server" />
+                </h3>
+                <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                    Public site or a Home Server on this PC.
+                </p>
+                <LoginServerPicker />
+                <button type="button"
+                        class="btn btn-link p-0"
+                        style="font-size:0.95rem; margin-top:0.75rem;"
+                        @onclick="() => _showLoginServerOptions = false">
+                    Hide options
+                </button>
+            }
+        </div>
+    }
+
     <footer class="site-legal-footer">
         <a href="/privacy">Privacy</a>
         <span class="login-download-sep">·</span>
@@ -481,8 +524,30 @@
     private bool _linuxInstallCopied;
     private bool _showPasswordForm;
     private bool _showTwoFactorForm;
-    /// <summary>"windows", "linux", "mac", or null until detected.</summary>
+    private bool _showLoginServerOptions;
+    /// <summary>windows, linux, mac, android, ios, ipad, chromeos, unknown; null until detected.</summary>
     private string? _detectedOs;
+
+    private bool RecommendPwa =>
+        _detectedOs is "android" or "ios" or "ipad" or "mac" or "chromeos" or "unknown";
+
+    private string PwaHelpTopic => _detectedOs switch
+    {
+        "android" => "pwa-android",
+        "ios" => "pwa-ios",
+        "ipad" => "pwa-ipad",
+        "mac" => "pwa-mac",
+        "chromeos" => "pwa-chromeos",
+        _ => "pwa"
+    };
+
+    private string PwaLead => _detectedOs switch
+    {
+        "mac" => "Add Wizionic to your Dock. It opens like an app.",
+        "ios" or "ipad" => "Add Wizionic to your Home Screen in Safari. It opens like an app.",
+        "chromeos" => "Install Wizionic from Chrome. It opens like an app.",
+        _ => "Add Wizionic to your home screen. It opens like an app."
+    };
 
     private enum LoginMode { Code, Password }
 
@@ -555,14 +620,21 @@
 
         try
         {
-            // Prefer modern platform hint, fall back to userAgent.
-            var platform = await JS.InvokeAsync<string>("appPlatform");
-            _detectedOs = DetectOsFromUserAgent(platform);
+            _detectedOs = await JS.InvokeAsync<string>("appClientOs");
+            if (string.IsNullOrWhiteSpace(_detectedOs))
+                _detectedOs = DetectOsFromUserAgent(await JS.InvokeAsync<string>("appPlatform"));
             await InvokeAsync(StateHasChanged);
         }
         catch
         {
-            _detectedOs = "unknown";
+            try
+            {
+                _detectedOs = DetectOsFromUserAgent(await JS.InvokeAsync<string>("appPlatform"));
+            }
+            catch
+            {
+                _detectedOs = "unknown";
+            }
         }
     }
 
@@ -572,12 +644,17 @@
             return "unknown";
 
         var s = ua.ToLowerInvariant();
+        if (s.Contains("android"))
+            return "android";
+        if (s.Contains("iphone") || s.Contains("ipod"))
+            return "ios";
+        if (s.Contains("ipad"))
+            return "ipad";
+        if (s.Contains("cros"))
+            return "chromeos";
         if (s.Contains("win"))
             return "windows";
-        // Android UAs often include "Linux" — treat as non-desktop.
-        if (s.Contains("android") || s.Contains("iphone") || s.Contains("ipad"))
-            return "unknown";
-        if (s.Contains("linux") || s.Contains("x11") || s.Contains("cros"))
+        if (s.Contains("linux") || s.Contains("x11"))
             return "linux";
         if (s.Contains("mac"))
             return "mac";
@@ -587,8 +664,6 @@
     protected override async Task OnInitializedAsync()
     {
         await Auth.LoadAsync();
-        if (Auth.IsAuthenticated && GuestMigration is not null)
-            await GuestMigration.MigrateIfNeededAsync();
 
         var uri = Nav.ToAbsoluteUri(Nav.Uri);
         string path = uri.AbsolutePath.TrimEnd('/');
@@ -650,9 +725,6 @@
                 error = err;
                 return;
             }
-
-            if (GuestMigration is not null)
-                await GuestMigration.MigrateIfNeededAsync();
 
             Nav.NavigateTo(RedirectAfterLogin, replace: true);
         }
@@ -722,9 +794,6 @@
                 await BeginTwoFactorAsync(result);
                 return;
             }
-
-            if (GuestMigration is not null)
-                await GuestMigration.MigrateIfNeededAsync();
 
             Nav.NavigateTo(RedirectAfterLogin, replace: true);
         }
@@ -1010,8 +1079,6 @@
             }
 
             await ClearTwoFactorChallengeAsync();
-            if (GuestMigration is not null)
-                await GuestMigration.MigrateIfNeededAsync();
 
             Nav.NavigateTo(RedirectAfterLogin, replace: true);
         }

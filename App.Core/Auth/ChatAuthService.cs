@@ -13,7 +13,6 @@ namespace App.Core.Auth;
 public class ChatAuthService : IAuthService
 {
     private readonly HttpClient _http;
-    private readonly IGuestKeyProvider? _guestKeys;
     private readonly AppServerOptions? _serverOptions;
     private readonly IAppServerEndpoint? _endpoint;
     private readonly IAuthSessionPersistence? _sessionPersistence;
@@ -45,17 +44,13 @@ public class ChatAuthService : IAuthService
 
     public event Action? OnChanged;
 
-    private string? _guestKeyB64;
-
     public ChatAuthService(
         HttpClient http,
-        IGuestKeyProvider? guestKeys = null,
         IOptions<AppServerOptions>? serverOptions = null,
         IAuthSessionPersistence? sessionPersistence = null,
         IAppServerEndpoint? endpoint = null)
     {
         _http = http;
-        _guestKeys = guestKeys;
         _serverOptions = serverOptions?.Value;
         _sessionPersistence = sessionPersistence;
         _endpoint = endpoint;
@@ -462,28 +457,8 @@ public class ChatAuthService : IAuthService
         OnChanged?.Invoke();
     }
 
-    public async Task<string> GetOrCreateHistoryEncryptionKeyAsync()
-    {
-        if (!string.IsNullOrEmpty(LocalEncryptionKeyB64))
-            return LocalEncryptionKeyB64;
-
-        if (!string.IsNullOrEmpty(_guestKeyB64))
-            return _guestKeyB64;
-
-        if (_guestKeys is null)
-            return string.Empty;
-
-        try
-        {
-            _guestKeyB64 = await _guestKeys.GetOrCreateGuestKeyAsync();
-            return _guestKeyB64;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Auth] Could not ensure guest encryption key: {ex.Message}");
-            return string.Empty;
-        }
-    }
+    public Task<string> GetOrCreateHistoryEncryptionKeyAsync() =>
+        Task.FromResult(LocalEncryptionKeyB64 ?? string.Empty);
 
     private enum AuthFetchResult
     {
