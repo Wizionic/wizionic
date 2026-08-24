@@ -24,7 +24,7 @@ public static class NoteContentFormatter
         if (string.IsNullOrWhiteSpace(content))
             return "";
 
-        return ToQuillHtml(content);
+        return IsHtml(contentFormat) ? content : Markdown.ToHtml(content, Pipeline);
     }
 
     public static string ToEditorHtml(string content, string? contentFormat)
@@ -32,12 +32,13 @@ public static class NoteContentFormatter
         if (string.IsNullOrWhiteSpace(content))
             return "<p><br></p>";
 
-        return ToQuillHtml(content);
+        return IsHtml(contentFormat) ? content : Markdown.ToHtml(content, Pipeline);
     }
 
     /// <summary>
-    /// Convert model markdown/HTML into Quill-friendly HTML so view mode matches the editor
-    /// (Quill bullets use <c>ol &gt; li[data-list]</c>; extra empty paragraphs are collapsed).
+    /// AI-only: convert model markdown/HTML into Quill-friendly HTML.
+    /// Does not run on manual editor saves. Consecutive blank paragraphs collapse to one
+    /// so a single blank line between sections is kept.
     /// </summary>
     public static string ToQuillHtml(string? content)
     {
@@ -72,15 +73,14 @@ public static class NoteContentFormatter
             },
             RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
-        // Drop spacer paragraphs and pretty-print newlines. Quill view uses a real .ql-editor
-        // (white-space: pre-wrap) so leftover source whitespace shows as blank lines.
+        // Pretty-printed source newlines between tags; keep a single blank paragraph.
+        html = Regex.Replace(html, @">\s+<", "><");
         html = Regex.Replace(
             html,
-            @"<p>(?:\s|&nbsp;|<br\s*/?>)*</p>",
-            "",
+            @"(?:<p>(?:\s|&nbsp;|<br\s*/?>)*</p>){2,}",
+            "<p><br></p>",
             RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, @">\s+<", "><");
-        html = Regex.Replace(html, @"(?:<br\s*/?>\s*){2,}", "<br>", RegexOptions.IgnoreCase);
+        html = Regex.Replace(html, @"(?:<br\s*/?>\s*){3,}", "<br><br>", RegexOptions.IgnoreCase);
 
         return string.IsNullOrWhiteSpace(html) ? "<p><br></p>" : html.Trim();
     }
