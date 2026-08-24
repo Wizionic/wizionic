@@ -1154,32 +1154,65 @@
         return utc.ToLocalTime().ToString("MMM d");
     }
 
-    private async void HandleIncomingSyncPayload(string convoId, string json, string fromDeviceId)
-    {
-        try { await RefreshConversationsAsync(); statusMessage = $"Received sync for convo \"{GetConvoTitle(convoId)}\" from {fromDeviceId}."; StateHasChanged(); }
-        catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming sync payload: {ex.Message}"); }
-    }
+    private void HandleIncomingSyncPayload(string convoId, string json, string fromDeviceId) =>
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await RefreshConversationsAsync();
+                statusMessage = $"Received sync for convo \"{GetConvoTitle(convoId)}\" from {fromDeviceId}.";
+                StateHasChanged();
+            }
+            catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming sync payload: {ex.Message}"); }
+        });
 
-    private void HandleSyncAckReceived(string convoId, string fromPeerId)
-    { statusMessage = $"Peer confirmed receipt of conversation \"{GetConvoTitle(convoId)}\"."; StateHasChanged(); ScheduleStatusClear("confirmed receipt"); }
+    private void HandleSyncAckReceived(string convoId, string fromPeerId) =>
+        _ = InvokeAsync(() =>
+        {
+            statusMessage = $"Peer confirmed receipt of conversation \"{GetConvoTitle(convoId)}\".";
+            StateHasChanged();
+            ScheduleStatusClear("confirmed receipt");
+        });
 
-    private async void HandleIncomingNoteSyncPayload(string noteId, string json, string fromDeviceId)
-    {
-        try { await RefreshNotesAsync(); statusMessage = $"Received sync for note \"{GetNoteTitle(noteId)}\" from {fromDeviceId}."; StateHasChanged(); }
-        catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming note sync payload: {ex.Message}"); }
-    }
+    private void HandleIncomingNoteSyncPayload(string noteId, string json, string fromDeviceId) =>
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await RefreshNotesAsync();
+                statusMessage = $"Received sync for note \"{GetNoteTitle(noteId)}\" from {fromDeviceId}.";
+                StateHasChanged();
+            }
+            catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming note sync payload: {ex.Message}"); }
+        });
 
-    private void HandleNoteSyncAckReceived(string noteId, string fromPeerId)
-    { statusMessage = $"Peer confirmed receipt of note \"{GetNoteTitle(noteId)}\"."; StateHasChanged(); ScheduleStatusClear("confirmed receipt"); }
+    private void HandleNoteSyncAckReceived(string noteId, string fromPeerId) =>
+        _ = InvokeAsync(() =>
+        {
+            statusMessage = $"Peer confirmed receipt of note \"{GetNoteTitle(noteId)}\".";
+            StateHasChanged();
+            ScheduleStatusClear("confirmed receipt");
+        });
 
-    private async void HandleIncomingAlbumSyncPayload(string albumId, string json, string fromDeviceId)
-    {
-        try { await RefreshAlbumsAsync(); statusMessage = $"Received sync for album \"{GetAlbumTitle(albumId)}\" from {fromDeviceId}."; StateHasChanged(); }
-        catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming album sync payload: {ex.Message}"); }
-    }
+    private void HandleIncomingAlbumSyncPayload(string albumId, string json, string fromDeviceId) =>
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await RefreshAlbumsAsync();
+                statusMessage = $"Received sync for album \"{GetAlbumTitle(albumId)}\" from {fromDeviceId}.";
+                StateHasChanged();
+            }
+            catch (Exception ex) { Console.WriteLine($"[Sync] Failed to refresh after incoming album sync payload: {ex.Message}"); }
+        });
 
-    private void HandleAlbumSyncAckReceived(string albumId, string fromPeerId)
-    { statusMessage = $"Peer confirmed receipt of album \"{GetAlbumTitle(albumId)}\"."; StateHasChanged(); ScheduleStatusClear("confirmed receipt"); }
+    private void HandleAlbumSyncAckReceived(string albumId, string fromPeerId) =>
+        _ = InvokeAsync(() =>
+        {
+            statusMessage = $"Peer confirmed receipt of album \"{GetAlbumTitle(albumId)}\".";
+            StateHasChanged();
+            ScheduleStatusClear("confirmed receipt");
+        });
 
     private string GetConvoTitle(string id) => localConvos.FirstOrDefault(c => c.Id == id)?.Title ?? id;
     private string GetNoteTitle(string id) => localNotes.FirstOrDefault(n => n.Id == id)?.Title ?? id;

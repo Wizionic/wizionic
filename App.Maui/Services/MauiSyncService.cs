@@ -841,19 +841,38 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             storageQuota: sp.GetService<IStorageQuotaService>(),
             calendarStore: sp.GetRequiredService<ICalendarStore>());
 
-        _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
-        _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
-        _coordinator.OnGalleryChanged += () => OnGalleryChanged?.Invoke();
-        _coordinator.OnCalendarsChanged += () => OnCalendarsChanged?.Invoke();
-        _coordinator.OnBookmarksChanged += () => OnBookmarksChanged?.Invoke();
-        _coordinator.OnInstalledAppsChanged += () => OnInstalledAppsChanged?.Invoke();
-        _coordinator.OnSettingsChanged += () => OnSettingsChanged?.Invoke();
-        _coordinator.OnSyncPayloadReceived += (c, j, f) => OnSyncPayloadReceived?.Invoke(c, j, f);
-        _coordinator.OnSyncAckReceived += (c, f) => OnSyncAckReceived?.Invoke(c, f);
-        _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => OnNoteSyncPayloadReceived?.Invoke(n, j, f);
-        _coordinator.OnNoteSyncAckReceived += (n, f) => OnNoteSyncAckReceived?.Invoke(n, f);
-        _coordinator.OnAlbumSyncPayloadReceived += (a, j, f) => OnAlbumSyncPayloadReceived?.Invoke(a, j, f);
-        _coordinator.OnAlbumSyncAckReceived += (a, f) => OnAlbumSyncAckReceived?.Invoke(a, f);
+        _coordinator.OnConversationsChanged += () => RaiseOnUi(OnConversationsChanged);
+        _coordinator.OnNotesChanged += () => RaiseOnUi(OnNotesChanged);
+        _coordinator.OnGalleryChanged += () => RaiseOnUi(OnGalleryChanged);
+        _coordinator.OnCalendarsChanged += () => RaiseOnUi(OnCalendarsChanged);
+        _coordinator.OnBookmarksChanged += () => RaiseOnUi(OnBookmarksChanged);
+        _coordinator.OnInstalledAppsChanged += () => RaiseOnUi(OnInstalledAppsChanged);
+        _coordinator.OnSettingsChanged += () => RaiseOnUi(OnSettingsChanged);
+        _coordinator.OnSyncPayloadReceived += (c, j, f) => RaiseOnUi(() => OnSyncPayloadReceived?.Invoke(c, j, f));
+        _coordinator.OnSyncAckReceived += (c, f) => RaiseOnUi(() => OnSyncAckReceived?.Invoke(c, f));
+        _coordinator.OnNoteSyncPayloadReceived += (n, j, f) => RaiseOnUi(() => OnNoteSyncPayloadReceived?.Invoke(n, j, f));
+        _coordinator.OnNoteSyncAckReceived += (n, f) => RaiseOnUi(() => OnNoteSyncAckReceived?.Invoke(n, f));
+        _coordinator.OnAlbumSyncPayloadReceived += (a, j, f) => RaiseOnUi(() => OnAlbumSyncPayloadReceived?.Invoke(a, j, f));
+        _coordinator.OnAlbumSyncAckReceived += (a, f) => RaiseOnUi(() => OnAlbumSyncAckReceived?.Invoke(a, f));
+    }
+
+    /// <summary>
+    /// SIPSorcery DataChannel callbacks run on a thread-pool thread. Linux GirCore's
+    /// Blazor dispatcher throws if we StateHasChanged there; marshal to the UI thread first.
+    /// </summary>
+    private static void RaiseOnUi(Action? handler)
+    {
+        if (handler is null) return;
+        void run()
+        {
+            try { handler(); }
+            catch (Exception ex) { SyncDebugLog.Info($"Sync UI callback failed: {ex.Message}"); }
+        }
+
+        if (MainThread.IsMainThread)
+            run();
+        else
+            MainThread.BeginInvokeOnMainThread(run);
     }
 
     private void EnsureCoordinatorWired()

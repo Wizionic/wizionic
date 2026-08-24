@@ -393,12 +393,13 @@ public sealed partial class WebRtcSyncCoordinator
             if (!await _calendarStore.ShouldAcceptIncomingCalendarAsync(meta.CalendarId, meta.LastUpdatedTicks))
             {
                 SyncDebugLog.Info($"Ignoring stale calendar meta {meta.CalendarId}");
+                ScheduleAutoSyncCalendarAfterLocalSave(meta.CalendarId);
                 return;
             }
 
             await _calendarStore.ApplyRemoteCalendarMetaAsync(
                 meta.CalendarId, meta.Name, meta.Color, meta.IsVisible, meta.Description, meta.LastUpdatedTicks);
-            OnCalendarsChanged?.Invoke();
+            Raise(OnCalendarsChanged);
             SyncDebugLog.Info($"Applied calendar meta {meta.CalendarId} from {fromDeviceId}");
         }
         catch (Exception ex)
@@ -427,11 +428,12 @@ public sealed partial class WebRtcSyncCoordinator
             if (!await _calendarStore.ShouldAcceptIncomingEventAsync(evt.Id, evt))
             {
                 SyncDebugLog.Info($"Ignoring stale calendar event {evt.Id}");
+                ScheduleAutoSyncEventAfterLocalSave(evt.CalendarId, evt.Id);
                 return;
             }
 
             await _calendarStore.UpsertEventAsync(evt);
-            OnCalendarsChanged?.Invoke();
+            Raise(OnCalendarsChanged);
             SyncDebugLog.Info($"Applied calendar event {payload.CalendarId}/{evt.Id} from {fromDeviceId}");
         }
         catch (Exception ex)
@@ -455,7 +457,7 @@ public sealed partial class WebRtcSyncCoordinator
             }
             if (await _calendarStore.TryApplyRemoteCalendarDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnCalendarsChanged?.Invoke();
+                Raise(OnCalendarsChanged);
                 SyncDebugLog.Info($"Applied calendar delete {payload.Id} from {fromDeviceId}");
             }
         }
@@ -492,7 +494,7 @@ public sealed partial class WebRtcSyncCoordinator
 
             if (await _calendarStore.TryApplyRemoteEventDeleteAsync(eventId, payload.DeletedAtTicks))
             {
-                OnCalendarsChanged?.Invoke();
+                Raise(OnCalendarsChanged);
                 SyncDebugLog.Info($"Applied calendar event delete {eventId} from {fromDeviceId}");
             }
         }

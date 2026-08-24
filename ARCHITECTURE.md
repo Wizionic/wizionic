@@ -989,11 +989,11 @@ sequenceDiagram
 4. **`SyncPresencePage.razor`** (`/sync`) — online devices, rename, AI-server selection, per-kind auto-sync toggles (chats, notes, gallery, calendar, settings, …).
 
 ### Phase 2 — Data sync (WebRTC DataChannel)
-1. Initiator (`WasmSyncService` / `MauiSyncService` + `WebRtcSyncCoordinator`) opens a WebRTC peer connection; **offer/answer/ICE** via SignalR.
-2. WASM: JS `RTCPeerConnection` helpers; MAUI: SIPSorcery WebRTC.
-3. **Manifest exchange** first: both sides send fingerprints (`SyncFingerprint`); only changed items transfer. Matching fingerprints are enough — `LastUpdated` clock skew does not re-send gallery images. Peer-online auto-sync includes chats, notes, gallery, **calendar**, and bookmarks/apps when those toggles are on.
+1. Initiator (`WasmSyncService` / `MauiSyncService` + `WebRtcSyncCoordinator`) opens a WebRTC peer connection; **offer/answer/ICE** via SignalR. Only the lexicographically smaller device id creates the offer (the other answers or sends `webrtc-need-offer`).
+2. WASM: JS `RTCPeerConnection` helpers; MAUI: SIPSorcery WebRTC. Incoming DataChannels are often already open before `onopen` is wired — both WASM (`readyState === 'open'`) and MAUI (`IsOpened`) treat that as open and send any pending outbound item. The first inbound DataChannel message also starts a waiting outbound send so the answerer does not sit on `active: manifest` for 90s.
+3. **Manifest exchange** first: both sides send fingerprints (`SyncFingerprint`); only changed items transfer. Matching fingerprints are enough — `LastUpdated` clock skew does not re-send gallery images. Peer-online auto-sync includes chats, notes, gallery, **calendar**, and bookmarks/apps when those toggles are on. Calendar event LWW is `ModifiedUtc`/`DeletedAt`, not `StartUtc`.
 4. Encrypted content never touches the central server—JSON over the DataChannel (chunked for large blobs).
-5. Receiver decrypts with the shared per-user key and writes to local stores; UI refreshes via store change events. Handshake (ICE) and ack timers are separate; the ack window starts after the payload is sent.
+5. Receiver decrypts with the shared per-user key and writes to local stores; UI refreshes via store change events marshaled onto the UI thread (MAUI DataChannel callbacks are thread-pool). Handshake (ICE) and ack timers are separate; the ack window starts after the payload is sent. A live channel is not closed on handshake timeout.
 
 ### Sync item kinds (`SyncItemKind`)
 
