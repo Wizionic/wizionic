@@ -11,7 +11,7 @@ The desktop app also checks for a newer installer when it starts. You are asked 
 
 ## Login server (desktop only) {#login-server}
 
-Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server uses `http://localhost:5150`. After you change it, restart if the app asks you to.
+Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server uses `http://localhost:5150`. After you change it, restart if the app asks you to. On the desktop sign-in screen, **More options** opens the same choice.
 
 The website always uses its own origin.
 

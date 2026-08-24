@@ -358,9 +358,6 @@ public static class MauiProgram
 		services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<SqliteKeyStore>());
 		services.AddScoped<MauiCryptoService>();
 		services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<MauiCryptoService>());
-		services.AddScoped<IGuestKeyProvider, SqliteGuestKeyProvider>();
-		services.AddScoped<NullGuestDataMigrationService>();
-		services.AddScoped<IGuestDataMigrationService>(sp => sp.GetRequiredService<NullGuestDataMigrationService>());
 		services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
 		services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
 		services.AddSingleton<ContextualRequestRouter>();

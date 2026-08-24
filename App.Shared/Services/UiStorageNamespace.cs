@@ -6,7 +6,7 @@ namespace App.Shared.Services;
 
 /// <summary>
 /// Applies the current auth storage prefix to theme / nav-layout / sidebar JS modules
-/// so those UI preferences stay isolated per user (or guest) on the same browser/device.
+/// so those UI preferences stay isolated per user on the same browser/device.
 /// </summary>
 public static class UiStorageNamespace
 {

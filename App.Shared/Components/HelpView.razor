@@ -10,7 +10,27 @@
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
-<div class="help-view">
+<div class="help-view @(_tocOpen ? "help-view--toc-open" : null)">
+    <div class="help-view-mobile-bar">
+        @if (_tocOpen)
+        {
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm help-view-toc-toggle"
+                    @onclick="() => _tocOpen = false">
+                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                Back
+            </button>
+        }
+        else
+        {
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm help-view-toc-toggle"
+                    @onclick="() => _tocOpen = true">
+                <i class="bi bi-list" aria-hidden="true"></i>
+                Topics
+            </button>
+        }
+    </div>
     <div class="help-view-sidebar">
         <input type="search"
                class="form-control help-view-search"
@@ -119,6 +139,7 @@
     private string? askError;
     private bool askBusy;
     private List<HelpSearchHit> askCitations = new();
+    private bool _tocOpen;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -246,6 +267,7 @@
 
     private async Task Select(string id)
     {
+        _tocOpen = false;
         await LoadArticle(id);
         await TopicIdChanged.InvokeAsync(id);
     }

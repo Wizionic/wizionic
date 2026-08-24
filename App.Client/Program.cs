@@ -85,15 +85,11 @@ builder.Services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.S
 builder.Services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Services.NotesChatHandoff>();
 builder.Services.AddScoped<WasmStorageQuotaService>();
 builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
-// Guest key provider must be Singleton: ChatAuthService is Singleton and injects IGuestKeyProvider.
-builder.Services.AddSingleton<IGuestKeyProvider, BrowserGuestKeyProvider>();
 // Singleton auth so all stores share one identity/prefix (multi-user isolation).
 builder.Services.AddSingleton<ChatAuthService>();
 builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 builder.Services.AddScoped<WasmCryptoService>();
 builder.Services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<WasmCryptoService>());
-builder.Services.AddScoped<IGuestDataMigrationService, WasmGuestDataMigrationService>();
-builder.Services.AddScoped<WasmGuestDataMigrationService>();
 builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
 builder.Services.AddSingleton<App.Core.Homeserver.IHomeserverInstallService>(
     _ => App.Shared.Services.NullHomeserverInstallService.Instance);
@@ -149,12 +145,10 @@ builder.Services.AddScoped<IToolProvider, CompositeToolProvider>();
 var host = builder.Build();
 
 var authService = host.Services.GetRequiredService<IAuthService>();
-var guestMigration = host.Services.GetRequiredService<IGuestDataMigrationService>();
 var syncService = host.Services.GetRequiredService<ISyncService>();
 var keyStore = host.Services.GetRequiredService<IKeyStore>();
 await authService.LoadAsync();
 await keyStore.LoadAsync();
-await guestMigration.MigrateIfNeededAsync();
 
 using (var scope = host.Services.CreateScope())
 {

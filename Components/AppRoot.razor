@@ -547,14 +547,9 @@
         // the conversation blobs and metadata).
         //
         // All *content* (the serialized List<ChatMessage> JSON) is *always*
-        // encrypted with AES-GCM before being written to convoContents:
-        //   - When the user is logged in we use the server-provided
-        //     LocalEncryptionKey (so other devices of the same account can
-        //     decrypt for live sync).
-        //   - For completely unauthenticated/guest use we generate a local
-        //     (device-only) 256-bit key the first time and store it in the
-        //     settings store. This gives at-rest protection for guest history
-        //     without any server involvement.
+        // encrypted with AES-GCM before being written to convoContents using
+        // the server-provided LocalEncryptionKey (so other devices of the same
+        // account can decrypt for live sync).
         //
         // The lightweight meta (title, lastUpdated, syncEnabled flag) is
         // stored in cleartext in convoMetas so the list of conversations is
@@ -698,18 +693,6 @@
                 req.onsuccess = () => resolve(req.result || []);
                 req.onerror = () => reject(req.error);
             });
-        };
-
-        // Ensures a per-browser guest encryption key exists (device-local only).
-        // The key is a base64 32-byte value, stored in the settings store.
-        // It is used exactly like the server key for AES-GCM of guest history.
-        window.idbEnsureGuestKey = async () => {
-            const existing = await window.idbGetSetting("guest-encryption-key");
-            if (existing) return existing;
-            const bytes = crypto.getRandomValues(new Uint8Array(32));
-            const b64 = btoa(String.fromCharCode.apply(null, bytes));
-            await window.idbPutSetting("guest-encryption-key", b64);
-            return b64;
         };
 
         // --------------------------------------------------------------------

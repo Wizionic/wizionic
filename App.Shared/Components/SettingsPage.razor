@@ -4,8 +4,6 @@
 @inject App.Core.Sync.ISyncService SyncService
 @inject App.Core.Update.IUpdateService UpdateService
 @inject App.Core.Homeserver.IHomeserverInstallService Homeserver
-@inject App.Core.Configuration.IAppServerEndpoint ServerEndpoint
-@inject App.Core.UI.IAppRestartService AppRestart
 @inject App.Core.UI.IDesktopShellService DesktopShell
 @inject App.Core.Setup.ISetupWizardHost SetupWizard
 @inject App.Shared.Services.ThemeService Theme
@@ -37,31 +35,7 @@
             <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
                 Where this app authenticates and syncs device presence. Installing a Home Server sets this to
                 <code>http://localhost:5150</code>. </p>
-            <label>Server URL</label>
-            <input type="text" class="form-control" @bind="loginServerDraft" placeholder="https://wizionic.com" />
-            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
-                <button type="button" class="btn btn-primary btn-sm" @onclick="SaveLoginServer" disabled="@loginServerBusy">
-                    @(loginServerBusy ? "Saving…" : "Save login server")
-                </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset("https://wizionic.com")' disabled="@loginServerBusy">
-                    Public (wizionic.com)
-                </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset("http://localhost:5150")' disabled="@loginServerBusy">
-                    Local homeserver
-                </button>
-            </div>
-            @if (!string.IsNullOrEmpty(loginServerMessage))
-            {
-                <div style="margin-top: 0.5rem; font-size: 0.9em; color: @(loginServerIsError ? "var(--cf-error-fg, #c00)" : "var(--cf-success-fg, #22c55e)");">
-                    @loginServerMessage
-                    @if (loginServerRestartPending && AppRestart.CanRestart)
-                    {
-                        <button type="button" class="btn btn-primary btn-sm" style="margin-left: 0.5rem;" @onclick="RestartForLoginServer">
-                            Restart now
-                        </button>
-                    }
-                </div>
-            }
+            <LoginServerPicker />
             @if (Homeserver.IsSupported)
             {
                 <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--cf-border, #eee);">
@@ -727,15 +701,6 @@
                OnConfirm="DeleteAllMemories"
                OnCancel="() => showDeleteAllConfirm = false" />
 
-<ConfirmDialog IsVisible="@showRestartConfirm"
-               Title="Restart required"
-               Message="@restartConfirmMessage"
-               ConfirmText="Restart now"
-               CancelText="Later"
-               Danger="false"
-               OnConfirm="RestartForLoginServer"
-               OnCancel="() => showRestartConfirm = false" />
-
 <HelpOverlayHost />
 
 @code {
@@ -769,13 +734,7 @@
     private bool homeserverActionIsError;
     private bool homeserverBusy;
 
-    private string loginServerDraft = "";
-    private string? loginServerMessage;
-    private bool loginServerIsError;
-    private bool loginServerBusy;
-    private bool loginServerRestartPending;
-    private bool showRestartConfirm;
-    private string restartConfirmMessage = "";
+
 
     private int maxOutputDraft = App.Core.Storage.KeyStoreDefaults.DefaultMaxOutputTokens;
     private bool maxOutputBusy;
@@ -859,9 +818,6 @@
 
         if (AppEnvironment.IsMaui)
         {
-            loginServerDraft = ServerEndpoint.BaseUrl;
-            if (string.IsNullOrWhiteSpace(loginServerDraft))
-                loginServerDraft = "https://wizionic.com";
             LoadInstalledVersion();
             RefreshHomeserverStatus();
         }
@@ -1286,59 +1242,6 @@
             routingTestBusy = false;
             StateHasChanged();
         }
-    }
-
-    private Task ApplyLoginServerPreset(string url)
-    {
-        loginServerDraft = url;
-        return SaveLoginServer();
-    }
-
-    private async Task SaveLoginServer()
-    {
-        loginServerBusy = true;
-        loginServerMessage = null;
-        loginServerRestartPending = false;
-        showRestartConfirm = false;
-        StateHasChanged();
-        try
-        {
-            var restartRequired = await ServerEndpoint.SetBaseUrlAsync(loginServerDraft);
-            loginServerDraft = ServerEndpoint.BaseUrl;
-            loginServerIsError = false;
-            if (restartRequired)
-            {
-                loginServerRestartPending = true;
-                loginServerMessage = $"Login server saved as {ServerEndpoint.BaseUrl}. Restart Wizionic to connect.";
-                restartConfirmMessage =
-                    $"Wizionic must restart to use {ServerEndpoint.BaseUrl}. " +
-                    "The new address is already saved.";
-                if (AppRestart.CanRestart)
-                    showRestartConfirm = true;
-            }
-            else
-            {
-                loginServerMessage = $"Login server is {ServerEndpoint.BaseUrl}.";
-            }
-        }
-        catch (Exception ex)
-        {
-            loginServerMessage = ex.Message;
-            loginServerIsError = true;
-        }
-        finally
-        {
-            loginServerBusy = false;
-            StateHasChanged();
-        }
-    }
-
-    private void RestartForLoginServer()
-    {
-        showRestartConfirm = false;
-        if (!AppRestart.CanRestart)
-            return;
-        AppRestart.Restart();
     }
 
     private void OpenSetupWizard()

@@ -265,9 +265,8 @@ builder.Services.AddSingleton<App.Core.Workflows.IWorkflowOrchestrator>(
 builder.Services.AddAuthentication("AppAuth")
     .AddCookie("AppAuth", options =>
     {
-        // Root (/) is now the WASM landing page that handles both "login with email" and
-        // "continue without login" (guest/local mode). The cookie middleware therefore
-        // redirects unauthenticated users who hit a [Authorize] page to "/".
+        // Root (/) is the WASM sign-in landing page. Cookie middleware redirects
+        // unauthenticated users who hit a [Authorize] endpoint to "/".
         options.LoginPath = "/";
         options.LogoutPath = "/logout";
 
@@ -611,8 +610,6 @@ app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkServic
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
     await ctx.SignOutAsync("AppAuth");
-    // Return to the WASM root so the user sees the (now guest) landing page with
-    // the option to log in again or continue without an account.
     ctx.Response.Redirect("/");
 });
 
