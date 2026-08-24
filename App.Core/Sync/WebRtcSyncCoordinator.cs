@@ -139,6 +139,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private readonly HashSet<string> _owedOutboundTurn = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Device ids we have already sent a WebRTC offer to (avoid dual offers).</summary>
     private readonly HashSet<string> _offerInFlight = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Active outbound item already written to the DataChannel (waiting for ack, not handshake).</summary>
+    private readonly HashSet<string> _outboundSentByPeer = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _galleryChangedDebounceCts;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly AsyncLocal<bool> _holdingGate = new();
@@ -172,6 +174,27 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             _holdingGate.Value = false;
             _gate.Release();
         }
+    }
+
+    private static void Raise(Action? handler)
+    {
+        if (handler is null) return;
+        try { handler(); }
+        catch (Exception ex) { SyncDebugLog.Info($"Sync change notification failed: {ex.Message}"); }
+    }
+
+    private static void Raise<T1, T2>(Action<T1, T2>? handler, T1 a, T2 b)
+    {
+        if (handler is null) return;
+        try { handler(a, b); }
+        catch (Exception ex) { SyncDebugLog.Info($"Sync change notification failed: {ex.Message}"); }
+    }
+
+    private static void Raise<T1, T2, T3>(Action<T1, T2, T3>? handler, T1 a, T2 b, T3 c)
+    {
+        if (handler is null) return;
+        try { handler(a, b, c); }
+        catch (Exception ex) { SyncDebugLog.Info($"Sync change notification failed: {ex.Message}"); }
     }
 
     /// <summary>Fire-and-forget without flowing the exclusive-lock AsyncLocal into the new task.</summary>
@@ -1430,7 +1453,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             {
                 await Task.Delay(timeout, cts.Token);
             }
-            catch (TaskCanceledException)
+            catch (Exception ex) when (ex is TaskCanceledException or ObjectDisposedException)
             {
                 return;
             }
@@ -1446,6 +1469,18 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                     || !string.Equals(active.ItemId, itemId, StringComparison.Ordinal))
                     return;
 
+                // Answerer missed onopen but the channel is live (inbound already flowing).
+                // Send instead of tearing down — closing here killed the peer's in-flight notes.
+                if (!_outboundSentByPeer.Contains(peerId)
+                    && await _webrtc.IsDataChannelOpenAsync(peerId))
+                {
+                    SyncDebugLog.Info(
+                        $"Sync handshake still pending after {timeout.TotalSeconds:0}s for {peerId} " +
+                        $"but DataChannel is open; sending {DescribeQueueItem(active)}");
+                    await SendActiveItemOnOpenChannelAsync(peerId, active);
+                    return;
+                }
+
                 SyncDebugLog.Info($"Sync timed out for peer {peerId} after {timeout.TotalSeconds:0}s (active: {DescribeQueueItem(active)})");
                 await FailActiveSyncAsync(peerId, "timed out waiting for peer acknowledgement");
             });
@@ -1456,8 +1491,17 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     {
         if (_syncTimeoutByPeer.Remove(peerId, out var cts))
         {
-            cts.Cancel();
-            cts.Dispose();
+            try { cts.Cancel(); } catch { /* already canceled */ }
+            // Dispose after Delay has observed cancel — immediate Dispose races Task.Delay.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(250);
+                    cts.Dispose();
+                }
+                catch { /* ignore */ }
+            });
         }
     }
 
@@ -1467,6 +1511,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             return;
 
         _activeSyncByPeer.Remove(peerId);
+        _outboundSentByPeer.Remove(peerId);
         CancelSyncTimeout(peerId);
         ClearChunkAssembliesForPeer(peerId);
         _offerInFlight.Remove(peerId);
@@ -2224,6 +2269,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         if (!_activeSyncByPeer.Remove(peerId))
             return;
 
+        _outboundSentByPeer.Remove(peerId);
         CancelSyncTimeout(peerId);
         ClearChunkAssembliesForPeer(peerId);
         // Successfully completed at least one outbound item — turn fulfilled.
@@ -2246,22 +2292,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             {
                 var reuseLabel = DescribeQueueItem(nextItem);
                 SyncDebugLog.Info($"Reusing open channel for {peerId}: {reuseLabel}");
-
-                if (nextItem.IsManifestExchange)
-                {
-                    var sent = await _webrtc.SendDataAsync(
-                        peerId,
-                        SerializeDataChannelMessage(new DataChannelMessage("sync-manifest-offer", content: nextItem.DataJson)));
-                    if (!sent)
-                        await FailActiveSyncAsync(peerId, "data channel not ready for manifest");
-                    else
-                        StartAckTimeout(peerId, nextItem, nextItem.DataJson.Length);
-                }
-                else
-                {
-                    await TrySendActiveItemAsync(peerId, nextItem);
-                }
-
+                await SendActiveItemOnOpenChannelAsync(peerId, nextItem);
                 return;
             }
 
@@ -2452,11 +2483,32 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             if (!sent)
                 await FailActiveSyncAsync(peerId, "data channel not ready for manifest");
             else
+            {
+                _outboundSentByPeer.Add(peerId);
+                SyncDebugLog.Info($"Sent sync-manifest-offer to {peerId}");
                 StartAckTimeout(peerId, item, item.DataJson.Length);
+            }
             return;
         }
 
         await TrySendActiveItemAsync(peerId, item);
+    }
+
+    /// <summary>
+    /// Answerer often sees inbound messages before <see cref="OnDataChannelOpenAsync"/>.
+    /// If we have a queued outbound item and the channel can send, start it now.
+    /// </summary>
+    private async Task EnsureActiveOutboundSentAsync(string peerId)
+    {
+        if (!_activeSyncByPeer.TryGetValue(peerId, out var item))
+            return;
+        if (_outboundSentByPeer.Contains(peerId))
+            return;
+        if (!await _webrtc.IsDataChannelOpenAsync(peerId))
+            return;
+
+        SyncDebugLog.Info($"DataChannel live for {peerId}; sending pending {DescribeQueueItem(item)}");
+        await SendActiveItemOnOpenChannelAsync(peerId, item);
     }
 
     private async Task StartWebRtcDataChannelAsync(string targetDeviceId, string channelLabel)
@@ -2630,34 +2682,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         _offerInFlight.Remove(peerId);
         // Our offer won (or we are answerer on a live channel) — discard any deferred glare SDP.
         _deferredRemoteOffers.Remove(peerId);
-
-        if (!_activeSyncByPeer.TryGetValue(peerId, out var item))
-            return;
-
-        if (item.IsManifestExchange)
-        {
-            try
-            {
-                var sent = await _webrtc.SendDataAsync(
-                    peerId,
-                    SerializeDataChannelMessage(new DataChannelMessage("sync-manifest-offer", content: item.DataJson)));
-                if (!sent)
-                    await FailActiveSyncAsync(peerId, "data channel not ready for manifest");
-                else
-                {
-                    SyncDebugLog.Info($"Sent sync-manifest-offer to {peerId}");
-                    StartAckTimeout(peerId, item, item.DataJson.Length);
-                }
-            }
-            catch (Exception ex)
-            {
-                await FailActiveSyncAsync(peerId, ex.Message);
-            }
-
-            return;
-        }
-
-        await TrySendActiveItemAsync(peerId, item);
+        await EnsureActiveOutboundSentAsync(peerId);
     }
 
     private async Task TrySendActiveItemAsync(string peerId, SyncQueueItem item)
@@ -2677,6 +2702,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 }
 
                 SyncDebugLog.Info($"Sent {deleteType} to {peerId} for {item.ItemId}");
+                _outboundSentByPeer.Add(peerId);
                 StartAckTimeout(peerId, item, item.DataJson.Length);
                 return;
             }
@@ -2693,6 +2719,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 return;
             }
 
+            _outboundSentByPeer.Add(peerId);
             StartAckTimeout(peerId, item, payloadBytes);
 
             SyncDebugLog.Info($"Sent {DataTypeFor(item.Kind)} " +
@@ -2725,6 +2752,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     {
         // Leave any JSInvokable call stack before IndexedDB/localStorage (WASM) or further JS.
         await Task.Yield();
+        await EnsureActiveOutboundSentAsync(peerId);
         try
         {
             var msg = System.Text.Json.JsonSerializer.Deserialize<DataChannelMessage>(data);
@@ -3373,17 +3401,17 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         }
 
         if (appliedConvoDeletes > 0)
-            OnConversationsChanged?.Invoke();
+            Raise(OnConversationsChanged);
         if (appliedNoteDeletes > 0)
-            OnNotesChanged?.Invoke();
+            Raise(OnNotesChanged);
         if (appliedAlbumDeletes > 0)
-            OnGalleryChanged?.Invoke();
+            Raise(OnGalleryChanged);
         if (appliedCalendarDeletes + appliedCalendarEventDeletes > 0)
-            OnCalendarsChanged?.Invoke();
+            Raise(OnCalendarsChanged);
         if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
-            OnBookmarksChanged?.Invoke();
+            Raise(OnBookmarksChanged);
         if (appliedAppDeletes > 0)
-            OnInstalledAppsChanged?.Invoke();
+            Raise(OnInstalledAppsChanged);
 
         var response = new SyncManifestResponse(
             neededConvos,
@@ -3508,17 +3536,17 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         }
 
         if (appliedConvoDeletes > 0)
-            OnConversationsChanged?.Invoke();
+            Raise(OnConversationsChanged);
         if (appliedNoteDeletes > 0)
-            OnNotesChanged?.Invoke();
+            Raise(OnNotesChanged);
         if (appliedAlbumDeletes > 0)
-            OnGalleryChanged?.Invoke();
+            Raise(OnGalleryChanged);
         if (appliedCalendarDeletes + appliedCalendarEventDeletes > 0)
-            OnCalendarsChanged?.Invoke();
+            Raise(OnCalendarsChanged);
         if (appliedBookmarkDeletes + appliedFolderDeletes > 0)
-            OnBookmarksChanged?.Invoke();
+            Raise(OnBookmarksChanged);
         if (appliedAppDeletes > 0)
-            OnInstalledAppsChanged?.Invoke();
+            Raise(OnInstalledAppsChanged);
 
         var queued = await QueueNeededItemsFromManifestAsync(peerId, response);
         var noNeeded =
@@ -3559,13 +3587,13 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private async Task HandleSyncAckAsync(string convoId, string peerId)
     {
         await TryAdvanceOnMatchingAckAsync("sync-ack", convoId, peerId);
-        OnSyncAckReceived?.Invoke(convoId, peerId);
+        Raise(OnSyncAckReceived, convoId, peerId);
     }
 
     private async Task HandleNoteSyncAckAsync(string noteId, string peerId)
     {
         await TryAdvanceOnMatchingAckAsync("note-sync-ack", noteId, peerId);
-        OnNoteSyncAckReceived?.Invoke(noteId, peerId);
+        Raise(OnNoteSyncAckReceived, noteId, peerId);
     }
 
     private Task HandleGenericItemAckAsync(string type, string itemId, string peerId) =>
@@ -3613,8 +3641,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             // Versioned protection merge: never demote a local lock from stale remote false.
             await ApplyIncomingNoteProtectionAsync(payload);
 
-            OnNoteSyncPayloadReceived?.Invoke(payload.NoteId, json, fromDeviceId);
-            OnNotesChanged?.Invoke();
+            Raise(OnNoteSyncPayloadReceived, payload.NoteId, json, fromDeviceId);
+            Raise(OnNotesChanged);
 
             // If we kept local-only entries (or LWW chose local versions), push the merged
             // notebook back so the peer converges instead of staying on a partial overwrite.
@@ -3643,7 +3671,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private async Task HandleAlbumSyncAckAsync(string albumId, string peerId)
     {
         await TryAdvanceOnMatchingAckAsync("album-sync-ack", albumId, peerId);
-        OnAlbumSyncAckReceived?.Invoke(albumId, peerId);
+        Raise(OnAlbumSyncAckReceived, albumId, peerId);
     }
 
     private async Task HandleIncomingAlbumSyncPayload(string json, string fromDeviceId)
@@ -3667,7 +3695,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 meta.IsPasswordProtected,
                 meta.ProtectionChangedTicks);
 
-            OnAlbumSyncPayloadReceived?.Invoke(meta.AlbumId, json, fromDeviceId);
+            Raise(OnAlbumSyncPayloadReceived, meta.AlbumId, json, fromDeviceId);
             NotifyGalleryChangedDebounced();
             SyncDebugLog.Info($"Applied album meta for {meta.AlbumId} from {fromDeviceId} (images refs={meta.Images?.Count ?? 0})");
         }
@@ -3713,7 +3741,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             await _galleryStore.UpsertImageAsync(payload.AlbumId, normalized);
-            OnAlbumSyncPayloadReceived?.Invoke(payload.AlbumId, json, fromDeviceId);
+            Raise(OnAlbumSyncPayloadReceived, payload.AlbumId, json, fromDeviceId);
             // Debounce: multi-image sync was re-rendering the whole album after every image.
             NotifyGalleryChangedDebounced();
             SyncDebugLog.Info($"Applied album image {payload.AlbumId}/{payload.Image.Id} from {fromDeviceId} size={payload.Image.Size}");
@@ -3737,7 +3765,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _galleryStore.TryApplyRemoteAlbumDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnGalleryChanged?.Invoke();
+                Raise(OnGalleryChanged);
                 SyncDebugLog.Info($"Applied remote album delete for {payload.Id} from {fromDeviceId}");
             }
         }
@@ -3762,7 +3790,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _galleryStore.TryApplyRemoteImageDeleteAsync(albumId, imageId, payload.DeletedAtTicks))
             {
-                OnGalleryChanged?.Invoke();
+                Raise(OnGalleryChanged);
                 SyncDebugLog.Info($"Applied remote album image delete {payload.Id} from {fromDeviceId}");
             }
         }
@@ -3820,7 +3848,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             await _browserStore.ApplyBookmarkPayloadAsync(payload.Bookmark);
-            OnBookmarksChanged?.Invoke();
+            Raise(OnBookmarksChanged);
             SyncDebugLog.Info($"Applied incoming bookmark sync for {payload.Bookmark.Id} from {fromDeviceId}");
         }
         catch (Exception ex)
@@ -3851,7 +3879,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             await _browserStore.ApplyFolderPayloadAsync(payload.Folder);
-            OnBookmarksChanged?.Invoke();
+            Raise(OnBookmarksChanged);
             SyncDebugLog.Info($"Applied incoming folder sync for {payload.Folder.Id} from {fromDeviceId}");
         }
         catch (Exception ex)
@@ -3882,7 +3910,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             await _sidebarStore.ApplySidebarAppPayloadAsync(payload.App);
-            OnInstalledAppsChanged?.Invoke();
+            Raise(OnInstalledAppsChanged);
             SyncDebugLog.Info($"Applied incoming sidebar app sync for {payload.App.Id} from {fromDeviceId}");
         }
         catch (Exception ex)
@@ -3918,7 +3946,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             await _settingsStore.ApplyAsync(payload);
-            OnSettingsChanged?.Invoke();
+            Raise(OnSettingsChanged);
             SyncDebugLog.Info(
                 $"Applied incoming settings sync for {payload.Category} from {fromDeviceId} " +
                 $"(remoteTicks={payload.UpdatedTicks})");
@@ -3941,7 +3969,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _conversationStore.TryApplyRemoteDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnConversationsChanged?.Invoke();
+                Raise(OnConversationsChanged);
                 SyncDebugLog.Info($"Applied remote convo delete for {payload.Id} from {fromDeviceId}");
             }
         }
@@ -3961,7 +3989,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _noteStore.TryApplyRemoteDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnNotesChanged?.Invoke();
+                Raise(OnNotesChanged);
                 SyncDebugLog.Info($"Applied remote note delete for {payload.Id} from {fromDeviceId}");
             }
         }
@@ -3984,7 +4012,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _browserStore.TryApplyRemoteBookmarkDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnBookmarksChanged?.Invoke();
+                Raise(OnBookmarksChanged);
                 SyncDebugLog.Info($"Applied remote bookmark delete for {payload.Id} from {fromDeviceId}");
             }
         }
@@ -4007,7 +4035,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _browserStore.TryApplyRemoteFolderDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnBookmarksChanged?.Invoke();
+                Raise(OnBookmarksChanged);
                 SyncDebugLog.Info($"Applied remote folder delete for {payload.Id} from {fromDeviceId}");
             }
         }
@@ -4030,7 +4058,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (await _sidebarStore.TryApplyRemoteSidebarAppDeleteAsync(payload.Id, payload.DeletedAtTicks))
             {
-                OnInstalledAppsChanged?.Invoke();
+                Raise(OnInstalledAppsChanged);
                 SyncDebugLog.Info($"Applied remote sidebar app delete for {payload.Id} from {fromDeviceId}");
             }
         }
@@ -4087,8 +4115,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             // Versioned protection merge: never demote a local lock from stale remote false.
             await ApplyIncomingConvoProtectionAsync(payload);
 
-            OnSyncPayloadReceived?.Invoke(convoId, json, fromDeviceId);
-            OnConversationsChanged?.Invoke();
+            Raise(OnSyncPayloadReceived, convoId, json, fromDeviceId);
+            Raise(OnConversationsChanged);
 
             SyncDebugLog.Info($"Auto-saved incoming sync for convo {convoId} from {fromDeviceId} " +
                 $"({msgs.Count} messages, title=\"{incomingTitle ?? ""}\", custom={incomingTitleIsCustom}, " +
@@ -4184,7 +4212,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             {
                 await Task.Delay(GalleryChangedDebounce, cts.Token);
                 if (!cts.Token.IsCancellationRequested)
-                    OnGalleryChanged?.Invoke();
+                    Raise(OnGalleryChanged);
             }
             catch (TaskCanceledException) { }
         });

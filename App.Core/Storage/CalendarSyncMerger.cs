@@ -39,12 +39,13 @@ public static class CalendarSyncMerger
 
     public static long EffectiveTicks(CalendarEvent e)
     {
-        long max = 0;
-        if (e.ModifiedUtc.HasValue) max = Math.Max(max, e.ModifiedUtc.Value.Ticks);
-        if (e.DeletedAt.HasValue) max = Math.Max(max, e.DeletedAt.Value.Ticks);
-        if (e.CreatedUtc.HasValue) max = Math.Max(max, e.CreatedUtc.Value.Ticks);
-        max = Math.Max(max, e.StartUtc.Ticks);
-        return max;
+        // Last-write clock only — never StartUtc/EndUtc (those are event content).
+        // Using StartUtc made future events look equal on every edit, so LWW
+        // fell through to "prefer remote" and a stale peer could overwrite a local change.
+        if (e.DeletedAt.HasValue) return e.DeletedAt.Value.Ticks;
+        if (e.ModifiedUtc.HasValue) return e.ModifiedUtc.Value.Ticks;
+        if (e.CreatedUtc.HasValue) return e.CreatedUtc.Value.Ticks;
+        return e.StartUtc.Ticks;
     }
 
     public static bool ContentEquals(CalendarEvent a, CalendarEvent b)

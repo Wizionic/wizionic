@@ -315,6 +315,12 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
             if (!entry.SuppressCallbacks)
                 entry.Callbacks.OnDataChannelClose(peerId);
         };
+
+        // Incoming channels (answerer) are often already open before we subscribe to onopen.
+        // WASM checks readyState === 'open' for the same reason; without this the answerer
+        // never sends its own manifest/calendar/notes and the handshake sits for 90s.
+        if (dc.IsOpened && !entry.SuppressCallbacks)
+            _ = entry.Callbacks.OnDataChannelOpenAsync(peerId, CancellationToken.None);
     }
 
     private static string SerializeSessionDescription(RTCSessionDescriptionInit desc) =>
