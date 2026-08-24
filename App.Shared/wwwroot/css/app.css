@@ -5008,12 +5008,6 @@ html[data-theme="nord"] {
 
 .note-quill-display .ql-editor li > p {
     margin: 0 !important;
-    display: inline;
-}
-
-.note-quill-display .ql-editor p:empty,
-.note-quill-display .ql-editor p:has(> br:only-child):not(:has(*:not(br))) {
-    display: none;
 }
 
 /* Plain-text / markdown note entries — same isolated paper */
