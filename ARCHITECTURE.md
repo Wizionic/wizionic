@@ -105,10 +105,11 @@ Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore save
 
 | Piece | Detail |
 |-------|--------|
-| **UI** | `NotesPage.razor` (`/notes`) — notebooks, Quill HTML entries, floating add |
+| **UI** | `NotesPage.razor` (`/notes`) — notebooks, Quill HTML entries, floating add; click-to-edit; last notebook restored on this device |
 | **Store** | `INoteStore` — WASM IndexedDB / MAUI SQLite; bodies AES-GCM encrypted; titles cleartext |
-| **Chat handoff** | “Add to notes” from chat; optional images via `IConversationMediaBuffer` |
-| **AI tools** | `NotesToolModule`: `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry` |
+| **Theme** | Note paper and default ink follow the app theme; authored inline colors stay as written |
+| **Chat handoff** | “Add to notes” from chat; Notes → Chat “Edit with AI” (`INotesChatHandoff`); optional images via `IConversationMediaBuffer` |
+| **AI tools** | `NotesToolModule`: `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry`, `update_note_entry` |
 | **Routing** | Attached when `ContextualRequestRouter.MessageSuggestsNotesTools` (or AI router picks `Notes`) |
 | **Protection** | Password-protected notebooks blocked for tools until unlocked in the UI |
 | **Sync** | Auto-sync after local save via `INotesSyncBridge`; merge via `NoteSyncMerger` (entry LWW) |

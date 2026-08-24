@@ -231,6 +231,8 @@ public sealed class ChatCompletionService : IChatCompletionService
                     }
                 }
 
+                AttachNotesContextIfNeeded(effectiveMessages, chatHistory);
+
                 var toolNames = _currentTools.OfType<AIFunction>().Select(f => f.Name).ToList();
                 _trace.Record(toolNames.Count > 0
                     ? $"🔧 Tools ({toolNames.Count}): {string.Join(", ", toolNames)}"
@@ -800,6 +802,34 @@ public sealed class ChatCompletionService : IChatCompletionService
         chatHistory.Insert(0, new AiChatMessage(ChatRole.System, systemText));
     }
 
+    private void AttachNotesContextIfNeeded(
+        IReadOnlyList<StoreChatMessage> messages,
+        List<AiChatMessage> chatHistory)
+    {
+        if (!messages.Any(NotesChatContext.Is))
+            return;
+
+        var hasNotesModule = _toolProvider.GetActiveModules()
+            .Any(m => m.IsAvailable && string.Equals(m.ModuleName, "Notes", StringComparison.OrdinalIgnoreCase));
+        if (!hasNotesModule)
+            return;
+
+        var alreadyHasNotes = _currentTools.OfType<AIFunction>().Any(f =>
+            string.Equals(f.Name, "list_notebooks", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(f.Name, "update_note_entry", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(f.Name, "add_note_entry", StringComparison.OrdinalIgnoreCase));
+        if (!alreadyHasNotes)
+        {
+            var extra = _toolProvider.GetToolsForModules(["Notes"], includeMcp: false);
+            _currentTools = _currentTools.Count == 0
+                ? extra
+                : _currentTools.Concat(extra).ToList();
+            _trace.Record("🧭 Notes context: attached Notes tools (opened from a notebook)");
+        }
+
+        AppendSystemInstruction(chatHistory, NotesChatContext.SystemReminder);
+    }
+
     private static void AppendSystemInstruction(List<AiChatMessage> chatHistory, string instruction)
     {
         if (string.IsNullOrWhiteSpace(instruction))
@@ -1271,6 +1301,12 @@ public sealed class ChatCompletionService : IChatCompletionService
             bool hasContent = !string.IsNullOrWhiteSpace(m.Content);
             bool hasAttachments = m.Attachments != null && m.Attachments.Any();
             if (!hasContent && !hasAttachments) continue;
+
+            if (NotesChatContext.TryParse(m, out var notePayload))
+            {
+                chatHistory.Add(new AiChatMessage(ChatRole.User, NotesChatContext.ToLlmText(notePayload)));
+                continue;
+            }
 
             var roleStr = m.Role ?? (m.User == currentUser ? "user" : "assistant");
             var aiRole = roleStr.Equals("user", StringComparison.OrdinalIgnoreCase) ? ChatRole.User : ChatRole.Assistant;

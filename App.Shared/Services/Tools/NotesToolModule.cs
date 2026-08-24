@@ -81,6 +81,19 @@ public sealed class NotesToolModule : IToolModule
                 Description =
                     "Append text and/or an image to an existing note entry (entry_id from list_note_entries). " +
                     "Text is appended as a new paragraph. Images are added as attachments."
+            }),
+        AIFunctionFactory.Create(UpdateNoteEntryAsync,
+            new AIFunctionFactoryOptions
+            {
+                Name = "update_note_entry",
+                Description =
+                    "Replace the full content of an existing note entry. " +
+                    "ONLY call this when the user explicitly asked to save/overwrite/update that note " +
+                    "(or confirmed a chat draft looks good to save). " +
+                    "Do not call it for summarize, explain, or rewrite-in-chat. " +
+                    "overwrite_confirmed must be true. Prefer compact HTML " +
+                    "(headings, <ol><li data-list=\"bullet\"> lists). notebook is id or title; " +
+                    "entry_id from the open-note context or list_note_entries."
             })
     ];
 
@@ -402,6 +415,65 @@ public sealed class NotesToolModule : IToolModule
         }
     }
 
+    [Description("Replace the full content of an existing note entry.")]
+    private async Task<string> UpdateNoteEntryAsync(
+        [Description("Notebook id or title.")] string notebook,
+        [Description("entry_id from list_note_entries or the open-note context.")] string entry_id,
+        [Description("Replacement body (markdown or HTML).")] string text,
+        [Description("Must be true only when the user explicitly asked to save/overwrite/update the existing note.")] bool overwrite_confirmed = false)
+    {
+        _trace.Record($"📝 update_note_entry(notebook=\"{notebook}\", entry={entry_id}, confirmed={overwrite_confirmed})");
+
+        if (!overwrite_confirmed)
+        {
+            _trace.Record("   ⛔ overwrite not confirmed — left notebook unchanged");
+            return "Did not change the notebook. Show the result in chat first. " +
+                   "Call update_note_entry again with overwrite_confirmed=true only after the user explicitly asks to save or overwrite the existing note.";
+        }
+
+        if (string.IsNullOrWhiteSpace(entry_id))
+            return "update_note_entry failed: entry_id is required.";
+        if (string.IsNullOrWhiteSpace(text))
+            return "update_note_entry failed: text is required.";
+
+        try
+        {
+            using var work = OpenScope();
+            var notes = await work.Store.LoadIndexAsync();
+            var note = ResolveNotebook(notes, notebook);
+            if (note is null)
+                return $"No notebook matched \"{notebook}\".";
+            if (note.IsPasswordProtected)
+                return $"Notebook \"{note.Title}\" is password-protected.";
+
+            var entries = await work.Store.LoadNoteAsync(note.Id);
+            var idx = entries.FindIndex(e =>
+                string.Equals(e.ItemId, entry_id, StringComparison.OrdinalIgnoreCase)
+                && e.DeletedAt is null);
+            if (idx < 0)
+                return $"No entry_id={entry_id} in notebook \"{note.Title}\".";
+
+            var existing = entries[idx];
+            var html = NoteContentFormatter.ToQuillHtml(text);
+            entries[idx] = ChatMessageHelper.TouchModified(
+                existing,
+                content: html,
+                contentFormat: NoteContentFormatter.FormatHtml);
+
+            await work.Store.SaveNoteAsync(note.Id, entries);
+            await work.Store.UpdateIndexAfterSaveAsync(note.Id, note.Title, entries);
+            work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(note.Id, note.Title);
+
+            _trace.Record($"   ✅ replaced entry_id={entry_id}");
+            return $"Replaced entry_id={entry_id} in notebook \"{note.Title}\" (notebook_id={note.Id}).";
+        }
+        catch (Exception ex)
+        {
+            _trace.Record($"   ❌ {ex.Message}");
+            return "update_note_entry failed: " + ex.Message;
+        }
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────
 
     private bool TryResolveImage(
@@ -461,7 +533,7 @@ public sealed class NotesToolModule : IToolModule
 
     private static ChatMessage MakeTextEntry(string text, List<Attachment>? attachments = null)
     {
-        var html = string.IsNullOrWhiteSpace(text) ? "" : TextToHtmlParagraphs(text);
+        var html = string.IsNullOrWhiteSpace(text) ? "" : NoteContentFormatter.ToQuillHtml(text);
         // Prefer HTML so Notes Quill display is consistent; empty content ok if image-only
         var format = string.IsNullOrEmpty(html) && attachments is { Count: > 0 }
             ? NoteContentFormatter.FormatHtml

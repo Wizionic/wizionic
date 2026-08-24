@@ -82,6 +82,7 @@ builder.Services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<WasmCalen
 builder.Services.AddScoped<ICalendarSyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
 builder.Services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 builder.Services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
+builder.Services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Services.NotesChatHandoff>();
 builder.Services.AddScoped<WasmStorageQuotaService>();
 builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
 // Guest key provider must be Singleton: ChatAuthService is Singleton and injects IGuestKeyProvider.

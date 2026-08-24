@@ -92,3 +92,101 @@ window.appNotesReorder = window.appNotesReorder || {
         document.addEventListener('touchcancel', onUp, true);
     }
 };
+
+// Last-selected notebook + Ctrl/Cmd+S while the Notes page is mounted.
+window.appNotesUi = window.appNotesUi || (function () {
+    const BASE_STORAGE_KEY = 'app-last-notebook-id';
+    const GUEST_PREFIX = 'wasmchat-';
+
+    let storagePrefix = '';
+    let saveHandler = null;
+    let keydownBound = null;
+
+    function storageKey() {
+        return (storagePrefix || '') + BASE_STORAGE_KEY;
+    }
+
+    function readStorage(key) {
+        try {
+            return localStorage.getItem(key);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writeStorage(key, value) {
+        try {
+            if (!value)
+                localStorage.removeItem(key);
+            else
+                localStorage.setItem(key, value);
+        } catch (_) { /* private browsing */ }
+    }
+
+    function setStoragePrefix(prefix) {
+        storagePrefix = prefix || '';
+    }
+
+    function getLastNotebookId() {
+        const key = storageKey();
+        let value = readStorage(key);
+        if (value)
+            return value;
+
+        const fallbacks = [];
+        if (key !== BASE_STORAGE_KEY)
+            fallbacks.push(BASE_STORAGE_KEY);
+        const guestKey = GUEST_PREFIX + BASE_STORAGE_KEY;
+        if (key !== guestKey)
+            fallbacks.push(guestKey);
+
+        for (const fallback of fallbacks) {
+            value = readStorage(fallback);
+            if (value) {
+                writeStorage(key, value);
+                return value;
+            }
+        }
+
+        return '';
+    }
+
+    function setLastNotebookId(id) {
+        writeStorage(storageKey(), id || '');
+    }
+
+    function onKeyDown(event) {
+        if (!(event.ctrlKey || event.metaKey))
+            return;
+        if (event.key !== 's' && event.key !== 'S')
+            return;
+        event.preventDefault();
+        if (!saveHandler)
+            return;
+        try {
+            saveHandler.invokeMethodAsync('OnNotesSaveHotkey');
+        } catch (_) { /* circuit may be gone */ }
+    }
+
+    function bindSaveHotkey(dotNetRef) {
+        unbindSaveHotkey();
+        saveHandler = dotNetRef;
+        keydownBound = onKeyDown;
+        document.addEventListener('keydown', keydownBound, true);
+    }
+
+    function unbindSaveHotkey() {
+        if (keydownBound)
+            document.removeEventListener('keydown', keydownBound, true);
+        keydownBound = null;
+        saveHandler = null;
+    }
+
+    return {
+        setStoragePrefix: setStoragePrefix,
+        getLastNotebookId: getLastNotebookId,
+        setLastNotebookId: setLastNotebookId,
+        bindSaveHotkey: bindSaveHotkey,
+        unbindSaveHotkey: unbindSaveHotkey
+    };
+})();

@@ -279,6 +279,7 @@ public static class MauiProgram
 		services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<SqliteCalendarStore>());
 		services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 		services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
+		services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Services.NotesChatHandoff>();
 		services.AddSingleton<MauiStorageQuotaService>();
 		services.AddSingleton<IStorageQuotaService>(sp => sp.GetRequiredService<MauiStorageQuotaService>());
 		services.AddSingleton<ISyncPreferencesStore, SqliteSyncPreferencesStore>();

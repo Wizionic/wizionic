@@ -4474,25 +4474,54 @@ body .message-bot,
 }
 
 /* ====================== NOTES QUILL EDITOR ====================== */
-.note-response-actions {
-    position: absolute;
-    top: 4px;
-    right: 4px;
+.note-entry-wrap {
+    position: relative;
     display: flex;
-    gap: 2px;
-    opacity: 0.5;
-    transition: opacity 0.15s ease;
-    z-index: 2;
+    flex-direction: column;
+    align-items: flex-end;
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 10px;
 }
 
-.message-bot:hover .note-response-actions,
-.message-bot.note-editing .note-response-actions,
+.note-entry-wrap .message-bot {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+.note-response-actions {
+    position: absolute;
+    top: -12px;
+    right: 8px;
+    display: flex;
+    gap: 8px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    z-index: 2;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+    border: 1px solid var(--color-border, rgba(0, 0, 0, 0.08));
+    background: var(--color-bg-surface, var(--note-paper, #fff));
+}
+
+.note-entry-wrap:hover .note-response-actions,
+.note-entry-wrap.note-editing .note-response-actions,
 .note-response-actions:focus-within {
     opacity: 1;
 }
 
+.note-entry-wrap.note-editing .note-response-actions {
+    position: sticky;
+    top: 8px;
+    z-index: 6;
+}
+
 .note-action-btn {
     padding: 2px 6px;
+}
+
+.message-bot:not(.note-editing) {
+    cursor: text;
 }
 
 .notes-fab {
@@ -4744,9 +4773,12 @@ body .message-bot,
 }
 
 .message-bot.note-editing {
-    width: 100%;
-    max-width: 100%;
+    width: 100% !important;
+    max-width: 100% !important;
     overflow: visible;
+    outline: 2px solid var(--color-accent, var(--primary-blue));
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent, #3b82f6) 28%, transparent);
 }
 
 .message-bot.note-editing .quill-editor-host {
@@ -4757,25 +4789,95 @@ body .message-bot,
     z-index: 5;
 }
 
+.message-bot.note-editing .quill-editor-host .ql-toolbar.ql-snow {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: color-mix(in srgb, var(--note-paper-muted, #f6f8fa) 28%, transparent);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+.note-ai-toolbar-btn {
+    width: 28px;
+    height: 24px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--note-ink, #1f2a37);
+    border-radius: 4px;
+}
+
+.note-ai-toolbar-btn:hover {
+    background: color-mix(in srgb, var(--note-ink, #1f2a37) 12%, transparent);
+}
+
+.note-chat-context-card {
+    max-width: 100%;
+    width: 100%;
+    margin-right: auto;
+    padding: 0.7rem 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-surface);
+    color: var(--color-text);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.note-chat-context-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.note-chat-context-preview {
+    margin-top: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+    line-height: 1.4;
+}
+
 .quill-editor-host {
     width: 100%;
     min-width: 280px;
 }
 
 /*
- * Note document isolation — note HTML is authored content (inline colors, tables, etc.).
- * Keep a stable light canvas independent of app theme so dark-mode chrome does not wash out body text.
+ * Note document surface — default light paper/ink. Dark app themes remap --note-*
+ * so unstyled text follows the chrome. Authored inline colors/backgrounds are left alone.
  */
-.note-document-surface,
-.note-quill-display,
-.message-bot .chat-markdown.note-entry-body,
-.quill-editor-host {
-    color-scheme: light;
+:root {
     --note-ink: #1f2a37;
     --note-paper: #ffffff;
     --note-paper-muted: #f6f8fa;
     --note-border: #d0d7de;
     --note-muted: #64748b;
+    --note-color-scheme: light;
+}
+
+html[data-theme="app-dark"],
+html[data-theme="dark-blue"],
+html[data-theme="dracula"],
+html[data-theme="nord"] {
+    --note-ink: var(--color-text);
+    --note-paper: var(--color-bg-surface);
+    --note-paper-muted: var(--color-bg-muted);
+    --note-border: var(--color-border);
+    --note-muted: var(--color-text-muted);
+    --note-color-scheme: dark;
+}
+
+.note-document-surface,
+.note-quill-display,
+.message-bot .chat-markdown.note-entry-body,
+.quill-editor-host {
+    color-scheme: var(--note-color-scheme, light);
 }
 
 .quill-editor-host .ql-toolbar.ql-snow {
@@ -4787,15 +4889,34 @@ body .message-bot,
 }
 
 .quill-editor-host .ql-toolbar.ql-snow .ql-stroke {
-    stroke: #444 !important;
+    stroke: var(--note-ink, #444) !important;
 }
 
 .quill-editor-host .ql-toolbar.ql-snow .ql-fill {
-    fill: #444 !important;
+    fill: var(--note-ink, #444) !important;
 }
 
 .quill-editor-host .ql-toolbar.ql-snow .ql-picker {
-    color: #444 !important;
+    color: var(--note-ink, #444) !important;
+}
+
+.quill-editor-host .ql-snow .ql-picker-options {
+    background: var(--note-paper, #ffffff);
+    color: var(--note-ink, #1f2a37);
+    border-color: var(--note-border, #d0d7de);
+}
+
+.quill-editor-host .ql-snow .ql-tooltip {
+    background: var(--note-paper, #ffffff);
+    color: var(--note-ink, #1f2a37);
+    border-color: var(--note-border, #d0d7de);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.quill-editor-host .ql-snow .ql-tooltip input[type=text] {
+    background: var(--note-paper-muted, #f6f8fa);
+    color: var(--note-ink, #1f2a37);
+    border-color: var(--note-border, #d0d7de);
 }
 
 .quill-editor-host .ql-container.ql-snow {
@@ -4845,6 +4966,44 @@ body .message-bot,
     color: var(--note-ink, #1f2a37);
     background: transparent;
     font-family: inherit;
+    /* Quill's .ql-editor uses pre-wrap; markdown/HTML source newlines would show as blank lines. */
+    white-space: normal;
+}
+
+/* Match Quill editor spacing in read-only view (Bootstrap p/li margins otherwise explode). */
+.note-quill-display .ql-editor p,
+.note-quill-display .ql-editor h1,
+.note-quill-display .ql-editor h2,
+.note-quill-display .ql-editor h3,
+.note-quill-display .ql-editor h4,
+.note-quill-display .ql-editor ul,
+.note-quill-display .ql-editor ol,
+.note-quill-display .ql-editor pre,
+.note-quill-display .ql-editor blockquote {
+    margin: 0 !important;
+}
+
+.note-quill-display .ql-editor li {
+    margin: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+.note-quill-display .ql-editor ul > li {
+    list-style-type: disc;
+    list-style-position: outside;
+    margin-left: 1.5em !important;
+    padding-left: 0.25em !important;
+}
+
+.note-quill-display .ql-editor li > p {
+    margin: 0 !important;
+    display: inline;
+}
+
+.note-quill-display .ql-editor p:empty,
+.note-quill-display .ql-editor p:has(> br:only-child):not(:has(*:not(br))) {
+    display: none;
 }
 
 /* Plain-text / markdown note entries — same isolated paper */
@@ -4861,8 +5020,10 @@ body .message-bot,
     color: inherit;
 }
 
+.note-quill-display .ql-editor a,
+.quill-editor-host .ql-editor a,
 .message-bot .chat-markdown.note-entry-body a {
-    color: #0969da;
+    color: var(--color-accent, #0969da);
 }
 
 /* Roadmap + Architecture markdown pages */
