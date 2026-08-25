@@ -18,7 +18,7 @@ On Windows and Linux desktop, close-to-tray keeps this device online so other de
 
 ## Login server (desktop)
 
-The desktop app can use wizionic.com or a **Home Server** on this PC (`http://localhost:5150`). Set that under Settings → Login server. Pointing at the wrong host is a common reason 2FA or new APIs “do not exist.”
+The desktop app can use wizionic.com or a **Home Server**. On the PC that hosts it, Login server is `http://localhost:5150`. Other devices must use the network URL from that PC’s Settings → Home Server (not localhost). Pointing at the wrong host is a common reason 2FA or new APIs “do not exist.”
 
 ## AI server
 

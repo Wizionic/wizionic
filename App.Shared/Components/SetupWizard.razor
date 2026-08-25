@@ -10,6 +10,8 @@
 @inject IOllamaInstallService Ollama
 @inject IKeyStore KeyStore
 @inject HttpClient Http
+@inject IAuthService Auth
+@inject IAppRestartService AppRestart
 @implements IDisposable
 
 @if (Wizard.IsVisible && AppEnvironment.IsMaui)
@@ -35,7 +37,7 @@
                         The Wizionic desktop app is ready. You can optionally install:
                     </p>
                     <ul>
-                        <li><strong>Home Server</strong> — login website and auth server on this PC (port 5150)</li>
+                        <li><strong>Home Server</strong> — login website and auth server on this PC (port 5150). Other devices use the network URL from Settings.</li>
                         <li><strong>Lemonade</strong> (recommended) — local AI with multimodal / advanced features (port 13305)</li>
                         <li><strong>Ollama</strong> — popular local model runner (port 11434)</li>
                     </ul>
@@ -56,7 +58,7 @@
                         @if (hs.IsInstalled)
                         {
                             <p class="setup-ok">Already installed: <strong>@Homeserver.GetServiceStatusText()</strong></p>
-                            <p>Login server will use <code>http://localhost:5150</code> if you continue with a reinstall/update from Settings.</p>
+                            <p>This app uses <code>http://localhost:5150</code>. Other devices use the network URL under Settings → Home Server.</p>
                         }
                         else
                         {
@@ -67,7 +69,7 @@
                             </p>
                             <label class="setup-check">
                                 <input type="checkbox" @bind="wantHomeserver" disabled="@busy" />
-                                Yes, install Home Server and set login server to localhost:5150
+                                Yes, install Home Server and set this app’s login server to localhost:5150
                             </label>
                         }
                     }
@@ -197,6 +199,7 @@
                     <ul>
                         <li>Login server: use <strong>Settings</strong> to change anytime</li>
                         <li>Home Server: @(homeserverDoneLabel)</li>
+                        <li>Other devices: copy the network URL from Settings → Home Server</li>
                         <li>Lemonade: @(lemonadeDoneLabel)</li>
                         <li>Ollama: @(ollamaDoneLabel)</li>
                     </ul>
@@ -333,6 +336,7 @@
     private string homeserverDoneLabel = "skipped";
     private string lemonadeDoneLabel = "skipped";
     private string ollamaDoneLabel = "skipped";
+    private bool homeserverInstalledThisRun;
 
     protected override void OnInitialized()
     {
@@ -436,6 +440,7 @@
             homeserverOk = result.Success;
             homeserverMessage = result.Message;
             homeserverDoneLabel = result.Success ? $"installed ({result.BaseUrl})" : "failed";
+            homeserverInstalledThisRun = result.Success;
         }
         finally
         {
@@ -554,9 +559,14 @@
         Wizard.MarkCompleted();
     }
 
-    private void Close()
+    private async Task Close()
     {
         Wizard.MarkCompleted();
         Wizard.Hide();
+        if (!homeserverInstalledThisRun || !AppRestart.CanRestart)
+            return;
+        try { await Auth.SignOutAsync(); }
+        catch { Auth.SignOutLocal(); }
+        AppRestart.Restart();
     }
 }

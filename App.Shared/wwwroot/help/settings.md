@@ -11,9 +11,19 @@ The desktop app also checks for a newer installer when it starts. You are asked 
 
 ## Login server (desktop only) {#login-server}
 
-Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server uses `http://localhost:5150`. After you change it, restart if the app asks you to. On the desktop sign-in screen, **More options** opens the same choice.
+Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server on **this PC** uses `http://localhost:5150`. Other devices on your network use the **On your network** URL from Settings → Home Server (computer name `.local` or the PC’s IP, port 5150). After you change it, restart if the app asks you to. On the desktop sign-in screen, **More options** opens the same choice.
 
 The website always uses its own origin.
+
+## Home Server (desktop only) {#home-server}
+
+Optional login website on this PC (Windows Service or systemd when possible). Install asks for confirmation. **This PC** stays on `http://localhost:5150`. Other phones, PCs, and browsers use the network name or IP shown after install.
+
+**Stop** pauses the website; login accounts stay on disk. **Uninstall** deletes those login accounts and keys on this PC. Chats and notes already on each device stay on those devices.
+
+You cannot Stop or Uninstall while this app is signed in through this Home Server. Switch Login server to wizionic.com (or another Home Server) first.
+
+Other devices must use port **5150** (not 5050) and the **IP** if the `.local` name does not resolve — Android often cannot resolve `.local`. After install, Wizionic signs you out and restarts so you are not still on wizionic.com.
 
 ## Appearance {#appearance}
 
