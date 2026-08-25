@@ -60,7 +60,7 @@
             }
         }
 
-        @if (Auth.IsAuthenticated)
+        @if (!AppEnvironment.IsMaui || Auth.IsAuthenticated)
         {
         <div class="app-nav-primary">
             @if (AppEnvironment.IsMaui)
@@ -104,7 +104,7 @@
             }
             else
             {
-                <a href="/chat" title="Chat" class="@(IsChatActive ? "active" : null)">
+                <a href="/chat" title="Chat" class="@(IsOnChatPage() ? "active" : null)">
                     <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
                 </a>
                 <a href="/tools?tab=skills" title="Tools, Skills and Workflows" class="@(IsToolsActive ? "active" : null)">
@@ -112,19 +112,19 @@
                 </a>
                 @if (NavLayout.ShowNotes)
                 {
-                    <a href="/notes" title="Notes">
+                    <a href="/notes" title="Notes" class="@(IsOnNotesPage() ? "active" : null)">
                         <i class="bi bi-journal-text" style="font-size: 24px;"></i>
                     </a>
                 }
                 @if (NavLayout.ShowGallery)
                 {
-                    <a href="/gallery" title="Gallery">
+                    <a href="/gallery" title="Gallery" class="@(IsOnGalleryPage() ? "active" : null)">
                         <i class="bi bi-images" style="font-size: 24px;"></i>
                     </a>
                 }
                 @if (NavLayout.ShowCalendar)
                 {
-                    <a href="/calendar" title="Calendar">
+                    <a href="/calendar" title="Calendar" class="@(IsOnCalendarPage() ? "active" : null)">
                         <i class="bi bi-calendar3" style="font-size: 24px;"></i>
                     </a>
                 }
@@ -151,7 +151,7 @@
                 }
             </button>
         }
-        else if (Auth.IsAuthenticated)
+        else if (!AppEnvironment.IsMaui)
         {
             @* WASM: AppTopBar is static — Blazor @onclick does not run; JS uses data-wasm-secondary-toggle. *@
             <button type="button"
@@ -179,7 +179,7 @@
                 </div>
             }
         }
-        else if (Auth.IsAuthenticated)
+        else if (!AppEnvironment.IsMaui)
         {
             <div class="app-nav-secondary" style="display:none" data-secondary-expanded="0">
                 @SecondarySettingsLinks
@@ -188,10 +188,22 @@
 
 
         <div class="app-nav-account">
-            <a href="@(Auth.IsAuthenticated || !AppEnvironment.IsMaui ? "/account" : "/login")" class="app-nav-account-link" title="Account / Login">
-                <i class="bi bi-person-circle"></i>
-            </a>
-            @if (Auth.IsAuthenticated)
+            @if (AppEnvironment.IsMaui)
+            {
+                <button type="button"
+                        class="app-nav-account-link"
+                        title="@(Auth.IsAuthenticated && UnsignedAppRoutes.IsAllowed(Nav) ? "Back" : "Account / Login")"
+                        @onclick="OnAccountIconClick">
+                    <i class="bi bi-person-circle"></i>
+                </button>
+            }
+            else
+            {
+                <a href="/account" class="app-nav-account-link" title="Account / Login">
+                    <i class="bi bi-person-circle"></i>
+                </a>
+            }
+            @if (!AppEnvironment.IsMaui || Auth.IsAuthenticated)
             {
             <button type="button"
                     class="app-nav-account-menu-btn"
@@ -343,9 +355,8 @@
         }
     }
     private bool ShowSidebarToggle =>
-        Auth.IsAuthenticated
-        && (IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
-        || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true)));
+        IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
+        || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));
 
     protected override void OnInitialized()
     {
@@ -407,6 +418,20 @@
         {
             NotesPanel.IsOpen = false;
         }
+    }
+
+    private void OnAccountIconClick()
+    {
+        if (!Auth.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        if (UnsignedAppRoutes.IsAllowed(Nav))
+            Nav.NavigateTo("/chat");
+        else
+            Nav.NavigateTo("/account");
     }
 
     private async Task ToggleSidebar()

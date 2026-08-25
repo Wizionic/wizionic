@@ -89,16 +89,23 @@
 
     @if (Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email))
     {
-        <div class="cf-success-box" style="margin: 1rem 0; padding: 0.75rem 1rem;">
-            Logged in as <strong>@Auth.Email</strong>.<br />
-            <span style="font-size:0.9em;">You can now sync your encrypted chat history across browsers or devices with the Wizionic app.</span>
-        </div>
+        <div class="login-signed-in-card">
+            <button type="button"
+                    class="login-signed-in-close"
+                    title="Close"
+                    aria-label="Close"
+                    @onclick="CloseSignedInAccount">
+                <i class="bi bi-x-lg" aria-hidden="true"></i>
+            </button>
+            <div class="cf-success-box" style="margin: 0 0 0.75rem; padding: 0.75rem 1rem;">
+                Logged in as <strong>@Auth.Email</strong>.<br />
+                <span style="font-size:0.9em;">You can now sync your encrypted chat history across browsers or devices with the Wizionic app.</span>
+            </div>
 
-        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/chat")'>Continue to Chat</button>
-            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/settings")'>Settings</button>
-            <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
-        </div>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                <button class="btn btn-outline-secondary" @onclick="CloseSignedInAccount">Cancel</button>
+                <button class="btn btn-outline-secondary" @onclick="DoLogout">Sign out</button>
+            </div>
 
         <div style="margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
             @if (!string.IsNullOrEmpty(passwordMessage) && !_showPasswordForm)
@@ -320,6 +327,7 @@
                 </div>
             </div>
             }
+        </div>
         </div>
     }
     else if (!string.IsNullOrEmpty(twoFactorChallengeId))
@@ -733,6 +741,8 @@
             busy = false;
         }
     }
+
+    void CloseSignedInAccount() => Nav.NavigateTo("/chat");
 
     async Task DoLogout()
     {

@@ -141,8 +141,11 @@ window.appNavLayout = window.appNavLayout || {
     },
 
     toggleSecondaryExpanded: function () {
+        const cluster = document.querySelector('.app-nav-secondary');
+        const currentlyOpen = !!(cluster && cluster.getAttribute('data-secondary-expanded') === '1'
+            && cluster.style.display !== 'none');
         const prefs = this.getPrefs();
-        prefs.secondaryExpanded = !prefs.secondaryExpanded;
+        prefs.secondaryExpanded = !currentlyOpen;
         this.savePrefs(prefs);
         this.applySecondaryUi(prefs.secondaryExpanded);
         return prefs.secondaryExpanded;
