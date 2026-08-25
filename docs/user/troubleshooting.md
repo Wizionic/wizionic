@@ -15,7 +15,13 @@ title: Troubleshooting
 
 - Same account on both.
 - Both online; open the Sync page on each.
-- Desktop login server must match (wizionic.com vs local Home Server).
+- Desktop login server must match (wizionic.com vs the same Home Server). Other devices cannot use `localhost` — copy the network URL from the hosting PC’s Settings → Home Server.
+
+## Other devices cannot open the Home Server
+
+- On the hosting PC, Settings → Home Server should list an **On your network** URL (`pc-name.local:5150`) and an IP URL. Copy one of those — not `localhost`.
+- Port is **5150** (not 5050). Prefer the **IP** on Android; `.local` often does not resolve there.
+- The Home Server must be **running**. After install, Wizionic signs you out and restarts so you are not still on wizionic.com.
 
 ## Two-factor checkbox fails with a 400
 

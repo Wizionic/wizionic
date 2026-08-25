@@ -53,3 +53,11 @@ Keep settings and setup **short**. Labels and a one-line lead are enough; proced
 - Cookie auth uses 10-year sliding expiration with Data Protection keys in SQLite (survives restarts).
 - Content encryption: metadata (titles/dates) stored cleartext for fast sidebar listing; message/note bodies encrypted before any persistence.
 - Add migrations after every model change in Core entities or DbContext.
+
+# Testing & Verification Rules
+
+- Only verify that the project **builds successfully**.
+- Do **not** start the application, open a browser, navigate pages, run the server, or perform any runtime / end-to-end / UI testing.
+- Do **not** use browser tools, web fetching for testing, or any form of interactive verification.
+- After making changes, run the build command (e.g. `dotnet build`) and confirm it succeeds with no errors.
+- Leave all testing, manual verification, and browser work to the user.

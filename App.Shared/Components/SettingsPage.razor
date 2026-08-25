@@ -4,6 +4,8 @@
 @inject App.Core.Sync.ISyncService SyncService
 @inject App.Core.Update.IUpdateService UpdateService
 @inject App.Core.Homeserver.IHomeserverInstallService Homeserver
+@inject App.Core.Configuration.IAppServerEndpoint ServerEndpoint
+@inject App.Core.UI.IAppRestartService AppRestart
 @inject App.Core.UI.IDesktopShellService DesktopShell
 @inject App.Core.Setup.ISetupWizardHost SetupWizard
 @inject App.Shared.Services.ThemeService Theme
@@ -33,8 +35,8 @@
         <div class="settings-card" style="margin-top: 1rem;">
             <h3 class="help-heading" style="margin: 0 0 0.25rem;">Login server <HelpGlyph Topic="settings-login-server" /></h3>
             <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
-                Where this app authenticates and syncs device presence. Installing a Home Server sets this to
-                <code>http://localhost:5150</code>. </p>
+                Where this app authenticates and syncs device presence. A Home Server on this PC uses
+                <code>http://localhost:5150</code>. Other devices use the network URL shown under Home Server. </p>
             <LoginServerPicker />
             @if (Homeserver.IsSupported)
             {
@@ -594,31 +596,67 @@
     @if (AppEnvironment.IsMaui && Homeserver.IsSupported)
     {
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
-            <h4>Home Server</h4>
+            <h3 class="help-heading" style="margin: 0 0 0.25rem;">Home Server <HelpGlyph Topic="settings-home-server" /></h3>
             <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.5rem;">
                 Optional local login server and website app.
             </p>
             <div style="margin: 0.5rem 0; color: var(--color-text-muted); font-size: 0.95em;">
                 Status: <strong>@(homeserverStatusText ?? "…")</strong>
             </div>
+            @if (homeserverState is { IsInstalled: true } && homeserverListen is not null)
+            {
+                <div style="display:grid; grid-template-columns: max-content 1fr auto; column-gap: 0.5rem; row-gap: 0.4rem; align-items:center; margin: 0.35rem 0 0.5rem; font-size: 0.9em;max-width: 400px;">
+                    <span style="color: var(--color-text-muted);">This PC:</span>
+                    <code style="overflow-wrap:anywhere;">@homeserverListen.LocalUrl</code>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => CopyHomeserverUrl(homeserverListen.LocalUrl)">
+                        @(copiedHomeserverUrl == homeserverListen.LocalUrl ? "Copied" : "Copy")
+                    </button>
+                    @if (!string.IsNullOrEmpty(homeserverListen.HostNameUrl))
+                    {
+                        <span style="color: var(--color-text-muted);">On your network:</span>
+                        <code style="overflow-wrap:anywhere;">@homeserverListen.HostNameUrl</code>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => CopyHomeserverUrl(homeserverListen.HostNameUrl!)">
+                            @(copiedHomeserverUrl == homeserverListen.HostNameUrl ? "Copied" : "Copy")
+                        </button>
+                    }
+                    @if (!string.IsNullOrEmpty(homeserverListen.IPv4Url))
+                    {
+                        <span style="color: var(--color-text-muted);">IP:</span>
+                        <code style="overflow-wrap:anywhere;">@homeserverListen.IPv4Url</code>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => CopyHomeserverUrl(homeserverListen.IPv4Url!)">
+                            @(copiedHomeserverUrl == homeserverListen.IPv4Url ? "Copied" : "Copy")
+                        </button>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(homeserverLanProbeNote))
+                {
+                    <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0.4rem 0 0;">@homeserverLanProbeNote</p>
+                }
+            }
             @if (!string.IsNullOrEmpty(homeserverActionMessage))
             {
                 <div style="margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9em;
                             background: @(homeserverActionIsError ? "#fff0f0" : "#e6f2ff");
                             border: 1px solid @(homeserverActionIsError ? "#f5c2c7" : "#b3d9ff");">
                     @homeserverActionMessage
+                    @if (homeserverRestartPending && AppRestart.CanRestart)
+                    {
+                        <button type="button" class="btn btn-primary btn-sm" style="margin-left: 0.5rem;" @onclick="RestartForHomeserver">
+                            Restart now
+                        </button>
+                    }
                 </div>
             }
+            @if (homeserverState is { IsInstalled: true } && HomeserverActionsBlocked)
+            {
+                <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0.5rem 0;">
+                    You are signed in through this Home Server. Switch Login server to wizionic.com or another Home Server to stop or uninstall.
+                </p>
+            }
             <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
-                @if (homeserverState is { IsInstalled: false, InstallMode: not HomeserverInstallMode.Declined })
+                @if (homeserverState is { IsInstalled: false })
                 {
-                    <button class="btn btn-outline-primary btn-sm" @onclick="InstallHomeserver" disabled="@homeserverBusy">
-                        @(homeserverBusy ? "Installing…" : "Install Home Server")
-                    </button>
-                }
-                @if (homeserverState is { InstallMode: HomeserverInstallMode.Declined })
-                {
-                    <button class="btn btn-outline-primary btn-sm" @onclick="InstallHomeserver" disabled="@homeserverBusy">
+                    <button class="btn btn-outline-primary btn-sm" @onclick="() => showInstallHomeserverConfirm = true" disabled="@homeserverBusy">
                         @(homeserverBusy ? "Installing…" : "Install Home Server")
                     </button>
                 }
@@ -626,6 +664,25 @@
                 {
                     <button class="btn btn-outline-secondary btn-sm" @onclick="UpdateHomeserver" disabled="@homeserverBusy">
                         @(homeserverBusy ? "Working…" : "Check Home Server update")
+                    </button>
+                    @if (homeserverRunning)
+                    {
+                        <button class="btn btn-outline-secondary btn-sm"
+                                @onclick="() => showStopHomeserverConfirm = true"
+                                disabled="@(homeserverBusy || HomeserverActionsBlocked)">
+                            Stop
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-outline-primary btn-sm" @onclick="StartHomeserver" disabled="@homeserverBusy">
+                            @(homeserverBusy ? "Working…" : "Start")
+                        </button>
+                    }
+                    <button class="btn btn-outline-danger btn-sm"
+                            @onclick="() => showUninstallHomeserverConfirm = true"
+                            disabled="@(homeserverBusy || HomeserverActionsBlocked)">
+                        Uninstall
                     </button>
                 }
             </div>
@@ -701,6 +758,33 @@
                OnConfirm="DeleteAllMemories"
                OnCancel="() => showDeleteAllConfirm = false" />
 
+<ConfirmDialog IsVisible="@showInstallHomeserverConfirm"
+               Title="Install Home Server?"
+               Message="This downloads the Home Server and runs it as a service on this PC (port 5150). This app will then sign in through it instead of wizionic.com. Other devices on your network can use the address shown after install."
+               ConfirmText="Install"
+               CancelText="Cancel"
+               Danger="false"
+               OnConfirm="ConfirmInstallHomeserver"
+               OnCancel="() => showInstallHomeserverConfirm = false" />
+
+<ConfirmDialog IsVisible="@showStopHomeserverConfirm"
+               Title="Stop Home Server?"
+               Message="This stops the login website on this PC. Other devices using it will not be able to sign in until you start it again. Login accounts are kept."
+               ConfirmText="Stop"
+               CancelText="Cancel"
+               Danger="false"
+               OnConfirm="ConfirmStopHomeserver"
+               OnCancel="() => showStopHomeserverConfirm = false" />
+
+<ConfirmDialog IsVisible="@showUninstallHomeserverConfirm"
+               Title="Uninstall Home Server?"
+               Message="This stops the Home Server and permanently deletes all login accounts stored on this PC, including the keys used to sign in. Chats and notes already on each device stay on those devices, but nobody will be able to sign in to this Home Server again. This cannot be undone."
+               ConfirmText="Uninstall and delete logins"
+               CancelText="Cancel"
+               Danger="true"
+               OnConfirm="ConfirmUninstallHomeserver"
+               OnCancel="() => showUninstallHomeserverConfirm = false" />
+
 <HelpOverlayHost />
 
 @code {
@@ -733,6 +817,17 @@
     private string? homeserverActionMessage;
     private bool homeserverActionIsError;
     private bool homeserverBusy;
+    private bool homeserverRunning;
+    private HomeserverListenAddresses? homeserverListen;
+    private string? copiedHomeserverUrl;
+    private bool showInstallHomeserverConfirm;
+    private bool showStopHomeserverConfirm;
+    private bool showUninstallHomeserverConfirm;
+    private bool homeserverRestartPending;
+    private string? homeserverLanProbeNote;
+
+    private bool HomeserverActionsBlocked =>
+        Auth.IsAuthenticated && Homeserver.IsLoginServerThisHomeserver(Auth.ServerBaseUrl);
 
 
 
@@ -800,6 +895,8 @@
     protected override async Task OnInitializedAsync()
     {
         Theme.OnChanged += OnThemeChangedFromService;
+        Auth.OnChanged += OnAuthOrServerChanged;
+        ServerEndpoint.OnChanged += OnAuthOrServerChanged;
         if (AppEnvironment.IsMaui)
             NavLayout.OnChanged += OnNavLayoutChangedFromService;
         if (DesktopShell.IsSupported)
@@ -1261,23 +1358,74 @@
         if (!Homeserver.IsSupported)
             return;
         homeserverState = Homeserver.GetState();
+        homeserverRunning = Homeserver.IsRunning();
+        homeserverListen = homeserverState.IsInstalled ? Homeserver.GetListenAddresses() : null;
+        homeserverLanProbeNote = null;
+        if (homeserverState.IsInstalled && homeserverRunning && homeserverListen is not null)
+        {
+            var localOk = HomeserverListenAddresses.TryTcpConnect(homeserverListen.LocalUrl)
+                          || HomeserverListenAddresses.TryTcpConnect($"http://127.0.0.1:{homeserverListen.Port}");
+            var lanOk = HomeserverListenAddresses.TryTcpConnect(homeserverListen.IPv4Url);
+            if (lanOk)
+                homeserverLanProbeNote = "This PC can reach the IP address. Other devices should use the IP if the .local name does not resolve (common on Android).";
+            else if (localOk)
+                homeserverLanProbeNote = "Reachable on this PC only. Other devices cannot connect until the firewall allows TCP 5150 (you may see a UAC prompt on next launch).";
+            else
+                homeserverLanProbeNote = "Home Server is not answering yet. Try Start, or restart Wizionic after a UAC prompt to open the firewall.";
+        }
         homeserverStatusText = Homeserver.GetServiceStatusText()
             ?? (homeserverState.InstallMode == HomeserverInstallMode.Declined
                 ? "Declined"
                 : "Not installed");
     }
 
-    private async Task InstallHomeserver()
+    private async Task ConfirmInstallHomeserver()
+    {
+        showInstallHomeserverConfirm = false;
+        await RunHomeserverAction(() => Homeserver.InstallAsync());
+    }
+
+    private async Task StartHomeserver()
+        => await RunHomeserverAction(() => Homeserver.StartAsync());
+
+    private async Task ConfirmStopHomeserver()
+    {
+        showStopHomeserverConfirm = false;
+        await RunHomeserverAction(() => Homeserver.StopAsync());
+    }
+
+    private async Task ConfirmUninstallHomeserver()
+    {
+        showUninstallHomeserverConfirm = false;
+        await RunHomeserverAction(() => Homeserver.UninstallAsync());
+    }
+
+    private async Task UpdateHomeserver()
+        => await RunHomeserverAction(() => Homeserver.UpdateIfNeededAsync());
+
+    private async Task RunHomeserverAction(Func<Task<HomeserverInstallResult>> action)
     {
         homeserverBusy = true;
         homeserverActionMessage = null;
+        homeserverRestartPending = false;
         StateHasChanged();
         try
         {
-            var result = await Homeserver.InstallAsync();
+            var result = await action();
             homeserverActionMessage = result.Message;
             homeserverActionIsError = !result.Success;
+            homeserverRestartPending = result.Success && result.RestartRequired;
             RefreshHomeserverStatus();
+            if (result.Success && result.RestartRequired && AppRestart.CanRestart)
+            {
+                try { await Auth.SignOutAsync(); }
+                catch { Auth.SignOutLocal(); }
+                homeserverActionMessage = result.Message + " Restarting so you can sign in to the Home Server…";
+                StateHasChanged();
+                await Task.Delay(400);
+                AppRestart.Restart();
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -1291,28 +1439,29 @@
         }
     }
 
-    private async Task UpdateHomeserver()
+    private async Task CopyHomeserverUrl(string url)
     {
-        homeserverBusy = true;
-        homeserverActionMessage = null;
-        StateHasChanged();
         try
         {
-            var result = await Homeserver.UpdateIfNeededAsync();
-            homeserverActionMessage = result.Message;
-            homeserverActionIsError = !result.Success;
-            RefreshHomeserverStatus();
-        }
-        catch (Exception ex)
-        {
-            homeserverActionMessage = ex.Message;
-            homeserverActionIsError = true;
-        }
-        finally
-        {
-            homeserverBusy = false;
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", url);
+            copiedHomeserverUrl = url;
+            StateHasChanged();
+            await Task.Delay(2000);
+            if (copiedHomeserverUrl == url)
+                copiedHomeserverUrl = null;
             StateHasChanged();
         }
+        catch
+        {
+            // Clipboard may be blocked; user can select the URL.
+        }
+    }
+
+    private void RestartForHomeserver()
+    {
+        if (!AppRestart.CanRestart)
+            return;
+        AppRestart.Restart();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1353,11 +1502,15 @@
     public void Dispose()
     {
         Theme.OnChanged -= OnThemeChangedFromService;
+        Auth.OnChanged -= OnAuthOrServerChanged;
+        ServerEndpoint.OnChanged -= OnAuthOrServerChanged;
         if (AppEnvironment.IsMaui)
             NavLayout.OnChanged -= OnNavLayoutChangedFromService;
         if (DesktopShell.IsSupported)
             DesktopShell.OnChanged -= OnDesktopShellChanged;
     }
+
+    private void OnAuthOrServerChanged() => InvokeAsync(StateHasChanged);
 
     private async Task OnCloseToTrayChanged(ChangeEventArgs e)
         => await DesktopShell.SetCloseToTrayAsync(IsChecked(e));

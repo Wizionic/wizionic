@@ -11,6 +11,8 @@ On a phone, tablet, or Mac this is the usual way to keep Wizionic handy. Windows
 
 Chat, notes, and other data still live **on this device** after you install. Signing in with the same account lets other devices sync.
 
+If you run a Home Server on a PC, open that PC’s **On your network** URL (Settings → Home Server) in this device’s browser — not `localhost` — then install as a PWA.
+
 ## Android {#android}
 
 Use **Chrome** when you can. Other Android browsers work too.

@@ -27,7 +27,23 @@ public sealed class NullHomeserverInstallService : IHomeserverInstallService
         CancellationToken cancellationToken = default) =>
         Task.FromResult(HomeserverInstallResult.Ok("No homeserver on this platform.", HomeserverInstallMode.Unknown));
 
-    public Task UninstallBinariesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<HomeserverInstallResult> StartAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(HomeserverInstallResult.Fail("Home Server is only available on Windows and Linux desktop."));
+
+    public Task<HomeserverInstallResult> StopAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(HomeserverInstallResult.Fail("Home Server is only available on Windows and Linux desktop."));
+
+    public Task<HomeserverInstallResult> UninstallAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(HomeserverInstallResult.Fail("Home Server is only available on Windows and Linux desktop."));
+
+    public Task<HomeserverInstallResult> EnsureLanAccessAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(HomeserverInstallResult.Ok("No homeserver on this platform.", HomeserverInstallMode.Unknown));
+
+    public bool IsRunning() => false;
+
+    public HomeserverListenAddresses GetListenAddresses() => HomeserverListenAddresses.LocalOnly();
+
+    public bool IsLoginServerThisHomeserver(string? baseUrl) => false;
 
     public string? GetServiceStatusText() => null;
 }

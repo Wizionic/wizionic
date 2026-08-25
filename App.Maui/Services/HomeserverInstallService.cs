@@ -16,9 +16,9 @@ using System.ServiceProcess;
 namespace App.Maui.Services;
 
 /// <summary>
-/// Downloads, installs, updates, and removes the optional Wizionic Home Server
+/// Downloads, installs, updates, starts, stops, and uninstalls the optional Wizionic Home Server
 /// (Windows Service / Linux systemd, with user-session fallback).
-/// Data lives under a stable path and is never deleted by update/uninstall of binaries.
+/// Updates replace binaries only; uninstall deletes login data under ProgramData.
 /// </summary>
 public sealed class HomeserverInstallService : IHomeserverInstallService
 {
@@ -90,6 +90,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
             EnsureHostExecutable();
             WriteHomeserverAppsettings(HomeserverPaths.DefaultPort);
+            await EnsureLanFirewallAsync(cancellationToken);
             TryDelete(zipPath);
 
             progress?.Report("Starting Home Server…");
@@ -105,7 +106,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             state.DeclinedAt = null;
             state.Save();
 
-            await RetargetMauiToLocalHomeserverAsync(state.BaseUrl);
+            var restartRequired = await RetargetMauiToLocalHomeserverAsync(state.BaseUrl);
             ShouldPromptOnStartup = false;
 
             var modeLabel = mode switch
@@ -114,11 +115,15 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 HomeserverInstallMode.Systemd => "systemd unit (starts automatically)",
                 _ => "user session (starts at logon)"
             };
+            var message = restartRequired
+                ? $"Home Server installed ({modeLabel}) at {state.BaseUrl}. Sign out and restart to use it."
+                : $"Home Server installed ({modeLabel}) at {state.BaseUrl}";
             return HomeserverInstallResult.Ok(
-                $"Home Server installed ({modeLabel}) at {state.BaseUrl}",
+                message,
                 mode,
                 state.BaseUrl,
-                manifest.Version);
+                manifest.Version,
+                restartRequired: restartRequired);
         }
         catch (Exception ex)
         {
@@ -184,15 +189,91 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
     }
 
-    public async Task UninstallBinariesAsync(CancellationToken cancellationToken = default)
+    public async Task<HomeserverInstallResult> StartAsync(CancellationToken cancellationToken = default)
     {
         if (!IsSupported)
-            return;
+            return HomeserverInstallResult.Fail("Home Server is only supported on Windows and Linux.");
 
         var state = HomeserverState.Load();
+        if (!state.IsInstalled)
+            return HomeserverInstallResult.Fail("Home Server is not installed.");
+
+        try
+        {
+            await EnsureLanAccessAsync(cancellationToken);
+            if (IsRunning())
+            {
+                return HomeserverInstallResult.Ok(
+                    "Home Server is already running.",
+                    state.InstallMode,
+                    state.BaseUrl,
+                    state.InstalledVersion);
+            }
+
+            await StartHostAsync(state.InstallMode, cancellationToken);
+            await Task.Delay(800, cancellationToken);
+            if (!IsRunning())
+                return HomeserverInstallResult.Fail("Home Server did not start.");
+
+            return HomeserverInstallResult.Ok(
+                "Home Server started.",
+                state.InstallMode,
+                state.BaseUrl,
+                state.InstalledVersion);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Homeserver] Start failed");
+            return HomeserverInstallResult.Fail($"Could not start Home Server: {ex.Message}");
+        }
+    }
+
+    public async Task<HomeserverInstallResult> StopAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsSupported)
+            return HomeserverInstallResult.Fail("Home Server is only supported on Windows and Linux.");
+
+        var state = HomeserverState.Load();
+        if (!state.IsInstalled)
+            return HomeserverInstallResult.Fail("Home Server is not installed.");
+
+        try
+        {
+            if (!IsRunning())
+            {
+                return HomeserverInstallResult.Ok(
+                    "Home Server is already stopped.",
+                    state.InstallMode,
+                    state.BaseUrl,
+                    state.InstalledVersion);
+            }
+
+            await StopHostAsync(state.InstallMode, cancellationToken);
+            await Task.Delay(500, cancellationToken);
+            return HomeserverInstallResult.Ok(
+                "Home Server stopped. Login accounts on this PC are unchanged.",
+                state.InstallMode,
+                state.BaseUrl,
+                state.InstalledVersion);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Homeserver] Stop failed");
+            return HomeserverInstallResult.Fail($"Could not stop Home Server: {ex.Message}");
+        }
+    }
+
+    public async Task<HomeserverInstallResult> UninstallAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsSupported)
+            return HomeserverInstallResult.Fail("Home Server is only supported on Windows and Linux.");
+
+        var state = HomeserverState.Load();
+        var retarget = IsLoginServerThisHomeserver(_serverEndpoint?.BaseUrl);
         try
         {
             await StopHostAsync(state.InstallMode, cancellationToken);
+            await Task.Delay(800, cancellationToken);
 #if WINDOWS
             if (state.InstallMode == HomeserverInstallMode.WindowsService)
                 await DeleteWindowsServiceAsync(cancellationToken);
@@ -201,27 +282,144 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 await DeleteSystemdUnitAsync(cancellationToken);
 
             RemoveUserStartupShortcut();
+            await RemoveLanFirewallAsync(cancellationToken);
+            DeleteInstallRoot();
 
-            if (Directory.Exists(HomeserverPaths.AppDirectory))
+            var restartRequired = false;
+            if (retarget && _serverEndpoint is not null)
             {
                 try
                 {
-                    Directory.Delete(HomeserverPaths.AppDirectory, recursive: true);
+                    restartRequired = await _serverEndpoint.SetBaseUrlAsync("https://wizionic.com", cancellationToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "[Homeserver] Could not fully delete app directory");
+                    _logger.LogWarning(ex, "[Homeserver] Could not retarget login server after uninstall");
                 }
             }
 
-            _logger.LogInformation(
-                "[Homeserver] Binaries removed. Database preserved at {DbPath}",
-                HomeserverPaths.DatabasePath);
+            var message = restartRequired
+                ? "Home Server uninstalled and login data deleted. Login server set to wizionic.com. Restart Wizionic to connect."
+                : "Home Server uninstalled and login data deleted.";
+            _logger.LogInformation("[Homeserver] Uninstalled (data deleted).");
+            return HomeserverInstallResult.Ok(
+                message,
+                HomeserverInstallMode.Unknown,
+                restartRequired: restartRequired);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[Homeserver] Uninstall binaries encountered errors");
+            _logger.LogError(ex, "[Homeserver] Uninstall failed");
+            return HomeserverInstallResult.Fail($"Home Server uninstall failed: {ex.Message}");
         }
+    }
+
+    public async Task<HomeserverInstallResult> EnsureLanAccessAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsSupported)
+            return HomeserverInstallResult.Ok("Not supported.", HomeserverInstallMode.Unknown);
+
+        var state = HomeserverState.Load();
+        if (!state.IsInstalled)
+            return HomeserverInstallResult.Ok("Home Server not installed.", state.InstallMode);
+
+        try
+        {
+            var bindChanged = NeedsLanBindRewrite(state.Port);
+            if (bindChanged)
+                WriteHomeserverAppsettings(state.Port);
+
+            var firewallChanged = await EnsureLanFirewallAsync(cancellationToken);
+            var envChanged = false;
+#if WINDOWS
+            if (state.InstallMode == HomeserverInstallMode.WindowsService)
+                envChanged = await EnsureWindowsServiceListenEnvAsync(state.Port, cancellationToken);
+#endif
+
+            if ((bindChanged || envChanged) && IsRunning())
+            {
+                await StopHostAsync(state.InstallMode, cancellationToken);
+                await StartHostAsync(state.InstallMode, cancellationToken);
+                return HomeserverInstallResult.Ok(
+                    "Home Server is now reachable on your network.",
+                    state.InstallMode,
+                    state.BaseUrl,
+                    state.InstalledVersion);
+            }
+
+            if (bindChanged || envChanged)
+            {
+                return HomeserverInstallResult.Ok(
+                    "Home Server will listen on the network the next time it starts.",
+                    state.InstallMode,
+                    state.BaseUrl,
+                    state.InstalledVersion);
+            }
+
+            if (firewallChanged)
+            {
+                return HomeserverInstallResult.Ok(
+                    "Opened the firewall so other devices can reach this Home Server.",
+                    state.InstallMode,
+                    state.BaseUrl,
+                    state.InstalledVersion);
+            }
+
+            return HomeserverInstallResult.Ok(
+                "LAN access already configured.",
+                state.InstallMode,
+                state.BaseUrl,
+                state.InstalledVersion);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Homeserver] Ensure LAN access failed");
+            return HomeserverInstallResult.Fail($"Could not enable network access: {ex.Message}");
+        }
+    }
+
+    public bool IsRunning()
+    {
+        if (!IsSupported)
+            return false;
+
+        var state = HomeserverState.Load();
+        if (!state.IsInstalled)
+            return false;
+
+#if WINDOWS
+        if (state.InstallMode == HomeserverInstallMode.WindowsService)
+        {
+            try
+            {
+                using var sc = new ServiceController(HomeserverPaths.ServiceName);
+                return sc.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+#endif
+
+        if (state.InstallMode == HomeserverInstallMode.Systemd)
+            return IsSystemdUnitActive();
+
+        return IsHostProcessRunning();
+    }
+
+    public HomeserverListenAddresses GetListenAddresses()
+    {
+        var state = HomeserverState.Load();
+        var port = string.IsNullOrWhiteSpace(state.Port) ? HomeserverPaths.DefaultPort : state.Port;
+        return HomeserverListenAddresses.Detect(port);
+    }
+
+    public bool IsLoginServerThisHomeserver(string? baseUrl)
+    {
+        if (!GetState().IsInstalled)
+            return false;
+        return GetListenAddresses().MatchesLoginServer(baseUrl);
     }
 
     public string? GetServiceStatusText()
@@ -235,17 +433,18 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         if (!state.IsInstalled)
             return "Not installed";
 
+        var local = state.BaseUrl;
 #if WINDOWS
         if (state.InstallMode == HomeserverInstallMode.WindowsService)
         {
             try
             {
                 using var sc = new ServiceController(HomeserverPaths.ServiceName);
-                return $"Installed v{state.InstalledVersion ?? "?"} — Service {sc.Status} ({state.BaseUrl})";
+                return $"Installed v{state.InstalledVersion ?? "?"} — Service {sc.Status} ({local})";
             }
             catch
             {
-                return $"Installed v{state.InstalledVersion ?? "?"} — Service not found ({state.BaseUrl})";
+                return $"Installed v{state.InstalledVersion ?? "?"} — Service not found ({local})";
             }
         }
 #endif
@@ -253,11 +452,11 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         if (state.InstallMode == HomeserverInstallMode.Systemd)
         {
             var active = IsSystemdUnitActive();
-            return $"Installed v{state.InstalledVersion ?? "?"} — systemd {(active ? "active" : "inactive")} ({state.BaseUrl})";
+            return $"Installed v{state.InstalledVersion ?? "?"} — systemd {(active ? "active" : "inactive")} ({local})";
         }
 
         var running = IsHostProcessRunning();
-        return $"Installed v{state.InstalledVersion ?? "?"} — User session {(running ? "running" : "stopped")} ({state.BaseUrl})";
+        return $"Installed v{state.InstalledVersion ?? "?"} — User session {(running ? "running" : "stopped")} ({local})";
     }
 
     // ── feed / download ──────────────────────────────────────────────────
@@ -407,6 +606,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         var dbPath = HomeserverPaths.DatabasePath.Replace('\\', '/');
         var json = $$"""
             {
+              "Urls": "http://0.0.0.0:{{port}}",
               "Homeserver": {
                 "AllowHttpCookies": true
               },
@@ -422,7 +622,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
               "Kestrel": {
                 "Endpoints": {
                   "Http": {
-                    "Url": "http://127.0.0.1:{{port}}"
+                    "Url": "http://0.0.0.0:{{port}}"
                   }
                 }
               }
@@ -489,6 +689,8 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 $"config {HomeserverPaths.ServiceName} binPath= {binPath} start= auto",
                 ct);
 
+            await EnsureWindowsServiceListenEnvAsync(HomeserverPaths.DefaultPort, ct);
+
             await RunElevatedWindowsAsync("sc.exe", $"start {HomeserverPaths.ServiceName}", ct, acceptAnyExitCode: true);
 
             await Task.Delay(1500, ct);
@@ -544,6 +746,8 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 RestartSec=5
                 Environment=ASPNETCORE_ENVIRONMENT=Production
                 Environment=DOTNET_PrintStackToConsoleOnException=1
+                Environment=APP_HOMESERVER=1
+                Environment=ASPNETCORE_URLS=http://0.0.0.0:{HomeserverPaths.DefaultPort}
                 # HomeserverPaths.AppsettingsPath is under the user's LocalApplicationData
                 # and is loaded by the host when present.
 
@@ -697,6 +901,8 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
 
         psi.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
+        psi.Environment["APP_HOMESERVER"] = "1";
+        psi.Environment["ASPNETCORE_URLS"] = $"http://0.0.0.0:{HomeserverPaths.DefaultPort}";
         Process.Start(psi);
     }
 
@@ -795,15 +1001,15 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             TryDelete(HomeserverPaths.LinuxAutostartDesktopPath);
     }
 
-    private async Task RetargetMauiToLocalHomeserverAsync(string baseUrl)
+    private async Task<bool> RetargetMauiToLocalHomeserverAsync(string baseUrl)
     {
         try
         {
             if (_serverEndpoint is not null)
             {
-                await _serverEndpoint.SetBaseUrlAsync(baseUrl);
+                var restartRequired = await _serverEndpoint.SetBaseUrlAsync(baseUrl);
                 _logger.LogInformation("[Homeserver] Login server set via endpoint to {BaseUrl}", baseUrl);
-                return;
+                return restartRequired;
             }
 
             var path = Path.Combine(MauiAppData.Directory, "appsettings.Local.json");
@@ -819,10 +1025,12 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             }, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(path, json);
             _logger.LogInformation("[Homeserver] Wrote MAUI local override {Path} BaseUrl={BaseUrl}", path, baseUrl);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Homeserver] Could not retarget MAUI BaseUrl");
+            return true;
         }
     }
 
@@ -991,6 +1199,220 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
 
         return Parse(candidate) > Parse(current);
+    }
+
+    private static bool NeedsLanBindRewrite(string port)
+    {
+        var path = HomeserverPaths.AppsettingsPath;
+        if (!File.Exists(path))
+            return true;
+
+        var text = File.ReadAllText(path);
+        if (text.Contains("127.0.0.1", StringComparison.Ordinal) ||
+            text.Contains("localhost:", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var p = string.IsNullOrWhiteSpace(port) ? HomeserverPaths.DefaultPort : port.Trim();
+        // Installed 0.2.x hosts honor "Urls" more reliably than Kestrel:Endpoints with "*".
+        if (text.Contains($"\"Urls\": \"http://0.0.0.0:{p}\"", StringComparison.Ordinal) ||
+            text.Contains($"http://0.0.0.0:{p}", StringComparison.Ordinal))
+            return false;
+
+        return true;
+    }
+
+#if WINDOWS
+    private async Task<bool> EnsureWindowsServiceListenEnvAsync(string port, CancellationToken ct)
+    {
+        var p = string.IsNullOrWhiteSpace(port) ? HomeserverPaths.DefaultPort : port.Trim();
+        if (WindowsServiceListenEnvConfigured(p))
+            return false;
+
+        var args =
+            $"add \"HKLM\\SYSTEM\\CurrentControlSet\\Services\\{HomeserverPaths.ServiceName}\" " +
+            $"/v Environment /t REG_MULTI_SZ " +
+            $"/d \"ASPNETCORE_URLS=http://0.0.0.0:{p}\\0APP_HOMESERVER=1\" /f";
+        var ok = await RunElevatedWindowsAsync("reg.exe", args, ct);
+        if (!ok)
+        {
+            _logger.LogWarning(
+                "[Homeserver] Could not set ASPNETCORE_URLS on the Windows Service. LAN bind may still be loopback.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool WindowsServiceListenEnvConfigured(string port)
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "reg.exe",
+                Arguments =
+                    $"query \"HKLM\\SYSTEM\\CurrentControlSet\\Services\\{HomeserverPaths.ServiceName}\" /v Environment",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5000);
+            return proc.ExitCode == 0 &&
+                   output.Contains($"ASPNETCORE_URLS=http://0.0.0.0:{port}", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+#endif
+
+    private async Task<bool> EnsureLanFirewallAsync(CancellationToken ct)
+    {
+#if WINDOWS
+        if (OperatingSystem.IsWindows())
+        {
+            if (WindowsFirewallRuleAllowsLan())
+                return false;
+
+            var args =
+                $"advfirewall firewall delete rule name=\"{HomeserverPaths.FirewallRuleName}\" & " +
+                $"netsh advfirewall firewall add rule name=\"{HomeserverPaths.FirewallRuleName}\" " +
+                $"dir=in action=allow protocol=TCP localport={HomeserverPaths.DefaultPort} profile=any enable=yes";
+            var ok = await RunElevatedWindowsAsync("netsh", args, ct, acceptAnyExitCode: true);
+            if (!ok || !WindowsFirewallRuleAllowsLan())
+            {
+                _logger.LogWarning(
+                    "[Homeserver] Could not add Windows Firewall rule. Other devices on the LAN may not connect.");
+                return false;
+            }
+            return true;
+        }
+#endif
+        if (OperatingSystem.IsLinux())
+            return await EnsureLinuxFirewallAsync(ct);
+
+        return false;
+    }
+
+    private async Task RemoveLanFirewallAsync(CancellationToken ct)
+    {
+#if WINDOWS
+        if (OperatingSystem.IsWindows())
+        {
+            await RunElevatedWindowsAsync(
+                "netsh",
+                $"advfirewall firewall delete rule name=\"{HomeserverPaths.FirewallRuleName}\"",
+                ct,
+                acceptAnyExitCode: true);
+            return;
+        }
+#endif
+        if (OperatingSystem.IsLinux() && CommandExists("ufw"))
+        {
+            await RunElevatedLinuxAsync(
+                $"ufw delete allow {HomeserverPaths.DefaultPort}/tcp || true",
+                ct,
+                timeoutMs: 15_000);
+        }
+    }
+
+#if WINDOWS
+    private static bool WindowsFirewallRuleAllowsLan()
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "netsh",
+                Arguments = $"advfirewall firewall show rule name=\"{HomeserverPaths.FirewallRuleName}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5000);
+            if (proc.ExitCode != 0 ||
+                !output.Contains(HomeserverPaths.FirewallRuleName, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Home Wi-Fi is often classified as Public; Private-only rules do not apply.
+            return output.Contains("Public", StringComparison.OrdinalIgnoreCase)
+                   || output.Contains("Any", StringComparison.OrdinalIgnoreCase)
+                   || output.Contains("All", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+#endif
+
+    private async Task<bool> EnsureLinuxFirewallAsync(CancellationToken ct)
+    {
+        if (!CommandExists("ufw"))
+            return false;
+
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "ufw",
+                Arguments = "status",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+            if (proc is null)
+                return false;
+            var output = await proc.StandardOutput.ReadToEndAsync(ct);
+            proc.WaitForExit(5000);
+            if (!output.Contains("Status: active", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (output.Contains(HomeserverPaths.DefaultPort, StringComparison.Ordinal))
+                return false;
+
+            return await RunElevatedLinuxAsync(
+                $"ufw allow {HomeserverPaths.DefaultPort}/tcp comment 'Wizionic Home Server'",
+                ct,
+                timeoutMs: 15_000);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[Homeserver] ufw probe failed");
+            return false;
+        }
+    }
+
+    private void DeleteInstallRoot()
+    {
+        TryDeleteDirectory(HomeserverPaths.AppDirectory);
+        TryDeleteDirectory(HomeserverPaths.DataDirectory);
+        TryDelete(HomeserverPaths.StateFilePath);
+        TryDelete(HomeserverPaths.AppsettingsPath);
+        TryDelete(HomeserverPaths.PendingUpdateFlagPath);
+        TryDeleteDirectory(HomeserverPaths.RootDirectory);
+    }
+
+    private void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Homeserver] Could not fully delete {Path}", path);
+        }
     }
 
     private static void TryDelete(string path)

@@ -12,6 +12,8 @@ public static class HomeserverPaths
     public const string SystemdUnitName = "wizionic-homeserver";
     public const string DefaultPort = "5150";
     public const string DefaultBaseUrl = "http://localhost:5150";
+    /// <summary>Windows Firewall inbound rule (Private profile, TCP 5150).</summary>
+    public const string FirewallRuleName = "Wizionic Home Server";
 
     public const string LatestManifestFile = "latest.json";
 

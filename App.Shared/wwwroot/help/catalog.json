@@ -11,6 +11,7 @@
     { "id": "sync", "title": "Devices and sync", "file": "sync.md", "routes": ["/sync"], "audience": "howto" },
     { "id": "settings", "title": "Settings", "file": "settings.md", "routes": ["/settings"], "audience": "howto" },
     { "id": "settings-login-server", "title": "Login server", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "login-server", "toc": false },
+    { "id": "settings-home-server", "title": "Home Server", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "home-server", "toc": false },
     { "id": "settings-appearance", "title": "Appearance", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "appearance", "toc": false },
     { "id": "settings-desktop", "title": "Desktop", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "desktop", "toc": false },
     { "id": "settings-voice", "title": "Voice", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "voice", "toc": false },

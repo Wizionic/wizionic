@@ -324,6 +324,25 @@ builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddSignalR();
 
+if (isHomeserverHost)
+{
+    var port = 5150;
+    if (!int.TryParse(HomeserverPaths.DefaultPort, out port))
+        port = 5150;
+    var configured = builder.Configuration["Kestrel:Endpoints:Http:Url"]
+                     ?? builder.Configuration["Urls"];
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        var first = configured.Split(';', 2)[0].Trim();
+        if (Uri.TryCreate(first, UriKind.Absolute, out var listenUri) && listenUri.Port > 0)
+            port = listenUri.Port;
+        else if (int.TryParse(builder.Configuration["Homeserver:Port"], out var parsed))
+            port = parsed;
+    }
+
+    builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
+    Console.WriteLine($"[Homeserver] Kestrel ListenAnyIP({port})");
+}
 
 var app = builder.Build();
 

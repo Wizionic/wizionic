@@ -30,8 +30,28 @@ public interface IHomeserverInstallService
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Stop service / remove binaries. Leaves ProgramData data/ intact.</summary>
-    Task UninstallBinariesAsync(CancellationToken cancellationToken = default);
+    Task<HomeserverInstallResult> StartAsync(CancellationToken cancellationToken = default);
+
+    Task<HomeserverInstallResult> StopAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stop the host, remove the service/unit, delete binaries and login data (homeserver.db).
+    /// Retargets this app to wizionic.com when the login server still pointed at this install.
+    /// </summary>
+    Task<HomeserverInstallResult> UninstallAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bind Kestrel to all interfaces and open the LAN firewall if needed.
+    /// Restarts a running host when the bind address changed.
+    /// </summary>
+    Task<HomeserverInstallResult> EnsureLanAccessAsync(CancellationToken cancellationToken = default);
+
+    bool IsRunning();
+
+    HomeserverListenAddresses GetListenAddresses();
+
+    /// <summary>True when <paramref name="baseUrl"/> is this PC's Home Server (localhost, hostname, or LAN IP).</summary>
+    bool IsLoginServerThisHomeserver(string? baseUrl);
 
     string? GetServiceStatusText();
 }
@@ -43,9 +63,23 @@ public sealed class HomeserverInstallResult
     public HomeserverInstallMode Mode { get; init; }
     public string? BaseUrl { get; init; }
     public string? Version { get; init; }
+    public bool RestartRequired { get; init; }
 
-    public static HomeserverInstallResult Ok(string message, HomeserverInstallMode mode, string? baseUrl = null, string? version = null) =>
-        new() { Success = true, Message = message, Mode = mode, BaseUrl = baseUrl, Version = version };
+    public static HomeserverInstallResult Ok(
+        string message,
+        HomeserverInstallMode mode,
+        string? baseUrl = null,
+        string? version = null,
+        bool restartRequired = false) =>
+        new()
+        {
+            Success = true,
+            Message = message,
+            Mode = mode,
+            BaseUrl = baseUrl,
+            Version = version,
+            RestartRequired = restartRequired
+        };
 
     public static HomeserverInstallResult Fail(string message) =>
         new() { Success = false, Message = message, Mode = HomeserverInstallMode.Unknown };

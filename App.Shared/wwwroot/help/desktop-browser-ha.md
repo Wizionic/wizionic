@@ -57,4 +57,4 @@ Chat can list and control lights, media players, climate, covers, scenes, and sc
 
 ## Setup wizard
 
-Settings → **Run setup wizard** can install a Home Server (local login site), Lemonade, and/or Ollama on this PC.
+Settings → **Run setup wizard** can install a Home Server (local login site), Lemonade, and/or Ollama on this PC. After a Home Server install, other devices use the network URL under Settings → Home Server.

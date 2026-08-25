@@ -35,8 +35,16 @@ public sealed class MauiAuthCookieStore : IAuthSessionPersistence
 
     public async Task ClearCookiesAsync()
     {
-        foreach (Cookie cookie in _container.GetCookies(_serverUri))
-            cookie.Expired = true;
+        try
+        {
+            foreach (Cookie cookie in _container.GetAllCookies())
+                cookie.Expired = true;
+        }
+        catch
+        {
+            foreach (Cookie cookie in _container.GetCookies(_serverUri))
+                cookie.Expired = true;
+        }
 
         await _db.RemoveAsync(StorageKey);
     }

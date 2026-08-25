@@ -58,15 +58,15 @@ public partial class MainPage : ContentPage
         if (!_homeserverLifecycleStarted)
         {
             _homeserverLifecycleStarted = true;
-            _ = RunPostUpdateHomeserverRefreshAsync(services);
+            _ = RunHomeserverLifecycleAsync(services);
         }
     }
 
     /// <summary>
-    /// After Velopack update only: refresh homeserver binaries if installed.
-    /// First-run onboarding is the full-screen SetupWizard (no alerts).
+    /// Bind existing Home Server installs to the LAN, then after a Velopack update
+    /// refresh homeserver binaries if installed. First-run onboarding is SetupWizard.
     /// </summary>
-    private static async Task RunPostUpdateHomeserverRefreshAsync(IServiceProvider services)
+    private static async Task RunHomeserverLifecycleAsync(IServiceProvider services)
     {
         try
         {
@@ -74,10 +74,17 @@ public partial class MainPage : ContentPage
             if (homeserver is null || !homeserver.IsSupported)
                 return;
 
+            var state = homeserver.GetState();
+            if (state.IsInstalled)
+            {
+                Console.WriteLine("[Homeserver] Ensuring LAN bind and firewall…");
+                var lan = await homeserver.EnsureLanAccessAsync();
+                Console.WriteLine($"[Homeserver] {lan.Message}");
+            }
+
             if (!(homeserver.PendingUpdateCheck || File.Exists(HomeserverPaths.PendingUpdateFlagPath)))
                 return;
 
-            var state = homeserver.GetState();
             if (state.IsInstalled)
             {
                 Console.WriteLine("[Homeserver] Checking for Home Server update after app update…");

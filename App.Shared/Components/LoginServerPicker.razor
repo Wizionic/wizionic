@@ -1,10 +1,14 @@
+@using App.Core.Auth
 @using App.Core.Configuration
+@using App.Core.Homeserver
 @using App.Core.UI
 @inject IAppServerEndpoint ServerEndpoint
 @inject IAppRestartService AppRestart
+@inject IHomeserverInstallService Homeserver
+@inject IAuthService Auth
 
 <label>Server URL</label>
-<input type="text" class="form-control" @bind="loginServerDraft" placeholder="https://wizionic.com" />
+<input type="text" class="form-control" @bind="loginServerDraft" placeholder="https://wizionic.com or http://pc-name.local:5150" />
 <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
     <button type="button" class="btn btn-primary btn-sm" @onclick="SaveLoginServer" disabled="@loginServerBusy">
         @(loginServerBusy ? "Saving…" : "Save login server")
@@ -12,9 +16,12 @@
     <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset("https://wizionic.com")' disabled="@loginServerBusy">
         Public (wizionic.com)
     </button>
-    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset("http://localhost:5150")' disabled="@loginServerBusy">
-        Local homeserver
-    </button>
+    @if (Homeserver.GetState().IsInstalled)
+    {
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => ApplyLoginServerPreset(HomeserverPaths.DefaultBaseUrl)' disabled="@loginServerBusy">
+            This PC (localhost:5150)
+        </button>
+    }
 </div>
 @if (!string.IsNullOrEmpty(loginServerMessage))
 {
@@ -74,10 +81,12 @@
             loginServerIsError = false;
             if (restartRequired)
             {
+                try { await Auth.SignOutAsync(); }
+                catch { Auth.SignOutLocal(); }
                 loginServerRestartPending = true;
-                loginServerMessage = $"Login server saved as {ServerEndpoint.BaseUrl}. Restart Wizionic to connect.";
+                loginServerMessage = $"Login server saved as {ServerEndpoint.BaseUrl}. Restart Wizionic to sign in there.";
                 restartConfirmMessage =
-                    $"Wizionic must restart to use {ServerEndpoint.BaseUrl}. " +
+                    $"Wizionic will sign you out and restart to use {ServerEndpoint.BaseUrl}. " +
                     "The new address is already saved.";
                 if (AppRestart.CanRestart)
                     showRestartConfirm = true;

@@ -40,6 +40,8 @@ OAuth *app* Client IDs and secrets (Google, GitHub, Notion, Stripe) live in the 
 
 The broker sends `redirect_uri` for **this host**: `https://wizionic.com/api/oauth/{provider}/callback` on the public site, or `http://localhost:5150/api/oauth/{provider}/callback` on a wizard-installed Home Server. Register both (and `http://127.0.0.1:5150/…`) on each provider. A Home Server still needs its own `OAuthProviders` row (same client id/secret is fine; the stored `RedirectUri` can stay the public URL).
 
+A wizard-installed Home Server listens on **all interfaces** (`http://*:5150`), not loopback only. The desktop app on that PC still uses `http://localhost:5150`. Other devices use `http://{computer-name}.local:5150` or `http://{lan-ip}:5150` (copy those from Settings → Home Server). Windows Firewall is opened for TCP 5150 on the **Private** profile.
+
 The sample `free-chat` proxied provider in `appsettings.json` points at `http://127.0.0.1:11434/v1/` (local Ollama). Change or remove it if you do not run Ollama there.
 
 SMS two-factor is optional. If the Twilio variables are unset, users can still enable 2FA and complete the second step with an email code. Do not put the Twilio auth token in config; use an API key.
