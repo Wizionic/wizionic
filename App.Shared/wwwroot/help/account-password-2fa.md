@@ -7,10 +7,10 @@ title: Account, password, and 2FA
 
 ## Sign in
 
-- **Login code (email)** — we email a code and a link. Fine when 2FA is off.
+- **Login code (email)** — we email a one-time code. Type it in the app or site. Email links do not sign you in (they opened the wrong app, and mail scanners would use the code).
 - **Password** — if you set one. Faster than waiting for email.
 
-Sign in is required. The same account (and encryption key) is what lets other devices decrypt your data.
+Sign in is required. The same account (and encryption key) is what lets other devices decrypt your data. Changing password or signing out a session never deletes notes or chats; that device just signs in again and gets the same key.
 
 ## Password
 
@@ -19,7 +19,9 @@ Optional. Used to:
 - Sign in without an email code
 - Unlock protected notebooks, chats, and albums
 
-Requirements are shown on the form (length, a digit, and a capital or symbol). Common passwords are rejected.
+Use at least 8 characters. Common and leaked passwords are rejected. We do not force rotation or extra symbol rules.
+
+Changing your password emails you and signs other devices out. Notes on those devices stay; they sign in again.
 
 Unlocking a notebook still asks **only** for this password. It does not ask for 2FA.
 
@@ -28,10 +30,17 @@ Unlocking a notebook still asks **only** for this password. It does not ask for 
 On the account page, **Two-factor sign-in** (hidden behind a link). When it is on:
 
 1. Enter email and password.
-2. Enter an email code, or an SMS code if you enrolled a phone.
+2. Enter an email code, or an SMS code if you enrolled a phone, or a recovery code.
 
-A cold click of a magic link does **not** sign you in. Email codes complete the second step after the password.
+A device you have already confirmed is remembered for 30 days so you are not asked every time.
+
+When you turn 2FA on, save the recovery codes shown once. Each code works one time if email or SMS is delayed.
+
+A cold click of an old magic link does **not** sign you in. Type the code.
 
 SMS uses Twilio Verify on the host you are pointed at. If that host has no Twilio config, you can still use email as the second factor.
 
-The desktop app’s **login server** must be the host that has 2FA (local `dotnet run` vs wizionic.com). See [Sync](/help/sync).
+## Devices and sessions
+
+On the account page, **Devices and sessions**. Sign out one device or all others. A new device that uses a stolen session cannot sync until it signs in (login code or password). You get an email when a new device signs in.
+

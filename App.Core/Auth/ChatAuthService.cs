@@ -16,6 +16,7 @@ public class ChatAuthService : IAuthService
     private readonly AppServerOptions? _serverOptions;
     private readonly IAppServerEndpoint? _endpoint;
     private readonly IAuthSessionPersistence? _sessionPersistence;
+    private readonly IClientDeviceId? _deviceId;
 
     public string? Email { get; private set; }
     public string? UserId { get; private set; }
@@ -25,6 +26,8 @@ public class ChatAuthService : IAuthService
     public bool HasTwoFactorPhone { get; private set; }
     public string? TwoFactorPhoneMasked { get; private set; }
     public bool SmsTwoFactorAvailable { get; private set; }
+    public bool HasRecoveryCodes { get; private set; }
+    public IReadOnlyList<string>? LastRecoveryCodes { get; private set; }
     public bool IsAuthenticated => !string.IsNullOrEmpty(Email) && !string.IsNullOrEmpty(LocalEncryptionKeyB64);
 
     public string ServerBaseUrl =>
@@ -48,16 +51,19 @@ public class ChatAuthService : IAuthService
         HttpClient http,
         IOptions<AppServerOptions>? serverOptions = null,
         IAuthSessionPersistence? sessionPersistence = null,
-        IAppServerEndpoint? endpoint = null)
+        IAppServerEndpoint? endpoint = null,
+        IClientDeviceId? deviceId = null)
     {
         _http = http;
         _serverOptions = serverOptions?.Value;
         _sessionPersistence = sessionPersistence;
         _endpoint = endpoint;
+        _deviceId = deviceId;
     }
 
     public async Task LoadAsync()
     {
+        await AttachDeviceHeadersAsync();
         var result = await TryFetchAuthStateAsync();
         if (result == AuthFetchResult.Success)
         {
@@ -97,6 +103,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
+            await AttachDeviceHeadersAsync();
             var payload = new { Email = email.Trim() };
             var resp = await _http.PostAsJsonAsync("api/auth/request-magic-link", payload);
 
@@ -116,6 +123,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
+            await AttachDeviceHeadersAsync();
             var payload = new { Email = email.Trim(), Code = code.Trim() };
             var resp = await _http.PostAsJsonAsync("api/auth/verify-code", payload);
 
@@ -150,7 +158,8 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            var payload = new { Email = email.Trim(), Password = password };
+            await AttachDeviceHeadersAsync();
+            var payload = new { Email = email.Trim(), Password = password, RememberDevice = true };
             var resp = await _http.PostAsJsonAsync("api/auth/login-password", payload);
 
             if (!resp.IsSuccessStatusCode)
@@ -191,7 +200,8 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            var payload = new { ChallengeId = challengeId, Code = code, Method = method };
+            await AttachDeviceHeadersAsync();
+            var payload = new { ChallengeId = challengeId, Code = code, Method = method, RememberDevice = true };
             var resp = await _http.PostAsJsonAsync("api/auth/2fa/verify", payload);
 
             if (!resp.IsSuccessStatusCode)
@@ -271,6 +281,14 @@ public class ChatAuthService : IAuthService
             {
                 HasTwoFactorPhone = false;
                 TwoFactorPhoneMasked = null;
+                HasRecoveryCodes = false;
+                LastRecoveryCodes = null;
+            }
+            else
+            {
+                var bodyOk = await ReadJsonOrNullAsync<TwoFactorSettingsResponse>(resp);
+                LastRecoveryCodes = bodyOk?.RecoveryCodes;
+                HasRecoveryCodes = LastRecoveryCodes is { Count: > 0 };
             }
 
             OnChanged?.Invoke();
@@ -432,6 +450,55 @@ public class ChatAuthService : IAuthService
         }
     }
 
+    public async Task<IReadOnlyList<AuthSessionInfo>> GetSessionsAsync()
+    {
+        try
+        {
+            await AttachDeviceHeadersAsync();
+            var resp = await _http.GetAsync("api/auth/sessions");
+            if (!resp.IsSuccessStatusCode)
+                return Array.Empty<AuthSessionInfo>();
+            var list = await ReadJsonOrNullAsync<List<AuthSessionInfo>>(resp);
+            return list ?? (IReadOnlyList<AuthSessionInfo>)Array.Empty<AuthSessionInfo>();
+        }
+        catch
+        {
+            return Array.Empty<AuthSessionInfo>();
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> RevokeSessionAsync(string sessionId)
+    {
+        try
+        {
+            await AttachDeviceHeadersAsync();
+            var resp = await _http.PostAsJsonAsync("api/auth/sessions/revoke", new { Id = sessionId });
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+            return (false, await ReadApiErrorAsync(resp) ?? "Could not sign out that device.");
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> RevokeOtherSessionsAsync()
+    {
+        try
+        {
+            await AttachDeviceHeadersAsync();
+            var resp = await _http.PostAsync("api/auth/sessions/revoke-others", null);
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+            return (false, await ReadApiErrorAsync(resp) ?? "Could not sign out other devices.");
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
     public async Task SignOutAsync()
     {
         try
@@ -487,8 +554,13 @@ public class ChatAuthService : IAuthService
                 return AuthFetchResult.Unauthorized;
 
             using var keyResponse = await _http.GetAsync("api/user/encryption-key");
-            if (keyResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            if (keyResponse.StatusCode is HttpStatusCode.Unauthorized)
                 return AuthFetchResult.Unauthorized;
+            if (keyResponse.StatusCode is HttpStatusCode.Forbidden)
+            {
+                Console.WriteLine("[Auth] This device must sign in again before it can sync.");
+                return AuthFetchResult.Unauthorized;
+            }
 
             if (!keyResponse.IsSuccessStatusCode)
             {
@@ -508,6 +580,7 @@ public class ChatAuthService : IAuthService
             HasTwoFactorPhone = me.HasTwoFactorPhone;
             TwoFactorPhoneMasked = me.TwoFactorPhoneMasked;
             SmsTwoFactorAvailable = me.SmsTwoFactorAvailable;
+            HasRecoveryCodes = me.HasRecoveryCodes;
             return AuthFetchResult.Success;
         }
         catch (HttpRequestException ex)
@@ -598,6 +671,42 @@ public class ChatAuthService : IAuthService
         HasTwoFactorPhone = false;
         TwoFactorPhoneMasked = null;
         SmsTwoFactorAvailable = false;
+        HasRecoveryCodes = false;
+        LastRecoveryCodes = null;
+    }
+
+    private async Task AttachDeviceHeadersAsync()
+    {
+        if (_deviceId is null)
+            return;
+        try
+        {
+            var id = await _deviceId.GetOrCreateAsync();
+            if (string.IsNullOrWhiteSpace(id))
+                return;
+            _http.DefaultRequestHeaders.Remove(ClientDeviceKeys.IdHeader);
+            _http.DefaultRequestHeaders.TryAddWithoutValidation(ClientDeviceKeys.IdHeader, id);
+            var name = await _deviceId.GetNameAsync();
+            _http.DefaultRequestHeaders.Remove(ClientDeviceKeys.NameHeader);
+            // HTTP headers must be ASCII. MAUI default names include "•".
+            var encodedName = EncodeHeaderValue(name);
+            if (!string.IsNullOrWhiteSpace(encodedName))
+                _http.DefaultRequestHeaders.TryAddWithoutValidation(ClientDeviceKeys.NameHeader, encodedName);
+        }
+        catch
+        {
+            // Old clients / JS not ready: omit the header rather than blocking login.
+        }
+    }
+
+    private static string? EncodeHeaderValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        var trimmed = value.Trim();
+        if (trimmed.Length > 80)
+            trimmed = trimmed[..80];
+        return Uri.EscapeDataString(trimmed);
     }
 
     private record UserMeResponse(
@@ -608,7 +717,9 @@ public class ChatAuthService : IAuthService
         bool TwoFactorEnabled = false,
         bool HasTwoFactorPhone = false,
         string? TwoFactorPhoneMasked = null,
-        bool SmsTwoFactorAvailable = false);
+        bool SmsTwoFactorAvailable = false,
+        bool HasRecoveryCodes = false);
+    private record TwoFactorSettingsResponse(bool Success, bool TwoFactorEnabled, string[]? RecoveryCodes);
     private record PasswordLoginResponse(
         bool Success,
         bool RequiresTwoFactor = false,

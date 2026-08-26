@@ -99,8 +99,23 @@
             </button>
             <div class="cf-success-box" style="margin: 0 0 0.75rem; padding: 0.75rem 1rem;">
                 Logged in as <strong>@Auth.Email</strong>.<br />
-                <span style="font-size:0.9em;">You can now sync your encrypted chat history across browsers or devices with the Wizionic app.</span>
+                <span style="font-size:0.9em;">You can now sync your encrypted app data (chat history, notes, calendar, albums, bookmarks, settings) across devices with Wizionic.</span>
             </div>
+            @if (Auth.HasPassword && !Auth.TwoFactorEnabled)
+            {
+                <div style="margin: 0 0 0.75rem; padding: 0.75rem 1rem; background: var(--color-info-bg); border: 1px solid var(--color-info-border); border-radius: 6px; font-size: 0.9em;">
+                    Protect sign-in with a second factor (email or SMS code after your password).
+                    <button type="button" class="btn btn-link p-0" style="font-size:0.9em;" @onclick="() => _showTwoFactorForm = true">Turn on two-factor</button>
+                </div>
+            }
+            @if (Auth.LastRecoveryCodes is { Count: > 0 })
+            {
+                <div style="margin: 0 0 0.75rem; padding: 0.75rem 1rem; border: 1px solid var(--color-border); border-radius: 6px;">
+                    <p style="margin:0 0 0.35rem; font-size:0.95em;"><strong>Save these recovery codes now.</strong> Each works once if email or SMS is unavailable.</p>
+                    <pre style="margin:0 0 0.5rem; letter-spacing:0.08em;">@string.Join("\n", Auth.LastRecoveryCodes)</pre>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyRecoveryCodes">@(_recoveryCopied ? "Copied" : "Copy")</button>
+                </div>
+            }
 
             <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
                 <button class="btn btn-outline-secondary" @onclick="CloseSignedInAccount">Cancel</button>
@@ -327,6 +342,61 @@
                 </div>
             </div>
             }
+
+            <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+                @if (!_showSessions)
+                {
+                    <button type="button" class="btn btn-link p-0" style="font-size:0.95rem;" @onclick="ShowSessions">
+                        Devices and sessions
+                    </button>
+                }
+                else
+                {
+                    <h3 class="help-heading" style="font-size:1.05rem; margin:0 0 0.35rem 0;">Devices and sessions <HelpGlyph Topic="account" /></h3>
+                    <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                        Sign out all sessions . (In case you left a session open on a public computer, or lost a device.)
+                    </p>
+                    @if (!string.IsNullOrEmpty(sessionsError))
+                    {
+                        <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@sessionsError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(sessionsMessage))
+                    {
+                        <div style="color: var(--color-success-fg, #22c55e); margin: 0 0 0.5rem; font-size:0.9em;">@sessionsMessage</div>
+                    }
+                    @if (_sessions.Count == 0)
+                    {
+                        <p style="font-size:0.9em; color: var(--color-text-muted);">This device only.</p>
+                    }
+                    else
+                    {
+                        <ul style="list-style:none; padding:0; margin:0 0 0.75rem;">
+                            @foreach (var s in _sessions)
+                            {
+                                <li style="display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start; padding:0.4rem 0; border-bottom:1px solid var(--color-border); font-size:0.9em;">
+                                    <span>
+                                        <strong>@(string.IsNullOrWhiteSpace(s.DeviceName) ? "Device" : s.DeviceName)</strong>
+                                        @if (s.IsCurrent)
+                                        {
+                                            <span style="color: var(--color-text-muted);"> (this device)</span>
+                                        }
+                                        <br />
+                                        <span style="color: var(--color-text-muted);">Last active @s.LastSeenAt.ToLocalTime().ToString("g")</span>
+                                    </span>
+                                    @if (!s.IsCurrent)
+                                    {
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@busy" @onclick="() => RevokeSession(s.Id)">Sign out</button>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@busy" @onclick="RevokeOtherSessions">Sign out other devices</button>
+                        <button type="button" class="btn btn-link btn-sm p-0" @onclick="() => _showSessions = false">Cancel</button>
+                    </div>
+                }
+            </div>
         </div>
         </div>
     }
@@ -338,10 +408,17 @@
         }
 
         <p style="color: var(--color-text-muted);">
-            Enter the @(twoFactorMethod == "sms" ? "SMS" : "email") code to finish signing in.
-            @if (twoFactorMethod == "sms" && !string.IsNullOrEmpty(twoFactorMaskedPhone))
+            @if (twoFactorMethod == "recovery")
             {
-                <text> Sent to @twoFactorMaskedPhone.</text>
+                <text>Enter a recovery code to finish signing in. This device will be remembered for 30 days.</text>
+            }
+            else
+            {
+                <text>Enter the @(twoFactorMethod == "sms" ? "SMS" : "email") code to finish signing in. This device will be remembered for 30 days.</text>
+                @if (twoFactorMethod == "sms" && !string.IsNullOrEmpty(twoFactorMaskedPhone))
+                {
+                    <text> Sent to @twoFactorMaskedPhone.</text>
+                }
             }
         </p>
 
@@ -367,6 +444,10 @@
                 @if (twoFactorMethods.Contains("email") && twoFactorMethod != "email")
                 {
                     <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => SwitchTwoFactorMethod("email")' disabled="@busy">Use email</button>
+                }
+                @if (twoFactorMethods.Contains("recovery") && twoFactorMethod != "recovery")
+                {
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick='() => SwitchTwoFactorMethod("recovery")' disabled="@busy">Use a recovery code</button>
                 }
                 <button type="button" class="btn btn-link btn-sm p-0" @onclick="CancelTwoFactor" disabled="@busy">Back</button>
             </div>
@@ -428,7 +509,7 @@
                 <p style="margin:0 0 0.25rem 0;"><strong>Login code sent!</strong></p>
                 <p style="margin:0; font-size:0.95em;">
                     We've emailed a login code to <strong>@email</strong>. Open your inbox (and check spam).
-                    Enter the code below, or click the web login link in the email.
+                    Enter the code below.
                 </p>
             </div>
 
@@ -533,6 +614,11 @@
     private bool _showPasswordForm;
     private bool _showTwoFactorForm;
     private bool _showLoginServerOptions;
+    private bool _showSessions;
+    private bool _recoveryCopied;
+    private readonly List<AuthSessionInfo> _sessions = new();
+    private string? sessionsError;
+    private string? sessionsMessage;
     /// <summary>windows, linux, mac, android, ios, ipad, chromeos, unknown; null until detected.</summary>
     private string? _detectedOs;
 
@@ -693,6 +779,12 @@
         {
             loginMode = LoginMode.Password;
             error = "This account requires your password, then a second factor.";
+        }
+
+        if (uri.Query.Contains("enterCode=1", StringComparison.OrdinalIgnoreCase))
+        {
+            loginMode = LoginMode.Code;
+            error = "Enter the login code from your email. Links do not sign you in.";
         }
 
         await RestoreTwoFactorChallengeAsync();
@@ -1109,6 +1201,8 @@
         error = null;
         if (string.IsNullOrWhiteSpace(twoFactorChallengeId))
             return;
+        if (string.Equals(twoFactorMethod, "recovery", StringComparison.Ordinal))
+            return;
 
         busy = true;
         try
@@ -1128,7 +1222,78 @@
         twoFactorCode = "";
         error = null;
         await PersistTwoFactorChallengeAsync();
-        await ResendTwoFactor();
+        if (!string.Equals(method, "recovery", StringComparison.Ordinal))
+            await ResendTwoFactor();
+    }
+
+    async Task CopyRecoveryCodes()
+    {
+        if (Auth.LastRecoveryCodes is not { Count: > 0 })
+            return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", string.Join(Environment.NewLine, Auth.LastRecoveryCodes));
+            _recoveryCopied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _recoveryCopied = false;
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    async Task ShowSessions()
+    {
+        _showSessions = true;
+        sessionsError = null;
+        sessionsMessage = null;
+        var list = await Auth.GetSessionsAsync();
+        _sessions.Clear();
+        _sessions.AddRange(list);
+    }
+
+    async Task RevokeSession(string id)
+    {
+        sessionsError = null;
+        sessionsMessage = null;
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.RevokeSessionAsync(id);
+            if (!ok)
+            {
+                sessionsError = err ?? "Could not sign out that device.";
+                return;
+            }
+            sessionsMessage = "Signed out that device.";
+            await ShowSessions();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task RevokeOtherSessions()
+    {
+        sessionsError = null;
+        sessionsMessage = null;
+        busy = true;
+        try
+        {
+            var (ok, err) = await Auth.RevokeOtherSessionsAsync();
+            if (!ok)
+            {
+                sessionsError = err ?? "Could not sign out other devices.";
+                return;
+            }
+            sessionsMessage = "Other devices must sign in again. Notes on those devices stay put.";
+            await ShowSessions();
+        }
+        finally
+        {
+            busy = false;
+        }
     }
 
     async Task CancelTwoFactor()

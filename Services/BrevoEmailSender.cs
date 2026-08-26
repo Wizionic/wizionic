@@ -63,38 +63,32 @@ public class BrevoEmailSender : IEmailSender
         return string.IsNullOrWhiteSpace(key) ? null : key.Trim();
     }
 
-    public async Task SendLoginEmailAsync(string toEmail, string loginCode, string magicLinkUrl)
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(ReadApiKeyFromEnv()) && !string.IsNullOrWhiteSpace(_options.From);
+
+    public Task<bool> SendLoginEmailAsync(string toEmail, string loginCode)
+    {
+        var (text, html) = LoginEmailContent.Build(loginCode);
+        return SendAsync(toEmail, LoginEmailContent.Subject, text, html, "login");
+    }
+
+    public Task<bool> SendSecurityNoticeAsync(string toEmail, string subject, string textBody, string htmlBody) =>
+        SendAsync(toEmail, subject, textBody, htmlBody, "security");
+
+    private async Task<bool> SendAsync(string toEmail, string subject, string textBody, string htmlBody, string kind)
     {
         string? apiKey = ReadApiKeyFromEnv();
-
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(_options.From))
         {
-            _logger.LogWarning("[BrevoEmailSender] BREVO_API_KEY not configured; login email not sent.");
-            return;
+            _logger.LogWarning("[BrevoEmailSender] Not configured; {Kind} email not sent.", kind);
+            return false;
         }
-
-        if (string.IsNullOrWhiteSpace(_options.From))
-        {
-            _logger.LogWarning("[BrevoEmailSender] No From address configured. Cannot send email to {Email}.", toEmail);
-            return;
-        }
-
-        _logger.LogInformation("[BrevoEmailSender] Sending login email via Brevo HTTP API.");
-
-        var (textBody, htmlBody) = LoginEmailContent.Build(loginCode, magicLinkUrl);
 
         var payload = new
         {
-            sender = new
-            {
-                name = _options.SenderName,
-                email = _options.From
-            },
-            to = new[]
-            {
-                new { email = toEmail }
-            },
-            subject = LoginEmailContent.Subject,
+            sender = new { name = _options.SenderName, email = _options.From },
+            to = new[] { new { email = toEmail } },
+            subject,
             htmlContent = htmlBody,
             textContent = textBody
         };
@@ -102,20 +96,17 @@ public class BrevoEmailSender : IEmailSender
         try
         {
             var client = _httpFactory.CreateClient("brevo");
-
             using var request = new HttpRequestMessage(HttpMethod.Post, "smtp/email")
             {
                 Content = JsonContent.Create(payload)
             };
             request.Headers.Add("api-key", apiKey);
-            // 'accept' and 'content-type' are handled by JsonContent + defaults on the named client
 
             var response = await client.SendAsync(request);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
             {
-                // Brevo typically returns 201 with something like {"messageId": "..."}
                 string? messageId = null;
                 try
                 {
@@ -125,30 +116,18 @@ public class BrevoEmailSender : IEmailSender
                 }
                 catch { /* best effort */ }
 
-                _logger.LogInformation("Login email sent via Brevo (messageId: {MessageId})", messageId ?? "(none)");
+                _logger.LogInformation("{Kind} email sent via Brevo (messageId: {MessageId})", kind, messageId ?? "(none)");
+                return true;
             }
-            else
-            {
-                _logger.LogError("[BrevoEmailSender] Brevo API returned {Status} for {Email}. Body: {Body}", (int)response.StatusCode, toEmail, responseBody);
 
-                // Common Brevo errors: 401 unauthorized (bad key), 400 (unverified sender, invalid payload), 422, etc.
-                if ((int)response.StatusCode == 401 || responseBody.Contains("unauthorized", StringComparison.OrdinalIgnoreCase) || responseBody.Contains("invalid api key", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("[BrevoEmailSender] Authentication failed (401). Check that BREVO_API_KEY is a valid Brevo v3 API key (starts with xkeysib- usually) and has the 'Transactional' permission.");
-                }
-                else if (responseBody.Contains("verified", StringComparison.OrdinalIgnoreCase) || responseBody.Contains("sender", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("[BrevoEmailSender] Sender address '{From}' may not be verified in your Brevo account. Verify the domain or single address in Brevo dashboard.", _options.From);
-                }
-
-                // Throw so the caller can surface a useful error (same behavior as the SMTP sender)
-                throw new InvalidOperationException($"Brevo email send failed with status {(int)response.StatusCode}: {responseBody}");
-            }
+            _logger.LogError("[BrevoEmailSender] Brevo API returned {Status} for {Kind} to {Email}. Body: {Body}",
+                (int)response.StatusCode, kind, toEmail, responseBody);
+            return false;
         }
-        catch (Exception ex) when (ex is not InvalidOperationException)
+        catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send login email to {Email} via Brevo HTTP API", toEmail);
-            throw;
+            _logger.LogError(ex, "Failed to send {Kind} email to {Email} via Brevo HTTP API", kind, toEmail);
+            return false;
         }
     }
 }

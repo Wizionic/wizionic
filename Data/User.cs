@@ -46,4 +46,15 @@ public class User
     /// Future admin flag. Defaults to false for all existing and new users.
     /// </summary>
     public bool IsAdmin { get; set; }
+
+    /// <summary>UTC until which password/code attempts are rejected. Null when not locked.</summary>
+    public DateTime? LockoutUntil { get; set; }
+
+    public int FailedAuthCount { get; set; }
+
+    /// <summary>JSON array of SHA-256 hex hashes of remaining 2FA recovery codes.</summary>
+    public string? RecoveryCodesJson { get; set; }
+
+    public ICollection<AuthSession> Sessions { get; set; } = new List<AuthSession>();
+    public ICollection<UserDevice> Devices { get; set; } = new List<UserDevice>();
 }

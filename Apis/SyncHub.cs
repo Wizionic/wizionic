@@ -1,3 +1,4 @@
+using App.Core.Auth;
 using App.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -37,10 +38,12 @@ namespace App.Apis;
 public class SyncHub : Hub
 {
     private readonly DevicePresenceService _presence;
+    private readonly AuthSessionService _sessions;
 
-    public SyncHub(DevicePresenceService presence)
+    public SyncHub(DevicePresenceService presence, AuthSessionService sessions)
     {
         _presence = presence;
+        _sessions = sessions;
     }
 
     private string? GetUserId() =>
@@ -96,6 +99,9 @@ public class SyncHub : Hub
         var userId = GetUserId();
         var email = GetEmail();
         var connId = Context.ConnectionId;
+
+        if (!await DeviceMaySyncAsync(deviceId))
+            throw new HubException("This device needs to sign in before it can sync.");
 
         if (!string.IsNullOrWhiteSpace(deviceId))
             Context.Items["DeviceId"] = deviceId;
@@ -205,5 +211,18 @@ public class SyncHub : Hub
             // _hub.On<string, string, string>("ReceiveSignaling", ...) handler.
             await Clients.Client(connId).SendAsync("ReceiveSignaling", fromDeviceId, messageType, payloadJson);
         }
+    }
+
+    private async Task<bool> DeviceMaySyncAsync(string? deviceId)
+    {
+        var sid = AuthSessionService.ReadSid(Context.User);
+        if (string.IsNullOrEmpty(sid))
+            return true;
+
+        var session = await _sessions.FindValidAsync(sid);
+        if (session == null)
+            return true;
+
+        return AuthSessionService.DeviceMayUseSession(session, deviceId);
     }
 }

@@ -86,6 +86,7 @@ builder.Services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Ser
 builder.Services.AddScoped<WasmStorageQuotaService>();
 builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
 // Singleton auth so all stores share one identity/prefix (multi-user isolation).
+builder.Services.AddSingleton<IClientDeviceId, WasmClientDeviceId>();
 builder.Services.AddSingleton<ChatAuthService>();
 builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 builder.Services.AddScoped<WasmCryptoService>();
