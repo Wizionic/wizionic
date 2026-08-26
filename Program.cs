@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using App.Shared.Services;
 using App.Services.OAuth;
@@ -84,6 +85,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Keys are now per-user via ProviderKeyService (WASM clients call providers directly; server only proxies tools + serves keys).
 
 builder.Services.AddScoped<MagicLinkService>();
+builder.Services.AddScoped<AuthSessionService>();
+builder.Services.AddScoped<UserDeviceService>();
+builder.Services.AddSingleton<AuthThrottleService>();
+builder.Services.AddSingleton<HaveIBeenPwnedService>();
 builder.Services.Configure<TwilioOptions>(builder.Configuration.GetSection(TwilioOptions.SectionName));
 builder.Services.PostConfigure<TwilioOptions>(opts =>
 {
@@ -119,8 +124,16 @@ builder.Services.AddHttpClient("brevo", client =>
     client.BaseAddress = new Uri("https://api.brevo.com/v3/");
     client.DefaultRequestHeaders.Add("accept", "application/json");
 });
+builder.Services.AddHttpClient("pwned", client =>
+{
+    client.BaseAddress = new Uri("https://api.pwnedpasswords.com/");
+    client.Timeout = TimeSpan.FromSeconds(3);
+    client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Wizionic");
+});
 
-builder.Services.AddScoped<IEmailSender, BrevoEmailSender>();
+builder.Services.AddScoped<BrevoEmailSender>();
+builder.Services.AddScoped<EmailSender>();
+builder.Services.AddScoped<IEmailSender, FallbackEmailSender>();
 
 // Force SmtpUser / SmtpPass from environment variables (Email__SmtpUser / Email__SmtpPass)
 // when those variables are defined in the process environment. This ensures the values
@@ -281,10 +294,18 @@ builder.Services.AddAuthentication("AppAuth")
         // email clicks (cross-site top-level navigation) still work while protecting against CSRF on APIs.
         options.Cookie.HttpOnly = true;
         // Development and local homeserver use plain http — Secure cookies would never be stored.
-        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() || homeserverHttpCookies
-            ? CookieSecurePolicy.SameAsRequest
-            : CookieSecurePolicy.Always;
+        var cookieAlwaysSecure = !(builder.Environment.IsDevelopment() || homeserverHttpCookies);
+        options.Cookie.SecurePolicy = cookieAlwaysSecure
+            ? CookieSecurePolicy.Always
+            : CookieSecurePolicy.SameAsRequest;
         options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.Path = "/";
+        if (cookieAlwaysSecure)
+        {
+            // __Host- requires Secure, Path=/, and no Domain. One-time re-login on the public site
+            // after this deploy; notes stay on the device and the same encryption key is returned.
+            options.Cookie.Name = "__Host-AppAuth";
+        }
 
         // WASM HttpClient calls /api/* with fetch; a 302 to "/" is followed and returns HTML,
         // which then crashes JSON parsing during WASM startup. APIs get 401/403 instead.
@@ -315,12 +336,53 @@ builder.Services.AddAuthentication("AppAuth")
 
                 ctx.Response.Redirect(ctx.RedirectUri);
                 return Task.CompletedTask;
+            },
+            OnValidatePrincipal = async ctx =>
+            {
+                var sessions = ctx.HttpContext.RequestServices.GetRequiredService<AuthSessionService>();
+                var sid = AuthSessionService.ReadSid(ctx.Principal);
+                if (string.IsNullOrEmpty(sid))
+                {
+                    await sessions.UpgradeLegacyCookieAsync(ctx);
+                    return;
+                }
+
+                var session = await sessions.FindValidAsync(sid);
+                if (session == null)
+                {
+                    ctx.RejectPrincipal();
+                    await ctx.HttpContext.SignOutAsync("AppAuth");
+                    return;
+                }
+
+                await sessions.TouchAsync(session);
             }
         };
     });
 
 builder.Services.AddAuthorization();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (ctx, token) =>
+    {
+        ctx.HttpContext.Response.ContentType = "application/json";
+        await ctx.HttpContext.Response.WriteAsync(
+            """{"success":false,"message":"Too many attempts. Try again in a few minutes."}""",
+            token);
+    };
+    options.AddPolicy("auth", httpContext =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(15),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
 
 builder.Services.AddSignalR();
 
@@ -369,8 +431,25 @@ app.UseForwardedHeaders();
     scope.ServiceProvider.GetRequiredService<AiProviderProxyService>().LogStartupDiagnostics();
 }
 
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        var headers = context.Response.Headers;
+        headers["X-Content-Type-Options"] = "nosniff";
+        headers["X-Frame-Options"] = "DENY";
+        headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        headers["Permissions-Policy"] = "camera=(), geolocation=()";
+        headers["Content-Security-Policy"] =
+            "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
+        return Task.CompletedTask;
+    });
+    await next();
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 using (var scope = app.Services.CreateScope())
 {
@@ -591,44 +670,17 @@ app.MapMethods("/install.ps1", new[] { "GET", "HEAD" }, (HttpContext ctx) =>
     return Results.File(safePath, contentType, fileDownloadName: "install.ps1");
 });
 
-app.MapGet("/magic-login", async (HttpContext ctx, string token, MagicLinkService magicLinks, TwoFactorAuthService twoFactor) =>
+app.MapGet("/magic-login", (HttpContext ctx) =>
 {
-    var user = await magicLinks.FindByMagicTokenAsync(token);
-
-    if (user == null)
-    {
-        ctx.Response.Redirect("/");
-        return;
-    }
-
-    // 2FA accounts: the email link only completes a password-verified challenge.
-    if (user.TwoFactorEnabled && !twoFactor.HasLiveChallenge(user))
-    {
-        ctx.Response.Redirect("/?passwordRequired=1");
-        return;
-    }
-
-    var ready = await magicLinks.ConsumeLoginTokenAsync(user);
-    if (ready == null)
-    {
-        ctx.Response.Redirect("/");
-        return;
-    }
-
-    twoFactor.ClearChallenge(ready);
-    await twoFactor.PersistAsync();
-    await AuthSignInHelper.SignInUserAsync(ctx, ready);
-
-    // After successful magic-link sign-in, land on "/" so the WASM landing page can
-    // immediately show the "Logged in as ..." state (with buttons to chat/settings).
-    // The user then explicitly chooses to go to chat or settings.
-    ctx.Response.Redirect("/");
-});
+    // Do not consume a code here. Email scanners and the wrong app/browser used to
+    // hit this URL. Sign-in is always "enter the code in the app or site."
+    ctx.Response.Redirect("/?enterCode=1");
+}).RequireRateLimiting("auth");
 
 
-app.MapGet("/logout", async (HttpContext ctx) =>
+app.MapGet("/logout", async (HttpContext ctx, AuthSessionService sessions) =>
 {
-    await ctx.SignOutAsync("AppAuth");
+    await AuthSignInHelper.SignOutUserAsync(ctx, sessions);
     ctx.Response.Redirect("/");
 });
 

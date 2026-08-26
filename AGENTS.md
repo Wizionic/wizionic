@@ -50,7 +50,7 @@ Keep settings and setup **short**. Labels and a one-line lead are enough; proced
 
 - No unit tests — manual validation via running app is the primary testing approach.
 - Framework: .NET 10 · Blazor Web App (Auto render mode) · SQLite via EF Core · SignalR · Microsoft.Extensions.AI
-- Cookie auth uses 10-year sliding expiration with Data Protection keys in SQLite (survives restarts).
+- Cookie auth uses 10-year sliding expiration with Data Protection keys in SQLite (survives restarts). Sessions are server-side and revocable; the per-user encryption key is never rotated.
 - Content encryption: metadata (titles/dates) stored cleartext for fast sidebar listing; message/note bodies encrypted before any persistence.
 - Add migrations after every model change in Core entities or DbContext.
 

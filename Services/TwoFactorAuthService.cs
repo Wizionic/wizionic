@@ -41,6 +41,8 @@ public sealed class TwoFactorAuthService
         var methods = new List<string> { "email" };
         if (SmsAvailable && !string.IsNullOrEmpty(user.TwoFactorPhoneE164))
             methods.Add("sms");
+        if (RecoveryCodeService.RemainingCount(user) > 0)
+            methods.Add("recovery");
         return methods;
     }
 
@@ -99,11 +101,11 @@ public sealed class TwoFactorAuthService
 
         if (method == "email")
         {
-            var code = await _magic.CreateMagicLinkTokenAsync(user.Email);
-            var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
-            var magicLink = $"{baseUrl}/magic-login?token={Uri.EscapeDataString(code)}";
-            await _email.SendLoginEmailAsync(user.Email, code, magicLink);
-            return (true, null);
+            var code = await _magic.CreateLoginCodeAsync(user.Email);
+            var sent = await _email.SendLoginEmailAsync(user.Email, code);
+            return sent
+                ? (true, null)
+                : (false, "Could not send an email code. Try again in a moment.");
         }
 
         return (false, "Unknown verification method.");
@@ -128,6 +130,14 @@ public sealed class TwoFactorAuthService
             return ready != null
                 ? (true, null)
                 : (false, "Incorrect or expired code.");
+        }
+
+        if (method == "recovery")
+        {
+            if (!RecoveryCodeService.TryConsume(user, code))
+                return (false, "Incorrect or expired code.");
+            await _db.SaveChangesAsync();
+            return (true, null);
         }
 
         return (false, "Unknown verification method.");
@@ -167,7 +177,7 @@ public sealed class TwoFactorAuthService
         if (string.IsNullOrWhiteSpace(method))
             return null;
         var value = method.Trim().ToLowerInvariant();
-        return value is "sms" or "email" ? value : null;
+        return value is "sms" or "email" or "recovery" ? value : null;
     }
 
     public static string? NormalizeE164(string? raw)

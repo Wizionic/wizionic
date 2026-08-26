@@ -51,10 +51,10 @@ App/
 ## Authentication & Encryption
 
 ### Sign-in required
-- App features (chat, notes, gallery, calendar, tools, settings, local AI, sync) are unavailable until the user has an account. The first successful magic-link for a new email creates the account.
-- User requests magic link → email via Brevo → `/magic-login?token=...` sets a **persistent** `AppAuth` cookie (survives browser restarts; renewed on activity via sliding expiration; cleared only on explicit sign-out). Password and optional 2FA are alternatives.
-- WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie sent automatically, same origin).
-- Per-user **server encryption key** (random, protected at rest in SQLite via ASP.NET Data Protection).
+- App features (chat, notes, gallery, calendar, tools, settings, local AI, sync) are unavailable until the user has an account. The first successful **login code** for a new email creates the account (not on the request itself).
+- User requests a login code → email via Brevo (SMTP fallback) → type the 10-character code in the app or site. `/magic-login` does **not** consume a token (wrong-app clicks and mail scanners). Password and optional 2FA are alternatives. Recovery codes are shown once when 2FA is enabled. A confirmed device is remembered for 30 days.
+- Persistent cookie (`AppAuth`, or `__Host-AppAuth` on public HTTPS) with a **server-side session** row (revocable). Sliding 10-year expiry; no idle logout. Password change and “sign out other devices” revoke other sessions. Existing cookies are upgraded, not rejected.
+- Per-user **encryption key** is generated once and never rotated on login, password change, or session revoke. WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie + `X-Wizionic-Device-Id`). A bound session used from a different device must sign in again before it can fetch the key or join sync; old clients that omit the header still work.
 - Data namespace: `u-{userId}-`. Signed-out UI prefs may still use a historical `wasmchat-` prefix so they never land on authenticated keys.
 
 ### At-rest encryption

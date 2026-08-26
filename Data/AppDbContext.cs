@@ -14,6 +14,9 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<UserProviderKey> ProviderKeys => Set<UserProviderKey>();
     public DbSet<OAuthProvider> OAuthProviders => Set<OAuthProvider>();
     public DbSet<Connector> Connectors => Set<Connector>();
+    public DbSet<AuthSession> AuthSessions => Set<AuthSession>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<PendingLoginCode> PendingLoginCodes => Set<PendingLoginCode>();
 
     /// <summary>
     /// ASP.NET DataProtection stores its key rings (XML) here. The table is created by a migration.
@@ -35,6 +38,33 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
 
         modelBuilder.Entity<User>()
             .HasIndex(u => u.TwoFactorChallengeHash);
+
+        modelBuilder.Entity<AuthSession>()
+            .HasIndex(s => s.SessionHash)
+            .IsUnique();
+
+        modelBuilder.Entity<AuthSession>()
+            .HasIndex(s => new { s.UserId, s.RevokedAt });
+
+        modelBuilder.Entity<AuthSession>()
+            .HasOne(s => s.User)
+            .WithMany(u => u.Sessions)
+            .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserDevice>()
+            .HasIndex(d => new { d.UserId, d.DeviceId })
+            .IsUnique();
+
+        modelBuilder.Entity<UserDevice>()
+            .HasOne(d => d.User)
+            .WithMany(u => u.Devices)
+            .HasForeignKey(d => d.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<PendingLoginCode>()
+            .HasIndex(p => p.Email)
+            .IsUnique();
 
         modelBuilder.Entity<UserProviderKey>()
             .HasOne(k => k.User)

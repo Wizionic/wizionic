@@ -35,9 +35,15 @@ public class EmailOptions
 public interface IEmailSender
 {
     /// <summary>
-    /// Sends the unified login email with a copy/paste code (web + native) and an optional web magic link.
+    /// Sends the login email with a copy/paste code (web + native). No sign-in URL.
+    /// Returns false when the message could not be handed to any provider.
     /// </summary>
-    Task SendLoginEmailAsync(string toEmail, string loginCode, string magicLinkUrl);
+    Task<bool> SendLoginEmailAsync(string toEmail, string loginCode);
+
+    /// <summary>
+    /// Best-effort security notice. Failures are logged; callers must not fail the user action.
+    /// </summary>
+    Task<bool> SendSecurityNoticeAsync(string toEmail, string subject, string textBody, string htmlBody);
 }
 
 /// <summary>
@@ -74,32 +80,33 @@ public class EmailSender : IEmailSender
         }
     }
 
-    public async Task SendLoginEmailAsync(string toEmail, string loginCode, string magicLinkUrl)
-    {
-        if (string.IsNullOrWhiteSpace(_options.SmtpHost) || string.IsNullOrWhiteSpace(_options.From))
-        {
-            _logger.LogWarning("[EmailSender] SMTP not configured; login email not sent.");
-            return;
-        }
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(_options.SmtpHost) && !string.IsNullOrWhiteSpace(_options.From);
 
-        _logger.LogInformation("[EmailSender] SMTP ready to send (host={Host}, port={Port}, hasAuthUser={HasUser}, user=\"{User}\", starttls={Tls})", _options.SmtpHost, _options.SmtpPort, !string.IsNullOrWhiteSpace(_options.SmtpUser), _options.SmtpUser, _options.UseStartTls);
+    public Task<bool> SendLoginEmailAsync(string toEmail, string loginCode)
+    {
+        var (text, html) = LoginEmailContent.Build(loginCode);
+        return SendAsync(toEmail, LoginEmailContent.Subject, text, html, "login");
+    }
+
+    public Task<bool> SendSecurityNoticeAsync(string toEmail, string subject, string textBody, string htmlBody) =>
+        SendAsync(toEmail, subject, textBody, htmlBody, "security");
+
+    private async Task<bool> SendAsync(string toEmail, string subject, string textBody, string htmlBody, string kind)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogWarning("[EmailSender] SMTP not configured; {Kind} email not sent.", kind);
+            return false;
+        }
 
         var message = new MimeMessage();
         message.From.Add(MailboxAddress.Parse(_options.From));
         message.To.Add(MailboxAddress.Parse(toEmail));
-        message.Subject = LoginEmailContent.Subject;
-
-        var (textBody, htmlBody) = LoginEmailContent.Build(loginCode, magicLinkUrl);
-
-        var bodyBuilder = new BodyBuilder
-        {
-            TextBody = textBody,
-            HtmlBody = htmlBody
-        };
-        message.Body = bodyBuilder.ToMessageBody();
+        message.Subject = subject;
+        message.Body = new BodyBuilder { TextBody = textBody, HtmlBody = htmlBody }.ToMessageBody();
 
         using var smtp = new SmtpClient();
-
         try
         {
             var secure = _options.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto;
@@ -115,23 +122,13 @@ public class EmailSender : IEmailSender
 
             await smtp.SendAsync(message);
             await smtp.DisconnectAsync(true);
-
-            _logger.LogInformation("Login email sent to {Email}", toEmail);
+            _logger.LogInformation("{Kind} email sent via SMTP to {Email}", kind, toEmail);
+            return true;
         }
         catch (Exception ex)
         {
-            // For auth failures (535 5.7.8 etc.) this will include the attempted user in preceding log lines.
-            _logger.LogError(ex, "Failed to send login email.");
-
-            // Extra guidance on the console for the common Brevo 535 case.
-            var msg = (ex.InnerException?.ToString() ?? ex.ToString());
-            if (ex is MailKit.Security.AuthenticationException ||
-                msg.Contains("5.7.8") || msg.Contains("Authentication failed") || msg.Contains("535"))
-            {
-                _logger.LogWarning("[EmailSender] SMTP authentication failed (535 5.7.8). Check: 1) the value of $env:Email__SmtpUser (or user-secrets) matches your Brevo SMTP login exactly, 2) the pass is the full generated SMTP key (xsmtpsib-...), 3) you are running the server from a shell where those env vars are defined, 4) the key is still valid in Brevo dashboard.");
-            }
-
-            throw; // Let caller decide (usually surface a friendly error to the UI)
+            _logger.LogError(ex, "Failed to send {Kind} email via SMTP.", kind);
+            return false;
         }
     }
 }

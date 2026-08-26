@@ -14,6 +14,9 @@ public interface IAuthService
     string? TwoFactorPhoneMasked { get; }
     /// <summary>True when the host can send Twilio SMS codes.</summary>
     bool SmsTwoFactorAvailable { get; }
+    bool HasRecoveryCodes { get; }
+    /// <summary>One-time recovery codes from the last 2FA enable. Shown once, then cleared.</summary>
+    IReadOnlyList<string>? LastRecoveryCodes { get; }
     string ServerBaseUrl { get; }
     string SyncHubUrl { get; }
 
@@ -31,6 +34,9 @@ public interface IAuthService
     Task<(bool Success, string? Error)> ConfirmTwoFactorPhoneAsync(string phone, string code);
     Task<(bool Success, string? Error)> RemoveTwoFactorPhoneAsync(string? currentPassword = null);
     Task<(bool Success, string? Error)> VerifyPasswordAsync(string password);
+    Task<IReadOnlyList<AuthSessionInfo>> GetSessionsAsync();
+    Task<(bool Success, string? Error)> RevokeSessionAsync(string sessionId);
+    Task<(bool Success, string? Error)> RevokeOtherSessionsAsync();
     Task SignOutAsync();
     Task<string> GetOrCreateHistoryEncryptionKeyAsync();
     void SignOutLocal();
