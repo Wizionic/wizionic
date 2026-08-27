@@ -144,7 +144,10 @@
                         {
                             <button type="button" class="browser-bookmarks-item"
                                     @onclick="() => OpenBookmarkFromMenu(bm.Url)">
-                                <span class="browser-bookmarks-item-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
+                                @if (!string.IsNullOrWhiteSpace(bm.Title))
+                                {
+                                    <span class="browser-bookmarks-item-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
+                                }
                                 <span class="browser-bookmarks-item-url">@bm.Url</span>
                             </button>
                         }
@@ -252,7 +255,10 @@
                         @oncontextmenu:stopPropagation="true">
                     <img class="browser-bookmarks-bar-icon" src="@BrowserFaviconUrl.Get(bm.Url, bm.IconUrl)" alt="" loading="lazy" draggable="false"
                          onerror="this.dataset.step=(+this.dataset.step||0)+1;var s=+this.dataset.step;if(s===1)this.src='@BrowserFaviconUrl.GetDuckDuckGo(bm.Url)';else if(s===2)this.src='@BrowserFaviconUrl.GetSiteRootIco(bm.Url)';else if(s===3)this.src='@BrowserFaviconUrl.GetGoogle(bm.Url)';else{this.onerror=null;this.style.opacity='0.35';}" />
-                    <span class="browser-bookmarks-bar-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
+                    @if (!string.IsNullOrWhiteSpace(bm.Title))
+                    {
+                        <span class="browser-bookmarks-bar-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
+                    }
                 </button>
             }
             @if (!BookmarksBarItems.Any())
@@ -263,6 +269,10 @@
     }
     <div class="browser-body" id="browser-body" @onclick="() => CloseAllContextMenus()">
         <div class="browser-main-column">
+            @if (_barMenuInsetPx > 0)
+            {
+                <div class="browser-bar-menu-spacer" style="height:@($"{_barMenuInsetPx:F0}px")"></div>
+            }
             <div id="browser-content-host" class="browser-content browser-content-host">
                 @if (_showStartPage)
                 {
@@ -279,7 +289,10 @@
                                     @foreach (var bm in folderBookmarks)
                                     {
                                         <button type="button" class="browser-start-tile" @onclick="() => OpenBookmark(bm.Url)">
-                                            <span class="browser-start-tile-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
+                                            @if (!string.IsNullOrWhiteSpace(bm.Title))
+                                            {
+                                                <span class="browser-start-tile-title">@BrowserPageMetadata.ResolveBookmarkTitle(bm.Title, bm.Url)</span>
+                                            }
                                             <span class="browser-start-tile-url">@bm.Url</span>
                                         </button>
                                     }
@@ -450,6 +463,10 @@
                     }
                     else if (SidePanel.Content == BrowserSidePanelContent.Web)
                     {
+                        @if (_barMenuInsetPx > 0)
+                        {
+                            <div class="browser-bar-menu-spacer" style="height:@($"{_barMenuInsetPx:F0}px")"></div>
+                        }
                         <div id="browser-side-content-host" class="browser-content browser-side-content-host"></div>
                     }
                 </div>
@@ -654,6 +671,8 @@
     private string _newFolderName = "";
 
     private string? _barContextMenuBookmarkId;
+    private double _barMenuInsetPx;
+    private bool _barMenuInsetPending;
     private double _menuAnchorLeft;
     private double _menuAnchorTop;
 
@@ -764,6 +783,35 @@
         {
             _pendingOverlaySync = false;
             await SyncOverlayAsync();
+        }
+
+        if (_barMenuInsetPending)
+        {
+            _barMenuInsetPending = false;
+            await MeasureBarMenuInsetAsync();
+        }
+    }
+
+    private async Task MeasureBarMenuInsetAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_barContextMenuBookmarkId) || _showStartPage)
+            return;
+
+        try
+        {
+            var inset = await JS.InvokeAsync<double?>(
+                "appBrowser.measureBarMenuSpace",
+                ".browser-bookmarks-bar-context-menu",
+                "browser-body");
+            if (inset is > 0)
+            {
+                _barMenuInsetPx = inset.Value + 8;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Browser] bar menu inset measure failed: {ex.Message}");
         }
     }
 
@@ -1505,9 +1553,6 @@
         if (string.IsNullOrWhiteSpace(url))
             return;
 
-        var iconUrl = await CapturePageFaviconAsync(url)
-                      ?? BrowserFaviconUrl.GetCached(url);
-
         if (_bookmarkIsEditMode)
         {
             if (string.IsNullOrWhiteSpace(_editingBookmarkId))
@@ -1517,18 +1562,20 @@
             if (existing == null)
                 return;
 
+            // Editing must not touch the icon — it is captured once, when the bookmark is created.
             var updated = existing with
             {
                 Title = _bookmarkTitle?.Trim() ?? "",
                 Url = url,
-                FolderId = _bookmarkFolderId,
-                IconUrl = iconUrl ?? existing.IconUrl
+                FolderId = _bookmarkFolderId
             };
             await BrowserStore.UpdateBookmarkAsync(updated);
             SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(updated.Id);
         }
         else
         {
+            var iconUrl = await CapturePageFaviconAsync(url)
+                          ?? BrowserFaviconUrl.GetCached(url);
             var added = await BrowserStore.AddBookmarkAsync(url, _bookmarkTitle, _bookmarkFolderId, iconUrl);
             SyncService.ScheduleAutoSyncBookmarkAfterLocalSave(added.Id);
         }
@@ -1551,12 +1598,15 @@
     {
         await SetMenuAnchorAsync(e.ClientX, e.ClientY);
         _barContextMenuBookmarkId = bookmark.Id;
+        _barMenuInsetPending = !_showStartPage;
         StateHasChanged();
     }
 
     private void CloseBarContextMenu()
     {
         _barContextMenuBookmarkId = null;
+        _barMenuInsetPx = 0;
+        _barMenuInsetPending = false;
         RefreshWebViewBounds();
     }
 
