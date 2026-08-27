@@ -99,6 +99,16 @@ window.appBrowser = window.appBrowser || {
         setTimeout(() => sendBounds(), 100);
     },
 
+    measureBarMenuSpace: function (menuSelector, bodyId) {
+        const menu = document.querySelector(menuSelector);
+        const body = document.getElementById(bodyId);
+        if (!menu || !body) return null;
+        const m = menu.getBoundingClientRect();
+        const b = body.getBoundingClientRect();
+        const intoBody = m.bottom - b.top;
+        return intoBody > 0 ? Math.ceil(intoBody) : 0;
+    },
+
     reportBoundsNow: function (mainSelector, sideSelector) {
         if (!this._dotNetRef)
             return;

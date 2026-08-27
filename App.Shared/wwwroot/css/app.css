@@ -1166,6 +1166,12 @@ button.btn-outline-secondary:hover:not(:disabled) {
     outline: 1px dashed var(--color-border);
 }
 
+.browser-bar-menu-spacer {
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    width: 100%;
+}
+
 .browser-bookmarks-bar-context-menu {
     min-width: 120px;
     background: var(--color-chat-bg);
