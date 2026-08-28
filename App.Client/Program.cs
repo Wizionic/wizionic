@@ -56,6 +56,9 @@ builder.Services.AddScoped<App.Core.Lemonade.ILemonadeImageService, App.Shared.S
 builder.Services.AddScoped<App.Core.Lemonade.ILemonadeSpeechService, App.Shared.Services.Lemonade.LemonadeSpeechService>();
 builder.Services.AddScoped<App.Core.Cloud.ICloudImageService, App.Shared.Services.Cloud.CloudImageService>();
 builder.Services.AddScoped<App.Core.Cloud.ICloudSpeechService, App.Shared.Services.Cloud.CloudSpeechService>();
+builder.Services.AddScoped<App.Core.Speech.ISpeechTranscriptionService, App.Shared.Services.Speech.SpeechTranscriptionService>();
+builder.Services.AddScoped<INotesSearchService, App.Shared.Services.NotesSearchService>();
+builder.Services.AddSingleton<INoteAudioStore>(_ => App.Shared.Services.NullNoteAudioStore.Instance);
 builder.Services.AddSingleton<JsSyncPreferencesStore>();
 builder.Services.AddSingleton<ISyncPreferencesStore>(sp => sp.GetRequiredService<JsSyncPreferencesStore>());
 builder.Services.AddSingleton<App.Core.Skills.ISkillStore, App.Shared.Services.Skills.PreferencesSkillStore>();

@@ -16,7 +16,8 @@ public record StorageQuotaSnapshot(
     long ChatHistoryBytes = 0,
     long NotesBytes = 0,
     long GalleryBytes = 0,
-    long OtherBytes = 0);
+    long OtherBytes = 0,
+    long NoteAudioBytes = 0);
 
 public interface IStorageQuotaService
 {

@@ -457,7 +457,10 @@ public sealed class ContextualRequestRouter : IRequestRouter
             || m.Contains("create a notebook") || m.Contains("create notebook")
             || m.Contains("new notebook") || m.Contains("make a notebook")
             || m.Contains("list_note") || m.Contains("add_note") || m.Contains("append_to_note")
-            || m.Contains("list_notebooks") || m.Contains("create_notebook"))
+            || m.Contains("list_notebooks") || m.Contains("create_notebook")
+            || m.Contains("search_notes") || m.Contains("search notes")
+            || m.Contains("find in my notes") || m.Contains("look up in notes")
+            || m.Contains("what did i write") || m.Contains("what did i note"))
             return true;
 
         // List / show entries (often omits the word "note" — e.g. "list entries in Travel Journal")

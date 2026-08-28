@@ -100,6 +100,19 @@
 
     public Task<string> GetText() => QuillInterop.GetTextAsync(JS, _editorElement).AsTask();
 
+    public Task InsertText(string text) => QuillInterop.InsertTextAsync(JS, _editorElement, text ?? "").AsTask();
+
+    public Task InsertHtml(string html) => QuillInterop.InsertHtmlAsync(JS, _editorElement, html ?? "").AsTask();
+
+    public Task InsertSttSeg(string text, double startSeconds, string? audioId, bool newParagraph) =>
+        QuillInterop.InsertSttSegAsync(JS, _editorElement, text ?? "", startSeconds, audioId, newParagraph).AsTask();
+
+    public async Task<(double T, string? Audio)?> GetSttCueAtCursor()
+    {
+        var cue = await QuillInterop.GetSttCueAtCursorAsync(JS, _editorElement);
+        return cue is null ? null : (cue.T, cue.Audio);
+    }
+
     public async ValueTask DisposeAsync()
     {
         _dotNetRef?.Dispose();

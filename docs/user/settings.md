@@ -47,6 +47,8 @@ The Home Server service is separate: it can stay running after you Quit, but it 
 
 Voice mode listens for the wake word, captures until you pause, sends the command, and speaks the reply. By default it then waits for the wake word again so it does not transcribe music or background noise. Optional **Keep listening after a command** allows ~30s of follow-ups without the name. The mic button is still push-to-talk dictation into the box.
 
+**Notes speech-to-text** is the transcription model for the mic on a note (Lemonade Whisper or a cloud STT provider). It is independent of the Chat model profile. Empty = Lemonade’s default STT, then a cloud STT provider if Lemonade has none.
+
 ## About you {#about-you}
 
 Optional name and occupation injected into the system prompt when customization is on. Stored on this device (and synced if you enable settings sync).

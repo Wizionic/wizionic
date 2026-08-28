@@ -4852,6 +4852,140 @@ body .message-bot,
     background: color-mix(in srgb, var(--note-ink, #1f2a37) 12%, transparent);
 }
 
+.note-ai-toolbar-btn.mic-recording {
+    color: #e11d48;
+}
+
+.notes-mic-status {
+    font-size: 0.75em;
+    color: var(--cf-text-muted);
+    padding: 4px 8px 2px;
+}
+
+.notes-mic-status.is-error {
+    color: var(--cf-error-fg, #b91c1c);
+}
+
+.notes-search-wrap {
+    padding: 8px 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.notes-search-label {
+    font-size: 0.8rem;
+    margin: 0;
+}
+
+.notes-search-status {
+    font-size: 0.75em;
+    color: var(--cf-text-muted);
+}
+
+.notes-search-results {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.notes-search-hit {
+    text-align: left;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-surface);
+    color: var(--color-text);
+    border-radius: 8px;
+    padding: 6px 8px;
+    cursor: pointer;
+}
+
+.notes-search-hit-title {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.notes-search-hit-snippet {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--cf-text-muted);
+}
+
+.notes-ask-input {
+    resize: vertical;
+}
+
+.notes-ask-answer {
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    color: var(--color-text);
+}
+
+.note-audio-list {
+    margin-top: 8px;
+}
+
+.note-audio-player {
+    margin-top: 4px;
+}
+
+.note-audio-cues {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.note-audio-cue {
+    font-size: 0.7rem;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--cf-text-muted);
+    border-radius: 999px;
+    padding: 1px 8px;
+    cursor: pointer;
+}
+
+.note-stt-seg {
+    display: inline;
+    cursor: pointer;
+    border-bottom: none;
+    text-decoration: none;
+}
+
+.note-stt-seg:hover {
+    background: color-mix(in srgb, var(--color-accent, #2563eb) 18%, transparent);
+    border-radius: 2px;
+}
+
+.note-audio-player-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.note-audio-tool-btn {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--cf-text-muted);
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.note-audio-delete-btn:hover {
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+
 .note-chat-context-card {
     max-width: 100%;
     width: 100%;

@@ -329,6 +329,273 @@ window.appMicStop = async function () {
     };
 };
 
+// Rolling STT windows (+ optional MediaRecorder archive for MAUI lecture audio).
+window.__appMicRolling = window.__appMicRolling || {
+    stream: null, ctx: null, processor: null, source: null,
+    samples: [], recording: false, inputRate: 48000,
+    windowSamples: 0, overlapSamples: 0, flushedMs: 0,
+    sessionStart: 0, dotNet: null, archive: false,
+    recorder: null, archiveChunks: [], archiveMime: 'audio/webm',
+    silenceMs: 0, hadSpeech: false, pendingParagraph: false
+};
+
+window.appMicRollingStart = async function (dotNetRef, opts) {
+    const state = window.__appMicRolling;
+    if (state.recording) return { ok: true, already: true };
+    opts = opts || {};
+    const windowMs = Math.max(8000, opts.windowMs || 25000);
+    const overlapMs = Math.max(0, opts.overlapMs || 2000);
+    const archive = !!opts.archive;
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+        });
+        state.stream = stream;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx();
+        state.ctx = ctx;
+        state.inputRate = ctx.sampleRate;
+        state.windowSamples = Math.round((windowMs / 1000) * ctx.sampleRate);
+        state.overlapSamples = Math.round((overlapMs / 1000) * ctx.sampleRate);
+        state.samples = [];
+        state.flushedMs = 0;
+        state.sessionStart = Date.now();
+        state.dotNet = dotNetRef;
+        state.archive = archive;
+        state.archiveChunks = [];
+        state.silenceMs = 0;
+        state.hadSpeech = false;
+        state.pendingParagraph = false;
+
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        state.source = source;
+        state.processor = processor;
+        processor.onaudioprocess = function (e) {
+            if (!state.recording) return;
+            const input = e.inputBuffer.getChannelData(0);
+            let sum = 0;
+            for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+            const rms = Math.sqrt(sum / Math.max(1, input.length));
+            const dtMs = (input.length / state.inputRate) * 1000;
+            if (rms >= 0.04) {
+                state.hadSpeech = true;
+                state.silenceMs = 0;
+            } else {
+                state.silenceMs += dtMs;
+            }
+            state.samples.push(new Float32Array(input));
+            let total = 0;
+            for (let i = 0; i < state.samples.length; i++) total += state.samples[i].length;
+            const minPauseSamples = Math.round(2.0 * state.inputRate);
+            const pauseFlush = state.hadSpeech && state.silenceMs >= 3000 && total >= minPauseSamples
+                && total < state.windowSamples;
+            if (pauseFlush)
+                window.__appMicRollingFlush(false, true);
+            else if (total >= state.windowSamples)
+                window.__appMicRollingFlush(false, false);
+        };
+        source.connect(processor);
+        var silent = ctx.createGain();
+        silent.gain.value = 0;
+        processor.connect(silent);
+        silent.connect(ctx.destination);
+
+        if (archive && typeof MediaRecorder !== 'undefined') {
+            const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus'
+                : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+            try {
+                state.recorder = mime
+                    ? new MediaRecorder(stream, { mimeType: mime })
+                    : new MediaRecorder(stream);
+                state.archiveMime = state.recorder.mimeType || mime || 'audio/webm';
+                state.recorder.ondataavailable = function (ev) {
+                    if (ev.data && ev.data.size > 0) state.archiveChunks.push(ev.data);
+                };
+                state.recorder.start(5000);
+            } catch (recErr) {
+                console.warn('MediaRecorder start failed', recErr);
+                state.recorder = null;
+            }
+        }
+
+        state.recording = true;
+        return { ok: true, sampleRate: ctx.sampleRate, archive: !!state.recorder };
+    } catch (e) {
+        console.warn('appMicRollingStart failed', e);
+        await window.appMicRollingCancel();
+        return { ok: false, error: (e && e.message) ? e.message : String(e) };
+    }
+};
+
+window.__appMicRollingFlush = function (finalFlush, pauseFlush) {
+    const state = window.__appMicRolling;
+    if (!state.samples || state.samples.length === 0) return;
+    let total = 0;
+    for (let i = 0; i < state.samples.length; i++) total += state.samples[i].length;
+    if (!finalFlush && !pauseFlush && total < state.windowSamples) return;
+    if (finalFlush && total < Math.round(0.25 * state.inputRate)) {
+        state.samples = [];
+        return;
+    }
+
+    const merged = new Float32Array(total);
+    let offset = 0;
+    for (let i = 0; i < state.samples.length; i++) {
+        merged.set(state.samples[i], offset);
+        offset += state.samples[i].length;
+    }
+
+    const keep = (!pauseFlush && !finalFlush) ? Math.min(state.overlapSamples || 0, merged.length) : 0;
+    if (keep > 0) {
+        const tail = merged.subarray(merged.length - keep);
+        state.samples = [new Float32Array(tail)];
+    } else {
+        state.samples = [];
+    }
+
+    const newParagraph = !!state.pendingParagraph;
+    state.pendingParagraph = !!pauseFlush;
+    state.hadSpeech = false;
+    state.silenceMs = 0;
+
+    const startMs = state.flushedMs;
+    const durationMs = Math.round((merged.length / state.inputRate) * 1000);
+    state.flushedMs = startMs + Math.max(0, durationMs - Math.round((keep / state.inputRate) * 1000));
+
+    const targetRate = 16000;
+    const resampled = window.__appResampleFloat(merged, state.inputRate, targetRate);
+    const wav = window.__appEncodeWav(resampled, targetRate);
+    const b64 = window.__appArrayBufferToBase64(wav.buffer);
+    const dn = state.dotNet;
+    if (dn) {
+        try {
+            return dn.invokeMethodAsync(
+                'OnNotesMicChunk',
+                b64,
+                Math.round((resampled.length / targetRate) * 1000),
+                startMs,
+                newParagraph);
+        } catch (e) { console.warn('OnNotesMicChunk failed', e); }
+    }
+    return Promise.resolve();
+};
+
+window.appMicRollingStop = async function () {
+    const state = window.__appMicRolling;
+    if (!state.recording && (!state.samples || state.samples.length === 0) && !state.recorder) {
+        await window.appMicRollingCancel();
+        return { ok: false, error: 'Not recording.' };
+    }
+    state.recording = false;
+    try { await window.__appMicRollingFlush(true); } catch (e) { }
+
+    let archiveOk = false;
+    const durationMs = Date.now() - (state.sessionStart || Date.now());
+    const mime = state.archiveMime || 'audio/webm';
+    const dn = state.dotNet;
+    const recorder = state.recorder;
+    const chunks = state.archiveChunks || [];
+
+    const finishRecorder = new Promise(function (resolve) {
+        if (!recorder || recorder.state === 'inactive') {
+            resolve();
+            return;
+        }
+        recorder.onstop = function () { resolve(); };
+        try { recorder.stop(); } catch (e) { resolve(); }
+    });
+    await finishRecorder;
+
+    if (dn && chunks.length > 0) {
+        try {
+            const blob = new Blob(chunks, { type: mime });
+            const buf = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            const chunkSize = 196608;
+            const total = Math.max(1, Math.ceil(bytes.length / chunkSize));
+            for (let i = 0; i < total; i++) {
+                const slice = bytes.subarray(i * chunkSize, Math.min(bytes.length, (i + 1) * chunkSize));
+                const copy = new Uint8Array(slice.byteLength);
+                copy.set(slice);
+                const b64 = window.__appArrayBufferToBase64(copy.buffer);
+                await dn.invokeMethodAsync(
+                    'OnNotesMicArchiveChunk', b64, i, i === total - 1, mime, durationMs, bytes.length);
+            }
+            archiveOk = true;
+        } catch (e) {
+            console.warn('archive transfer failed', e);
+        }
+    }
+
+    await window.appMicRollingCancel();
+    return { ok: true, archive: archiveOk, durationMs: durationMs };
+};
+
+window.appMicRollingCancel = async function () {
+    const state = window.__appMicRolling;
+    state.recording = false;
+    try {
+        if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop();
+    } catch (e) { }
+    try {
+        if (state.processor) { state.processor.disconnect(); state.processor.onaudioprocess = null; }
+        if (state.source) state.source.disconnect();
+        if (state.ctx && state.ctx.state !== 'closed') await state.ctx.close();
+        if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+    } catch (e) { }
+    state.processor = null;
+    state.source = null;
+    state.ctx = null;
+    state.stream = null;
+    state.samples = [];
+    state.dotNet = null;
+    state.recorder = null;
+    state.archiveChunks = [];
+};
+
+window.appNotesAudioSeek = function (audioEl, seconds) {
+    if (!audioEl) return;
+    try {
+        audioEl.currentTime = Math.max(0, Number(seconds) || 0);
+        audioEl.play();
+    } catch (e) { }
+};
+
+window.appNotesAudioSeekClip = function (container, clipId, seconds) {
+    if (!container) return;
+    let audio = null;
+    if (clipId)
+        audio = container.querySelector('audio[data-clip-id="' + clipId + '"]');
+    if (!audio)
+        audio = container.querySelector('audio');
+    window.appNotesAudioSeek(audio, seconds);
+};
+
+window.appNotesAudioBindSeek = function (container) {
+    if (!container || container.__notesSeekBound) return;
+    container.__notesSeekBound = true;
+    container.addEventListener('click', function (e) {
+        const seg = e.target && e.target.closest && e.target.closest('.note-stt-seg');
+        if (!seg) return;
+        const t = parseFloat(seg.getAttribute('data-t'));
+        if (isNaN(t)) return;
+        const audioId = seg.getAttribute('data-note-audio');
+        const wrap = seg.closest('.note-entry-wrap') || container;
+        let audio = null;
+        if (audioId)
+            audio = wrap.querySelector('audio[data-clip-id="' + audioId + '"]');
+        if (!audio)
+            audio = wrap.querySelector('audio');
+        if (!audio)
+            audio = container.querySelector('audio');
+        if (!audio) return;
+        window.appNotesAudioSeek(audio, t);
+    });
+};
+
 window.__appArrayBufferToBase64 = window.__appArrayBufferToBase64 || function (buffer) {
     let binary = '';
     const bytes = new Uint8Array(buffer);

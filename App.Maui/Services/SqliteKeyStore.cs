@@ -303,7 +303,8 @@ public class SqliteKeyStore : IKeyStore
             PreferredName = (profile.PreferredName ?? "").Trim(),
             Occupation = (profile.Occupation ?? "").Trim(),
             AssistantName = name,
-            VoiceFollowUpWithoutWake = profile.VoiceFollowUpWithoutWake
+            VoiceFollowUpWithoutWake = profile.VoiceFollowUpWithoutWake,
+            NotesSttModelId = string.IsNullOrWhiteSpace(profile.NotesSttModelId) ? null : profile.NotesSttModelId.Trim()
         };
         var json = JsonSerializer.Serialize(_userProfile);
         await SetItemAsync(UserProfileKey, json, ct);

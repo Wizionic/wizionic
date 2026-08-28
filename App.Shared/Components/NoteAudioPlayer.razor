@@ -1,0 +1,81 @@
+@using App.Core.Storage
+@inject IJSRuntime JS
+
+@if (!string.IsNullOrEmpty(Url))
+{
+    <div class="note-audio-player">
+        <div class="note-audio-player-row">
+            <audio @ref="_audio"
+                   data-clip-id="@Clip?.Id"
+                   src="@Url"
+                   controls
+                   preload="metadata"
+                   style="flex:1;min-width:0;height:32px;"></audio>
+            @if (CanPlayFromCursor)
+            {
+                <button type="button"
+                        class="note-audio-tool-btn"
+                        title="Play from the cursor in this note"
+                        @onclick="PlayFromCursorAsync">
+                    <i class="bi bi-text-indent-left"></i>
+                </button>
+            }
+            @if (CanDelete)
+            {
+                <button type="button"
+                        class="note-audio-tool-btn note-audio-delete-btn"
+                        title="Delete recording (keep the transcript)"
+                        @onclick="DeleteClicked">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            }
+        </div>
+        @if (Cues is { Count: > 0 })
+        {
+            <div class="note-audio-cues">
+                @foreach (var cue in Cues)
+                {
+                    var c = cue;
+                    <button type="button"
+                            class="note-audio-cue"
+                            title="@($"Play from {FormatTime(c.StartSeconds)}")"
+                            @onclick="() => SeekAsync(c.StartSeconds)">
+                        @FormatTime(c.StartSeconds)
+                    </button>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public NoteAudioRef? Clip { get; set; }
+    [Parameter] public string? Url { get; set; }
+    [Parameter] public IReadOnlyList<NoteAudioCue>? Cues { get; set; }
+    [Parameter] public bool CanDelete { get; set; }
+    [Parameter] public bool CanPlayFromCursor { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+    [Parameter] public EventCallback OnPlayFromCursor { get; set; }
+
+    private ElementReference _audio;
+
+    private async Task SeekAsync(double seconds)
+    {
+        try { await JS.InvokeVoidAsync("appNotesAudioSeek", _audio, seconds); }
+        catch { /* player may not be ready */ }
+    }
+
+    private Task PlayFromCursorAsync() => OnPlayFromCursor.InvokeAsync();
+    private Task DeleteClicked() => OnDelete.InvokeAsync();
+
+    public async Task SeekToAsync(double seconds) => await SeekAsync(seconds);
+
+    private static string FormatTime(double seconds)
+    {
+        if (seconds < 0) seconds = 0;
+        var t = TimeSpan.FromSeconds(seconds);
+        return t.TotalHours >= 1
+            ? t.ToString(@"h\:mm\:ss")
+            : t.ToString(@"m\:ss");
+    }
+}

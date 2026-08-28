@@ -72,6 +72,7 @@ public sealed class MauiStorageQuotaService : IStorageQuotaService
         var galleryImages = await _history.SumContentLengthAsync("album_image_content", ct);
         var galleryLegacy = await _history.SumContentLengthAsync("album_content", ct);
         var gallery = galleryImages + galleryLegacy;
+        var noteAudio = await _history.SumContentLengthAsync("note_audio_content", ct);
 
         // On-disk size of the app data DB only (not help_rag.db / other files under AppData).
         long dbBytes = 0;
@@ -85,7 +86,7 @@ public sealed class MauiStorageQuotaService : IStorageQuotaService
 
         // "Used" on the Sync page is live encrypted content so deletes drop immediately.
         // OtherBytes is SQLite file overhead (WAL / freelist) until Compact.
-        var contentSum = chat + notes + gallery;
+        var contentSum = chat + notes + gallery + noteAudio;
         var usage = contentSum;
         var other = Math.Max(0, dbBytes - contentSum);
 
@@ -115,7 +116,7 @@ public sealed class MauiStorageQuotaService : IStorageQuotaService
 
         return new StorageQuotaSnapshot(
             usage, free, Math.Max(limit, 0), source,
-            chat, notes, gallery, other);
+            chat, notes, gallery, other, noteAudio);
     }
 
     public async Task CompactAsync(CancellationToken ct = default)

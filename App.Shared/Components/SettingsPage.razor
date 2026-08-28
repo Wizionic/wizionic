@@ -118,6 +118,15 @@
                 <span class="ollama-toggle-slider"></span>
             </label>
         </div>
+        <label style="margin-top: 0.85rem;" class="help-heading">Notes speech-to-text <HelpGlyph Topic="notes" /></label>
+        <select class="form-select form-select-sm" @bind="notesSttDraft">
+            <option value="">Auto — Lemonade or cloud default</option>
+            @foreach (var m in profileSttOptions)
+            {
+                <option value="@m.Id">@m.Label</option>
+            }
+        </select>
+        <div class="ollama-field-hint" style="margin-top: 0.25rem;">Used by the mic on a note while editing. Independent of the Chat profile.</div>
         <div style="margin-top: 0.75rem;">
             <button type="button" @onclick="SaveProfile" class="btn btn-outline-secondary btn-sm">Save voice settings</button>
         </div>
@@ -866,6 +875,7 @@
     private string profileSttDraft = "";
     private string profileVoiceDraft = "";
     private string profileVisionDraft = "";
+    private string notesSttDraft = "";
     private List<(string Id, string Label)> profileChatOptions = new();
     private List<(string Id, string Label)> profileImageOptions = new();
     private List<(string Id, string Label)> profileEditOptions = new();
@@ -907,6 +917,7 @@
         await KeyStore.LoadAsync();
         systemPromptDraft = KeyStore.GetSystemPrompt();
         profileDraft = KeyStore.GetUserProfile();
+        notesSttDraft = profileDraft.NotesSttModelId ?? "";
         ReloadMemories();
         maxOutputDraft = KeyStore.MaxOutputTokens;
         LoadToolRoutingDraft();
@@ -1534,7 +1545,8 @@
     {
         try
         {
-            await KeyStore.SetUserProfileAsync( profileDraft);
+            profileDraft.NotesSttModelId = string.IsNullOrWhiteSpace(notesSttDraft) ? null : notesSttDraft.Trim();
+            await KeyStore.SetUserProfileAsync(profileDraft);
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Profile);
             await ShowSaveFeedbackAsync("Voice and about-you settings saved.", isError: false);
         }
