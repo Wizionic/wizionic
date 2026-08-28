@@ -1,6 +1,8 @@
+@using App.Core.Browser
 @using App.Core.Help
 @inject IHelpCatalog Catalog
 @inject IHelpOverlay Overlay
+@inject IBrowserOverlaySync BrowserOverlay
 @inject NavigationManager Nav
 
 <div class="help-page">
@@ -17,11 +19,30 @@
     protected override void OnInitialized()
     {
         Overlay.Close();
+        HideBrowserOverlay();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // Re-assert after the DOM pass: the unmounted embedded browser on /chat can
+        // still have in-flight bounds reports that would re-show the native overlay.
+        if (firstRender)
+            HideBrowserOverlay();
     }
 
     private void OnTopicChanged(string id)
     {
         var url = string.IsNullOrWhiteSpace(id) || id == "start" ? "/help" : "/help/" + id;
         Nav.NavigateTo(url, replace: true);
+    }
+
+    private void HideBrowserOverlay()
+    {
+        // On MAUI the embedded browser renders in native WebView overlays above the
+        // Blazor content (MainPage.xaml); they must not cover this page. No-op on WASM.
+        // Never restore them here: restoring would cover settings and other pages.
+        // The EmbeddedBrowser on /chat re-syncs and re-shows the overlay when the user returns.
+        BrowserOverlay.SetMainOverlayVisible(false);
+        BrowserOverlay.SetSideOverlayVisible(false);
     }
 }
