@@ -242,9 +242,13 @@ public static class MauiProgram
 				UseCookies = true,
 				AutomaticDecompression = DecompressionMethods.All
 			};
-			var handler = new PersistCookiesHandler(store)
+			var persist = new PersistCookiesHandler(store)
 			{
 				InnerHandler = inner
+			};
+			var handler = new ClientDeviceHeaderHandler(options.BaseUri, sp.GetService<IClientDeviceId>())
+			{
+				InnerHandler = persist
 			};
 			return new HttpClient(handler)
 			{

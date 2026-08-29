@@ -63,7 +63,7 @@ public class ChatAuthService : IAuthService
 
     public async Task LoadAsync()
     {
-        await AttachDeviceHeadersAsync();
+        await EnsureDeviceIdAsync();
         var result = await TryFetchAuthStateAsync();
         if (result == AuthFetchResult.Success)
         {
@@ -103,7 +103,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var payload = new { Email = email.Trim() };
             var resp = await _http.PostAsJsonAsync("api/auth/request-magic-link", payload);
 
@@ -123,7 +123,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var payload = new { Email = email.Trim(), Code = code.Trim() };
             var resp = await _http.PostAsJsonAsync("api/auth/verify-code", payload);
 
@@ -158,7 +158,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var payload = new { Email = email.Trim(), Password = password, RememberDevice = true };
             var resp = await _http.PostAsJsonAsync("api/auth/login-password", payload);
 
@@ -200,7 +200,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var payload = new { ChallengeId = challengeId, Code = code, Method = method, RememberDevice = true };
             var resp = await _http.PostAsJsonAsync("api/auth/2fa/verify", payload);
 
@@ -454,7 +454,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var resp = await _http.GetAsync("api/auth/sessions");
             if (!resp.IsSuccessStatusCode)
                 return Array.Empty<AuthSessionInfo>();
@@ -471,7 +471,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var resp = await _http.PostAsJsonAsync("api/auth/sessions/revoke", new { Id = sessionId });
             if (resp.IsSuccessStatusCode)
                 return (true, null);
@@ -487,7 +487,7 @@ public class ChatAuthService : IAuthService
     {
         try
         {
-            await AttachDeviceHeadersAsync();
+            await EnsureDeviceIdAsync();
             var resp = await _http.PostAsync("api/auth/sessions/revoke-others", null);
             if (resp.IsSuccessStatusCode)
                 return (true, null);
@@ -675,38 +675,22 @@ public class ChatAuthService : IAuthService
         LastRecoveryCodes = null;
     }
 
-    private async Task AttachDeviceHeadersAsync()
+    /// <summary>
+    /// Warm the cached device id so the first app-origin request can attach headers
+    /// without waiting on JS/storage. The handler, not DefaultRequestHeaders, sends them.
+    /// </summary>
+    private async Task EnsureDeviceIdAsync()
     {
         if (_deviceId is null)
             return;
         try
         {
-            var id = await _deviceId.GetOrCreateAsync();
-            if (string.IsNullOrWhiteSpace(id))
-                return;
-            _http.DefaultRequestHeaders.Remove(ClientDeviceKeys.IdHeader);
-            _http.DefaultRequestHeaders.TryAddWithoutValidation(ClientDeviceKeys.IdHeader, id);
-            var name = await _deviceId.GetNameAsync();
-            _http.DefaultRequestHeaders.Remove(ClientDeviceKeys.NameHeader);
-            // HTTP headers must be ASCII. MAUI default names include "•".
-            var encodedName = EncodeHeaderValue(name);
-            if (!string.IsNullOrWhiteSpace(encodedName))
-                _http.DefaultRequestHeaders.TryAddWithoutValidation(ClientDeviceKeys.NameHeader, encodedName);
+            await _deviceId.GetOrCreateAsync();
         }
         catch
         {
             // Old clients / JS not ready: omit the header rather than blocking login.
         }
-    }
-
-    private static string? EncodeHeaderValue(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-        var trimmed = value.Trim();
-        if (trimmed.Length > 80)
-            trimmed = trimmed[..80];
-        return Uri.EscapeDataString(trimmed);
     }
 
     private record UserMeResponse(

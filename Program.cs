@@ -200,7 +200,12 @@ builder.Services.AddSingleton<App.Core.Browser.IPwaDetector, App.Client.Services
 builder.Services.AddScoped(sp =>
 {
     var navigationManager = sp.GetRequiredService<NavigationManager>();
-    return new HttpClient { BaseAddress = new Uri(navigationManager.BaseUri) };
+    var baseAddress = new Uri(navigationManager.BaseUri);
+    var handler = new ClientDeviceHeaderHandler(baseAddress, sp.GetService<IClientDeviceId>())
+    {
+        InnerHandler = new HttpClientHandler()
+    };
+    return new HttpClient(handler) { BaseAddress = baseAddress };
 });
 builder.Services.AddScoped<ChatAuthService>();
 builder.Services.AddScoped<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
