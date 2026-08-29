@@ -8,6 +8,7 @@
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IAuthService AuthService
+@inject IJSRuntime JS
 @implements IDisposable
 
 <div class="lemonade-page">
@@ -216,33 +217,36 @@
             }
         </div>
 
-        <!-- Right: Lemonade UI embed -->
-        <div class="lemonade-embed-pane">
-            @if (CanEmbedLocalServer)
-            {
-                <div class="lemonade-embed-frame-wrap">
-                    <SimpleUrlEmbed @key="embedKey" Url="@embedUrl" Title="Lemonade Server UI" />
-                </div>
-            }
-            else
-            {
-                <div class="lemonade-embed-fallback">
-                    <p>
-                        This page is served over HTTPS, so the browser blocks embedding
-                        <code>http://localhost</code> (mixed content).
-                    </p>
-                    <p>
-                        Use the <strong>desktop app</strong>, or open Lemonade directly:
-                    </p>
-                    @* data-enhance-nav=false: never let Blazor treat the local URL as an in-app route *@
-                    <a class="btn btn-primary"
-                       href="@embedUrl"
-                       target="_blank"
-                       rel="noopener noreferrer"
-                       data-enhance-nav="false">Open @embedUrl</a>
-                </div>
-            }
-        </div>
+        @if (!HideLemonadeUiEmbed)
+        {
+            <!-- Right: Lemonade UI embed (desktop only — mobile WebViews get sent to the store) -->
+            <div class="lemonade-embed-pane">
+                @if (CanEmbedLocalServer)
+                {
+                    <div class="lemonade-embed-frame-wrap">
+                        <SimpleUrlEmbed @key="embedKey" Url="@embedUrl" Title="Lemonade Server UI" />
+                    </div>
+                }
+                else
+                {
+                    <div class="lemonade-embed-fallback">
+                        <p>
+                            This page is served over HTTPS, so the browser blocks embedding
+                            <code>http://localhost</code> (mixed content).
+                        </p>
+                        <p>
+                            Use the <strong>desktop app</strong>, or open Lemonade directly:
+                        </p>
+                        @* data-enhance-nav=false: never let Blazor treat the local URL as an in-app route *@
+                        <a class="btn btn-primary"
+                           href="@embedUrl"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           data-enhance-nav="false">Open @embedUrl</a>
+                    </div>
+                }
+            </div>
+        }
     </div>
 </div>
 
@@ -275,7 +279,19 @@
     string embedUrl = "http://localhost:13305";
 
     /// <summary>
-    /// MAUI can always try the embed. WASM/host only when the page itself is not HTTPS
+    /// Lemonade's bundled UI redirects phones to the Play Store / App Store.
+    /// Never mount the native WebView or iframe on Android, iOS, or iPad.
+    /// WASM/host starts hidden until JS reports a desktop OS.
+    /// </summary>
+    bool HideLemonadeUiEmbed =
+        OperatingSystem.IsAndroid()
+        || OperatingSystem.IsIOS()
+        || !AppEnvironment.IsMaui;
+
+    bool _embedMobileChecked;
+
+    /// <summary>
+    /// MAUI desktop can always try the embed. WASM/host only when the page itself is not HTTPS
     /// (or Base URL is HTTPS) to avoid mixed-content blocks. Never embed when the target
     /// is not a valid absolute http(s) URL — relative values would hit wizionic.com routes
     /// and surface the app NotFound page.
@@ -284,6 +300,8 @@
     {
         get
         {
+            if (HideLemonadeUiEmbed)
+                return false;
             if (AppEnvironment.IsMaui)
                 return true;
             if (!Uri.TryCreate(embedUrl, UriKind.Absolute, out var target)
@@ -309,6 +327,29 @@
         SettingsSync.OnSettingsChanged += OnSettingsSynced;
         SyncService.OnSettingsChanged += OnSettingsSynced;
     }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _embedMobileChecked || AppEnvironment.IsMaui)
+            return;
+
+        _embedMobileChecked = true;
+        try
+        {
+            var os = await JS.InvokeAsync<string>("appClientOs");
+            HideLemonadeUiEmbed = IsMobileClientOs(os);
+        }
+        catch
+        {
+            // JS missing: keep the embed hidden rather than sending a phone to the store.
+            HideLemonadeUiEmbed = true;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    static bool IsMobileClientOs(string? os) =>
+        os is "android" or "ios" or "ipad";
 
     void ReloadFromKeyStore()
     {

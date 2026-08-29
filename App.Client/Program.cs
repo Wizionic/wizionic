@@ -15,8 +15,19 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 
+// Device id before HttpClient so ClientDeviceHeaderHandler can resolve it.
+builder.Services.AddSingleton<IClientDeviceId, WasmClientDeviceId>();
 // Singleton HttpClient + auth so keystore/settings can share one multi-user storage prefix.
-builder.Services.AddSingleton(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+// Device id headers are attached only for this origin (see ClientDeviceHeaderHandler).
+builder.Services.AddSingleton(sp =>
+{
+    var baseAddress = new Uri(builder.HostEnvironment.BaseAddress);
+    var handler = new ClientDeviceHeaderHandler(baseAddress, sp.GetService<IClientDeviceId>())
+    {
+        InnerHandler = new HttpClientHandler()
+    };
+    return new HttpClient(handler) { BaseAddress = baseAddress };
+});
 builder.Services.AddSingleton<ThemeService>();
 builder.Services.AddSingleton<SidebarState>();
 builder.Services.AddSingleton<ISidebarState>(sp => sp.GetRequiredService<SidebarState>());
@@ -89,7 +100,6 @@ builder.Services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Ser
 builder.Services.AddScoped<WasmStorageQuotaService>();
 builder.Services.AddScoped<IStorageQuotaService>(sp => sp.GetRequiredService<WasmStorageQuotaService>());
 // Singleton auth so all stores share one identity/prefix (multi-user isolation).
-builder.Services.AddSingleton<IClientDeviceId, WasmClientDeviceId>();
 builder.Services.AddSingleton<ChatAuthService>();
 builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());
 builder.Services.AddScoped<WasmCryptoService>();
