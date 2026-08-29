@@ -403,6 +403,10 @@ public static class MauiProgram
 		services.AddSingleton<App.Core.Lemonade.ILemonadeSpeechService, App.Shared.Services.Lemonade.LemonadeSpeechService>();
 		services.AddSingleton<App.Core.Cloud.ICloudImageService, App.Shared.Services.Cloud.CloudImageService>();
 		services.AddSingleton<App.Core.Cloud.ICloudSpeechService, App.Shared.Services.Cloud.CloudSpeechService>();
+		services.AddSingleton<App.Core.Speech.ISpeechTranscriptionService, App.Shared.Services.Speech.SpeechTranscriptionService>();
+		services.AddSingleton<INotesSearchService, App.Shared.Services.NotesSearchService>();
+		services.AddScoped<SqliteNoteAudioStore>();
+		services.AddScoped<INoteAudioStore>(sp => sp.GetRequiredService<SqliteNoteAudioStore>());
 		services.AddSingleton<IClientDeviceId, MauiClientDeviceId>();
 		services.AddSingleton<ChatAuthService>();
 		services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuthService>());

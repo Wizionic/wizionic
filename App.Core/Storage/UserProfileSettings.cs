@@ -14,13 +14,20 @@ public sealed class UserProfileSettings
     /// </summary>
     public bool VoiceFollowUpWithoutWake { get; set; }
 
+    /// <summary>
+    /// Catalog id for Notes dictation (<c>lemonade/{name}</c> or <c>cloud/{provider}</c> / <c>cloud/{provider}/{model}</c>).
+    /// Empty = Lemonade default STT, then first cloud STT provider.
+    /// </summary>
+    public string? NotesSttModelId { get; set; }
+
     public UserProfileSettings Clone() => new()
     {
         CustomizationEnabled = CustomizationEnabled,
         PreferredName = PreferredName,
         Occupation = Occupation,
         AssistantName = AssistantName,
-        VoiceFollowUpWithoutWake = VoiceFollowUpWithoutWake
+        VoiceFollowUpWithoutWake = VoiceFollowUpWithoutWake,
+        NotesSttModelId = NotesSttModelId
     };
 }
 

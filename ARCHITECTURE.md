@@ -101,14 +101,17 @@ Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore save
 
 | Piece | Detail |
 |-------|--------|
-| **UI** | `NotesPage.razor` (`/notes`) — notebooks, Quill HTML entries, floating add; click-to-edit; last notebook restored on this device |
+| **UI** | `NotesPage.razor` (`/notes`) — notebooks, Quill HTML entries, floating add; click-to-edit; last notebook restored on this device; sidebar search / Ask my notes |
 | **Store** | `INoteStore` — WASM IndexedDB / MAUI SQLite; bodies AES-GCM encrypted; titles cleartext |
+| **Dictation** | Mic on the Quill toolbar; rolling ~25s STT windows via `ISpeechTranscriptionService`. Model is `UserProfileSettings.NotesSttModelId` (Settings → Voice), not the Chat profile STT slot |
+| **Lecture audio** | MAUI only: `INoteAudioStore` encrypted opus/webm blobs in `note_audio_*` tables. Device-local (not WebRTC). WASM is dictation-only |
 | **Theme** | Note paper and default ink follow the app theme; authored inline colors stay as written |
 | **Chat handoff** | “Add to notes” from chat; Notes → Chat “Edit with AI” (`INotesChatHandoff`); optional images via `IConversationMediaBuffer` |
-| **AI tools** | `NotesToolModule`: `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry`, `update_note_entry` |
+| **AI tools** | `NotesToolModule`: `search_notes`, `list_notebooks`, `list_note_entries`, `create_notebook`, `add_note_entry`, `append_to_note_entry`, `update_note_entry` |
+| **Search** | `INotesSearchService` decrypt-on-search over unlocked notebooks (no plaintext FTS on disk) |
 | **Routing** | Attached when `ContextualRequestRouter.MessageSuggestsNotesTools` (or AI router picks `Notes`) |
 | **Protection** | Password-protected notebooks blocked for tools until unlocked in the UI |
-| **Sync** | Auto-sync after local save via `INotesSyncBridge`; merge via `NoteSyncMerger` (entry LWW) |
+| **Sync** | Auto-sync after local save via `INotesSyncBridge`; merge via `NoteSyncMerger` (entry LWW). Audio bytes do not sync |
 
 ### Gallery (albums + AI tools)
 
@@ -190,6 +193,7 @@ Results are stored as **attachments** on assistant messages (PNG base64). Copy /
 - `ILemonadeSpeechService` — record mic (JS WAV interop) → Lemonade **transcription** model (e.g. Whisper).
 - Mic button on the input toolbar when STT is available (not on pure image models).
 - Transcript fills the chat textarea for send (push-to-talk dictation).
+- Notes uses rolling capture (`appMicRollingStart`) and `ISpeechTranscriptionService` with `NotesSttModelId`.
 
 ### Text-to-speech (TTS)
 

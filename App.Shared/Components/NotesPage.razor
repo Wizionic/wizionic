@@ -1,10 +1,12 @@
 @implements IAsyncDisposable
 @using App.Core.Auth
+@using App.Core.Speech
 @using App.Core.Storage
 @using App.Core.UI
 @using App.Shared.Services
 @using Microsoft.AspNetCore.Components.Routing
 @using System.Text
+@using System.Net
 
 @inject IJSRuntime JS
 @inject NavigationManager Nav
@@ -14,15 +16,78 @@
 @inject ISidebarState SidebarState
 @inject INotesChatHandoff NotesChatHandoff
 @inject IChatPanelState ChatPanel
+@inject ISpeechTranscriptionService Speech
+@inject INoteAudioStore NoteAudio
+@inject INotesSearchService NotesSearch
+@inject IStorageQuotaService Quota
+@inject IKeyStore KeyStore
 
 <WasmSidebarSync />
 
 <div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
     <div class="sidebar">
         <nav class="cf-nav cf-column">
+            <div class="cf-item notes-search-wrap">
+                <label class="notes-search-label help-heading" for="notes-search">Search <HelpGlyph Topic="notes" /></label>
+                <input id="notes-search"
+                       type="search"
+                       class="form-control form-control-sm"
+                       placeholder="Find in notes"
+                       @bind="notesSearchQuery"
+                       @bind:event="oninput"
+                       @bind:after="OnNotesSearchInput"
+                       @onclick:stopPropagation="true" />
+                @if (notesSearchBusy)
+                {
+                    <div class="notes-search-status">Searching…</div>
+                }
+                else if (notesSearchHits.Count > 0)
+                {
+                    <div class="notes-search-results">
+                        @foreach (var hit in notesSearchHits)
+                        {
+                            var h = hit;
+                            <button type="button"
+                                    class="notes-search-hit"
+                                    @onclick="() => OpenSearchHit(h)"
+                                    @onclick:stopPropagation="true">
+                                <span class="notes-search-hit-title">@h.NotebookTitle</span>
+                                <span class="notes-search-hit-snippet">@h.Snippet</span>
+                            </button>
+                        }
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(notesSearchQuery) && notesSearchRan)
+                {
+                    <div class="notes-search-status">No matching notes.</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(KeyStore.LastSelectedModel))
+                {
+                    <textarea class="form-control form-control-sm notes-ask-input"
+                              rows="2"
+                              placeholder="Ask my notes…"
+                              @bind="notesAskText"
+                              @onclick:stopPropagation="true"></textarea>
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm"
+                            disabled="@notesAskBusy"
+                            @onclick="AskMyNotesAsync"
+                            @onclick:stopPropagation="true">
+                        @(notesAskBusy ? "Asking…" : "Ask")
+                    </button>
+                    @if (!string.IsNullOrEmpty(notesAskError))
+                    {
+                        <div class="notes-search-status" style="color:var(--cf-error-fg);">@notesAskError</div>
+                    }
+                    else if (!string.IsNullOrEmpty(notesAskAnswer))
+                    {
+                        <div class="notes-ask-answer">@notesAskAnswer</div>
+                    }
+                }
+            </div>
             <div class="cf-item">
                 <span class="cf-link small">
-                   <h4>Notebooks</h4>
+                   <h4 class="help-heading">Notebooks <HelpGlyph Topic="notes" /></h4>
                     <div class="menu" @onclick:stopPropagation>
                         <button id="notebooks-menu-btn" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleExportAllMenu()" title="Notebook options">⋮</button>
                     </div>
@@ -61,7 +126,7 @@
         </nav>
     </div>
 
-    <main>
+    <main @onclick="OnNotesChromeClick">
         <div class="chat-wrapper" style="flex: 1; display: flex; flex-direction: column;">
             @if (IsActiveNoteLocked)
             {
@@ -90,14 +155,14 @@
                         @if (msg.DeletedAt is null)
                         {
                             <div class="message-row" style="margin-bottom: 32px; display: flex; justify-content:  flex-start;">
-                                    <div class="note-entry-wrap @(isEditing ? "note-editing" : "")">
+                                    <div class="note-entry-wrap @(isEditing ? "note-editing" : "")" @onclick:stopPropagation="true">
                                     <div class="note-response-actions" @onclick:stopPropagation="true">
                                         @if (isEditing)
                                         {
                                             <button type="button" class="menu-button note-action-btn" @onclick="() => SaveEdit(capturedIndex)" title="Save">
                                                 <i class="cf-icon bi bi-check-lg"></i>
                                             </button>
-                                            <button type="button" class="menu-button note-action-btn" @onclick="CancelEdit" title="Cancel">
+                                            <button type="button" class="menu-button note-action-btn" @onclick="CancelEditAsync" title="Cancel">
                                                 <i class="cf-icon bi bi-x-lg"></i>
                                             </button>
                                         }
@@ -205,9 +270,36 @@
                                                                 @onclick:stopPropagation="true">
                                                             <i class="bi bi-stars"></i>
                                                         </button>
+                                                        @if (Speech.IsNotesSttAvailable)
+                                                        {
+                                                            <button type="button"
+                                                                    class="note-ai-toolbar-btn @(isNotesMicRecording ? "mic-recording" : "")"
+                                                                    title="@(isNotesMicRecording ? "Stop dictation" : "Dictate / record lecture")"
+                                                                    disabled="@isNotesMicTranscribing"
+                                                                    @onclick="ToggleNotesMicAsync"
+                                                                    @onclick:stopPropagation="true"
+                                                                    style="@(isNotesMicRecording ? "color:#e11d48;" : null)">
+                                                                @if (isNotesMicTranscribing && !isNotesMicRecording)
+                                                                {
+                                                                    <i class="bi bi-hourglass-split"></i>
+                                                                }
+                                                                else if (isNotesMicRecording)
+                                                                {
+                                                                    <i class="bi bi-stop-circle-fill"></i>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <i class="bi bi-mic"></i>
+                                                                }
+                                                            </button>
+                                                        }
                                                     </span>
                                                 </ToolbarContent>
                                             </QuillEditor>
+                                            @if (!string.IsNullOrEmpty(notesMicStatus))
+                                            {
+                                                <div class="notes-mic-status @(notesMicStatusIsError ? "is-error" : "")">@notesMicStatus</div>
+                                            }
                                         }
                                         else if (NoteContentFormatter.IsHtml(msg.ContentFormat))
                                         {
@@ -228,6 +320,25 @@
                                         {
                                             <div class="model-label" style="font-size:0.6em;color:var(--cf-text-muted);text-align:right;margin-top:2px;opacity:0.7">
                                                 via @msg.ModelUsed
+                                            </div>
+                                        }
+                                        @if (msg.AudioClips is { Count: > 0 })
+                                        {
+                                            <div class="note-audio-list" @onclick:stopPropagation="true">
+                                                @foreach (var clip in msg.AudioClips)
+                                                {
+                                                    var c = clip;
+                                                    @if (localAudioIds.Contains(c.Id))
+                                                    {
+                                                        <NoteAudioPlayer Clip="c"
+                                                                         Url="@AudioUrlFor(c.Id)"
+                                                                         Cues="c.Cues"
+                                                                         CanDelete="true"
+                                                                         CanPlayFromCursor="isEditing"
+                                                                         OnDelete="() => PromptDeleteAudio(capturedIndex, c.Id)"
+                                                                         OnPlayFromCursor="() => PlayAudioFromCursorAsync(c.Id)" />
+                                                    }
+                                                }
                                             </div>
                                         }
                                         @if (msg.Timestamp.HasValue)
@@ -393,6 +504,29 @@
     private int editSessionKey;
     private QuillEditor? quillEditor;
 
+    private bool isNotesMicRecording;
+    private bool isNotesMicTranscribing;
+    private string? notesMicStatus;
+    private bool notesMicStatusIsError;
+    private DateTime _notesMicStartedUtc;
+    private string? _notesMicClipId;
+    private string? _lastSttTranscript;
+    private readonly List<NoteAudioCue> _notesMicCues = new();
+    private readonly List<byte> _archiveBuffer = new();
+    private readonly SemaphoreSlim _sttGate = new(1, 1);
+    private readonly HashSet<string> localAudioIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> audioUrls = new(StringComparer.OrdinalIgnoreCase);
+
+    private string notesSearchQuery = "";
+    private bool notesSearchBusy;
+    private bool notesSearchRan;
+    private List<NotesSearchHit> notesSearchHits = new();
+    private int _searchGen;
+    private string notesAskText = "";
+    private bool notesAskBusy;
+    private string? notesAskAnswer;
+    private string? notesAskError;
+
     private enum NoteNameDialogMode { None, Create, Rename }
 
     private NoteNameDialogMode nameDialogMode = NoteNameDialogMode.None;
@@ -404,6 +538,8 @@
     private string deleteConfirmMessage = "";
     private string? pendingDeleteNoteId;
     private int? pendingDeleteEntryIndex;
+    private string? pendingDeleteAudioClipId;
+    private int? pendingDeleteAudioEntryIndex;
 
     private int? openEntryMenuIndex;
     private string entryPopupStyle = "";
@@ -585,6 +721,9 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        try { await JS.InvokeVoidAsync("appNotesAudioBindSeek", chatContainer); }
+        catch { /* notes audio seek helper may be missing */ }
+
         if (!firstRender)
             return;
 
@@ -613,6 +752,12 @@
     {
         try
         {
+            await StopNotesMicAsync(cancelOnly: false);
+        }
+        catch { /* ignore */ }
+
+        try
+        {
             await CommitActiveEditAsync(persistToStore: true);
         }
         catch (Exception ex)
@@ -634,8 +779,15 @@
         if (_notesSyncChangedHandler != null)
             SyncBridge.OnNotesChanged -= _notesSyncChangedHandler;
 
+        foreach (var url in audioUrls.Values)
+        {
+            try { await NoteAudio.RevokeDisplayUrlAsync(url); } catch { }
+        }
+        audioUrls.Clear();
+
         _reorderDotNetRef?.Dispose();
         _reorderDotNetRef = null;
+        _sttGate.Dispose();
     }
 
     private void CancelEdit()
@@ -645,6 +797,12 @@
         _activeEditDraftHtml = null;
         quillEditor = null;
         editSessionKey++;
+    }
+
+    private async Task CancelEditAsync()
+    {
+        await StopNotesMicAsync(cancelOnly: true);
+        CancelEdit();
     }
 
     private void OnEditHtmlChanged(string html) => _activeEditDraftHtml = html;
@@ -674,6 +832,9 @@
 
     private async Task CommitActiveEditAsync(bool persistToStore = false)
     {
+        if (isNotesMicRecording)
+            await StopNotesMicAsync(cancelOnly: false);
+
         if (!await ApplyDraftToEditingMessageAsync())
             return;
 
@@ -755,6 +916,8 @@
 
         pendingDeleteNoteId = null;
         pendingDeleteEntryIndex = index;
+        pendingDeleteAudioClipId = null;
+        pendingDeleteAudioEntryIndex = null;
         deleteConfirmTitle = "Delete note entry?";
         deleteConfirmMessage = "This entry will be removed from the note and the change will sync to your other devices.";
         showDeleteConfirm = true;
@@ -768,6 +931,8 @@
         CloseMenu();
         pendingDeleteNoteId = noteId;
         pendingDeleteEntryIndex = null;
+        pendingDeleteAudioClipId = null;
+        pendingDeleteAudioEntryIndex = null;
         var note = notes.FirstOrDefault(n => n.Id == noteId);
         deleteConfirmTitle = "Delete note?";
         deleteConfirmMessage = $"This permanently removes \"{note?.Title ?? "this note"}\" and all its entries on this device, and syncs the delete to your other devices.";
@@ -779,11 +944,15 @@
         showDeleteConfirm = false;
         pendingDeleteNoteId = null;
         pendingDeleteEntryIndex = null;
+        pendingDeleteAudioClipId = null;
+        pendingDeleteAudioEntryIndex = null;
     }
 
     private async Task ConfirmPendingDelete()
     {
-        if (!string.IsNullOrEmpty(pendingDeleteNoteId))
+        if (!string.IsNullOrEmpty(pendingDeleteAudioClipId) && pendingDeleteAudioEntryIndex is int audioIdx)
+            await DeleteAudioClipAsync(audioIdx, pendingDeleteAudioClipId);
+        else if (!string.IsNullOrEmpty(pendingDeleteNoteId))
             await DeleteNote(pendingDeleteNoteId);
         else if (pendingDeleteEntryIndex is int index)
             await DeleteNoteEntry(index);
@@ -928,6 +1097,14 @@
             CancelEdit();
         else
             await CommitActiveEditAsync(persistToStore: true);
+
+        var clips = currentNoteMessages[index].AudioClips;
+        if (clips is { Count: > 0 })
+        {
+            foreach (var clip in clips)
+                await RemoveAudioBlobAsync(clip.Id);
+            try { await Quota.CompactAsync(); } catch { }
+        }
 
         currentNoteMessages[index] = ChatMessageHelper.SoftDelete(currentNoteMessages[index]);
         await SaveCurrent();
@@ -1102,6 +1279,7 @@
         }
 
         currentNoteMessages = await NoteStore.LoadNoteAsync(id);
+        await RefreshLocalAudioAsync();
         StateHasChanged();
     }
 
@@ -1235,7 +1413,18 @@
 
     private async Task DeleteNote(string id)
     {
+        if (id == activeNoteId)
+        {
+            foreach (var msg in currentNoteMessages)
+            {
+                if (msg.AudioClips is not { Count: > 0 }) continue;
+                foreach (var clip in msg.AudioClips)
+                    await RemoveAudioBlobAsync(clip.Id);
+            }
+        }
+
         var deletedAt = await NoteStore.DeleteNoteAsync(id);
+        try { await Quota.CompactAsync(); } catch { }
         notes = await NoteStore.LoadIndexAsync();
         SyncBridge.ScheduleAutoSyncNoteDeleteAfterLocalDelete(id, deletedAt);
 
@@ -1591,5 +1780,482 @@
             activePopupStyle = "position: fixed; top: 120px; left: 260px; z-index: 10000;";
             StateHasChanged();
         }
+    }
+
+    private async Task OnNotesChromeClick()
+    {
+        if (isNotesMicRecording)
+            await StopNotesMicAsync(cancelOnly: false);
+        if (editingMessageIndex != null)
+            await CommitActiveEditAsync(persistToStore: true);
+    }
+
+    private async Task ToggleNotesMicAsync()
+    {
+        if (isNotesMicRecording)
+        {
+            await StopNotesMicAsync(cancelOnly: false);
+            return;
+        }
+
+        if (editingMessageIndex is null)
+            return;
+
+        notesMicStatus = null;
+        notesMicStatusIsError = false;
+        _lastSttTranscript = null;
+        _notesMicCues.Clear();
+        _archiveBuffer.Clear();
+        _notesMicClipId = Guid.NewGuid().ToString("N");
+        _notesMicStartedUtc = DateTime.UtcNow;
+
+        var archive = NoteAudio.IsSupported;
+        if (archive)
+        {
+            try
+            {
+                if (!await Quota.CanAcceptBytesAsync(20_000_000))
+                {
+                    notesMicStatus = "Storage is nearly full. Dictation will still run; lecture audio may not be saved.";
+                    notesMicStatusIsError = false;
+                }
+            }
+            catch { /* quota is best-effort */ }
+        }
+
+        _reorderDotNetRef ??= DotNetObjectReference.Create(this);
+        try
+        {
+            var start = await JS.InvokeAsync<MicStartResult>("appMicRollingStart", _reorderDotNetRef, new
+            {
+                windowMs = 25000,
+                overlapMs = 2000,
+                archive
+            });
+            if (start is not { Ok: true })
+            {
+                notesMicStatusIsError = true;
+                notesMicStatus = start?.Error ?? "Could not start microphone.";
+                if (notesMicStatus.Contains("Permission", StringComparison.OrdinalIgnoreCase)
+                    || notesMicStatus.Contains("NotAllowed", StringComparison.OrdinalIgnoreCase)
+                    || notesMicStatus.Contains("denied", StringComparison.OrdinalIgnoreCase))
+                {
+                    notesMicStatus = "Microphone permission denied. Allow mic access for this app/site and try again.";
+                }
+                return;
+            }
+
+            isNotesMicRecording = true;
+            var hint = Speech.NotesSttModelHint;
+            notesMicStatus = "Listening…" + (hint is null ? "" : $" · {hint}")
+                + (archive ? " · recording audio" : "");
+        }
+        catch (Exception ex)
+        {
+            notesMicStatusIsError = true;
+            notesMicStatus = "Microphone error: " + ex.Message;
+            isNotesMicRecording = false;
+            try { await JS.InvokeVoidAsync("appMicRollingCancel"); } catch { }
+        }
+    }
+
+    private async Task StopNotesMicAsync(bool cancelOnly)
+    {
+        if (!isNotesMicRecording && _archiveBuffer.Count == 0)
+            return;
+
+        isNotesMicRecording = false;
+        isNotesMicTranscribing = true;
+        notesMicStatus = cancelOnly ? "Stopping…" : "Finishing transcription…";
+        notesMicStatusIsError = false;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            if (cancelOnly)
+            {
+                try { await JS.InvokeVoidAsync("appMicRollingCancel"); } catch { }
+            }
+            else
+            {
+                try { await JS.InvokeAsync<MicStartResult>("appMicRollingStop"); }
+                catch { try { await JS.InvokeVoidAsync("appMicRollingCancel"); } catch { } }
+            }
+        }
+        finally
+        {
+            try
+            {
+                await _sttGate.WaitAsync();
+                _sttGate.Release();
+            }
+            catch { /* disposed */ }
+            isNotesMicTranscribing = false;
+            if (!notesMicStatusIsError)
+            {
+                var elapsed = DateTime.UtcNow - _notesMicStartedUtc;
+                notesMicStatus = elapsed.TotalSeconds < 1
+                    ? null
+                    : $"Dictation stopped ({FormatElapsed(elapsed)}).";
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [JSInvokable]
+    public Task OnNotesMicChunk(string base64, int durationMs, int startMs, bool newParagraph) =>
+        InvokeAsync(() => HandleNotesMicChunkAsync(base64, durationMs, startMs, newParagraph));
+
+    private async Task HandleNotesMicChunkAsync(string base64, int durationMs, int startMs, bool newParagraph)
+    {
+        if (string.IsNullOrWhiteSpace(base64) || durationMs < 250)
+            return;
+
+        byte[] wav;
+        try { wav = Convert.FromBase64String(base64); }
+        catch { return; }
+
+        isNotesMicTranscribing = true;
+        notesMicStatus = "Transcribing…";
+        notesMicStatusIsError = false;
+        StateHasChanged();
+
+        await _sttGate.WaitAsync();
+        try
+        {
+            var result = await Speech.TranscribeAsync(wav, Speech.ResolveNotesSttModelId(), "notes-chunk.wav");
+            if (!result.Success || string.IsNullOrWhiteSpace(result.Text))
+            {
+                notesMicStatusIsError = true;
+                notesMicStatus = result.Error ?? "Transcription failed.";
+                return;
+            }
+
+            var incoming = TranscriptOverlap.NormalizeForInsert(result.Text);
+            var text = TranscriptOverlap.NormalizeForInsert(
+                TranscriptOverlap.Dedup(_lastSttTranscript, incoming));
+            _lastSttTranscript = incoming;
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            var startSec = Math.Max(0, startMs / 1000.0);
+            _notesMicCues.Add(new NoteAudioCue(startSec, text));
+
+            if (quillEditor is not null)
+            {
+                try
+                {
+                    await quillEditor.InsertSttSeg(text, startSec, _notesMicClipId, newParagraph);
+                }
+                catch
+                {
+                    try
+                    {
+                        if (newParagraph)
+                            await quillEditor.InsertText("\n\n");
+                        await quillEditor.InsertText(text + " ");
+                    }
+                    catch { /* editor may be mid-dispose */ }
+                }
+            }
+
+            var hint = result.Model ?? Speech.NotesSttModelHint;
+            var elapsed = DateTime.UtcNow - _notesMicStartedUtc;
+            notesMicStatus = isNotesMicRecording
+                ? $"Listening… {FormatElapsed(elapsed)}" + (hint is null ? "" : $" · {hint}")
+                : $"Transcribed with {hint ?? "STT"}.";
+            notesMicStatusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            notesMicStatusIsError = true;
+            notesMicStatus = "Speech-to-text error: " + ex.Message;
+        }
+        finally
+        {
+            isNotesMicTranscribing = false;
+            _sttGate.Release();
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public Task OnNotesMicArchiveChunk(string base64, int index, bool isLast, string mime, int durationMs, int totalBytes) =>
+        InvokeAsync(() => HandleArchiveChunkAsync(base64, index, isLast, mime, durationMs, totalBytes));
+
+    private async Task HandleArchiveChunkAsync(string base64, int index, bool isLast, string mime, int durationMs, int totalBytes)
+    {
+        if (!NoteAudio.IsSupported)
+            return;
+
+        try
+        {
+            if (!string.IsNullOrEmpty(base64))
+            {
+                var part = Convert.FromBase64String(base64);
+                _archiveBuffer.AddRange(part);
+            }
+        }
+        catch
+        {
+            notesMicStatusIsError = true;
+            notesMicStatus = "Could not decode recorded audio.";
+            return;
+        }
+
+        if (!isLast)
+            return;
+
+        if (_archiveBuffer.Count == 0 || string.IsNullOrEmpty(activeNoteId) || editingMessageIndex is not int idx)
+        {
+            _archiveBuffer.Clear();
+            return;
+        }
+
+        if (idx < 0 || idx >= currentNoteMessages.Count)
+        {
+            _archiveBuffer.Clear();
+            return;
+        }
+
+        try
+        {
+            var bytes = _archiveBuffer.ToArray();
+            _archiveBuffer.Clear();
+            var clipId = _notesMicClipId ?? Guid.NewGuid().ToString("N");
+            var entryId = currentNoteMessages[idx].ItemId ?? "";
+            var saved = await NoteAudio.SaveAsync(
+                activeNoteId,
+                entryId,
+                clipId,
+                string.IsNullOrWhiteSpace(mime) ? "audio/webm" : mime,
+                bytes,
+                durationMs,
+                _notesMicCues.ToList());
+
+            var msg = currentNoteMessages[idx];
+            var clips = msg.AudioClips?.ToList() ?? new List<NoteAudioRef>();
+            clips.Add(saved);
+            currentNoteMessages[idx] = msg with { AudioClips = clips, ModifiedAt = DateTime.UtcNow };
+            await ApplyDraftToEditingMessageAsync();
+            await SaveCurrent();
+            localAudioIds.Add(clipId);
+            await EnsureAudioUrlAsync(clipId);
+            notesMicStatus = $"Saved {FormatElapsed(TimeSpan.FromMilliseconds(durationMs))} of audio on this device.";
+            notesMicStatusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            notesMicStatusIsError = true;
+            notesMicStatus = "Could not save lecture audio: " + ex.Message;
+        }
+        finally
+        {
+            _archiveBuffer.Clear();
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshLocalAudioAsync()
+    {
+        foreach (var url in audioUrls.Values)
+        {
+            try { await NoteAudio.RevokeDisplayUrlAsync(url); } catch { }
+        }
+        audioUrls.Clear();
+        localAudioIds.Clear();
+        if (!NoteAudio.IsSupported)
+            return;
+
+        foreach (var msg in currentNoteMessages)
+        {
+            if (msg.AudioClips is not { Count: > 0 })
+                continue;
+            foreach (var clip in msg.AudioClips)
+            {
+                try
+                {
+                    if (await NoteAudio.ExistsAsync(clip.Id))
+                    {
+                        localAudioIds.Add(clip.Id);
+                        await EnsureAudioUrlAsync(clip.Id);
+                    }
+                }
+                catch { /* skip missing clips */ }
+            }
+        }
+    }
+
+    private string? AudioUrlFor(string clipId) =>
+        audioUrls.TryGetValue(clipId, out var url) ? url : null;
+
+    private void PromptDeleteAudio(int entryIndex, string clipId)
+    {
+        pendingDeleteNoteId = null;
+        pendingDeleteEntryIndex = null;
+        pendingDeleteAudioEntryIndex = entryIndex;
+        pendingDeleteAudioClipId = clipId;
+        deleteConfirmTitle = "Delete recording?";
+        deleteConfirmMessage = "The transcript stays in the note. Only the audio file on this device is removed.";
+        showDeleteConfirm = true;
+    }
+
+    private async Task DeleteAudioClipAsync(int entryIndex, string clipId)
+    {
+        if (entryIndex < 0 || entryIndex >= currentNoteMessages.Count)
+            return;
+
+        await RemoveAudioBlobAsync(clipId);
+        var msg = currentNoteMessages[entryIndex];
+        var remaining = msg.AudioClips?.Where(c => !string.Equals(c.Id, clipId, StringComparison.OrdinalIgnoreCase)).ToList();
+        currentNoteMessages[entryIndex] = msg with
+        {
+            AudioClips = remaining is { Count: > 0 } ? remaining : null,
+            ModifiedAt = DateTime.UtcNow
+        };
+        await SaveCurrent();
+        try { await Quota.CompactAsync(); } catch { }
+        StateHasChanged();
+    }
+
+    private async Task RemoveAudioBlobAsync(string clipId)
+    {
+        if (string.IsNullOrEmpty(clipId))
+            return;
+        if (audioUrls.TryGetValue(clipId, out var url))
+        {
+            try { await NoteAudio.RevokeDisplayUrlAsync(url); } catch { }
+            audioUrls.Remove(clipId);
+        }
+        localAudioIds.Remove(clipId);
+        try { await NoteAudio.DeleteAsync(clipId); } catch { }
+    }
+
+    private async Task PlayAudioFromCursorAsync(string clipId)
+    {
+        if (quillEditor is null)
+            return;
+        try
+        {
+            var cue = await quillEditor.GetSttCueAtCursor();
+            if (cue is null)
+                return;
+            var id = string.IsNullOrEmpty(cue.Value.Audio) ? clipId : cue.Value.Audio;
+            await JS.InvokeVoidAsync("appNotesAudioSeekClip", chatContainer, id, cue.Value.T);
+        }
+        catch { /* player may not be ready */ }
+    }
+
+    private async Task EnsureAudioUrlAsync(string clipId)
+    {
+        if (audioUrls.ContainsKey(clipId))
+            return;
+        var url = await NoteAudio.CreateDisplayUrlAsync(clipId);
+        if (!string.IsNullOrEmpty(url))
+            audioUrls[clipId] = url;
+    }
+
+    private async Task OnNotesSearchInput()
+    {
+        var gen = Interlocked.Increment(ref _searchGen);
+        var q = notesSearchQuery;
+        if (string.IsNullOrWhiteSpace(q))
+        {
+            notesSearchHits = new();
+            notesSearchRan = false;
+            notesSearchBusy = false;
+            return;
+        }
+
+        notesSearchBusy = true;
+        await Task.Delay(280);
+        if (gen != _searchGen)
+            return;
+
+        try
+        {
+            var hits = await NotesSearch.SearchAsync(q, 12, unlockedNoteIds);
+            if (gen != _searchGen)
+                return;
+            notesSearchHits = hits.ToList();
+            notesSearchRan = true;
+        }
+        catch
+        {
+            if (gen != _searchGen)
+                return;
+            notesSearchHits = new();
+            notesSearchRan = true;
+        }
+        finally
+        {
+            if (gen == _searchGen)
+                notesSearchBusy = false;
+        }
+    }
+
+    private async Task OpenSearchHit(NotesSearchHit hit)
+    {
+        if (string.IsNullOrEmpty(hit.NotebookId))
+            return;
+        await CommitActiveEditAsync(persistToStore: true);
+        await LoadNote(hit.NotebookId);
+        if (!string.IsNullOrEmpty(hit.EntryId))
+        {
+            var idx = currentNoteMessages.FindIndex(m =>
+                string.Equals(m.ItemId, hit.EntryId, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+                await StartEdit(idx);
+        }
+    }
+
+    private async Task AskMyNotesAsync()
+    {
+        var q = (notesAskText ?? "").Trim();
+        if (q.Length == 0)
+            return;
+        notesAskBusy = true;
+        notesAskError = null;
+        notesAskAnswer = null;
+        try
+        {
+            var result = await NotesSearch.AskAsync(q, unlockedNoteIds);
+            if (!string.IsNullOrEmpty(result.Error))
+                notesAskError = result.Error;
+            else
+                notesAskAnswer = result.AnswerMarkdown;
+            if (result.Citations.Count > 0)
+            {
+                notesSearchHits = result.Citations.ToList();
+                notesSearchRan = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            notesAskError = ex.Message;
+        }
+        finally
+        {
+            notesAskBusy = false;
+        }
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        if (elapsed.TotalHours >= 1)
+            return elapsed.ToString(@"h\:mm\:ss");
+        return elapsed.ToString(@"m\:ss");
+    }
+
+    private sealed class MicStartResult
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("ok")]
+        public bool Ok { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("already")]
+        public bool Already { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("archive")]
+        public bool Archive { get; set; }
     }
 }

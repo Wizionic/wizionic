@@ -111,4 +111,6 @@ public record ChatMessage(
     DateTime? ModifiedAt = null,
     DateTime? DeletedAt = null,
     /// <summary>Compact generation metrics (TTFT, total time, tokens) for the UI footer.</summary>
-    string? StatsLine = null);
+    string? StatsLine = null,
+    /// <summary>Local audio clip refs (bytes live in <see cref="INoteAudioStore"/>, not this payload).</summary>
+    List<NoteAudioRef>? AudioClips = null);

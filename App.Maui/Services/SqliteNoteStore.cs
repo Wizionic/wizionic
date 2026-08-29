@@ -11,12 +11,18 @@ public class SqliteNoteStore : INoteStore
     private readonly IAuthService _auth;
     private readonly ICryptoService _crypto;
     private readonly SqliteHistoryDatabase _db;
+    private readonly INoteAudioStore _audio;
 
-    public SqliteNoteStore(IAuthService auth, ICryptoService crypto, SqliteHistoryDatabase db)
+    public SqliteNoteStore(
+        IAuthService auth,
+        ICryptoService crypto,
+        SqliteHistoryDatabase db,
+        INoteAudioStore audio)
     {
         _auth = auth;
         _crypto = crypto;
         _db = db;
+        _audio = audio;
     }
 
     private string GetPrefix() => StorageNamespace.GetPrefix(_auth);
@@ -146,6 +152,8 @@ public class SqliteNoteStore : INoteStore
             existing?.ProtectionChangedTicks ?? 0), ct);
 
         await _db.DeleteNoteContentAsync(existing?.StorageKey ?? storageKey, ct);
+        try { await _audio.DeleteByNotebookAsync(id, ct); }
+        catch (Exception ex) { Console.WriteLine($"[Notes] Failed to delete notebook audio: {ex.Message}"); }
         return deletedAt;
     }
 

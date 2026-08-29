@@ -19,19 +19,22 @@ public sealed class NotesToolModule : IToolModule
     private readonly IConversationMediaBuffer _media;
     private readonly IToolConversationContext _convoCtx;
     private readonly IToolExecutionTrace _trace;
+    private readonly INotesSearchService _search;
 
     public NotesToolModule(
         IServiceProvider services,
         IServiceScopeFactory scopeFactory,
         IConversationMediaBuffer media,
         IToolConversationContext convoCtx,
-        IToolExecutionTrace trace)
+        IToolExecutionTrace trace,
+        INotesSearchService search)
     {
         _services = services;
         _scopeFactory = scopeFactory;
         _media = media;
         _convoCtx = convoCtx;
         _trace = trace;
+        _search = search;
     }
 
     public string ModuleName => "Notes";
@@ -46,6 +49,16 @@ public sealed class NotesToolModule : IToolModule
                 Description =
                     "List the user's notebooks (id and title). " +
                     "Use before add_note_entry when the user names a notebook."
+            }),
+        AIFunctionFactory.Create(SearchNotesAsync,
+            new AIFunctionFactoryOptions
+            {
+                Name = "search_notes",
+                Description =
+                    "Search the user's notebooks by keyword. Use this BEFORE list_note_entries " +
+                    "when the user asks what they wrote, to find a topic, or to look something up in notes. " +
+                    "Password-protected notebooks are skipped until unlocked in the Notes UI. " +
+                    "Returns notebook_id, entry_id, and a short snippet."
             }),
         AIFunctionFactory.Create(ListNoteEntriesAsync,
             new AIFunctionFactoryOptions
@@ -136,6 +149,38 @@ public sealed class NotesToolModule : IToolModule
         }
 
         public void Dispose() => _owned?.Dispose();
+    }
+
+    [Description("Search notebooks by keyword.")]
+    private async Task<string> SearchNotesAsync(
+        [Description("Search query (topic, phrase, or keywords).")] string query,
+        [Description("Max hits to return (1-20). Default 8.")] int max = 8)
+    {
+        max = Math.Clamp(max, 1, 20);
+        _trace.Record($"📝 search_notes(query=\"{query}\", max={max})");
+        if (string.IsNullOrWhiteSpace(query))
+            return "search_notes failed: query is required.";
+
+        try
+        {
+            var hits = await _search.SearchAsync(query.Trim(), max);
+            if (hits.Count == 0)
+                return "No matching notes. Protected notebooks are skipped until unlocked. Try different keywords or list_notebooks.";
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Note search results:");
+            foreach (var h in hits)
+            {
+                sb.AppendLine(
+                    $"- notebook_id={h.NotebookId} title=\"{h.NotebookTitle}\" entry_id={h.EntryId} snippet=\"{h.Snippet}\"");
+            }
+            return sb.ToString().TrimEnd();
+        }
+        catch (Exception ex)
+        {
+            _trace.Record($"   ❌ {ex.Message}");
+            return "search_notes failed: " + ex.Message;
+        }
     }
 
     [Description("List notebooks.")]

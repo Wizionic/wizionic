@@ -5,7 +5,7 @@ namespace App.Maui.Services;
 /// <summary>
 /// SQLite schema for conversation/note history and settings (shared wizionic_local.db).
 /// </summary>
-public sealed class SqliteHistoryDatabase
+public sealed partial class SqliteHistoryDatabase
 {
     private readonly string _connectionString;
     private bool _initialized;
@@ -157,6 +157,26 @@ public sealed class SqliteHistoryDatabase
             CREATE INDEX IF NOT EXISTS idx_event_meta_range ON event_meta(namespace, start_utc, end_utc);
 
             CREATE TABLE IF NOT EXISTS event_content (
+                storage_key TEXT PRIMARY KEY NOT NULL,
+                content TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS note_audio_meta (
+                storage_key TEXT PRIMARY KEY NOT NULL,
+                id TEXT NOT NULL,
+                notebook_id TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                cues_json TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_audio_meta_ns ON note_audio_meta(namespace);
+            CREATE INDEX IF NOT EXISTS idx_note_audio_meta_id ON note_audio_meta(id);
+
+            CREATE TABLE IF NOT EXISTS note_audio_content (
                 storage_key TEXT PRIMARY KEY NOT NULL,
                 content TEXT
             );
@@ -779,6 +799,7 @@ public sealed class SqliteHistoryDatabase
             "note_content" => "note_content",
             "album_content" => "album_content",
             "album_image_content" => "album_image_content",
+            "note_audio_content" => "note_audio_content",
             _ => null
         };
         if (allowed == null) return 0;
