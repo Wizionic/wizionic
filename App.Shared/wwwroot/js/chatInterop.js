@@ -665,6 +665,75 @@ window.appendChatTextareaText = function (el, text) {
     try { el.focus(); } catch (e) { }
 };
 
+window.appCalendarPlaySound = async function (id) {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return 0;
+        if (!window.__appCalAudioCtx) window.__appCalAudioCtx = new AudioCtx();
+        const ctx = window.__appCalAudioCtx;
+        if (ctx.state === 'suspended') {
+            try { await ctx.resume(); } catch (e) {}
+        }
+        const now = ctx.currentTime;
+        const kind = (id || 'chime').toLowerCase();
+        let len = 0.45;
+        const beep = (freq, t0, dur, type, gain) => {
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.type = type || 'sine';
+            o.frequency.setValueAtTime(freq, t0);
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(gain || 0.18, t0 + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+            o.connect(g);
+            g.connect(ctx.destination);
+            o.start(t0);
+            o.stop(t0 + dur + 0.02);
+            len = Math.max(len, (t0 - now) + dur);
+        };
+        if (kind === 'ping') {
+            beep(1320, now, 0.18, 'sine', 0.16);
+        } else if (kind === 'bell') {
+            beep(660, now, 0.7, 'sine', 0.2);
+            beep(990, now, 0.55, 'sine', 0.08);
+            beep(1320, now, 0.4, 'sine', 0.05);
+        } else if (kind === 'glass') {
+            beep(1760, now, 0.35, 'triangle', 0.12);
+            beep(2637, now + 0.04, 0.28, 'sine', 0.08);
+        } else if (kind === 'wood') {
+            beep(220, now, 0.08, 'square', 0.12);
+            beep(140, now + 0.06, 0.1, 'square', 0.08);
+        } else if (kind === 'soft') {
+            beep(392, now, 0.45, 'sine', 0.1);
+            beep(494, now + 0.12, 0.4, 'sine', 0.08);
+        } else {
+            beep(784, now, 0.22, 'sine', 0.16);
+            beep(1046, now + 0.16, 0.28, 'sine', 0.14);
+        }
+        return Math.round(len * 1000);
+    } catch (e) {
+        console.warn('appCalendarPlaySound failed', e);
+        return 0;
+    }
+};
+
+window.appCalendarStartAlarm = async function (id, durationMs, gapMs) {
+    window.__appCalAlarmStop = false;
+    const end = performance.now() + Math.max(1000, durationMs || 60000);
+    const gap = gapMs == null ? 500 : gapMs;
+    while (!window.__appCalAlarmStop && performance.now() < end) {
+        const playedMs = await window.appCalendarPlaySound(id);
+        const wait = (typeof playedMs === 'number' && playedMs > 0 ? playedMs : 400) + gap;
+        await new Promise(function (resolve) { setTimeout(resolve, wait); });
+    }
+    return window.__appCalAlarmStop ? 'stopped' : 'done';
+};
+
+window.appCalendarStopAlarm = function () {
+    window.__appCalAlarmStop = true;
+    return true;
+};
+
 window.appPlayAudioBase64 = async function (base64, mimeType) {
     try {
         let b64 = base64 || '';

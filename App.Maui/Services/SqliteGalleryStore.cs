@@ -656,7 +656,7 @@ public class SqliteGalleryStore : IGalleryStore
 
         await PersistAlbumMetaAsync(
             albumId,
-            ChatMessageHelper.ResolveIncomingNoteTitle(title, existing.Title),
+            ChatMessageHelper.ResolveIncomingNoteTitle(title, existing.Title, albumId),
             applyProtected,
             applyTicks,
             existing.SortOrder,

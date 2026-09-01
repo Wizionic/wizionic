@@ -8072,7 +8072,7 @@ body.note-list-reordering {
     padding: 0.2rem 0.25rem;
     min-height: 80px;
     overflow: hidden;
-    cursor: pointer;
+    cursor: default;
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -8129,6 +8129,13 @@ body.note-list-reordering {
     white-space: nowrap;
     cursor: pointer;
     max-width: 100%;
+    transition: filter 0.08s ease, box-shadow 0.08s ease, outline-color 0.08s ease;
+}
+
+.cal-event-chip:hover {
+    filter: brightness(1.12);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+    z-index: 5;
 }
 
 /* Google-style timed: colored circle + time + title (no solid bar fill) */
@@ -8138,8 +8145,9 @@ body.note-list-reordering {
     gap: 3px;
     background: transparent !important;
     color: var(--color-text);
-    padding: 0 2px;
-    border-radius: 0;
+    padding: 2px 4px;
+    margin: 0 -2px;
+    border-radius: 4px;
     font-size: 0.68rem;
 }
 
@@ -8201,7 +8209,11 @@ body.note-list-reordering {
 }
 
 .cal-span-bar:hover {
-    filter: brightness(1.06);
+    filter: brightness(1.12);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: -1px;
+    z-index: 5;
 }
 
 /* .cal-event-chip.timed positioned in hour cells — see .cal-hour-cell */
@@ -8307,6 +8319,7 @@ body.note-list-reordering {
     grid-template-columns: 56px repeat(7, 1fr);
     min-height: 48px;
     border-bottom: 1px solid var(--color-sidebar-border, #f0f0f0);
+    position: relative;
 }
 
 .cal-hour-row.day {
@@ -8316,15 +8329,10 @@ body.note-list-reordering {
 .cal-hour-cell {
     border-left: 1px solid var(--color-sidebar-border, #e8eaed);
     position: relative;
-    cursor: pointer;
+    cursor: default;
     padding: 1px 2px;
     /* Allow multi-hour event chips to paint into cells below */
     overflow: visible;
-    z-index: 0;
-}
-
-.cal-hour-cell:hover {
-    z-index: 2;
 }
 
 .cal-event-chip.timed {
@@ -8337,6 +8345,24 @@ body.note-list-reordering {
     overflow: hidden;
     min-height: 18px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.cal-event-chip.timed:hover {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: -1px;
+    z-index: 4;
+}
+
+.cal-event-chip.timed-dot:hover {
+    filter: none;
+    box-shadow: none;
+    background: rgba(0, 0, 0, 0.08) !important;
+    border-radius: 4px;
+}
+
+.cal-event-chip.cal-event-bar:hover {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: -1px;
 }
 
 .cal-day-allday {
@@ -8549,6 +8575,13 @@ html[data-theme="dark-blue"] .cal-dropdown,
 html[data-theme="dracula"] .cal-dropdown,
 html[data-theme="nord"] .cal-dropdown {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme="app-dark"] .cal-event-chip.timed-dot:hover,
+html[data-theme="dark-blue"] .cal-event-chip.timed-dot:hover,
+html[data-theme="dracula"] .cal-event-chip.timed-dot:hover,
+html[data-theme="nord"] .cal-event-chip.timed-dot:hover {
+    background: rgba(255, 255, 255, 0.12) !important;
 }
 
 html[data-theme="app-dark"] .cal-month-cell.today .cal-month-daynum,

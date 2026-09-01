@@ -838,7 +838,7 @@ public class WasmGalleryStore : IGalleryStore
 
         await PersistAlbumMetaAsync(
             albumId,
-            ChatMessageHelper.ResolveIncomingNoteTitle(title, existing.title),
+            ChatMessageHelper.ResolveIncomingNoteTitle(title, existing.title, albumId),
             applyProtected,
             applyTicks,
             existing.sortOrder ?? 0,

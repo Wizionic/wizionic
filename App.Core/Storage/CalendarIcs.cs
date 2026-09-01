@@ -16,7 +16,10 @@ public static class CalendarIcs
     public sealed record ImportResult(
         string? CalendarName,
         IReadOnlyList<CalendarEvent> Events,
-        int Skipped);
+        int Skipped,
+        string? Description = null,
+        string? TimeZone = null,
+        TimeSpan? RefreshInterval = null);
 
     /// <summary>Export one calendar's events to a .ics string.</summary>
     public static string ExportCalendar(LocalCalendar calendar, IEnumerable<CalendarEvent> events)
@@ -64,6 +67,10 @@ public static class CalendarIcs
 
         var calName = cal.Properties.Get<string>("X-WR-CALNAME")
                       ?? cal.Properties.Get<string>("NAME");
+        var calDesc = cal.Properties.Get<string>("X-WR-CALDESC")
+                      ?? cal.Properties.Get<string>("DESCRIPTION");
+        var calTz = cal.Properties.Get<string>("X-WR-TIMEZONE");
+        var refresh = ParseRefreshInterval(cal);
         var events = new List<CalendarEvent>();
         var skipped = 0;
 
@@ -109,7 +116,54 @@ public static class CalendarIcs
         }
         catch { /* single-calendar ICS is fine */ }
 
-        return new ImportResult(calName, events, skipped);
+        return new ImportResult(calName, events, skipped, calDesc, calTz, refresh);
+    }
+
+    public static string NormalizeFeedUrl(string? url)
+    {
+        var t = (url ?? "").Trim();
+        if (t.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase))
+            t = "https://" + t["webcal://".Length..];
+        return t;
+    }
+
+    public static bool IsAllowedFeedUrl(string? url)
+    {
+        if (!Uri.TryCreate(NormalizeFeedUrl(url), UriKind.Absolute, out var uri))
+            return false;
+        return uri.Scheme is "https" or "http";
+    }
+
+    private static TimeSpan? ParseRefreshInterval(Calendar cal)
+    {
+        string? raw = null;
+        try { raw = cal.Properties.Get<string>("REFRESH-INTERVAL"); }
+        catch { /* ignore */ }
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            foreach (var p in cal.Properties)
+            {
+                if (p.Name.Equals("REFRESH-INTERVAL", StringComparison.OrdinalIgnoreCase))
+                {
+                    raw = p.Value?.ToString();
+                    break;
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        var s = raw.Trim();
+        var colon = s.LastIndexOf(':');
+        if (colon >= 0)
+            s = s[(colon + 1)..].Trim();
+        try
+        {
+            return System.Xml.XmlConvert.ToTimeSpan(s);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -403,6 +457,7 @@ public static class CalendarIcs
         var transp = string.Equals(ical.Transparency, "TRANSPARENT", StringComparison.OrdinalIgnoreCase)
             ? "TRANSPARENT"
             : "OPAQUE";
+        var reminderMinutes = ReadValarmMinutes(ical);
 
         return new CalendarEvent(
             Id: uid,
@@ -420,7 +475,34 @@ public static class CalendarIcs
             Sequence: ical.Sequence,
             CreatedUtc: ical.Created is not null ? FromCalDateTime(ical.Created, false) : DateTime.UtcNow,
             ModifiedUtc: ical.LastModified is not null ? FromCalDateTime(ical.LastModified, false) : DateTime.UtcNow,
-            WorkflowId: string.IsNullOrWhiteSpace(workflowId) ? null : workflowId);
+            WorkflowId: string.IsNullOrWhiteSpace(workflowId) ? null : workflowId,
+            ReminderMinutesBefore: CalendarReminder.NormalizeMinutes(reminderMinutes),
+            ReminderSoundId: reminderMinutes is null ? null : CalendarReminder.DefaultSoundId,
+            ReminderChannel: reminderMinutes is null ? null : CalendarReminder.ChannelSound);
+    }
+
+    private static int? ReadValarmMinutes(IcalEvent ical)
+    {
+        try
+        {
+            foreach (var alarm in ical.Alarms)
+            {
+                var trigger = alarm.Trigger;
+                if (trigger?.Duration is not { } dur)
+                    continue;
+                TimeSpan ts;
+                if (ical.DtStart is null) continue;
+                try { ts = dur.ToTimeSpan(ical.DtStart); }
+                catch { continue; }
+                var minutes = (int)Math.Round(Math.Abs(ts.TotalMinutes));
+                return minutes;
+            }
+        }
+        catch
+        {
+            // VALARM optional
+        }
+        return null;
     }
 
     private static CalDateTime ToCalDateTime(DateTime utc, bool isAllDay)

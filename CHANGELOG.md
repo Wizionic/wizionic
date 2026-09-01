@@ -9,6 +9,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Calendar event **Alert** shows a dismissible alarm and repeats the sound (1 or 5 minutes, half-second gap). **Subscribe** adds an ICS/webcal feed (Canvas) and polls it.
+- Calendar no longer auto-creates a **Personal** calendar on each device (that was duplicating via sync).
+- Forgot password: **Forgot password?** on the Password tab (or **Forgot current password?** when signed in) emails a login code. Verifying it removes the password and turns two-factor off so you can **Add a password** again.
 - WASM login on phone, tablet, Mac, or Chromebook recommends installing as a PWA, with Help steps for Chrome, Safari, Samsung Internet, Firefox, and Edge.
 - Desktop sign-in: **More options** picks public wizionic.com or a local Home Server (same restart prompt as Settings).
 - `scripts/install.ps1` (also `https://wizionic.com/install.ps1`): download `Wizionic-win-Setup.exe`, verify `SHA256SUMS`, `Unblock-File`, run the per-user Velopack installer.
@@ -26,11 +29,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Calendar: hovering an event highlights it and shows the pointer; empty slots use the default cursor. Clicking the lower part of a multi-hour event edits it instead of opening a new one.
 - Sign-in is required. Unauthenticated visitors only see the login landing page (and legal pages); chat, notes, gallery, and other app features are gated. Guest IndexedDB / guest-key migration is removed. Existing signed-in data under `u-{userId}-` is unchanged.
 - Windows install on README and the login page now leads with `irm … | iex` instead of a browser `.exe` download. Unsigned Edge downloads still hit Mark of the Web / SmartScreen.
 
 ### Fixed
 
+- Notes sync no longer sends the notebook id as the sidebar title, and a GUID title from a peer no longer overwrites a real name. Same guard for album titles.
 - WebRTC answerer (Windows MAUI vs Linux Dell): incoming DataChannels are often already open before `onopen` is wired, so the answerer never sent its own manifest, calendar, or note updates and sat on `active: manifest` for 90s then tore down the live channel. Fire open if already open (same as WASM `readyState === 'open'`), send the pending outbound item on the first inbound DataChannel message, and do not close a live channel on handshake timeout.
 - Linux MAUI DataChannel apply: Sync page `StateHasChanged` from SIPSorcery threads threw "current thread is not associated with the Dispatcher" and aborted message handling. Marshal UI notifies to the main thread; wrap change events so a UI exception cannot drop a calendar/note apply.
 - Calendar LWW used `StartUtc` as the write clock, so future events tied on every edit and stale peers could win. Last-write is now `ModifiedUtc`/`DeletedAt`. Ignoring a stale remote calendar/event now pushes the newer local copy back.

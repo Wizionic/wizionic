@@ -31,6 +31,18 @@ public interface ICalendarStore
         bool isVisible,
         string? description,
         long lastUpdatedTicks,
+        CancellationToken ct = default,
+        string? subscriptionUrl = null,
+        int? refreshIntervalMinutes = null);
+
+    /// <summary>Create or update a subscribed ICS calendar's URL and fetch cache.</summary>
+    Task SetCalendarSubscriptionAsync(
+        string id,
+        string? url,
+        int? refreshIntervalMinutes,
+        string? etag,
+        string? lastModified,
+        DateTime? lastFetchedUtc,
         CancellationToken ct = default);
 
     // ── Events ─────────────────────────────────────────────────────────────

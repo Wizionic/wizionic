@@ -16,6 +16,22 @@ If this was not you, sign in on a device you trust, change the password, and use
         return ("Your Wizionic password was changed", text, Wrap(text));
     }
 
+    public static (string Subject, string Text, string Html) PasswordRemoved(string? ip, DateTime utc)
+    {
+        var when = utc.ToString("u");
+        var extra = string.IsNullOrEmpty(ip) ? "" : $" Approximate source: {ip}.";
+        var text = $@"Your Wizionic password was removed on {when} UTC.{extra}
+
+Sign-in is email login code only until you add a new password. Two-factor sign-in was turned off.
+
+If this was you, no action is needed. Other devices will need to sign in again.
+
+If this was not you, sign in on a device you trust, add a password, and use Sign out other devices on the Account page.
+
+-- The Wizionic Team";
+        return ("Your Wizionic password was removed", text, Wrap(text));
+    }
+
     public static (string Subject, string Text, string Html) NewDevice(string? deviceName, string? ip, DateTime utc)
     {
         var name = string.IsNullOrWhiteSpace(deviceName) ? "a new device" : deviceName.Trim();

@@ -174,10 +174,9 @@ public class SqliteNoteStore : INoteStore
         var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
         var isProtected = existing?.IsPasswordProtected ?? false;
         var protectionTicks = existing?.ProtectionChangedTicks ?? 0;
-        var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries, isProtected, protectionTicks);
-
         var existingTitle = existing?.Title;
-        var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle);
+        var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle, id);
+        var contentFingerprint = SyncFingerprint.ForNote(id, resolvedTitle, entries, isProtected, protectionTicks);
         int sortOrder;
         if (existing is null)
         {

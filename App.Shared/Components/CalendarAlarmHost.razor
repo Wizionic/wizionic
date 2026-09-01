@@ -1,0 +1,134 @@
+@using App.Core.Storage
+@inject ICalendarBackgroundService? CalendarDue
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@if (_active is not null)
+{
+    <div class="cal-modal-overlay" style="z-index: 20000;">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3>@_active.Summary</h3>
+            <p style="margin:0 0 1rem; color:var(--cf-text-muted);">
+                @_active.OccurrenceStartUtc.ToLocalTime().ToString("t")
+                · @_active.OccurrenceStartUtc.ToLocalTime().ToString("D")
+            </p>
+            <div class="cal-modal-actions">
+                <div class="cal-modal-actions-right">
+                    <button type="button" class="cal-btn primary" @onclick="DismissAsync">Dismiss</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private CancellationTokenSource? _cts;
+    private Task? _loop;
+    private CalendarDueAlarm? _active;
+    private readonly HashSet<string> _dismissed = new(StringComparer.Ordinal);
+    private bool _playing;
+
+    protected override void OnInitialized()
+    {
+        if (CalendarDue is null) return;
+        _cts = new CancellationTokenSource();
+        _loop = RunLoopAsync(_cts.Token);
+    }
+
+    private async Task RunLoopAsync(CancellationToken ct)
+    {
+        try { await Task.Delay(TimeSpan.FromSeconds(4), ct); }
+        catch (OperationCanceledException) { return; }
+
+        while (!ct.IsCancellationRequested)
+        {
+            try { await PollAsync(ct); }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { Console.WriteLine($"[CalendarAlarm] {ex.Message}"); }
+
+            try { await Task.Delay(TimeSpan.FromSeconds(15), ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        if (CalendarDue is null) return;
+        var due = await CalendarDue.GetDueAlarmsAsync(ct);
+        var now = DateTime.UtcNow;
+
+        if (_active is not null)
+        {
+            if (now >= _active.UntilUtc || _dismissed.Contains(AlarmKey(_active)))
+            {
+                await StopAlarmAsync();
+                _active = null;
+                await InvokeAsync(StateHasChanged);
+            }
+            else
+                return;
+        }
+
+        var next = due.FirstOrDefault(a => !_dismissed.Contains(AlarmKey(a)) && now < a.UntilUtc);
+        if (next is null)
+            return;
+
+        _active = next;
+        await InvokeAsync(StateHasChanged);
+        await StartAlarmAsync(next);
+    }
+
+    private async Task StartAlarmAsync(CalendarDueAlarm alarm)
+    {
+        if (_playing) return;
+        _playing = true;
+        var remainingMs = Math.Max(1000, (int)(alarm.UntilUtc - DateTime.UtcNow).TotalMilliseconds);
+        try
+        {
+            await JS.InvokeVoidAsync("appCalendarStartAlarm", alarm.SoundId, remainingMs, CalendarReminder.SoundGapMs);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CalendarAlarm] play failed: {ex.Message}");
+        }
+        finally
+        {
+            _playing = false;
+        }
+
+        if (_active is not null && AlarmKey(_active) == AlarmKey(alarm) && DateTime.UtcNow >= alarm.UntilUtc)
+        {
+            _active = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task DismissAsync()
+    {
+        if (_active is not null)
+            _dismissed.Add(AlarmKey(_active));
+        await StopAlarmAsync();
+        _active = null;
+    }
+
+    private async Task StopAlarmAsync()
+    {
+        try { await JS.InvokeVoidAsync("appCalendarStopAlarm"); }
+        catch { /* ignore */ }
+        _playing = false;
+    }
+
+    private static string AlarmKey(CalendarDueAlarm a) =>
+        $"{a.EventId}|{a.OccurrenceStartUtc:o}|{a.TriggerUtc:o}";
+
+    public async ValueTask DisposeAsync()
+    {
+        try { _cts?.Cancel(); } catch { /* ignore */ }
+        await StopAlarmAsync();
+        if (_loop is not null)
+        {
+            try { await _loop; } catch { /* ignore */ }
+        }
+        _cts?.Dispose();
+    }
+}

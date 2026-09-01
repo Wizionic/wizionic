@@ -78,7 +78,6 @@ public sealed class WorkflowOrchestrator : IWorkflowOrchestrator
     {
         if (_calendar is null) return;
         await _workflows.LoadAsync(ct);
-        await _calendar.EnsureDefaultCalendarAsync(ct);
         var calId = await _calendar.EnsureWorkflowCalendarAsync(ct);
 
         // Remove old projected events for managed workflows (by WorkflowId), re-add next 14 days.

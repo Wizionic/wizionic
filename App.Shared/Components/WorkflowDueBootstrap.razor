@@ -1,5 +1,7 @@
+@using App.Core.Storage
 @using App.Core.Workflows
 @inject IWorkflowOrchestrator? Orchestrator
+@inject ICalendarBackgroundService? CalendarDue
 @implements IAsyncDisposable
 
 @* Invisible host: while the app is open, project workflow calendars and fire due cron/once runs. *@
@@ -11,10 +13,12 @@
     {
         // MAUI (all TFMs) + Linux GirCore: WorkflowDueHost owns the loop.
         if (AppEnvironment.IsMaui) return;
-        if (Orchestrator is null) return;
+        if (Orchestrator is null && CalendarDue is null) return;
         _cts = new CancellationTokenSource();
         _loop = RunLoopAsync(_cts.Token);
     }
+
+    private int tick;
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
@@ -26,8 +30,14 @@
         {
             try
             {
-                await Orchestrator!.ProjectCalendarsAsync(ct);
-                await Orchestrator.ProcessDueAsync(ct);
+                tick++;
+                if (Orchestrator is not null && tick % 4 == 0)
+                {
+                    await Orchestrator.ProjectCalendarsAsync(ct);
+                    await Orchestrator.ProcessDueAsync(ct);
+                }
+                if (CalendarDue is not null && tick % 4 == 0)
+                    await CalendarDue.TickSubscriptionsAsync(ct);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -35,7 +45,7 @@
                 Console.WriteLine($"[WorkflowDue] tick failed: {ex.Message}");
             }
 
-            try { await Task.Delay(TimeSpan.FromMinutes(1), ct); }
+            try { await Task.Delay(TimeSpan.FromSeconds(15), ct); }
             catch (OperationCanceledException) { break; }
         }
     }

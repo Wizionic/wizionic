@@ -4,6 +4,8 @@ namespace App.Core.Storage;
 public static class CalendarConstants
 {
     public const string DefaultCalendarName = "Personal";
+    /// <summary>Stable id so devices do not each mint a different Personal calendar.</summary>
+    public const string DefaultCalendarId = "wizionic-personal";
 
     /// <summary>System calendar for AI workflow schedule projection.</summary>
     public const string WorkflowCalendarName = "Workflows";
@@ -27,6 +29,13 @@ public static class CalendarConstants
         "#0B8043", // dark green
         "#D50000", // bright red
     ];
+
+    public const int DefaultSubscriptionRefreshMinutes = 360;
+    public const int MinSubscriptionRefreshMinutes = 15;
+    public const int MaxSubscriptionRefreshMinutes = 24 * 60;
+
+    public static int ClampRefreshMinutes(int minutes) =>
+        Math.Clamp(minutes, MinSubscriptionRefreshMinutes, MaxSubscriptionRefreshMinutes);
 
     public static string ColorForIndex(int index)
     {

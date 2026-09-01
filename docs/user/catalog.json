@@ -8,6 +8,8 @@
     { "id": "notes", "title": "Notes", "file": "notes.md", "routes": ["/notes"], "audience": "howto" },
     { "id": "gallery", "title": "Gallery", "file": "gallery.md", "routes": ["/gallery"], "audience": "howto" },
     { "id": "calendar", "title": "Calendar", "file": "calendar.md", "routes": ["/calendar"], "audience": "howto" },
+    { "id": "calendar-alerts", "title": "Event alerts", "file": "calendar.md", "routes": ["/calendar"], "audience": "howto", "anchor": "alerts", "toc": false },
+    { "id": "calendar-subscribe", "title": "Subscribe to a calendar", "file": "calendar.md", "routes": ["/calendar"], "audience": "howto", "anchor": "subscribe", "toc": false },
     { "id": "sync", "title": "Devices and sync", "file": "sync.md", "routes": ["/sync"], "audience": "howto" },
     { "id": "settings", "title": "Settings", "file": "settings.md", "routes": ["/settings"], "audience": "howto" },
     { "id": "settings-login-server", "title": "Login server", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "login-server", "toc": false },

@@ -58,16 +58,51 @@ public static class ChatMessageHelper
         return max;
     }
 
-    public static string ResolveIncomingNoteTitle(string? incomingTitle, string? localTitle)
+    /// <summary>
+    /// True when <paramref name="title"/> is empty, a generic placeholder, the item id,
+    /// or a GUID (the catch-up path used to send notebook ids as titles).
+    /// </summary>
+    public static bool IsPlaceholderNoteTitle(string? title, string? itemId = null)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return true;
+
+        var t = title.Trim();
+        if (GenericNoteTitles.Contains(t))
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(itemId)
+            && string.Equals(t, itemId.Trim(), StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return Guid.TryParse(t, out _);
+    }
+
+    /// <summary>
+    /// Title to put on the wire. Never the item id.
+    /// </summary>
+    public static string ResolveOutgoingNoteTitle(string? title, string? itemId)
+    {
+        var t = title?.Trim();
+        if (string.IsNullOrWhiteSpace(t) || IsPlaceholderNoteTitle(t, itemId))
+            return "Untitled";
+        return t;
+    }
+
+    public static string ResolveIncomingNoteTitle(string? incomingTitle, string? localTitle, string? itemId = null)
     {
         var incoming = string.IsNullOrWhiteSpace(incomingTitle) ? "Untitled" : incomingTitle.Trim();
         var local = localTitle?.Trim();
+        var incomingPlaceholder = IsPlaceholderNoteTitle(incoming, itemId);
+        var localMissing = string.IsNullOrWhiteSpace(local) || IsPlaceholderNoteTitle(local, itemId);
 
-        if (string.IsNullOrWhiteSpace(local) || GenericNoteTitles.Contains(local))
-            return incoming;
+        if (localMissing)
+            return incomingPlaceholder
+                ? (string.IsNullOrWhiteSpace(local) ? "Untitled" : local!)
+                : incoming;
 
-        if (GenericNoteTitles.Contains(incoming))
-            return local;
+        if (incomingPlaceholder)
+            return local!;
 
         return incoming;
     }

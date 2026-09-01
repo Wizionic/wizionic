@@ -31,9 +31,17 @@ The desktop app may be pointed at wizionic.com while you are testing a local bui
 
 Use the **account password**, not the email login code and not SMS.
 
+## Notebook shows a long id instead of its name
+
+The note body is unchanged. Rename it (⋮ → Rename). Sync had been able to replace the sidebar name with the notebook id.
+
+## I forgot my password
+
+On the Password tab, **Forgot password?** Enter the emailed login code. That removes the password (and turns two-factor off) so you can **Add a password**. Do not use the normal **Login code (email)** tab if two-factor is on — that path still requires the password first.
+
 ## Magic link does nothing
 
-If 2FA is on, enter your password first. Then use the email code or the link to finish.
+If 2FA is on, enter your password first. Then use the email code or the link to finish. If you forgot the password, use **Forgot password?** instead.
 
 ## I closed the app but it is still in the tray
 

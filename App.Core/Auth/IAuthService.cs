@@ -25,6 +25,10 @@ public interface IAuthService
     Task LoadAsync();
     Task<(bool Success, string? Error)> RequestLoginCodeAsync(string email);
     Task<(bool Success, string? Error)> VerifyLoginCodeAsync(string email, string code);
+    /// <summary>
+    /// Forgot-password: consume an emailed login code, clear the password (and 2FA), then sign in.
+    /// </summary>
+    Task<(bool Success, string? Error)> ResetPasswordAsync(string email, string code);
     Task<AuthLoginResult> LoginWithPasswordAsync(string email, string password);
     Task<AuthLoginResult> VerifyTwoFactorAsync(string challengeId, string code, string method);
     Task<(bool Success, string? Error)> SendTwoFactorAsync(string challengeId, string method);

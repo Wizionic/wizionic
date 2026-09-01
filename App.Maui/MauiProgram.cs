@@ -281,6 +281,9 @@ public static class MauiProgram
 		services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<SqliteGalleryStore>());
 		services.AddScoped<SqliteCalendarStore>();
 		services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<SqliteCalendarStore>());
+		services.AddScoped<ICalendarIcsFetcher, App.Shared.Services.CalendarIcsFetcher>();
+		services.AddScoped<App.Shared.Services.CalendarSubscriptionService>();
+		services.AddScoped<ICalendarBackgroundService, App.Shared.Services.CalendarBackgroundService>();
 		services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 		services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 		services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Services.NotesChatHandoff>();

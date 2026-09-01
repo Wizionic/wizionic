@@ -154,6 +154,42 @@ public class ChatAuthService : IAuthService
         }
     }
 
+    public async Task<(bool Success, string? Error)> ResetPasswordAsync(string email, string code)
+    {
+        try
+        {
+            await EnsureDeviceIdAsync();
+            var payload = new { Email = email.Trim(), Code = code.Trim() };
+            var resp = await _http.PostAsJsonAsync("api/auth/reset-password", payload);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                string message = resp.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Invalid or expired login code. Request a new one."
+                    : $"Could not reset password ({(int)resp.StatusCode}).";
+                try
+                {
+                    var body = await ReadJsonOrNullAsync<ErrorMessageResponse>(resp);
+                    if (!string.IsNullOrWhiteSpace(body?.Message))
+                        message = body.Message;
+                }
+                catch { /* keep default */ }
+
+                return (false, message);
+            }
+
+            LastRecoveryCodes = null;
+            await LoadAsync();
+            return IsAuthenticated
+                ? (true, null)
+                : (false, "Signed in on the server, but the session could not be loaded.");
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
     public async Task<AuthLoginResult> LoginWithPasswordAsync(string email, string password)
     {
         try
