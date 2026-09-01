@@ -72,3 +72,14 @@ public sealed class CalendarBackgroundService : ICalendarBackgroundService
     public Task TickSubscriptionsAsync(CancellationToken ct = default) =>
         _subscriptions.RefreshDueAsync(ct);
 }
+
+/// <summary>No-op ticker for host static render of shared layout/components.</summary>
+public sealed class NullCalendarBackgroundService : ICalendarBackgroundService
+{
+    public static readonly NullCalendarBackgroundService Instance = new();
+
+    public Task<IReadOnlyList<CalendarDueAlarm>> GetDueAlarmsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<CalendarDueAlarm>>([]);
+
+    public Task TickSubscriptionsAsync(CancellationToken ct = default) => Task.CompletedTask;
+}

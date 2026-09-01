@@ -220,6 +220,7 @@ builder.Services.AddScoped<INotesSyncBridge>(sp => sp.GetRequiredService<NullSyn
 builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
 builder.Services.AddScoped<ICalendarSyncBridge>(sp => sp.GetRequiredService<NullSyncService>());
 builder.Services.AddScoped<ICalendarStore>(_ => App.Shared.Services.NullCalendarStore.Instance);
+builder.Services.AddScoped<ICalendarBackgroundService>(_ => App.Shared.Services.NullCalendarBackgroundService.Instance);
 builder.Services.AddSingleton<IStorageQuotaService>(_ => NullStorageQuotaService.Instance);
 builder.Services.AddSingleton<App.Core.Storage.ISettingsSyncStore>(
     _ => App.Shared.Services.NullSettingsSyncStore.Instance);
