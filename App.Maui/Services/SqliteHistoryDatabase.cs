@@ -194,6 +194,14 @@ public sealed partial class SqliteHistoryDatabase
         await TryAddColumnAsync(conn, "album_meta", "sort_order", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "album_meta", "protection_changed_ticks", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "album_image_meta", "thumbnail_base64", "TEXT", ct);
+        await TryAddColumnAsync(conn, "calendar_meta", "subscription_url", "TEXT", ct);
+        await TryAddColumnAsync(conn, "calendar_meta", "refresh_interval_minutes", "INTEGER", ct);
+        await TryAddColumnAsync(conn, "calendar_meta", "subscription_etag", "TEXT", ct);
+        await TryAddColumnAsync(conn, "calendar_meta", "subscription_last_modified", "TEXT", ct);
+        await TryAddColumnAsync(conn, "calendar_meta", "last_fetched_utc", "TEXT", ct);
+        await TryAddColumnAsync(conn, "event_meta", "reminder_minutes_before", "INTEGER", ct);
+        await TryAddColumnAsync(conn, "event_meta", "reminder_sound_id", "TEXT", ct);
+        await TryAddColumnAsync(conn, "event_meta", "reminder_repeat_minutes", "INTEGER", ct);
 
         _initialized = true;
     }
@@ -319,7 +327,12 @@ public sealed partial class SqliteHistoryDatabase
         string? TimeZone = null,
         bool IsVisible = true,
         int SortOrder = 0,
-        bool IsWorkflowCalendar = false);
+        bool IsWorkflowCalendar = false,
+        string? SubscriptionUrl = null,
+        int? RefreshIntervalMinutes = null,
+        string? SubscriptionEtag = null,
+        string? SubscriptionLastModified = null,
+        string? LastFetchedUtc = null);
 
     public record EventMetaRow(
         string StorageKey,
@@ -336,7 +349,10 @@ public sealed partial class SqliteHistoryDatabase
         string? DeletedAt,
         string? RRule = null,
         string? Location = null,
-        string? WorkflowId = null);
+        string? WorkflowId = null,
+        int? ReminderMinutesBefore = null,
+        string? ReminderSoundId = null,
+        int? ReminderRepeatMinutes = null);
 
     public async Task<List<ConvoMetaRow>> GetConvoMetasByNamespaceAsync(string ns, CancellationToken ct = default)
     {
@@ -993,7 +1009,8 @@ public sealed partial class SqliteHistoryDatabase
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT storage_key, id, namespace, name, color, last_updated, sync_enabled,
-                   content_fingerprint, deleted_at, description, time_zone, is_visible, sort_order, is_workflow_calendar
+                   content_fingerprint, deleted_at, description, time_zone, is_visible, sort_order, is_workflow_calendar,
+                   subscription_url, refresh_interval_minutes, subscription_etag, subscription_last_modified, last_fetched_utc
             FROM calendar_meta WHERE namespace = $ns
             """;
         cmd.Parameters.AddWithValue("$ns", ns);
@@ -1008,7 +1025,8 @@ public sealed partial class SqliteHistoryDatabase
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT storage_key, id, namespace, name, color, last_updated, sync_enabled,
-                   content_fingerprint, deleted_at, description, time_zone, is_visible, sort_order, is_workflow_calendar
+                   content_fingerprint, deleted_at, description, time_zone, is_visible, sort_order, is_workflow_calendar,
+                   subscription_url, refresh_interval_minutes, subscription_etag, subscription_last_modified, last_fetched_utc
             FROM calendar_meta WHERE namespace = $ns AND id = $id
             """;
         cmd.Parameters.AddWithValue("$ns", ns);
@@ -1026,8 +1044,10 @@ public sealed partial class SqliteHistoryDatabase
         cmd.CommandText = """
             INSERT INTO calendar_meta (
                 storage_key, id, namespace, name, color, last_updated, sync_enabled,
-                content_fingerprint, deleted_at, description, time_zone, is_visible, sort_order, is_workflow_calendar)
-            VALUES ($key, $id, $ns, $name, $color, $last, $sync, $fp, $deleted, $desc, $tz, $vis, $sort, $wf)
+                content_fingerprint, deleted_at, description, time_zone, is_visible, sort_order, is_workflow_calendar,
+                subscription_url, refresh_interval_minutes, subscription_etag, subscription_last_modified, last_fetched_utc)
+            VALUES ($key, $id, $ns, $name, $color, $last, $sync, $fp, $deleted, $desc, $tz, $vis, $sort, $wf,
+                    $suburl, $refresh, $etag, $sublm, $fetched)
             ON CONFLICT(storage_key) DO UPDATE SET
                 id = excluded.id,
                 namespace = excluded.namespace,
@@ -1041,7 +1061,12 @@ public sealed partial class SqliteHistoryDatabase
                 time_zone = excluded.time_zone,
                 is_visible = excluded.is_visible,
                 sort_order = excluded.sort_order,
-                is_workflow_calendar = excluded.is_workflow_calendar;
+                is_workflow_calendar = excluded.is_workflow_calendar,
+                subscription_url = excluded.subscription_url,
+                refresh_interval_minutes = excluded.refresh_interval_minutes,
+                subscription_etag = excluded.subscription_etag,
+                subscription_last_modified = excluded.subscription_last_modified,
+                last_fetched_utc = excluded.last_fetched_utc;
             """;
         cmd.Parameters.AddWithValue("$key", row.StorageKey);
         cmd.Parameters.AddWithValue("$id", row.Id);
@@ -1057,6 +1082,11 @@ public sealed partial class SqliteHistoryDatabase
         cmd.Parameters.AddWithValue("$vis", row.IsVisible ? 1 : 0);
         cmd.Parameters.AddWithValue("$sort", row.SortOrder);
         cmd.Parameters.AddWithValue("$wf", row.IsWorkflowCalendar ? 1 : 0);
+        cmd.Parameters.AddWithValue("$suburl", (object?)row.SubscriptionUrl ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$refresh", (object?)row.RefreshIntervalMinutes ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$etag", (object?)row.SubscriptionEtag ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$sublm", (object?)row.SubscriptionLastModified ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$fetched", (object?)row.LastFetchedUtc ?? DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -1068,7 +1098,8 @@ public sealed partial class SqliteHistoryDatabase
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT storage_key, id, calendar_id, namespace, summary, start_utc, end_utc, is_all_day,
-                   status, last_updated, content_fingerprint, deleted_at, rrule, location, workflow_id
+                   status, last_updated, content_fingerprint, deleted_at, rrule, location, workflow_id,
+                   reminder_minutes_before, reminder_sound_id, reminder_repeat_minutes
             FROM event_meta WHERE namespace = $ns
             """;
         cmd.Parameters.AddWithValue("$ns", ns);
@@ -1083,7 +1114,8 @@ public sealed partial class SqliteHistoryDatabase
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT storage_key, id, calendar_id, namespace, summary, start_utc, end_utc, is_all_day,
-                   status, last_updated, content_fingerprint, deleted_at, rrule, location, workflow_id
+                   status, last_updated, content_fingerprint, deleted_at, rrule, location, workflow_id,
+                   reminder_minutes_before, reminder_sound_id, reminder_repeat_minutes
             FROM event_meta WHERE namespace = $ns AND id = $id
             """;
         cmd.Parameters.AddWithValue("$ns", ns);
@@ -1101,8 +1133,9 @@ public sealed partial class SqliteHistoryDatabase
         cmd.CommandText = """
             INSERT INTO event_meta (
                 storage_key, id, calendar_id, namespace, summary, start_utc, end_utc, is_all_day,
-                status, last_updated, content_fingerprint, deleted_at, rrule, location, workflow_id)
-            VALUES ($key, $id, $cal, $ns, $summary, $start, $end, $allday, $status, $last, $fp, $deleted, $rrule, $loc, $wf)
+                status, last_updated, content_fingerprint, deleted_at, rrule, location, workflow_id,
+                reminder_minutes_before, reminder_sound_id, reminder_repeat_minutes)
+            VALUES ($key, $id, $cal, $ns, $summary, $start, $end, $allday, $status, $last, $fp, $deleted, $rrule, $loc, $wf, $rmin, $rsound, $rrep)
             ON CONFLICT(storage_key) DO UPDATE SET
                 id = excluded.id,
                 calendar_id = excluded.calendar_id,
@@ -1117,7 +1150,10 @@ public sealed partial class SqliteHistoryDatabase
                 deleted_at = excluded.deleted_at,
                 rrule = excluded.rrule,
                 location = excluded.location,
-                workflow_id = excluded.workflow_id;
+                workflow_id = excluded.workflow_id,
+                reminder_minutes_before = excluded.reminder_minutes_before,
+                reminder_sound_id = excluded.reminder_sound_id,
+                reminder_repeat_minutes = excluded.reminder_repeat_minutes;
             """;
         cmd.Parameters.AddWithValue("$key", row.StorageKey);
         cmd.Parameters.AddWithValue("$id", row.Id);
@@ -1134,6 +1170,9 @@ public sealed partial class SqliteHistoryDatabase
         cmd.Parameters.AddWithValue("$rrule", (object?)row.RRule ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$loc", (object?)row.Location ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$wf", (object?)row.WorkflowId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$rmin", (object?)row.ReminderMinutesBefore ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$rsound", (object?)row.ReminderSoundId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$rrep", (object?)row.ReminderRepeatMinutes ?? DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -1194,7 +1233,12 @@ public sealed partial class SqliteHistoryDatabase
                 reader.IsDBNull(10) ? null : reader.GetString(10),
                 reader.IsDBNull(11) || reader.GetInt64(11) != 0,
                 reader.IsDBNull(12) ? 0 : (int)reader.GetInt64(12),
-                !reader.IsDBNull(13) && reader.GetInt64(13) != 0));
+                !reader.IsDBNull(13) && reader.GetInt64(13) != 0,
+                reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : null,
+                reader.FieldCount > 15 && !reader.IsDBNull(15) ? (int)reader.GetInt64(15) : null,
+                reader.FieldCount > 16 && !reader.IsDBNull(16) ? reader.GetString(16) : null,
+                reader.FieldCount > 17 && !reader.IsDBNull(17) ? reader.GetString(17) : null,
+                reader.FieldCount > 18 && !reader.IsDBNull(18) ? reader.GetString(18) : null));
         }
         return rows;
     }
@@ -1220,7 +1264,10 @@ public sealed partial class SqliteHistoryDatabase
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetString(13),
-                reader.IsDBNull(14) ? null : reader.GetString(14)));
+                reader.IsDBNull(14) ? null : reader.GetString(14),
+                reader.FieldCount > 15 && !reader.IsDBNull(15) ? (int)reader.GetInt64(15) : null,
+                reader.FieldCount > 16 && !reader.IsDBNull(16) ? reader.GetString(16) : null,
+                reader.FieldCount > 17 && !reader.IsDBNull(17) ? (int)reader.GetInt64(17) : null));
         }
         return rows;
     }

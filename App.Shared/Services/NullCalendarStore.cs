@@ -40,7 +40,12 @@ public sealed class NullCalendarStore : ICalendarStore
         Task.FromResult(false);
 
     public Task ApplyRemoteCalendarMetaAsync(
-        string id, string name, string color, bool isVisible, string? description, long lastUpdatedTicks, CancellationToken ct = default) =>
+        string id, string name, string color, bool isVisible, string? description, long lastUpdatedTicks, CancellationToken ct = default,
+        string? subscriptionUrl = null, int? refreshIntervalMinutes = null) =>
+        Task.CompletedTask;
+
+    public Task SetCalendarSubscriptionAsync(
+        string id, string? url, int? refreshIntervalMinutes, string? etag, string? lastModified, DateTime? lastFetchedUtc, CancellationToken ct = default) =>
         Task.CompletedTask;
 
     public Task<List<CalendarEventIndex>> LoadEventIndexAsync(DateTime fromUtc, DateTime toUtc, CancellationToken ct = default) =>

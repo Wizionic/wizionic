@@ -1,4 +1,5 @@
 using App.Core.Auth;
+using App.Core.Storage;
 using App.Data;
 using App.Services;
 using Microsoft.AspNetCore.Http;
@@ -16,6 +17,7 @@ namespace App.Apis;
 /// Auth surface:
 /// - POST /api/auth/request-magic-link  (PUBLIC) → hashed login code emailed (no clickable link; account created on verify)
 /// - POST /api/auth/verify-code         (PUBLIC) → exchange email+code for cookie session
+/// - POST /api/auth/reset-password      (PUBLIC) → email+code clears password+2FA (forgot password) then issues a cookie
 /// - POST /api/auth/login-password      (PUBLIC) → email+password login (generic errors; no existence/password-set clues)
 /// - POST /api/auth/2fa/send            (PUBLIC) → send SMS/email code for a password-verified challenge
 /// - POST /api/auth/2fa/verify          (PUBLIC) → complete 2FA and issue cookie
@@ -38,7 +40,7 @@ namespace App.Apis;
 /// on the server (reusing the same AppTools as the interactive server chat).
 ///
 /// /api/tools/* requires the same AppAuth cookie as /api/auth/me. Public auth endpoints
-/// (magic-link, verify-code, password, 2FA, logout) stay unauthenticated so sign-in works.
+/// (magic-link, verify-code, reset-password, password, 2FA, logout) stay unauthenticated so sign-in works.
 /// 
 /// The server never stores WASM conversation history (per design).
 /// 
@@ -128,6 +130,51 @@ public static class WasmApiEndpoints
                 success = true,
                 email = ready.Email,
                 message = "Signed in successfully."
+            });
+        }).RequireRateLimiting("auth");
+
+        // Forgot-password: same emailed login code as sign-in, but this path is allowed even when
+        // 2FA is on. Normal verify-code still requires password-then-2FA. Never rotates the
+        // encryption key. Generic errors — do not reveal whether the email exists or had a password.
+        publicAuth.MapPost("/reset-password", async (HttpContext ctx, MagicLinkService magic, AppDbContext db, AuthSessionService sessions, UserDeviceService devices, IEmailSender emailSender, AuthThrottleService throttle, VerifyLoginCode req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Code))
+                return Results.BadRequest("Email and code are required.");
+
+            var email = EmailNormalizer.Normalize(req.Email);
+            var (locked, lockMsg) = await throttle.CheckLockoutAsync(db, email);
+            if (locked)
+                return Results.Json(new { success = false, message = lockMsg }, statusCode: StatusCodes.Status429TooManyRequests);
+
+            var ready = await magic.ValidateLoginCodeAsync(email, req.Code.Trim());
+            if (ready == null)
+            {
+                await throttle.RegisterFailureAsync(db, email);
+                return Results.Json(new { success = false, message = AuthThrottleService.GenericCodeFail }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            var cleared = ClearPasswordAndTwoFactor(ready);
+            if (cleared)
+            {
+                await db.SaveChangesAsync();
+                await sessions.RevokeOthersAsync(ready.Id, currentRawSid: null);
+                var (subj, text, html) = SecurityEmailContent.PasswordRemoved(
+                    ctx.Connection.RemoteIpAddress?.ToString(), DateTime.UtcNow);
+                try { await emailSender.SendSecurityNoticeAsync(ready.Email, subj, text, html); }
+                catch { /* never fail the reset */ }
+            }
+
+            await throttle.RegisterSuccessAsync(db, ready);
+            await AuthSignInHelper.CompleteSignInAsync(ctx, ready, sessions, devices, emailSender);
+
+            return Results.Ok(new
+            {
+                success = true,
+                email = ready.Email,
+                hasPassword = false,
+                message = cleared
+                    ? "Password removed. You can add a new one."
+                    : "Signed in successfully."
             });
         }).RequireRateLimiting("auth");
 
@@ -589,6 +636,62 @@ public static class WasmApiEndpoints
             return Results.Ok(result);
         });
 
+        group.MapPost("/calendar/ics-fetch", async (CalendarIcsFetchRequest req) =>
+        {
+            var url = CalendarIcs.NormalizeFeedUrl(req.Url);
+            if (!CalendarIcs.IsAllowedFeedUrl(url))
+                return Results.BadRequest(new { message = "Enter an https (or webcal) calendar URL." });
+
+            using var handler = new HttpClientHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 };
+            using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.TryAddWithoutValidation("Accept", "text/calendar, text/plain, */*");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Wizionic/1.0");
+            if (!string.IsNullOrWhiteSpace(req.Etag))
+                request.Headers.TryAddWithoutValidation("If-None-Match", req.Etag);
+            if (!string.IsNullOrWhiteSpace(req.LastModified)
+                && DateTimeOffset.TryParse(req.LastModified, out var lm))
+                request.Headers.IfModifiedSince = lm;
+
+            HttpResponseMessage resp;
+            try
+            {
+                resp = await http.SendAsync(request);
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(new { statusCode = 502, message = ex.Message }, statusCode: 502);
+            }
+
+            using (resp)
+            {
+                if (resp.StatusCode == System.Net.HttpStatusCode.NotModified)
+                {
+                    return Results.Ok(new
+                    {
+                        statusCode = 304,
+                        text = (string?)null,
+                        etag = resp.Headers.ETag?.ToString(),
+                        lastModified = resp.Content.Headers.LastModified?.ToString("R")
+                    });
+                }
+
+                var bytes = await resp.Content.ReadAsByteArrayAsync();
+                if (bytes.Length > 2 * 1024 * 1024)
+                    return Results.Json(new { statusCode = 413, message = "Calendar is larger than 2 MB." }, statusCode: 413);
+
+                var text = System.Text.Encoding.UTF8.GetString(bytes);
+                return Results.Json(new
+                {
+                    statusCode = (int)resp.StatusCode,
+                    text = resp.IsSuccessStatusCode ? text : null,
+                    etag = resp.Headers.ETag?.ToString(),
+                    lastModified = resp.Content.Headers.LastModified?.ToString("R"),
+                    message = resp.IsSuccessStatusCode ? null : resp.ReasonPhrase
+                }, statusCode: resp.IsSuccessStatusCode ? 200 : (int)resp.StatusCode);
+            }
+        });
+
         // Tool proxies for WASM agentic mode.
         // These allow the browser (WASM) to use web search and page summarization
         // without CORS errors (the browser would otherwise be blocked when calling
@@ -696,7 +799,34 @@ public static class WasmApiEndpoints
     public record SummarizeUrlRequest(string Url);
     public record WeatherRequest(double Latitude, double Longitude, string? Units = "celsius", int? ForecastDays = 0);
 
+    /// <summary>
+    /// Clears the optional login password and all 2FA fields. Does not touch LocalEncryptionKey.
+    /// Returns true when anything actually changed.
+    /// </summary>
+    private static bool ClearPasswordAndTwoFactor(User user)
+    {
+        var changed = !string.IsNullOrEmpty(user.PasswordHash)
+            || user.TwoFactorEnabled
+            || !string.IsNullOrEmpty(user.TwoFactorPhoneE164)
+            || !string.IsNullOrEmpty(user.TwoFactorChallengeHash)
+            || user.TwoFactorChallengeExpiresAt != null
+            || !string.IsNullOrEmpty(user.RecoveryCodesJson);
+
+        if (!changed)
+            return false;
+
+        user.PasswordHash = null;
+        user.TwoFactorEnabled = false;
+        user.TwoFactorPhoneE164 = null;
+        user.TwoFactorChallengeHash = null;
+        user.TwoFactorChallengeExpiresAt = null;
+        RecoveryCodeService.Clear(user);
+        return true;
+    }
+
     // Request for the public login flow (used by WASM and MAUI landing pages).
+    public record CalendarIcsFetchRequest(string? Url, string? Etag = null, string? LastModified = null);
+
     public record RequestMagicLink(string Email);
     public record VerifyLoginCode(string Email, string Code);
     public record LoginWithPassword(string Email, string Password, bool RememberDevice = true);

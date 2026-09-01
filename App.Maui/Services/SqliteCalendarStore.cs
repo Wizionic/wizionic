@@ -50,21 +50,17 @@ public class SqliteCalendarStore : ICalendarStore
                 m.TimeZone,
                 m.IsVisible,
                 m.SortOrder,
-                m.IsWorkflowCalendar))
+                m.IsWorkflowCalendar,
+                m.SubscriptionUrl,
+                m.RefreshIntervalMinutes,
+                m.SubscriptionEtag,
+                m.SubscriptionLastModified,
+                string.IsNullOrWhiteSpace(m.LastFetchedUtc) ? null : DateTime.Parse(m.LastFetchedUtc).ToUniversalTime()))
             .ToList();
     }
 
-    public async Task EnsureDefaultCalendarAsync(CancellationToken ct = default)
-    {
-        var list = await LoadCalendarsAsync(ct);
-        if (list.Count > 0) return;
-        await CreateCalendarAsync(
-            Guid.NewGuid().ToString("N"),
-            CalendarConstants.DefaultCalendarName,
-            CalendarConstants.DefaultCalendarColor,
-            null,
-            ct);
-    }
+    public Task EnsureDefaultCalendarAsync(CancellationToken ct = default) =>
+        Task.CompletedTask;
 
     public async Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default, bool isWorkflowCalendar = false)
     {
@@ -231,17 +227,20 @@ public class SqliteCalendarStore : ICalendarStore
     }
 
     public async Task ApplyRemoteCalendarMetaAsync(
-        string id, string name, string color, bool isVisible, string? description, long lastUpdatedTicks, CancellationToken ct = default)
+        string id, string name, string color, bool isVisible, string? description, long lastUpdatedTicks, CancellationToken ct = default,
+        string? subscriptionUrl = null, int? refreshIntervalMinutes = null)
     {
         var ns = GetPrefix();
         var existing = await _db.GetCalendarMetaByIdAsync(ns, id, ct);
         var last = new DateTime(lastUpdatedTicks, DateTimeKind.Utc);
-        var fp = SyncFingerprint.ForCalendar(id, name, color, isVisible, description, lastUpdatedTicks);
+        var fp = SyncFingerprint.ForCalendar(id, name, color, isVisible, description, lastUpdatedTicks,
+            subscriptionUrl: subscriptionUrl, refreshIntervalMinutes: refreshIntervalMinutes);
         if (existing is null)
         {
             await _db.UpsertCalendarMetaAsync(new SqliteHistoryDatabase.CalendarMetaRow(
                 CalKey(ns, id), id, ns, name, color, last.ToString("o"),
-                _auth.IsAuthenticated, fp, null, description, null, isVisible), ct);
+                _auth.IsAuthenticated, fp, null, description, null, isVisible,
+                SubscriptionUrl: subscriptionUrl, RefreshIntervalMinutes: refreshIntervalMinutes), ct);
             return;
         }
         await _db.UpsertCalendarMetaAsync(existing with
@@ -252,7 +251,38 @@ public class SqliteCalendarStore : ICalendarStore
             Description = description,
             LastUpdated = last.ToString("o"),
             ContentFingerprint = fp,
-            DeletedAt = null
+            DeletedAt = null,
+            SubscriptionUrl = subscriptionUrl ?? existing.SubscriptionUrl,
+            RefreshIntervalMinutes = refreshIntervalMinutes ?? existing.RefreshIntervalMinutes
+        }, ct);
+    }
+
+    public async Task SetCalendarSubscriptionAsync(
+        string id,
+        string? url,
+        int? refreshIntervalMinutes,
+        string? etag,
+        string? lastModified,
+        DateTime? lastFetchedUtc,
+        CancellationToken ct = default)
+    {
+        var ns = GetPrefix();
+        var existing = await _db.GetCalendarMetaByIdAsync(ns, id, ct);
+        if (existing is null || !string.IsNullOrEmpty(existing.DeletedAt))
+            return;
+        var now = DateTime.UtcNow;
+        var fp = SyncFingerprint.ForCalendar(
+            id, existing.Name, existing.Color, existing.IsVisible, existing.Description, now.Ticks,
+            existing.IsWorkflowCalendar, url, refreshIntervalMinutes);
+        await _db.UpsertCalendarMetaAsync(existing with
+        {
+            SubscriptionUrl = url,
+            RefreshIntervalMinutes = refreshIntervalMinutes,
+            SubscriptionEtag = etag,
+            SubscriptionLastModified = lastModified,
+            LastFetchedUtc = lastFetchedUtc?.ToUniversalTime().ToString("o"),
+            LastUpdated = now.ToString("o"),
+            ContentFingerprint = fp
         }, ct);
     }
 
@@ -271,7 +301,8 @@ public class SqliteCalendarStore : ICalendarStore
             if (hasRrule && start >= toUtc) continue;
             result.Add(new CalendarEventIndex(
                 m.Id, m.CalendarId, m.Summary, start, end, m.IsAllDay, m.Status,
-                DateTime.Parse(m.LastUpdated).ToUniversalTime(), null, m.RRule, m.Location, m.WorkflowId));
+                DateTime.Parse(m.LastUpdated).ToUniversalTime(), null, m.RRule, m.Location, m.WorkflowId,
+                m.ReminderMinutesBefore, m.ReminderSoundId, m.ReminderRepeatMinutes));
         }
         return result;
     }
@@ -312,7 +343,10 @@ public class SqliteCalendarStore : ICalendarStore
                 meta.IsAllDay, null, meta.Location, null, meta.RRule,
                 Status: meta.Status,
                 ModifiedUtc: DateTime.Parse(meta.LastUpdated).ToUniversalTime(),
-                WorkflowId: meta.WorkflowId);
+                WorkflowId: meta.WorkflowId,
+                ReminderMinutesBefore: meta.ReminderMinutesBefore,
+                ReminderSoundId: meta.ReminderSoundId,
+                ReminderRepeatMinutes: meta.ReminderRepeatMinutes);
         }
 
         var keyB64 = await GetEncKeyAsync();
@@ -371,7 +405,10 @@ public class SqliteCalendarStore : ICalendarStore
             null,
             stored.RRule,
             stored.Location,
-            stored.WorkflowId), ct);
+            stored.WorkflowId,
+            stored.ReminderMinutesBefore,
+            stored.ReminderSoundId,
+            stored.ReminderRepeatMinutes), ct);
     }
 
     public Task SoftDeleteEventAsync(string eventId, CancellationToken ct = default) =>

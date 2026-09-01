@@ -143,8 +143,9 @@
             }
             else
             {
-            <h3 style="font-size:1.05rem; margin:0 0 0.35rem 0;">
+            <h3 class="help-heading" style="font-size:1.05rem; margin:0 0 0.35rem 0;">
                 @(Auth.HasPassword ? "Change password" : "Add a password")
+                <HelpGlyph Topic="account" />
             </h3>
             <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
                 Optional. Use a password to sign in without waiting for an email code, and to unlock protected notebooks.
@@ -160,6 +161,42 @@
                 <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@passwordError</div>
             }
 
+            @if (resettingPassword && Auth.HasPassword)
+            {
+                <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                    Enter the login code emailed to <strong>@Auth.Email</strong>. That removes the password so you can add a new one.
+                </p>
+                @if (loginSent)
+                {
+                    <div style="margin-bottom:0.5rem;">
+                        <input type="text"
+                               @bind-value="loginCode"
+                               @bind-value:event="oninput"
+                               placeholder="Login code"
+                               class="form-control"
+                               style="letter-spacing:0.15em; text-transform:uppercase;"
+                               autocomplete="one-time-code" />
+                    </div>
+                }
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                    @if (loginSent)
+                    {
+                        <button class="btn btn-primary"
+                                @onclick="VerifySignedInResetCode"
+                                disabled="@(busy || string.IsNullOrWhiteSpace(loginCode))">
+                            Verify code
+                        </button>
+                    }
+                    <button type="button" class="btn btn-outline-secondary" @onclick="StartForgotCurrentPassword" disabled="@busy">
+                        @(loginSent ? "Resend code" : "Send login code")
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CancelSignedInReset" disabled="@busy">
+                        Cancel
+                    </button>
+                </div>
+            }
+            else
+            {
             @if (Auth.HasPassword)
             {
                 <div style="margin-bottom:0.5rem;">
@@ -197,12 +234,21 @@
                     Cancel
                 </button>
             </div>
+            @if (Auth.HasPassword)
+            {
+                <div style="margin-top:0.5rem;">
+                    <button type="button" class="btn btn-link p-0" style="font-size:0.9em;" @onclick="StartForgotCurrentPassword" disabled="@busy">
+                        Forgot current password?
+                    </button>
+                </div>
+            }
             @if (!Auth.HasPassword)
             {
                 <label style="display:flex; align-items:flex-start; gap:0.5rem; margin-top:0.85rem; font-size:0.9em;">
                     <input type="checkbox" @bind="enableTwoFactorOnSave" disabled="@busy" />
                     <span>Require a second factor when signing in (email code, or SMS if you add a phone).</span>
                 </label>
+            }
             }
             }
 
@@ -475,6 +521,13 @@
             </button>
         </div>
 
+        @if (resettingPassword && loginMode == LoginMode.Code)
+        {
+            <p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                We'll email a login code. After you enter it, the password is removed so you can add a new one.
+            </p>
+        }
+
         @if (loginMode == LoginMode.Password)
         {
             <div style="display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
@@ -501,6 +554,13 @@
                 <p style="margin:0; font-size:0.85em; color: var(--color-text-muted);">
                     If you turned on two-factor, sign in with your password first.
                 </p>
+                <button type="button"
+                        class="btn btn-link p-0"
+                        style="font-size:0.9em;"
+                        @onclick="StartForgotPassword"
+                        disabled="@busy">
+                    Forgot password?
+                </button>
             </div>
         }
         else if (loginSent)
@@ -652,6 +712,7 @@
     string confirmPassword = "";
     string currentPassword = "";
     bool loginSent;
+    bool resettingPassword;
     bool busy;
     string? error;
     string? passwordError;
@@ -787,6 +848,12 @@
             error = "Enter the login code from your email. Links do not sign you in.";
         }
 
+        if (uri.Query.Contains("addPassword=1", StringComparison.OrdinalIgnoreCase) && Auth.IsAuthenticated)
+        {
+            _showPasswordForm = true;
+            passwordMessage = "Password removed. You can add a new one.";
+        }
+
         await RestoreTwoFactorChallengeAsync();
     }
 
@@ -819,6 +886,19 @@
             if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(loginCode))
                 return;
 
+            if (resettingPassword)
+            {
+                var (resetOk, resetErr) = await Auth.ResetPasswordAsync(email, loginCode);
+                if (!resetOk)
+                {
+                    error = resetErr;
+                    return;
+                }
+
+                Nav.NavigateTo($"{AccountPath.TrimEnd('/')}?addPassword=1", replace: true);
+                return;
+            }
+
             var (success, err) = await Auth.VerifyLoginCodeAsync(email, loginCode);
             if (!success)
             {
@@ -849,6 +929,7 @@
         twoFactorMessage = null;
         _showPasswordForm = false;
         _showTwoFactorForm = false;
+        resettingPassword = false;
         loginMode = LoginMode.Code;
         await ClearTwoFactorChallengeAsync();
         ResetTwoFactorManage();
@@ -865,6 +946,8 @@
     {
         loginMode = mode;
         error = null;
+        if (mode != LoginMode.Code)
+            resettingPassword = false;
         if (mode == LoginMode.Code)
             passwordLogin = "";
         else
@@ -872,6 +955,86 @@
             loginSent = false;
             loginCode = "";
         }
+    }
+
+    async Task StartForgotPassword()
+    {
+        loginMode = LoginMode.Code;
+        resettingPassword = true;
+        error = null;
+        loginSent = false;
+        loginCode = "";
+        if (IsValidEmail(email))
+            await SendLoginCode();
+    }
+
+    async Task StartForgotCurrentPassword()
+    {
+        passwordError = null;
+        passwordMessage = null;
+        resettingPassword = true;
+        loginSent = false;
+        loginCode = "";
+        if (string.IsNullOrEmpty(Auth.Email))
+        {
+            passwordError = "Sign in with an email login code first.";
+            resettingPassword = false;
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var (success, err) = await Auth.RequestLoginCodeAsync(Auth.Email);
+            if (success)
+                loginSent = true;
+            else
+                passwordError = err ?? "Could not send a login code.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task VerifySignedInResetCode()
+    {
+        passwordError = null;
+        passwordMessage = null;
+        if (string.IsNullOrEmpty(Auth.Email) || string.IsNullOrWhiteSpace(loginCode))
+            return;
+
+        busy = true;
+        try
+        {
+            var (success, err) = await Auth.ResetPasswordAsync(Auth.Email, loginCode);
+            if (!success)
+            {
+                passwordError = err ?? "Invalid or expired login code.";
+                return;
+            }
+
+            resettingPassword = false;
+            loginSent = false;
+            loginCode = "";
+            currentPassword = "";
+            newPassword = "";
+            confirmPassword = "";
+            _showPasswordForm = true;
+            passwordMessage = "Password removed. You can add a new one.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    void CancelSignedInReset()
+    {
+        resettingPassword = false;
+        loginSent = false;
+        loginCode = "";
+        passwordError = null;
     }
 
     async Task LoginWithPassword()
@@ -914,6 +1077,9 @@
     void CancelPasswordForm()
     {
         _showPasswordForm = false;
+        resettingPassword = false;
+        loginSent = false;
+        loginCode = "";
         passwordError = null;
         newPassword = "";
         confirmPassword = "";

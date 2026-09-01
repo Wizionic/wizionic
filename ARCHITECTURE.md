@@ -52,9 +52,9 @@ App/
 
 ### Sign-in required
 - App features (chat, notes, gallery, calendar, tools, settings, local AI, sync) are unavailable until the user has an account. The first successful **login code** for a new email creates the account (not on the request itself).
-- User requests a login code → email via Brevo (SMTP fallback) → type the 10-character code in the app or site. `/magic-login` does **not** consume a token (wrong-app clicks and mail scanners). Password and optional 2FA are alternatives. Recovery codes are shown once when 2FA is enabled. A confirmed device is remembered for 30 days.
-- Persistent cookie (`AppAuth`, or `__Host-AppAuth` on public HTTPS) with a **server-side session** row (revocable). Sliding 10-year expiry; no idle logout. Password change and “sign out other devices” revoke other sessions. Existing cookies are upgraded, not rejected.
-- Per-user **encryption key** is generated once and never rotated on login, password change, or session revoke. WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie + `X-Wizionic-Device-Id`). A bound session used from a different device must sign in again before it can fetch the key or join sync; old clients that omit the header still work.
+- User requests a login code → email via Brevo (SMTP fallback) → type the 10-character code in the app or site. `/magic-login` does **not** consume a token (wrong-app clicks and mail scanners). Password and optional 2FA are alternatives. Recovery codes are shown once when 2FA is enabled. A confirmed device is remembered for 30 days. Forgot password (`POST /api/auth/reset-password`) uses the same emailed login code to **clear** the password and turn 2FA off so the account page shows **Add a password** again; it does not bypass 2FA for ordinary code login.
+- Persistent cookie (`AppAuth`, or `__Host-AppAuth` on public HTTPS) with a **server-side session** row (revocable). Sliding 10-year expiry; no idle logout. Password change, password reset, and “sign out other devices” revoke other sessions. Existing cookies are upgraded, not rejected.
+- Per-user **encryption key** is generated once and never rotated on login, password change, password reset, or session revoke. WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie + `X-Wizionic-Device-Id`). A bound session used from a different device must sign in again before it can fetch the key or join sync; old clients that omit the header still work.
 - Data namespace: `u-{userId}-`. Signed-out UI prefs may still use a historical `wasmchat-` prefix so they never land on authenticated keys.
 
 ### At-rest encryption
@@ -134,7 +134,7 @@ No server-side gallery storage.
 | **UI** | `CalendarPage.razor` (`/calendar`) — Google Calendar–style Day / Week / Month / Year; mini-month sidebar; color + visibility layers |
 | **Models** | RFC 5545–aligned `LocalCalendar` / `CalendarEvent`; `WorkflowId` (`X-WIZIONIC-WORKFLOW`) reserved for future workflow triggers |
 | **Store** | `ICalendarStore` — meta cleartext for grid; full event JSON AES-GCM encrypted |
-| **iCalendar** | `CalendarIcs` (Ical.Net) — export/import `.ics`, RRULE presets, occurrence expansion for visible ranges |
+| **iCalendar** | `CalendarIcs` (Ical.Net) — export/import `.ics`, ICS URL **subscribe** (poll; WASM via `/api/calendar/ics-fetch`), RRULE presets, occurrence expansion. Subscribed event rows are device-local (not WebRTC), like Workflows. Sound alerts while the app is running. |
 | **AI tools** | `CalendarToolModule`: `list_calendars`, `list_events`, `add_calendar_event`, `update_calendar_event`, `delete_calendar_event` |
 | **Routing** | `MessageSuggestsCalendarTools` or AI router module `Calendar` |
 | **Sync** | `SyncItemKind.Calendar` / `CalendarEvent`; `CalendarMetaSyncPayload` / `CalendarEventSyncPayload`. **Excluded:** Workflows system calendar (`IsWorkflowCalendar` / id `wizionic-workflows`) and any event with `WorkflowId` (device-local schedules only) |

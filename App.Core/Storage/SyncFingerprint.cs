@@ -88,9 +88,12 @@ public static class SyncFingerprint
         bool isVisible,
         string? description,
         long lastUpdatedTicks,
-        bool isWorkflowCalendar = false) =>
+        bool isWorkflowCalendar = false,
+        string? subscriptionUrl = null,
+        int? refreshIntervalMinutes = null) =>
         Compute(CalendarMetaSyncPayload.Serialize(
-            calendarId, name, color, isVisible, description, lastUpdatedTicks, isWorkflowCalendar));
+            calendarId, name, color, isVisible, description, lastUpdatedTicks, isWorkflowCalendar,
+            subscriptionUrl, refreshIntervalMinutes));
 
     public static string ForCalendarEvent(CalendarEvent evt) =>
         Compute(CalendarEventSyncPayload.Serialize(evt.CalendarId, evt));

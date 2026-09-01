@@ -375,17 +375,19 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         }
 
         var index = await _noteStore.LoadIndexAsync();
-        var meta = index.FirstOrDefault(n => n.Id == noteId);
+        var meta = index.FirstOrDefault(n => string.Equals(n.Id, noteId, StringComparison.OrdinalIgnoreCase));
+        var candidate = ChatMessageHelper.IsPlaceholderNoteTitle(title, noteId) ? meta?.Title : title;
+        var resolvedTitle = ChatMessageHelper.ResolveOutgoingNoteTitle(candidate ?? meta?.Title, noteId);
         var isProtected = meta?.IsPasswordProtected == true;
         var proticks = meta?.ProtectionChangedTicks ?? 0;
-        var dataJson = NoteSyncPayload.Serialize(noteId, title, entries, isProtected, proticks);
+        var dataJson = NoteSyncPayload.Serialize(noteId, resolvedTitle, entries, isProtected, proticks);
         var item = new SyncQueueItem
         {
             Kind = SyncItemKind.Note,
             ItemId = noteId,
-            NoteTitle = title,
+            NoteTitle = resolvedTitle,
             DataJson = dataJson,
-            ContentFingerprint = SyncFingerprint.ForNote(noteId, title, entries, isProtected, proticks)
+            ContentFingerprint = SyncFingerprint.ForNote(noteId, resolvedTitle, entries, isProtected, proticks)
         };
         await EnqueueSyncAsync(targetDeviceId, item);
     }
@@ -401,7 +403,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         }
 
         var index = await _galleryStore.LoadIndexAsync();
-        var meta = index.FirstOrDefault(n => n.Id == albumId);
+        var meta = index.FirstOrDefault(n => string.Equals(n.Id, albumId, StringComparison.OrdinalIgnoreCase));
+        title = ChatMessageHelper.ResolveOutgoingNoteTitle(
+            ChatMessageHelper.IsPlaceholderNoteTitle(title, albumId) ? meta?.Title : title,
+            albumId);
         var isProtected = meta?.IsPasswordProtected == true;
         var proticks = meta?.ProtectionChangedTicks ?? 0;
         var images = await _galleryStore.LoadAlbumAsync(albumId);
@@ -1218,11 +1223,13 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
         }
 
+        var noteIndex = await _noteStore.LoadIndexAsync();
+        var noteManifest = await _noteStore.LoadManifestEntriesAsync();
         foreach (var noteId in response.NeededNotes.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var index = await _noteStore.LoadIndexAsync();
-            var noteMeta = index.FirstOrDefault(n => n.Id == noteId);
-            var title = noteMeta?.Title ?? noteId;
+            var noteMeta = noteIndex.FirstOrDefault(n => string.Equals(n.Id, noteId, StringComparison.OrdinalIgnoreCase));
+            var manifestTitle = noteManifest.FirstOrDefault(n => string.Equals(n.Id, noteId, StringComparison.OrdinalIgnoreCase))?.Title;
+            var title = ChatMessageHelper.ResolveOutgoingNoteTitle(noteMeta?.Title ?? manifestTitle, noteId);
             var isProtected = noteMeta?.IsPasswordProtected == true;
             var proticks = noteMeta?.ProtectionChangedTicks ?? 0;
             var entries = await _noteStore.LoadNoteAsync(noteId);
@@ -1246,11 +1253,11 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
         if (_galleryStore != null)
         {
+            var albumIndex = await _galleryStore.LoadIndexAsync();
             foreach (var albumId in (response.NeededAlbums ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var index = await _galleryStore.LoadIndexAsync();
-                var albumMeta = index.FirstOrDefault(n => n.Id == albumId);
-                var title = albumMeta?.Title ?? albumId;
+                var albumMeta = albumIndex.FirstOrDefault(n => string.Equals(n.Id, albumId, StringComparison.OrdinalIgnoreCase));
+                var title = ChatMessageHelper.ResolveOutgoingNoteTitle(albumMeta?.Title, albumId);
                 await EnqueueAlbumMetaSyncAsync(peerId, albumId, title);
                 queued++;
             }
@@ -3624,7 +3631,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             var merge = NoteSyncMerger.Merge(localEntries, remoteEntries);
 
             var localTitle = await _noteStore.GetMetaTitleAsync(payload.NoteId);
-            var title = ChatMessageHelper.ResolveIncomingNoteTitle(payload.Title, localTitle);
+            var title = ChatMessageHelper.ResolveIncomingNoteTitle(payload.Title, localTitle, payload.NoteId);
 
             // Persist when the merge changed local content (or note was empty and remote arrived).
             if (merge.DiffersFromLocal || localEntries.Count == 0)

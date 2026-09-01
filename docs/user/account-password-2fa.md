@@ -23,6 +23,8 @@ Use at least 8 characters. Common and leaked passwords are rejected. We do not f
 
 Changing your password emails you and signs other devices out. Notes on those devices stay; they sign in again.
 
+Forgot the password? On the Password tab, **Forgot password?** (or **Forgot current password?** on the account page). We email a login code. After you enter it, the password is removed and two-factor is turned off so you can **Add a password** again. Other devices are signed out. The encryption key is not changed. Protected notebooks, chats, and albums unlock with the **new** password after you set one.
+
 Unlocking a notebook still asks **only** for this password. It does not ask for 2FA.
 
 ## Two-factor sign-in

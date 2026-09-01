@@ -206,10 +206,9 @@ public class WasmNoteStore : INoteStore
         var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
         var isPasswordProtected = existing?.isPasswordProtected == true;
         var protectionChangedTicks = existing?.protectionChangedTicks ?? 0;
-        var contentFingerprint = SyncFingerprint.ForNote(id, normalizedTitle, entries, isPasswordProtected, protectionChangedTicks);
-
         var existingTitle = existing?.title;
-        var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle);
+        var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle, id);
+        var contentFingerprint = SyncFingerprint.ForNote(id, resolvedTitle, entries, isPasswordProtected, protectionChangedTicks);
         var sortOrder = existing?.sortOrder;
         if (sortOrder is null)
         {

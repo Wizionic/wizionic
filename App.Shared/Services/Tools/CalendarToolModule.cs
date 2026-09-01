@@ -126,17 +126,17 @@ public sealed class CalendarToolModule : IToolModule
         try
         {
             using var work = OpenScope();
-            await work.Store.EnsureDefaultCalendarAsync();
             var cals = await work.Store.LoadCalendarsAsync();
             if (cals.Count == 0)
-                return "No calendars yet. add_calendar_event will create a Personal calendar if needed.";
+                return "No calendars yet. Create one on the Calendar page, or add_calendar_event will create Personal.";
 
             var sb = new StringBuilder();
             sb.AppendLine("Calendars:");
             foreach (var c in cals.OrderBy(x => x.SortOrder).ThenBy(x => x.Name))
             {
                 var vis = c.IsVisible ? "visible" : "hidden";
-                sb.AppendLine($"- id={c.Id} name=\"{c.Name}\" color={c.Color} {vis}");
+                var sub = c.IsSubscribed ? " subscribed" : "";
+                sb.AppendLine($"- id={c.Id} name=\"{c.Name}\" color={c.Color} {vis}{sub}");
             }
             return sb.ToString().TrimEnd();
         }
@@ -173,7 +173,6 @@ public sealed class CalendarToolModule : IToolModule
                 toUtc = fromUtc.AddDays(7);
 
             using var work = OpenScope();
-            await work.Store.EnsureDefaultCalendarAsync();
             var cals = await work.Store.LoadCalendarsAsync();
             var colorBy = cals.ToDictionary(c => c.Id, c => c.Color, StringComparer.OrdinalIgnoreCase);
             var nameBy = cals.ToDictionary(c => c.Id, c => c.Name, StringComparer.OrdinalIgnoreCase);
@@ -276,16 +275,19 @@ public sealed class CalendarToolModule : IToolModule
             }
 
             using var work = OpenScope();
-            await work.Store.EnsureDefaultCalendarAsync();
             var cals = await work.Store.LoadCalendarsAsync();
-            var calId = ResolveCalendarId(cals, calendar)
-                        ?? cals.FirstOrDefault(c => c.IsVisible)?.Id
-                        ?? cals.FirstOrDefault()?.Id;
+            var writable = cals.Where(c => !c.IsWorkflowCalendar && !c.IsSubscribed).ToList();
+            var calId = ResolveCalendarId(writable, calendar)
+                        ?? writable.FirstOrDefault(c => c.IsVisible)?.Id
+                        ?? writable.FirstOrDefault()?.Id;
             if (calId is null)
             {
-                var id = Guid.NewGuid().ToString("N");
-                await work.Store.CreateCalendarAsync(id, CalendarConstants.DefaultCalendarName, CalendarConstants.DefaultCalendarColor);
-                work.Sync?.ScheduleAutoSyncCalendarAfterLocalSave(id);
+                var id = CalendarConstants.DefaultCalendarId;
+                if (!cals.Any(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    await work.Store.CreateCalendarAsync(id, CalendarConstants.DefaultCalendarName, CalendarConstants.DefaultCalendarColor);
+                    work.Sync?.ScheduleAutoSyncCalendarAfterLocalSave(id);
+                }
                 calId = id;
             }
 
@@ -370,6 +372,8 @@ public sealed class CalendarToolModule : IToolModule
             var existing = await work.Store.LoadEventAsync(event_id);
             if (existing is null)
                 return $"No event with id={event_id}.";
+            if (await IsSubscribedCalendarAsync(work.Store, existing.CalendarId))
+                return "That calendar is a subscription (read-only).";
 
             var startLocal = existing.StartUtc.ToLocalTime();
             var endLocal = existing.EndUtc.ToLocalTime();
@@ -440,6 +444,8 @@ public sealed class CalendarToolModule : IToolModule
             var existing = await work.Store.LoadEventAsync(event_id);
             if (existing is null)
                 return $"No event with id={event_id}.";
+            if (await IsSubscribedCalendarAsync(work.Store, existing.CalendarId))
+                return "That calendar is a subscription (read-only).";
 
             var deletedAt = await work.Store.DeleteEventAsync(event_id);
             work.Sync?.ScheduleAutoSyncEventDeleteAfterLocalDelete(existing.CalendarId, event_id, deletedAt);
@@ -454,6 +460,12 @@ public sealed class CalendarToolModule : IToolModule
     }
 
     // ── Parsing helpers ────────────────────────────────────────────────────
+
+    private static async Task<bool> IsSubscribedCalendarAsync(ICalendarStore store, string calendarId)
+    {
+        var cals = await store.LoadCalendarsAsync();
+        return cals.Any(c => c.IsSubscribed && c.Id.Equals(calendarId, StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string? ResolveCalendarId(List<LocalCalendar> cals, string? nameOrId)
     {

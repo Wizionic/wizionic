@@ -94,6 +94,9 @@ builder.Services.AddScoped<IGallerySyncBridge>(sp => sp.GetRequiredService<WasmS
 builder.Services.AddScoped<WasmCalendarStore>();
 builder.Services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<WasmCalendarStore>());
 builder.Services.AddScoped<ICalendarSyncBridge>(sp => sp.GetRequiredService<WasmSyncService>());
+builder.Services.AddScoped<ICalendarIcsFetcher, App.Shared.Services.CalendarIcsFetcher>();
+builder.Services.AddScoped<App.Shared.Services.CalendarSubscriptionService>();
+builder.Services.AddScoped<ICalendarBackgroundService, App.Shared.Services.CalendarBackgroundService>();
 builder.Services.AddScoped<IChatMediaLibrary, App.Shared.Services.ChatMediaLibrary>();
 builder.Services.AddSingleton<App.Core.Storage.IGalleryChatHandoff, App.Shared.Services.GalleryChatHandoff>();
 builder.Services.AddSingleton<App.Core.Storage.INotesChatHandoff, App.Shared.Services.NotesChatHandoff>();

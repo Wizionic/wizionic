@@ -46,7 +46,12 @@ public class WasmCalendarStore : ICalendarStore
         string? timeZone = null,
         bool? isVisible = null,
         int? sortOrder = null,
-        bool? isWorkflowCalendar = null);
+        bool? isWorkflowCalendar = null,
+        string? subscriptionUrl = null,
+        int? refreshIntervalMinutes = null,
+        string? subscriptionEtag = null,
+        string? subscriptionLastModified = null,
+        string? lastFetchedUtc = null);
 
     private record StoredEvtMeta(
         string key,
@@ -63,7 +68,10 @@ public class WasmCalendarStore : ICalendarStore
         string? deletedAt,
         string? rrule = null,
         string? location = null,
-        string? workflowId = null);
+        string? workflowId = null,
+        int? reminderMinutesBefore = null,
+        string? reminderSoundId = null,
+        int? reminderRepeatMinutes = null);
 
     private string GetPrefix() => StorageNamespace.GetPrefix(_auth);
 
@@ -98,19 +106,8 @@ public class WasmCalendarStore : ICalendarStore
             .ToList();
     }
 
-    public async Task EnsureDefaultCalendarAsync(CancellationToken ct = default)
-    {
-        var list = await LoadCalendarsAsync(ct);
-        if (list.Count > 0) return;
-
-        var id = Guid.NewGuid().ToString("N");
-        await CreateCalendarAsync(
-            id,
-            CalendarConstants.DefaultCalendarName,
-            CalendarConstants.DefaultCalendarColor,
-            description: null,
-            ct);
-    }
+    public Task EnsureDefaultCalendarAsync(CancellationToken ct = default) =>
+        Task.CompletedTask;
 
     public async Task CreateCalendarAsync(string id, string name, string color, string? description = null, CancellationToken ct = default, bool isWorkflowCalendar = false)
     {
@@ -335,18 +332,22 @@ public class WasmCalendarStore : ICalendarStore
         bool isVisible,
         string? description,
         long lastUpdatedTicks,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? subscriptionUrl = null,
+        int? refreshIntervalMinutes = null)
     {
         var ns = GetPrefix();
         var existing = await GetCalMetaAsync(id);
         var last = new DateTime(lastUpdatedTicks, DateTimeKind.Utc);
-        var fp = SyncFingerprint.ForCalendar(id, name, color, isVisible, description, lastUpdatedTicks);
+        var fp = SyncFingerprint.ForCalendar(id, name, color, isVisible, description, lastUpdatedTicks,
+            subscriptionUrl: subscriptionUrl, refreshIntervalMinutes: refreshIntervalMinutes);
 
         if (existing is null)
         {
             var meta = new StoredCalMeta(
                 CalKey(ns, id), id, ns, name, color, last.ToString("o"),
-                _auth.IsAuthenticated, fp, null, description, null, isVisible, 0, false);
+                _auth.IsAuthenticated, fp, null, description, null, isVisible, 0, false,
+                subscriptionUrl, refreshIntervalMinutes);
             await _js.InvokeVoidAsync("idbPutCalendarMeta", meta);
             return;
         }
@@ -359,9 +360,42 @@ public class WasmCalendarStore : ICalendarStore
             description = description,
             lastUpdated = last.ToString("o"),
             contentFingerprint = fp,
-            deletedAt = null
+            deletedAt = null,
+            subscriptionUrl = subscriptionUrl ?? existing.subscriptionUrl,
+            refreshIntervalMinutes = refreshIntervalMinutes ?? existing.refreshIntervalMinutes
         };
         await _js.InvokeVoidAsync("idbPutCalendarMeta", updated);
+    }
+
+    public async Task SetCalendarSubscriptionAsync(
+        string id,
+        string? url,
+        int? refreshIntervalMinutes,
+        string? etag,
+        string? lastModified,
+        DateTime? lastFetchedUtc,
+        CancellationToken ct = default)
+    {
+        var existing = await GetCalMetaAsync(id);
+        if (existing is null || !string.IsNullOrEmpty(existing.deletedAt))
+            return;
+        var now = DateTime.UtcNow;
+        var fp = SyncFingerprint.ForCalendar(
+            id, existing.name, existing.color, existing.isVisible ?? true, existing.description, now.Ticks,
+            isWorkflowCalendar: existing.isWorkflowCalendar == true,
+            subscriptionUrl: url,
+            refreshIntervalMinutes: refreshIntervalMinutes);
+        var meta = existing with
+        {
+            subscriptionUrl = url,
+            refreshIntervalMinutes = refreshIntervalMinutes,
+            subscriptionEtag = etag,
+            subscriptionLastModified = lastModified,
+            lastFetchedUtc = lastFetchedUtc?.ToUniversalTime().ToString("o"),
+            lastUpdated = now.ToString("o"),
+            contentFingerprint = fp
+        };
+        await _js.InvokeVoidAsync("idbPutCalendarMeta", meta);
     }
 
     // ── Events ─────────────────────────────────────────────────────────────
@@ -403,7 +437,10 @@ public class WasmCalendarStore : ICalendarStore
                 null,
                 m.rrule,
                 m.location,
-                m.workflowId));
+                m.workflowId,
+                m.reminderMinutesBefore,
+                m.reminderSoundId,
+                m.reminderRepeatMinutes));
         }
         return result;
     }
@@ -510,7 +547,10 @@ public class WasmCalendarStore : ICalendarStore
             deletedAt: null,
             rrule: stored.RRule,
             location: stored.Location,
-            workflowId: stored.WorkflowId);
+            workflowId: stored.WorkflowId,
+            reminderMinutesBefore: stored.ReminderMinutesBefore,
+            reminderSoundId: stored.ReminderSoundId,
+            reminderRepeatMinutes: stored.ReminderRepeatMinutes);
 
         await _js.InvokeVoidAsync("idbPutEventMeta", meta);
     }
@@ -606,7 +646,12 @@ public class WasmCalendarStore : ICalendarStore
         m.timeZone,
         m.isVisible ?? true,
         m.sortOrder ?? 0,
-        m.isWorkflowCalendar ?? false);
+        m.isWorkflowCalendar ?? false,
+        m.subscriptionUrl,
+        m.refreshIntervalMinutes,
+        m.subscriptionEtag,
+        m.subscriptionLastModified,
+        string.IsNullOrWhiteSpace(m.lastFetchedUtc) ? null : DateTime.Parse(m.lastFetchedUtc).ToUniversalTime());
 
     private static CalendarEvent FromMetaOnly(StoredEvtMeta m) => new(
         m.id,
@@ -621,5 +666,8 @@ public class WasmCalendarStore : ICalendarStore
         Status: m.status ?? "CONFIRMED",
         ModifiedUtc: DateTime.Parse(m.lastUpdated).ToUniversalTime(),
         DeletedAt: string.IsNullOrEmpty(m.deletedAt) ? null : DateTime.Parse(m.deletedAt).ToUniversalTime(),
-        WorkflowId: m.workflowId);
+        WorkflowId: m.workflowId,
+        ReminderMinutesBefore: m.reminderMinutesBefore,
+        ReminderSoundId: m.reminderSoundId,
+        ReminderRepeatMinutes: m.reminderRepeatMinutes);
 }

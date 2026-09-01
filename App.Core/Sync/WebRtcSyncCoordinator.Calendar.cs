@@ -34,6 +34,22 @@ public sealed partial class WebRtcSyncCoordinator
         return set;
     }
 
+    private async Task<bool> IsSubscribedCalendarAsync(string? calendarId)
+    {
+        if (_calendarStore is null || string.IsNullOrWhiteSpace(calendarId))
+            return false;
+        try
+        {
+            var cals = await _calendarStore.LoadCalendarsAsync();
+            return cals.Any(c =>
+                string.Equals(c.Id, calendarId, StringComparison.OrdinalIgnoreCase) && c.IsSubscribed);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool IsWorkflowCalendarId(string? calendarId, HashSet<string> workflowCalIds) =>
         !string.IsNullOrWhiteSpace(calendarId)
         && (workflowCalIds.Contains(calendarId)
@@ -49,7 +65,8 @@ public sealed partial class WebRtcSyncCoordinator
             if (evt is null) return false;
             if (!string.IsNullOrWhiteSpace(evt.WorkflowId)) return true;
             workflowCalIds ??= await GetWorkflowCalendarIdsAsync();
-            return IsWorkflowCalendarId(evt.CalendarId, workflowCalIds);
+            if (IsWorkflowCalendarId(evt.CalendarId, workflowCalIds)) return true;
+            return await IsSubscribedCalendarAsync(evt.CalendarId);
         }
         catch
         {
@@ -80,7 +97,8 @@ public sealed partial class WebRtcSyncCoordinator
         }
 
         var dataJson = CalendarMetaSyncPayload.Serialize(
-            cal.Id, cal.Name, cal.Color, cal.IsVisible, cal.Description, cal.LastUpdated.Ticks, cal.IsWorkflowCalendar);
+            cal.Id, cal.Name, cal.Color, cal.IsVisible, cal.Description, cal.LastUpdated.Ticks, cal.IsWorkflowCalendar,
+            cal.SubscriptionUrl, cal.RefreshIntervalMinutes);
         var item = new SyncQueueItem
         {
             Kind = SyncItemKind.Calendar,
@@ -88,7 +106,8 @@ public sealed partial class WebRtcSyncCoordinator
             NoteTitle = cal.Name,
             DataJson = dataJson,
             ContentFingerprint = SyncFingerprint.ForCalendar(
-                cal.Id, cal.Name, cal.Color, cal.IsVisible, cal.Description, cal.LastUpdated.Ticks, cal.IsWorkflowCalendar)
+                cal.Id, cal.Name, cal.Color, cal.IsVisible, cal.Description, cal.LastUpdated.Ticks, cal.IsWorkflowCalendar,
+                cal.SubscriptionUrl, cal.RefreshIntervalMinutes)
         };
         await EnqueueSyncAsync(targetDeviceId, item);
     }
@@ -124,12 +143,14 @@ public sealed partial class WebRtcSyncCoordinator
         if (evt is null)
             return;
 
-        // Device-local: workflow projections / WorkflowId events never leave this device.
+        // Device-local: workflow projections / subscribed ICS feeds never leave this device.
         if (!string.IsNullOrWhiteSpace(evt.WorkflowId)
             || IsWorkflowCalendarId(evt.CalendarId, await GetWorkflowCalendarIdsAsync())
-            || IsWorkflowCalendarId(calendarId, await GetWorkflowCalendarIdsAsync()))
+            || IsWorkflowCalendarId(calendarId, await GetWorkflowCalendarIdsAsync())
+            || await IsSubscribedCalendarAsync(evt.CalendarId)
+            || await IsSubscribedCalendarAsync(calendarId))
         {
-            SyncDebugLog.Info($"Skipping workflow calendar event sync for {calendarId}/{eventId}");
+            SyncDebugLog.Info($"Skipping local-only calendar event sync for {calendarId}/{eventId}");
             return;
         }
 
@@ -398,7 +419,8 @@ public sealed partial class WebRtcSyncCoordinator
             }
 
             await _calendarStore.ApplyRemoteCalendarMetaAsync(
-                meta.CalendarId, meta.Name, meta.Color, meta.IsVisible, meta.Description, meta.LastUpdatedTicks);
+                meta.CalendarId, meta.Name, meta.Color, meta.IsVisible, meta.Description, meta.LastUpdatedTicks,
+                subscriptionUrl: meta.SubscriptionUrl, refreshIntervalMinutes: meta.RefreshIntervalMinutes);
             Raise(OnCalendarsChanged);
             SyncDebugLog.Info($"Applied calendar meta {meta.CalendarId} from {fromDeviceId}");
         }
@@ -419,9 +441,10 @@ public sealed partial class WebRtcSyncCoordinator
 
             var evt = payload.Event with { CalendarId = payload.CalendarId };
             if (!string.IsNullOrWhiteSpace(evt.WorkflowId)
-                || IsWorkflowCalendarId(evt.CalendarId, await GetWorkflowCalendarIdsAsync()))
+                || IsWorkflowCalendarId(evt.CalendarId, await GetWorkflowCalendarIdsAsync())
+                || await IsSubscribedCalendarAsync(evt.CalendarId))
             {
-                SyncDebugLog.Info($"Ignoring remote workflow calendar event {evt.Id}");
+                SyncDebugLog.Info($"Ignoring remote local-only calendar event {evt.Id}");
                 return;
             }
 

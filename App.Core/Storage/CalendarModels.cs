@@ -11,7 +11,17 @@ public record LocalCalendar(
     bool IsVisible = true,
     int SortOrder = 0,
     /// <summary>When true, this calendar is reserved for future AI workflow triggers.</summary>
-    bool IsWorkflowCalendar = false);
+    bool IsWorkflowCalendar = false,
+    /// <summary>HTTPS (or normalized webcal) ICS feed. Null for a local calendar.</summary>
+    string? SubscriptionUrl = null,
+    /// <summary>Poll period in minutes. Null = default (6 hours) for subscribed calendars.</summary>
+    int? RefreshIntervalMinutes = null,
+    string? SubscriptionEtag = null,
+    string? SubscriptionLastModified = null,
+    DateTime? LastFetchedUtc = null)
+{
+    public bool IsSubscribed => !string.IsNullOrWhiteSpace(SubscriptionUrl);
+}
 
 /// <summary>
 /// Single calendar event (VEVENT-aligned). Times are stored in UTC;
@@ -42,7 +52,15 @@ public record CalendarEvent(
     /// <summary>RECURRENCE-ID for exception instances of a recurring series.</summary>
     DateTime? RecurrenceId = null,
     /// <summary>Future AI workflow trigger hook (X-WIZIONIC-WORKFLOW).</summary>
-    string? WorkflowId = null);
+    string? WorkflowId = null,
+    /// <summary>Minutes before start (0 = at start). Null = no alert.</summary>
+    int? ReminderMinutesBefore = null,
+    /// <summary>Web Audio preset id (chime, ping, …).</summary>
+    string? ReminderSoundId = null,
+    /// <summary>sound now; sms/email later.</summary>
+    string? ReminderChannel = null,
+    /// <summary>How long the alarm keeps repeating (1 or 5). Default 1.</summary>
+    int? ReminderRepeatMinutes = null);
 
 /// <summary>Lightweight event row for month/week grids (no encrypted description body).</summary>
 public record CalendarEventIndex(
@@ -57,7 +75,10 @@ public record CalendarEventIndex(
     DateTime? DeletedAt,
     string? RRule = null,
     string? Location = null,
-    string? WorkflowId = null)
+    string? WorkflowId = null,
+    int? ReminderMinutesBefore = null,
+    string? ReminderSoundId = null,
+    int? ReminderRepeatMinutes = null)
 {
     public static CalendarEventIndex FromEvent(CalendarEvent e) => new(
         e.Id,
@@ -71,7 +92,10 @@ public record CalendarEventIndex(
         e.DeletedAt,
         e.RRule,
         e.Location,
-        e.WorkflowId);
+        e.WorkflowId,
+        e.ReminderMinutesBefore,
+        e.ReminderSoundId,
+        e.ReminderRepeatMinutes);
 }
 
 /// <summary>Expanded occurrence for a visible date range (recurrence expansion).</summary>

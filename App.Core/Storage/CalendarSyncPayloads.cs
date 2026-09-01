@@ -10,7 +10,9 @@ public record CalendarMetaSyncPayload(
     bool IsVisible,
     string? Description,
     long LastUpdatedTicks,
-    bool IsWorkflowCalendar = false)
+    bool IsWorkflowCalendar = false,
+    string? SubscriptionUrl = null,
+    int? RefreshIntervalMinutes = null)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -24,10 +26,13 @@ public record CalendarMetaSyncPayload(
         bool isVisible,
         string? description,
         long lastUpdatedTicks,
-        bool isWorkflowCalendar = false) =>
+        bool isWorkflowCalendar = false,
+        string? subscriptionUrl = null,
+        int? refreshIntervalMinutes = null) =>
         JsonSerializer.Serialize(
             new CalendarMetaSyncPayload(
-                calendarId, name, color, isVisible, description, lastUpdatedTicks, isWorkflowCalendar),
+                calendarId, name, color, isVisible, description, lastUpdatedTicks, isWorkflowCalendar,
+                subscriptionUrl, refreshIntervalMinutes),
             JsonOpts);
 
     public static CalendarMetaSyncPayload? Deserialize(string json)

@@ -14,6 +14,7 @@
 @inject ISidebarState SidebarState
 @inject App.Core.Workflows.IWorkflowOrchestrator? WorkflowOrchestrator
 @inject App.Core.Workflows.IWorkflowStore? WorkflowStore
+@inject App.Shared.Services.CalendarSubscriptionService? CalendarSubscribe
 
 <WasmSidebarSync />
 
@@ -54,7 +55,10 @@
 
             <div class="cal-my-cals">
                 <div class="cal-section-header">
-                    <h4>My calendars</h4>
+                    <h4 class="help-heading">My calendars <HelpGlyph Topic="calendar-subscribe" /></h4>
+                    <button type="button" class="menu-button" @onclick="OpenSubscribeDialog" title="Subscribe to URL">
+                        <i class="bi bi-link-45deg" style="font-size:1.1rem;"></i>
+                    </button>
                     <button type="button" class="menu-button" @onclick="OpenCreateCalendarDialog" title="New calendar">
                         <i class="bi bi-plus-circle" style="font-size:1.1rem;"></i>
                     </button>
@@ -65,6 +69,10 @@
                         <label class="cal-list-label" title="@cal.Name">
                             <input type="checkbox" checked="@cal.IsVisible" @onchange="e => ToggleCalendarVisible(cal.Id, e)" />
                             <span class="cal-color-swatch" style="background:@cal.Color"></span>
+                            @if (cal.IsSubscribed)
+                            {
+                                <i class="bi bi-link-45deg" style="font-size:0.85em; opacity:0.75; margin-right:0.2rem;" title="Subscribed"></i>
+                            }
                             <span class="cal-list-name">@cal.Name</span>
                         </label>
                         <div class="menu" @onclick:stopPropagation>
@@ -86,9 +94,17 @@
                 {
                     <div class="cal-dropdown" style="@_calMenuStyle" @onclick:stopPropagation>
                         <button type="button" @onclick="() => OpenEditCalendarDialog(openCal)">Edit</button>
-                        <button type="button" @onclick="() => ExportCalendarAsync(openCal)">Export .ics</button>
-                        <button type="button" @onclick="() => BeginImport(openCal.Id)">Import .ics</button>
-                        <button type="button" class="danger" @onclick="() => ConfirmDeleteCalendar(openCal)">Delete</button>
+                        @if (openCal.IsSubscribed)
+                        {
+                            <button type="button" @onclick="() => RefreshSubscriptionAsync(openCal.Id)">Refresh</button>
+                            <button type="button" class="danger" @onclick="() => ConfirmDeleteCalendar(openCal)">Unsubscribe</button>
+                        }
+                        else
+                        {
+                            <button type="button" @onclick="() => ExportCalendarAsync(openCal)">Export .ics</button>
+                            <button type="button" @onclick="() => BeginImport(openCal.Id)">Import .ics</button>
+                            <button type="button" class="danger" @onclick="() => ConfirmDeleteCalendar(openCal)">Delete</button>
+                        }
                     </div>
                     <div class="menu-overlay" @onclick="CloseCalMenu"></div>
                 }
@@ -254,7 +270,7 @@
                     <div class="cal-week-hours">
                         @for (var h = 0; h < 24; h++)
                         {
-                            <div class="cal-hour-row">
+                            <div class="cal-hour-row" style="z-index: @(24 - h)">
                                 <div class="cal-week-gutter"><span>@FormatHour(h)</span></div>
                                 @foreach (var day in weekDays)
                                 {
@@ -291,7 +307,7 @@
                 <div class="cal-day-hours">
                     @for (var h = 0; h < 24; h++)
                     {
-                        <div class="cal-hour-row day">
+                        <div class="cal-hour-row day" style="z-index: @(24 - h)">
                             <div class="cal-week-gutter"><span>@FormatHour(h)</span></div>
                             <div class="cal-hour-cell" @onclick="() => OnHourClick(_focusDate, h)">
                                 @foreach (var occ in TimedEventsStartingAt(_focusDate, h))
@@ -391,45 +407,53 @@
 {
     <div class="cal-modal-overlay" @onclick="CloseEventDialog">
         <div class="cal-modal" @onclick:stopPropagation>
-            <h3>@(_editingEventId is null ? "Create event" : "Edit event")</h3>
+            <h3 class="help-heading">@(_editingEventId is null ? "Create event" : "Edit event") <HelpGlyph Topic="calendar-alerts" /></h3>
             <label>Title
-                <input type="text" @bind="_formSummary" placeholder="Add title" />
+                <input type="text" @bind="_formSummary" placeholder="Add title" disabled="@_eventReadOnly" />
             </label>
             <label class="cal-checkbox">
-                <input type="checkbox" checked="@_formAllDay" @onchange="OnAllDayChanged" /> All day
+                <input type="checkbox" checked="@_formAllDay" @onchange="OnAllDayChanged" disabled="@_eventReadOnly" /> All day
             </label>
             <div class="cal-form-row">
                 <label>Start
                     @if (_formAllDay)
                     {
-                        <input type="date" value="@_formStartStr" @onchange="OnFormStartChanged" />
+                        <input type="date" value="@_formStartStr" @onchange="OnFormStartChanged" disabled="@_eventReadOnly" />
                     }
                     else
                     {
-                        <input type="datetime-local" value="@_formStartStr" @onchange="OnFormStartChanged" />
+                        <input type="datetime-local" value="@_formStartStr" @onchange="OnFormStartChanged" disabled="@_eventReadOnly" />
                     }
                 </label>
                 <label>End
                     @if (_formAllDay)
                     {
-                        <input type="date" value="@_formEndStr" @onchange="OnFormEndChanged" />
+                        <input type="date" value="@_formEndStr" @onchange="OnFormEndChanged" disabled="@_eventReadOnly" />
                     }
                     else
                     {
-                        <input type="datetime-local" value="@_formEndStr" @onchange="OnFormEndChanged" />
+                        <input type="datetime-local" value="@_formEndStr" @onchange="OnFormEndChanged" disabled="@_eventReadOnly" />
                     }
                 </label>
             </div>
             <label>Calendar
-                <select @bind="_formCalendarId">
-                    @foreach (var c in _calendars.Where(x => !x.IsWorkflowCalendar).OrderBy(x => x.SortOrder).ThenBy(x => x.Name))
+                <select @bind="_formCalendarId" disabled="@_eventReadOnly">
+                    @foreach (var c in WritableCalendars)
                     {
                         <option value="@c.Id">@c.Name</option>
+                    }
+                    @if (_eventReadOnly && !string.IsNullOrEmpty(_formCalendarId))
+                    {
+                        var sub = _calendars.FirstOrDefault(x => x.Id == _formCalendarId);
+                        if (sub is not null && !WritableCalendars.Any(x => x.Id == sub.Id))
+                        {
+                            <option value="@sub.Id">@sub.Name</option>
+                        }
                     }
                 </select>
             </label>
             <label>Repeat
-                <select @bind="_formRepeatPreset">
+                <select @bind="_formRepeatPreset" disabled="@_eventReadOnly">
                     <option value="none">Does not repeat</option>
                     <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
@@ -451,13 +475,43 @@
                 <div class="cal-empty-hint" style="margin-top:-0.35rem;">@_formCustomRRule</div>
             }
             <label>Location
-                <input type="text" @bind="_formLocation" placeholder="Add location" />
+                <input type="text" @bind="_formLocation" placeholder="Add location" disabled="@_eventReadOnly" />
             </label>
             <label>Description
-                <textarea @bind="_formDescription" rows="3" placeholder="Add description"></textarea>
+                <textarea @bind="_formDescription" rows="3" placeholder="Add description" disabled="@_eventReadOnly"></textarea>
             </label>
+            <label>Alert
+                <select @bind="_formReminderMinutes">
+                    @foreach (var opt in CalendarReminder.Offsets)
+                    {
+                        <option value="@(opt.Minutes?.ToString() ?? "")">@opt.Label</option>
+                    }
+                </select>
+            </label>
+            @if (!string.IsNullOrEmpty(_formReminderMinutes))
+            {
+                <div class="cal-form-row">
+                    <label>Sound
+                        <select @bind="_formReminderSound">
+                            @foreach (var s in CalendarReminder.Sounds)
+                            {
+                                <option value="@s.Id">@s.Label</option>
+                            }
+                        </select>
+                    </label>
+                    <button type="button" class="cal-btn" style="align-self:flex-end;" @onclick="PreviewReminderSound">Play</button>
+                </div>
+                <label>Repeat for
+                    <select @bind="_formReminderRepeat">
+                        @foreach (var d in CalendarReminder.RepeatDurations)
+                        {
+                            <option value="@d.Minutes">@d.Label</option>
+                        }
+                    </select>
+                </label>
+            }
             <div class="cal-modal-actions">
-                @if (_editingEventId is not null)
+                @if (_editingEventId is not null && !_eventReadOnly)
                 {
                     <button type="button" class="cal-btn danger" @onclick="DeleteEditingEvent">Delete</button>
                 }
@@ -505,11 +559,38 @@
     <div class="cal-modal-overlay" @onclick="() => _confirmDeleteCal = null">
         <div class="cal-modal" @onclick:stopPropagation>
             <h3>Delete calendar?</h3>
-            <p>Delete “@_confirmDeleteCal.Name” and all of its events? This cannot be undone on this device.</p>
+            <p>@(_confirmDeleteCal.IsSubscribed
+                ? $"Unsubscribe from “{_confirmDeleteCal.Name}” and remove its events from this device?"
+                : $"Delete “{_confirmDeleteCal.Name}” and all of its events? This cannot be undone on this device.")</p>
             <div class="cal-modal-actions">
                 <div class="cal-modal-actions-right">
                     <button type="button" class="cal-btn" @onclick="() => _confirmDeleteCal = null">Cancel</button>
                     <button type="button" class="cal-btn danger" @onclick="DeleteConfirmedCalendar">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showSubscribeDialog)
+{
+    <div class="cal-modal-overlay" @onclick="CloseSubscribeDialog">
+        <div class="cal-modal" @onclick:stopPropagation>
+            <h3 class="help-heading">Subscribe to a calendar <HelpGlyph Topic="calendar-subscribe" /></h3>
+            <p style="margin:0; font-size:0.9rem; color:var(--cf-text-muted);">
+                Paste a webcal or https .ics URL (Canvas, school calendar).
+            </p>
+            <label>URL
+                <input type="url" @bind="_subscribeUrl" placeholder="webcal:// or https://" />
+            </label>
+            @if (!string.IsNullOrEmpty(_subscribeStatus))
+            {
+                <div class="cal-empty-hint">@_subscribeStatus</div>
+            }
+            <div class="cal-modal-actions">
+                <div class="cal-modal-actions-right">
+                    <button type="button" class="cal-btn" @onclick="CloseSubscribeDialog">Cancel</button>
+                    <button type="button" class="cal-btn primary" @onclick="SubscribeAsync" disabled="@_subscribeBusy">Subscribe</button>
                 </div>
             </div>
         </div>
@@ -589,10 +670,22 @@
     private string _formEndStr = "";
     private string _formRepeatPreset = "none";
     private string? _formCustomRRule;
+    private string _formReminderMinutes = "";
+    private string _formReminderSound = CalendarReminder.DefaultSoundId;
+    private int _formReminderRepeat = CalendarReminder.DefaultRepeatMinutes;
+    private bool _eventReadOnly;
     private const double HourRowPx = 48;
 
     private string? _importTargetCalendarId;
     private string? _importStatus;
+    private bool _showSubscribeDialog;
+    private string _subscribeUrl = "";
+    private string? _subscribeStatus;
+    private bool _subscribeBusy;
+
+    private IEnumerable<LocalCalendar> WritableCalendars =>
+        _calendars.Where(c => !c.IsWorkflowCalendar && !c.IsSubscribed)
+            .OrderBy(c => c.SortOrder).ThenBy(c => c.Name);
 
     // Calendar form
     private bool _showCalDialog;
@@ -645,7 +738,6 @@
 
         try
         {
-            await CalendarStore.EnsureDefaultCalendarAsync();
             // Always have a dedicated Workflows calendar for skill schedules.
             try { await CalendarStore.EnsureWorkflowCalendarAsync(); }
             catch (Exception wex) { Console.WriteLine($"[CalendarPage] EnsureWorkflowCalendar: {wex.Message}"); }
@@ -1098,10 +1190,13 @@
         _formAllDay = allDay;
         _formRepeatPreset = "none";
         _formCustomRRule = null;
+        _formReminderMinutes = "";
+        _formReminderSound = CalendarReminder.DefaultSoundId;
+        _formReminderRepeat = CalendarReminder.DefaultRepeatMinutes;
+        _eventReadOnly = false;
         SetFormTimesFromLocal(startLocal, endLocal, allDay);
-        _formCalendarId = _calendars.FirstOrDefault(c => c.IsVisible && !c.IsWorkflowCalendar)?.Id
-                          ?? _calendars.FirstOrDefault(c => !c.IsWorkflowCalendar)?.Id
-                          ?? _calendars.FirstOrDefault()?.Id
+        _formCalendarId = WritableCalendars.FirstOrDefault(c => c.IsVisible)?.Id
+                          ?? WritableCalendars.FirstOrDefault()?.Id
                           ?? "";
         _showEventDialog = true;
     }
@@ -1136,6 +1231,10 @@
             _formCalendarId = _calendars.FirstOrDefault(c => !c.IsWorkflowCalendar)?.Id ?? evt.CalendarId;
         }
         SetRepeatPresetFromRRule(evt.RRule, startLocal);
+        _formReminderMinutes = evt.ReminderMinutesBefore?.ToString() ?? "";
+        _formReminderSound = CalendarReminder.NormalizeSoundId(evt.ReminderSoundId);
+        _formReminderRepeat = CalendarReminder.NormalizeRepeatMinutes(evt.ReminderRepeatMinutes);
+        _eventReadOnly = _calendars.Any(c => c.IsSubscribed && c.Id.Equals(evt.CalendarId, StringComparison.OrdinalIgnoreCase));
         _showEventDialog = true;
         StateHasChanged();
     }
@@ -1477,24 +1576,48 @@
         else
             rrule = CalendarIcs.BuildRRule(_formRepeatPreset, startLocal);
 
-        var evt = new CalendarEvent(
-            id,
-            _formCalendarId,
-            _formSummary.Trim(),
-            startUtc,
-            endUtc,
-            _formAllDay,
-            string.IsNullOrWhiteSpace(_formDescription) ? null : _formDescription.Trim(),
-            string.IsNullOrWhiteSpace(_formLocation) ? null : _formLocation.Trim(),
-            TimeZoneId: TimeZoneInfo.Local.Id,
-            RRule: rrule,
-            Sequence: (existing?.Sequence ?? 0) + (_editingEventId is null ? 0 : 1),
-            CreatedUtc: existing?.CreatedUtc ?? now,
-            ModifiedUtc: now,
-            WorkflowId: existing?.WorkflowId);
+        int? reminderMins = int.TryParse(_formReminderMinutes, out var rm) ? rm : null;
+        var reminderSound = reminderMins is null ? null : CalendarReminder.NormalizeSoundId(_formReminderSound);
+        var reminderRepeat = reminderMins is null ? null : (int?)CalendarReminder.NormalizeRepeatMinutes(_formReminderRepeat);
+
+        CalendarEvent evt;
+        if (_eventReadOnly && existing is not null)
+        {
+            evt = existing with
+            {
+                ReminderMinutesBefore = reminderMins,
+                ReminderSoundId = reminderSound,
+                ReminderChannel = reminderMins is null ? null : CalendarReminder.ChannelSound,
+                ReminderRepeatMinutes = reminderRepeat,
+                ModifiedUtc = now
+            };
+        }
+        else
+        {
+            evt = new CalendarEvent(
+                id,
+                _formCalendarId,
+                _formSummary.Trim(),
+                startUtc,
+                endUtc,
+                _formAllDay,
+                string.IsNullOrWhiteSpace(_formDescription) ? null : _formDescription.Trim(),
+                string.IsNullOrWhiteSpace(_formLocation) ? null : _formLocation.Trim(),
+                TimeZoneId: TimeZoneInfo.Local.Id,
+                RRule: rrule,
+                Sequence: (existing?.Sequence ?? 0) + (_editingEventId is null ? 0 : 1),
+                CreatedUtc: existing?.CreatedUtc ?? now,
+                ModifiedUtc: now,
+                WorkflowId: existing?.WorkflowId,
+                ReminderMinutesBefore: reminderMins,
+                ReminderSoundId: reminderSound,
+                ReminderChannel: reminderMins is null ? null : CalendarReminder.ChannelSound,
+                ReminderRepeatMinutes: reminderRepeat);
+        }
 
         await CalendarStore.UpsertEventAsync(evt);
-        SyncBridge.ScheduleAutoSyncEventAfterLocalSave(evt.CalendarId, evt.Id);
+        if (!_eventReadOnly)
+            SyncBridge.ScheduleAutoSyncEventAfterLocalSave(evt.CalendarId, evt.Id);
         _showEventDialog = false;
         await ReloadAsync();
     }
@@ -1508,6 +1631,65 @@
             SyncBridge.ScheduleAutoSyncEventDeleteAfterLocalDelete(evt.CalendarId, evt.Id, deletedAt);
         _showEventDialog = false;
         await ReloadAsync();
+    }
+
+    private async Task PreviewReminderSound()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("appCalendarPlaySound", CalendarReminder.NormalizeSoundId(_formReminderSound));
+        }
+        catch { /* AudioContext may be blocked until a later click */ }
+    }
+
+    private void OpenSubscribeDialog()
+    {
+        _subscribeUrl = "";
+        _subscribeStatus = null;
+        _subscribeBusy = false;
+        _showSubscribeDialog = true;
+    }
+
+    private void CloseSubscribeDialog() => _showSubscribeDialog = false;
+
+    private async Task SubscribeAsync()
+    {
+        if (CalendarSubscribe is null)
+        {
+            _subscribeStatus = "Subscribe is unavailable.";
+            return;
+        }
+        _subscribeBusy = true;
+        _subscribeStatus = "Fetching…";
+        try
+        {
+            var (ok, msg) = await CalendarSubscribe.SubscribeAsync(_subscribeUrl);
+            _subscribeStatus = msg;
+            if (ok)
+            {
+                _showSubscribeDialog = false;
+                await ReloadAsync();
+            }
+        }
+        finally
+        {
+            _subscribeBusy = false;
+        }
+    }
+
+    private async Task RefreshSubscriptionAsync(string calendarId)
+    {
+        CloseCalMenu();
+        if (CalendarSubscribe is null) return;
+        try
+        {
+            await CalendarSubscribe.RefreshAsync(calendarId);
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CalendarPage] refresh failed: {ex.Message}");
+        }
     }
 
     private void OpenCreateCalendarDialog()
