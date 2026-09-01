@@ -35,6 +35,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- WASM first paint no longer crashes: host SSR now registers a no-op calendar ticker (`ICalendarBackgroundService`) so `WorkflowDueBootstrap` can construct.
 - Notes sync no longer sends the notebook id as the sidebar title, and a GUID title from a peer no longer overwrites a real name. Same guard for album titles.
 - WebRTC answerer (Windows MAUI vs Linux Dell): incoming DataChannels are often already open before `onopen` is wired, so the answerer never sent its own manifest, calendar, or note updates and sat on `active: manifest` for 90s then tore down the live channel. Fire open if already open (same as WASM `readyState === 'open'`), send the pending outbound item on the first inbound DataChannel message, and do not close a live channel on handshake timeout.
 - Linux MAUI DataChannel apply: Sync page `StateHasChanged` from SIPSorcery threads threw "current thread is not associated with the Dispatcher" and aborted message handling. Marshal UI notifies to the main thread; wrap change events so a UI exception cannot drop a calendar/note apply.
