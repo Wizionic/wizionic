@@ -501,6 +501,8 @@
     private int? editingMessageIndex;
     private string editingInitialHtml = "";
     private string? _activeEditDraftHtml;
+    private bool _editBaselineCaptured;
+    private bool _editDirty;
     private int editSessionKey;
     private QuillEditor? quillEditor;
 
@@ -640,8 +642,9 @@
 
         var fromStore = await NoteStore.LoadNoteAsync(activeNoteId);
 
-        // Open editor can be ahead of the store. Fold the draft into memory, then per-entry
-        // merge so remote sync never silently drops unsaved typing.
+        // Open editor can be ahead of the store. Fold a *dirty* draft into memory, then
+        // per-entry merge so remote sync never silently drops unsaved typing. Click-to-edit
+        // without a real HTML change must not stamp ModifiedAt or it wins LWW over real edits.
         var hasOpenEdit = editingMessageIndex is int openIdx
             && openIdx >= 0
             && openIdx < currentNoteMessages.Count;
@@ -658,20 +661,45 @@
                 catch { /* editor may be mid-dispose */ }
             }
 
-            if (html is not null)
-            {
-                if (IsBlankQuillHtml(html))
-                    html = "";
+            var draftDirty = _editDirty && html is not null && !NoteHtmlEquals(html, currentNoteMessages[idx].Content);
 
+            if (draftDirty)
+            {
+                var persistHtml = IsBlankQuillHtml(html) ? "" : html!;
                 currentNoteMessages[idx] = ChatMessageHelper.TouchModified(
                     currentNoteMessages[idx],
-                    content: html,
+                    content: persistHtml,
                     contentFormat: NoteContentFormatter.FormatHtml);
-                _activeEditDraftHtml = html;
+                _activeEditDraftHtml = persistHtml;
             }
 
-            var merge = NoteSyncMerger.Merge(currentNoteMessages, fromStore);
-            currentNoteMessages = merge.Entries;
+            if (!draftDirty)
+            {
+                currentNoteMessages = fromStore;
+            }
+            else
+            {
+                var merge = NoteSyncMerger.Merge(currentNoteMessages, fromStore);
+                currentNoteMessages = merge.Entries;
+
+                // Persist only when the dirty draft still has content the store lacks.
+                if (merge.DiffersFromRemote)
+                {
+                    try
+                    {
+                        var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
+                        var title = note?.Title ?? "Untitled";
+                        await NoteStore.SaveNoteAsync(activeNoteId, currentNoteMessages);
+                        await NoteStore.UpdateIndexAfterSaveAsync(activeNoteId, title, currentNoteMessages);
+                        notes = await NoteStore.LoadIndexAsync();
+                        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Notes] Failed to persist merged note after sync: {ex.Message}");
+                    }
+                }
+            }
 
             if (!string.IsNullOrEmpty(editingItemId))
             {
@@ -685,29 +713,13 @@
                     var msg = currentNoteMessages[newIdx];
                     editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
                     _activeEditDraftHtml = editingInitialHtml;
+                    _editBaselineCaptured = false;
+                    _editDirty = draftDirty;
                     editSessionKey++; // remount Quill on merged HTML
                 }
                 else
                 {
                     CancelEdit();
-                }
-            }
-
-            // Persist only when memory still has content the store lacks (draft won LWW).
-            if (merge.DiffersFromRemote)
-            {
-                try
-                {
-                    var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
-                    var title = note?.Title ?? "Untitled";
-                    await NoteStore.SaveNoteAsync(activeNoteId, currentNoteMessages);
-                    await NoteStore.UpdateIndexAfterSaveAsync(activeNoteId, title, currentNoteMessages);
-                    notes = await NoteStore.LoadIndexAsync();
-                    SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Notes] Failed to persist merged note after sync: {ex.Message}");
                 }
             }
         }
@@ -795,6 +807,8 @@
         editingMessageIndex = null;
         editingInitialHtml = "";
         _activeEditDraftHtml = null;
+        _editBaselineCaptured = false;
+        _editDirty = false;
         quillEditor = null;
         editSessionKey++;
     }
@@ -805,9 +819,28 @@
         CancelEdit();
     }
 
-    private void OnEditHtmlChanged(string html) => _activeEditDraftHtml = html;
+    private void OnEditHtmlChanged(string html)
+    {
+        // First callback is Quill's canonical form after mount — not a user edit.
+        if (!_editBaselineCaptured)
+        {
+            editingInitialHtml = html ?? "";
+            _activeEditDraftHtml = editingInitialHtml;
+            _editBaselineCaptured = true;
+            _editDirty = false;
+            return;
+        }
 
-    private async Task<bool> ApplyDraftToEditingMessageAsync()
+        _activeEditDraftHtml = html;
+        _editDirty = !NoteHtmlEquals(html, editingInitialHtml);
+    }
+
+    /// <summary>
+    /// True = dirty draft applied with a new ModifiedAt.
+    /// False = no content change (do not save).
+    /// Null = could not read the editor; leave the session open.
+    /// </summary>
+    private async Task<bool?> TryApplyDirtyDraftAsync()
     {
         if (editingMessageIndex is not int index || index < 0 || index >= currentNoteMessages.Count)
             return false;
@@ -817,6 +850,9 @@
             html = await quillEditor.GetHTML();
 
         if (html is null)
+            return null;
+
+        if (!_editDirty || NoteHtmlEquals(html, currentNoteMessages[index].Content))
             return false;
 
         if (IsBlankQuillHtml(html))
@@ -830,17 +866,26 @@
         return true;
     }
 
+    private async Task ApplyDraftToEditingMessageAsync()
+    {
+        await TryApplyDirtyDraftAsync();
+    }
+
     private async Task CommitActiveEditAsync(bool persistToStore = false)
     {
         if (isNotesMicRecording)
             await StopNotesMicAsync(cancelOnly: false);
 
-        if (!await ApplyDraftToEditingMessageAsync())
+        if (editingMessageIndex is null)
+            return;
+
+        var changed = await TryApplyDirtyDraftAsync();
+        if (changed is null)
             return;
 
         CancelEdit();
 
-        if (persistToStore)
+        if (persistToStore && changed == true)
             await SaveCurrent();
     }
 
@@ -859,8 +904,8 @@
         if (index < 0 || index >= currentNoteMessages.Count)
             return;
 
-        await ApplyDraftToEditingMessageAsync();
-        await SaveCurrent();
+        if (await TryApplyDirtyDraftAsync() == true)
+            await SaveCurrent();
 
         var msg = currentNoteMessages[index];
         var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
@@ -898,6 +943,8 @@
         editingMessageIndex = index;
         editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
         _activeEditDraftHtml = editingInitialHtml;
+        _editBaselineCaptured = false;
+        _editDirty = false;
         editSessionKey++;
     }
 
@@ -1142,7 +1189,8 @@
         currentNoteMessages = new List<ChatMessage> { firstEntry };
         await PersistLastNotebookIdAsync(id);
         await NoteStore.SaveNoteAsync(id, currentNoteMessages);
-        await NoteStore.UpdateIndexAfterSaveAsync(id, title, currentNoteMessages);
+        await NoteStore.UpdateIndexAfterSaveAsync(
+            id, title, currentNoteMessages, titleChangedTicks: DateTime.UtcNow.Ticks);
         notes = await NoteStore.LoadIndexAsync();
         SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(id, title);
 
@@ -1511,7 +1559,8 @@
             return;
 
         var title = nameDialogTitle.Trim();
-        await NoteStore.UpdateIndexAfterSaveAsync(nameDialogNoteId, title);
+        await NoteStore.UpdateIndexAfterSaveAsync(
+            nameDialogNoteId, title, titleChangedTicks: DateTime.UtcNow.Ticks);
         notes = await NoteStore.LoadIndexAsync();
         SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(nameDialogNoteId, title);
         CancelNameDialog();
@@ -1531,6 +1580,16 @@
 
     private static bool IsBlankQuillHtml(string? html) =>
         string.IsNullOrWhiteSpace(html) || string.Equals(html.Trim(), "<p><br></p>", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeNoteHtml(string? html)
+    {
+        if (IsBlankQuillHtml(html))
+            return "";
+        return html!.Trim();
+    }
+
+    private static bool NoteHtmlEquals(string? a, string? b) =>
+        string.Equals(NormalizeNoteHtml(a), NormalizeNoteHtml(b), StringComparison.Ordinal);
 
     private async Task ExportNotebook(string? noteId)
     {

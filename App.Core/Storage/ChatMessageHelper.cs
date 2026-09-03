@@ -89,6 +89,36 @@ public static class ChatMessageHelper
         return t;
     }
 
+    /// <summary>
+    /// Title to persist on a local save. Intentional rename keeps the requested string;
+    /// content saves will not replace a real stored name with a placeholder.
+    /// </summary>
+    public static string ResolveLocalPersistTitle(
+        string? requestedTitle,
+        string? existingTitle,
+        string? itemId,
+        bool titleIsIntentionalRename)
+    {
+        var requested = requestedTitle?.Trim();
+        var existing = existingTitle?.Trim();
+
+        if (titleIsIntentionalRename)
+        {
+            if (string.IsNullOrWhiteSpace(requested))
+                return string.IsNullOrWhiteSpace(existing) ? "Untitled" : existing!;
+            return requested;
+        }
+
+        if (string.IsNullOrWhiteSpace(requested) || IsPlaceholderNoteTitle(requested, itemId))
+        {
+            if (!string.IsNullOrWhiteSpace(existing) && !IsPlaceholderNoteTitle(existing, itemId))
+                return existing!;
+            return string.IsNullOrWhiteSpace(existing) ? "Untitled" : existing!;
+        }
+
+        return requested;
+    }
+
     public static string ResolveIncomingNoteTitle(string? incomingTitle, string? localTitle, string? itemId = null)
     {
         var incoming = string.IsNullOrWhiteSpace(incomingTitle) ? "Untitled" : incomingTitle.Trim();
@@ -105,6 +135,67 @@ public static class ChatMessageHelper
             return local!;
 
         return incoming;
+    }
+
+    /// <summary>
+    /// Last-write-wins for notebook titles. Newer <paramref name="incomingTicks"/> wins;
+    /// placeholder remote titles never replace a real local name; legacy peers (ticks 0)
+    /// cannot overwrite a local title that has an intentional rename clock.
+    /// </summary>
+    public static bool TryResolveIncomingNoteTitle(
+        string? incomingTitle,
+        long? incomingTicks,
+        string? localTitle,
+        long localTicks,
+        string? itemId,
+        out string applyTitle,
+        out long applyTicks)
+    {
+        var local = string.IsNullOrWhiteSpace(localTitle) ? null : localTitle.Trim();
+        var localMissing = string.IsNullOrWhiteSpace(local) || IsPlaceholderNoteTitle(local, itemId);
+        var incomingPlaceholder = IsPlaceholderNoteTitle(incomingTitle, itemId);
+        var incoming = incomingPlaceholder
+            ? "Untitled"
+            : incomingTitle!.Trim();
+
+        var rTicks = incomingTicks is > 0 ? incomingTicks.Value : 0L;
+        var lTicks = localTicks > 0 ? localTicks : 0L;
+
+        applyTitle = localMissing ? (local ?? "Untitled") : local!;
+        applyTicks = lTicks;
+
+        if (incomingPlaceholder)
+        {
+            if (localMissing && !string.Equals(applyTitle, incoming, StringComparison.Ordinal))
+            {
+                applyTitle = incoming;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (rTicks > lTicks)
+        {
+            applyTitle = incoming;
+            applyTicks = rTicks;
+            return true;
+        }
+
+        if (rTicks > 0)
+            return false;
+
+        // Legacy remote (no clock): keep a local name that was intentionally renamed.
+        if (lTicks > 0 && !localMissing)
+            return false;
+
+        var resolved = ResolveIncomingNoteTitle(incomingTitle, localTitle, itemId);
+        if (string.Equals(resolved, applyTitle, StringComparison.Ordinal))
+            return false;
+
+        applyTitle = resolved;
+        applyTicks = 0;
+        return true;
     }
 
     public static string ResolveIncomingConvoTitle(

@@ -197,7 +197,7 @@
         var title = _newNoteName.Trim();
         var messages = new List<ChatMessage> { SourceMessage };
         await NoteStore.SaveNoteAsync(id, messages);
-        await NoteStore.UpdateIndexAfterSaveAsync(id, title);
+        await NoteStore.UpdateIndexAfterSaveAsync(id, title, titleChangedTicks: DateTime.UtcNow.Ticks);
 
         await CloseDialog();
     }

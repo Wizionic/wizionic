@@ -61,7 +61,9 @@ public sealed partial class SqliteHistoryDatabase
                 content_fingerprint TEXT,
                 deleted_at TEXT,
                 is_password_protected INTEGER NOT NULL DEFAULT 0,
-                sort_order INTEGER NOT NULL DEFAULT 0
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                protection_changed_ticks INTEGER NOT NULL DEFAULT 0,
+                title_changed_ticks INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_note_meta_ns ON note_meta(namespace);
             CREATE INDEX IF NOT EXISTS idx_note_meta_id ON note_meta(id);
@@ -187,6 +189,7 @@ public sealed partial class SqliteHistoryDatabase
         await TryAddColumnAsync(conn, "note_meta", "is_password_protected", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "note_meta", "sort_order", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "note_meta", "protection_changed_ticks", "INTEGER NOT NULL DEFAULT 0", ct);
+        await TryAddColumnAsync(conn, "note_meta", "title_changed_ticks", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "conversation_meta", "sort_order", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "conversation_meta", "is_password_protected", "INTEGER NOT NULL DEFAULT 0", ct);
         await TryAddColumnAsync(conn, "conversation_meta", "protection_changed_ticks", "INTEGER NOT NULL DEFAULT 0", ct);
@@ -282,7 +285,8 @@ public sealed partial class SqliteHistoryDatabase
         string? DeletedAt,
         bool IsPasswordProtected = false,
         int SortOrder = 0,
-        long ProtectionChangedTicks = 0);
+        long ProtectionChangedTicks = 0,
+        long TitleChangedTicks = 0);
 
     public record AlbumMetaRow(
         string StorageKey,
@@ -466,7 +470,7 @@ public sealed partial class SqliteHistoryDatabase
         cmd.CommandText = """
             SELECT storage_key, id, namespace, title, last_updated, sync_enabled,
                    content_fingerprint, deleted_at, is_password_protected, sort_order,
-                   protection_changed_ticks
+                   protection_changed_ticks, title_changed_ticks
             FROM note_meta
             WHERE namespace = $ns
             """;
@@ -483,7 +487,7 @@ public sealed partial class SqliteHistoryDatabase
         cmd.CommandText = """
             SELECT storage_key, id, namespace, title, last_updated, sync_enabled,
                    content_fingerprint, deleted_at, is_password_protected, sort_order,
-                   protection_changed_ticks
+                   protection_changed_ticks, title_changed_ticks
             FROM note_meta
             WHERE namespace = $ns AND id = $id
             LIMIT 1
@@ -504,8 +508,8 @@ public sealed partial class SqliteHistoryDatabase
             INSERT INTO note_meta (
                 storage_key, id, namespace, title, last_updated, sync_enabled,
                 content_fingerprint, deleted_at, is_password_protected, sort_order,
-                protection_changed_ticks)
-            VALUES ($key, $id, $ns, $title, $last, $sync, $fp, $deleted, $locked, $sort, $proticks)
+                protection_changed_ticks, title_changed_ticks)
+            VALUES ($key, $id, $ns, $title, $last, $sync, $fp, $deleted, $locked, $sort, $proticks, $titleticks)
             ON CONFLICT(storage_key) DO UPDATE SET
                 id = excluded.id,
                 namespace = excluded.namespace,
@@ -516,7 +520,8 @@ public sealed partial class SqliteHistoryDatabase
                 deleted_at = excluded.deleted_at,
                 is_password_protected = excluded.is_password_protected,
                 sort_order = excluded.sort_order,
-                protection_changed_ticks = excluded.protection_changed_ticks;
+                protection_changed_ticks = excluded.protection_changed_ticks,
+                title_changed_ticks = excluded.title_changed_ticks;
             """;
         BindNoteMeta(cmd, row);
         await cmd.ExecuteNonQueryAsync(ct);
@@ -903,6 +908,7 @@ public sealed partial class SqliteHistoryDatabase
         cmd.Parameters.AddWithValue("$locked", row.IsPasswordProtected ? 1 : 0);
         cmd.Parameters.AddWithValue("$sort", row.SortOrder);
         cmd.Parameters.AddWithValue("$proticks", row.ProtectionChangedTicks);
+        cmd.Parameters.AddWithValue("$titleticks", row.TitleChangedTicks);
     }
 
     private static void BindAlbumMeta(SqliteCommand cmd, AlbumMetaRow row)
@@ -956,6 +962,7 @@ public sealed partial class SqliteHistoryDatabase
             var isProtected = reader.FieldCount > 8 && !reader.IsDBNull(8) && reader.GetInt64(8) != 0;
             var sortOrder = reader.FieldCount > 9 && !reader.IsDBNull(9) ? (int)reader.GetInt64(9) : 0;
             var proticks = reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetInt64(10) : 0L;
+            var titleTicks = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetInt64(11) : 0L;
             rows.Add(new NoteMetaRow(
                 reader.GetString(0),
                 reader.GetString(1),
@@ -967,7 +974,8 @@ public sealed partial class SqliteHistoryDatabase
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 isProtected,
                 sortOrder,
-                proticks));
+                proticks,
+                titleTicks));
         }
 
         return rows;

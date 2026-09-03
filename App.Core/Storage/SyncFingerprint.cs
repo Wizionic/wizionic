@@ -29,8 +29,10 @@ public static class SyncFingerprint
         string title,
         List<ChatMessage> entries,
         bool isPasswordProtected = false,
-        long protectionChangedTicks = 0) =>
-        Compute(NoteSyncPayload.Serialize(noteId, title, entries, isPasswordProtected, protectionChangedTicks));
+        long protectionChangedTicks = 0,
+        long titleChangedTicks = 0) =>
+        Compute(NoteSyncPayload.Serialize(
+            noteId, title, entries, isPasswordProtected, protectionChangedTicks, titleChangedTicks));
 
     public static string ForAlbumMeta(
         string albumId,
@@ -243,7 +245,11 @@ public record NoteSyncPayload(
     /// <summary>
     /// UTC ticks of last intentional lock/unlock. Null/0 = legacy peer.
     /// </summary>
-    long? ProtectionChangedTicks = null)
+    long? ProtectionChangedTicks = null,
+    /// <summary>
+    /// UTC ticks of last intentional rename. Null/0 = legacy peer.
+    /// </summary>
+    long? TitleChangedTicks = null)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -255,14 +261,16 @@ public record NoteSyncPayload(
         string title,
         List<ChatMessage> entries,
         bool isPasswordProtected = false,
-        long protectionChangedTicks = 0) =>
+        long protectionChangedTicks = 0,
+        long titleChangedTicks = 0) =>
         JsonSerializer.Serialize(
             new NoteSyncPayload(
                 noteId,
                 title,
                 entries,
                 isPasswordProtected,
-                protectionChangedTicks > 0 ? protectionChangedTicks : null),
+                protectionChangedTicks > 0 ? protectionChangedTicks : null,
+                titleChangedTicks > 0 ? titleChangedTicks : null),
             JsonOpts);
 
     public static NoteSyncPayload? Deserialize(string json)

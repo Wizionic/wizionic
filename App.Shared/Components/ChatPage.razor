@@ -4493,7 +4493,7 @@
         var id = Guid.NewGuid().ToString();
         var title = _newNoteName.Trim();
         await NoteStore.SaveNoteAsync(id, new List<ChatMessage> { _noteSourceMessage });
-        await NoteStore.UpdateIndexAfterSaveAsync(id, title);
+        await NoteStore.UpdateIndexAfterSaveAsync(id, title, titleChangedTicks: DateTime.UtcNow.Ticks);
         CloseNewNote();
     }
 

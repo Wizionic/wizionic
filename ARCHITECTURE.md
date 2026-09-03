@@ -111,7 +111,7 @@ Streaming tokens → UI (TTFT / total / ctx used/limit); IConversationStore save
 | **Search** | `INotesSearchService` decrypt-on-search over unlocked notebooks (no plaintext FTS on disk) |
 | **Routing** | Attached when `ContextualRequestRouter.MessageSuggestsNotesTools` (or AI router picks `Notes`) |
 | **Protection** | Password-protected notebooks blocked for tools until unlocked in the UI |
-| **Sync** | Auto-sync after local save via `INotesSyncBridge`; merge via `NoteSyncMerger` (entry LWW). Audio bytes do not sync |
+| **Sync** | Auto-sync after a **dirty** local save via `INotesSyncBridge` (click-to-edit with no HTML change does not stamp `ModifiedAt` or enqueue). Entry merge is `NoteSyncMerger` (per-entry LWW). Notebook titles LWW via `TitleChangedTicks` (placeholder/id titles never overwrite a real name). Note items jump the WebRTC queue ahead of gallery images. Audio bytes do not sync |
 
 ### Gallery (albums + AI tools)
 
