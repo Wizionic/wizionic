@@ -136,7 +136,7 @@ public sealed class NullSyncService : ISyncService
 
     public void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null) { }
     public void ScheduleAutoSyncConvoDeleteAfterLocalDelete(string convoId, DateTime deletedAtUtc) { }
-    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title) { }
+    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title, bool forceAckClear = false) { }
     public void ScheduleAutoSyncNoteDeleteAfterLocalDelete(string noteId, DateTime deletedAt) { }
     public void ScheduleAutoSyncAlbumMetaAfterLocalSave(string albumId, string title) { }
     public void ScheduleAutoSyncAlbumDeleteAfterLocalDelete(string albumId, DateTime deletedAt) { }

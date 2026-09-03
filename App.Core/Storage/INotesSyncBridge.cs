@@ -6,6 +6,6 @@ namespace App.Core.Storage;
 public interface INotesSyncBridge
 {
     event Action? OnNotesChanged;
-    void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title);
+    void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title, bool forceAckClear = false);
     void ScheduleAutoSyncNoteDeleteAfterLocalDelete(string noteId, DateTime deletedAt);
 }

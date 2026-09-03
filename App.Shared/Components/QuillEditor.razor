@@ -39,7 +39,7 @@
     </div>
 
     <div @ref="_editorElement" class="quill-editor">
-        @((MarkupString)(InitialHtml ?? ""))
+        @((MarkupString)(_seedHtml ?? ""))
     </div>
 </div>
 
@@ -54,7 +54,15 @@
     private ElementReference _editorElement;
     private ElementReference _toolbarElement;
     private bool _initialized;
+    private string? _seedHtml;
     private DotNetObjectReference<QuillEditor>? _dotNetRef;
+
+    protected override void OnParametersSet()
+    {
+        // Quill owns the editor DOM after init. Re-rendering a new MarkupString
+        // makes Blazor call removeChild on nodes Quill has already replaced.
+        _seedHtml ??= InitialHtml ?? "";
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

@@ -500,6 +500,7 @@
 
     private int? editingMessageIndex;
     private string editingInitialHtml = "";
+    private string _editBaselineHtml = "";
     private string? _activeEditDraftHtml;
     private bool _editBaselineCaptured;
     private bool _editDirty;
@@ -712,6 +713,7 @@
                     editingMessageIndex = newIdx;
                     var msg = currentNoteMessages[newIdx];
                     editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
+                    _editBaselineHtml = editingInitialHtml;
                     _activeEditDraftHtml = editingInitialHtml;
                     _editBaselineCaptured = false;
                     _editDirty = draftDirty;
@@ -806,6 +808,7 @@
     {
         editingMessageIndex = null;
         editingInitialHtml = "";
+        _editBaselineHtml = "";
         _activeEditDraftHtml = null;
         _editBaselineCaptured = false;
         _editDirty = false;
@@ -822,17 +825,20 @@
     private void OnEditHtmlChanged(string html)
     {
         // First callback is Quill's canonical form after mount — not a user edit.
+        // Do not write editingInitialHtml here: it is rendered as MarkupString inside
+        // the editor host, and changing it makes Blazor patch DOM that Quill owns
+        // (removeChild on null in MAUI WebView).
         if (!_editBaselineCaptured)
         {
-            editingInitialHtml = html ?? "";
-            _activeEditDraftHtml = editingInitialHtml;
+            _editBaselineHtml = html ?? "";
+            _activeEditDraftHtml = _editBaselineHtml;
             _editBaselineCaptured = true;
             _editDirty = false;
             return;
         }
 
         _activeEditDraftHtml = html;
-        _editDirty = !NoteHtmlEquals(html, editingInitialHtml);
+        _editDirty = !NoteHtmlEquals(html, _editBaselineHtml);
     }
 
     /// <summary>
@@ -942,6 +948,7 @@
         var msg = currentNoteMessages[index];
         editingMessageIndex = index;
         editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
+        _editBaselineHtml = editingInitialHtml;
         _activeEditDraftHtml = editingInitialHtml;
         _editBaselineCaptured = false;
         _editDirty = false;
@@ -1562,7 +1569,7 @@
         await NoteStore.UpdateIndexAfterSaveAsync(
             nameDialogNoteId, title, titleChangedTicks: DateTime.UtcNow.Ticks);
         notes = await NoteStore.LoadIndexAsync();
-        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(nameDialogNoteId, title);
+        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(nameDialogNoteId, title, forceAckClear: true);
         CancelNameDialog();
         StateHasChanged();
     }

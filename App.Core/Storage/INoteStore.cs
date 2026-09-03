@@ -19,6 +19,7 @@ public interface INoteStore
         string title,
         List<ChatMessage>? entriesForFingerprint = null,
         long? titleChangedTicks = null,
+        bool bumpLastUpdated = true,
         CancellationToken ct = default);
 
     /// <summary>

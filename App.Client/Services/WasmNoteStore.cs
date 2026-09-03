@@ -73,14 +73,8 @@ public class WasmNoteStore : INoteStore
                 var computed = SyncFingerprint.ForNote(
                     m.id, title, noteEntries, m.isPasswordProtected == true, m.protectionChangedTicks ?? 0,
                     m.titleChangedTicks ?? 0);
-                if (!string.IsNullOrEmpty(fingerprint) && !string.Equals(fingerprint, computed, StringComparison.Ordinal))
-                {
-                    Console.WriteLine(
-                        $"[WasmNoteStore] Note {m.id}: stored fingerprint does not match readable content " +
-                        "(likely decrypt failure after key rotation); manifest will request resync");
-                    fingerprint = computed;
-                }
-                else if (string.IsNullOrEmpty(fingerprint) && backfillMissingFingerprints)
+                if (string.IsNullOrEmpty(fingerprint)
+                    || !string.Equals(fingerprint, computed, StringComparison.Ordinal))
                 {
                     fingerprint = computed;
                     await PersistContentFingerprintAsync(m, title, fingerprint, deletedAt: null);
@@ -205,6 +199,7 @@ public class WasmNoteStore : INoteStore
         string title,
         List<ChatMessage>? entriesForFingerprint = null,
         long? titleChangedTicks = null,
+        bool bumpLastUpdated = true,
         CancellationToken ct = default)
     {
         var ns = GetPrefix();
@@ -230,13 +225,17 @@ public class WasmNoteStore : INoteStore
             sortOrder = index.Count == 0 ? 0 : index.Max(n => n.SortOrder) + 1;
         }
 
+        var lastUpdated = bumpLastUpdated || existing is null || string.IsNullOrEmpty(existing.lastUpdated)
+            ? DateTime.UtcNow.ToString("o")
+            : existing.lastUpdated;
+
         await _js.InvokeVoidAsync("idbPutNoteMeta", new
         {
             key = metaKey,
             id,
             @namespace = ns,
             title = resolvedTitle,
-            lastUpdated = DateTime.UtcNow.ToString("o"),
+            lastUpdated,
             syncEnabled,
             contentFingerprint,
             deletedAt = "",
