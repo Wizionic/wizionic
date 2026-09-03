@@ -80,12 +80,17 @@ public class SqliteNoteStore : INoteStore
                 ? DeleteSyncPayload.AckValue(deletedAtTicks.Value)
                 : m.ContentFingerprint ?? "";
 
-            if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
+            if (!deletedAtTicks.HasValue && backfillMissingFingerprints)
             {
                 var noteEntries = await LoadNoteAsync(m.Id, ct);
-                fingerprint = SyncFingerprint.ForNote(
+                var computed = SyncFingerprint.ForNote(
                     m.Id, title, noteEntries, m.IsPasswordProtected, m.ProtectionChangedTicks, m.TitleChangedTicks);
-                await _db.UpsertNoteMetaAsync(m with { ContentFingerprint = fingerprint }, ct);
+                if (string.IsNullOrEmpty(fingerprint)
+                    || !string.Equals(fingerprint, computed, StringComparison.Ordinal))
+                {
+                    fingerprint = computed;
+                    await _db.UpsertNoteMetaAsync(m with { ContentFingerprint = fingerprint }, ct);
+                }
             }
 
             entries.Add(new SyncManifestEntry(
@@ -171,6 +176,7 @@ public class SqliteNoteStore : INoteStore
         string title,
         List<ChatMessage>? entriesForFingerprint = null,
         long? titleChangedTicks = null,
+        bool bumpLastUpdated = true,
         CancellationToken ct = default)
     {
         var ns = GetPrefix();
@@ -200,12 +206,16 @@ public class SqliteNoteStore : INoteStore
             sortOrder = existing.SortOrder;
         }
 
+        var lastUpdated = bumpLastUpdated || existing is null
+            ? DateTime.UtcNow.ToString("o")
+            : existing.LastUpdated;
+
         await _db.UpsertNoteMetaAsync(new SqliteHistoryDatabase.NoteMetaRow(
             storageKey,
             id,
             ns,
             resolvedTitle,
-            DateTime.UtcNow.ToString("o"),
+            lastUpdated,
             syncEnabled,
             contentFingerprint,
             null,

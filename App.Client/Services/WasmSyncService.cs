@@ -959,10 +959,10 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         _coordinator.ScheduleAutoSyncConvoDeleteAfterLocalDelete(convoId, deletedAtUtc);
     }
 
-    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title)
+    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title, bool forceAckClear = false)
     {
         EnsureCoordinatorWired();
-        _coordinator.ScheduleAutoSyncNoteAfterLocalSave(noteId, title);
+        _coordinator.ScheduleAutoSyncNoteAfterLocalSave(noteId, title, forceAckClear);
     }
 
     public void ScheduleAutoSyncNoteDeleteAfterLocalDelete(string noteId, DateTime deletedAtUtc)

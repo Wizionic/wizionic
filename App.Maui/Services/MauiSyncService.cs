@@ -551,10 +551,10 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         Coordinator.ScheduleAutoSyncConvoDeleteAfterLocalDelete(convoId, deletedAtUtc);
     }
 
-    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title)
+    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title, bool forceAckClear = false)
     {
         EnsureCoordinatorWired();
-        Coordinator.ScheduleAutoSyncNoteAfterLocalSave(noteId, title);
+        Coordinator.ScheduleAutoSyncNoteAfterLocalSave(noteId, title, forceAckClear);
     }
 
     public void ScheduleAutoSyncNoteDeleteAfterLocalDelete(string noteId, DateTime deletedAtUtc)

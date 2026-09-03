@@ -1697,7 +1697,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         });
     }
 
-    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title)
+    public void ScheduleAutoSyncNoteAfterLocalSave(string noteId, string title, bool forceAckClear = false)
     {
         if (!AutoSyncNotes || SyncTargetDeviceIds.Count == 0)
             return;
@@ -1715,7 +1715,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             if (!_isHubConnected())
                 return;
 
-            await ClearPeerAckForItemAsync(SyncItemKind.Note, noteId);
+            if (forceAckClear)
+                await ClearPeerAckForItemAsync(SyncItemKind.Note, noteId);
 
             var manifest = await _noteStore.LoadManifestEntriesAsync();
             var entry = manifest.FirstOrDefault(n => n.Id == noteId);
@@ -2302,18 +2303,21 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                     SyncDebugLog.Info($"Pushed {pendingNotes.Count} pending note(s) to {deviceId} on peer-online");
                 }
 
-                if (!hasPending && pendingNotes.Count == 0)
+                var queueBusy = _activeSyncByPeer.ContainsKey(deviceId)
+                    || (_syncQueues.TryGetValue(deviceId, out var pendingQ) && pendingQ.Count > 0);
+
+                if (queueBusy)
+                {
+                    SyncDebugLog.Info($"Skipping auto-sync manifest for {deviceId} (queue busy)");
+                }
+                else if (!hasPending && pendingNotes.Count == 0)
                 {
                     SyncDebugLog.Info($"Skipping data auto-sync for {deviceId} (all items already acknowledged)");
                 }
                 else
                 {
                     var lastVerified = await GetLastManifestVerifiedUtcAsync(deviceId);
-                    // Never skip catch-up when items are still unacked — the cooldown only
-                    // avoids a redundant idle re-check after everything already matched.
-                    if (!hasPending
-                        && lastVerified.HasValue
-                        && DateTime.UtcNow - lastVerified.Value < ManifestRecheckCooldown)
+                    if (lastVerified.HasValue && DateTime.UtcNow - lastVerified.Value < ManifestRecheckCooldown)
                     {
                         var minutesAgo = (int)(DateTime.UtcNow - lastVerified.Value).TotalMinutes;
                         SyncDebugLog.Info($"Skipping auto-sync for {deviceId} " +
@@ -2553,6 +2557,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
     private async Task SendActiveItemOnOpenChannelAsync(string peerId, SyncQueueItem item)
     {
+        _outboundSentByPeer.Add(peerId);
+
         if (item.IsManifestExchange)
         {
             var sent = await _webrtc.SendDataAsync(
@@ -2562,7 +2568,6 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 await FailActiveSyncAsync(peerId, "data channel not ready for manifest");
             else
             {
-                _outboundSentByPeer.Add(peerId);
                 SyncDebugLog.Info($"Sent sync-manifest-offer to {peerId}");
                 StartAckTimeout(peerId, item, item.DataJson.Length);
             }
@@ -2775,6 +2780,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     {
         try
         {
+            // Mark in-flight before the first await so a reentrant DataChannel callback
+            // cannot start a second overlapping send of the same item.
+            _outboundSentByPeer.Add(peerId);
+
             if (item.IsDelete)
             {
                 var deleteType = DeleteTypeFor(item.Kind);
@@ -2788,7 +2797,6 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 }
 
                 SyncDebugLog.Info($"Sent {deleteType} to {peerId} for {item.ItemId}");
-                _outboundSentByPeer.Add(peerId);
                 StartAckTimeout(peerId, item, item.DataJson.Length);
                 return;
             }
@@ -2805,7 +2813,6 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 return;
             }
 
-            _outboundSentByPeer.Add(peerId);
             StartAckTimeout(peerId, item, payloadBytes);
 
             SyncDebugLog.Info($"Sent {DataTypeFor(item.Kind)} " +
@@ -3247,7 +3254,12 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             if (ManifestEntryNeedsSync(remote, local))
+            {
+                SyncDebugLog.Info(
+                    $"Note {remote.Id} needed from peer: remoteFp={remote.ContentFingerprint} " +
+                    $"localFp={local?.ContentFingerprint ?? "(none)"}");
                 neededNotes.Add(remote.Id);
+            }
             else
                 upToDateNotes++;
         }
@@ -3733,6 +3745,13 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             {
                 await _noteStore.UpdateIndexAfterSaveAsync(
                     payload.NoteId, title, merge.Entries, titleTicks);
+            }
+            else
+            {
+                // Identical body: still rewrite the stored fingerprint so a serializer
+                // change cannot keep the note "needed" on every manifest.
+                await _noteStore.UpdateIndexAfterSaveAsync(
+                    payload.NoteId, title, merge.Entries, bumpLastUpdated: false);
             }
 
             // Versioned protection merge: never demote a local lock from stale remote false.
