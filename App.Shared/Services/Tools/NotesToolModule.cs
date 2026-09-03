@@ -279,7 +279,7 @@ public sealed class NotesToolModule : IToolModule
             }
 
             await work.Store.SaveNoteAsync(id, entries);
-            await work.Store.UpdateIndexAfterSaveAsync(id, t, entries);
+            await work.Store.UpdateIndexAfterSaveAsync(id, t, entries, DateTime.UtcNow.Ticks);
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(id, t);
 
             _trace.Record($"   ✅ notebook_id={id}");
@@ -329,7 +329,7 @@ public sealed class NotesToolModule : IToolModule
                 notebookId = Guid.NewGuid().ToString("N");
                 title = notebook_name.Trim();
                 await work.Store.SaveNoteAsync(notebookId, new List<ChatMessage>());
-                await work.Store.UpdateIndexAfterSaveAsync(notebookId, title);
+                await work.Store.UpdateIndexAfterSaveAsync(notebookId, title, titleChangedTicks: DateTime.UtcNow.Ticks);
             }
             else
             {

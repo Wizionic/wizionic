@@ -16,7 +16,9 @@ public record LocalNote(
     bool IsPasswordProtected = false,
     int SortOrder = 0,
     /// <summary>UTC ticks of last intentional lock/unlock (0 = unknown / legacy).</summary>
-    long ProtectionChangedTicks = 0);
+    long ProtectionChangedTicks = 0,
+    /// <summary>UTC ticks of last intentional rename (0 = unknown / legacy).</summary>
+    long TitleChangedTicks = 0);
 
 public record LocalAlbum(
     string Id,

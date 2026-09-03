@@ -58,7 +58,8 @@ public class SqliteNoteStore : INoteStore
                 DateTime.Parse(m.LastUpdated),
                 m.IsPasswordProtected,
                 m.SortOrder,
-                m.ProtectionChangedTicks))
+                m.ProtectionChangedTicks,
+                m.TitleChangedTicks))
             .ToList();
     }
 
@@ -82,7 +83,8 @@ public class SqliteNoteStore : INoteStore
             if (!deletedAtTicks.HasValue && backfillMissingFingerprints && string.IsNullOrEmpty(fingerprint))
             {
                 var noteEntries = await LoadNoteAsync(m.Id, ct);
-                fingerprint = SyncFingerprint.ForNote(m.Id, title, noteEntries, m.IsPasswordProtected, m.ProtectionChangedTicks);
+                fingerprint = SyncFingerprint.ForNote(
+                    m.Id, title, noteEntries, m.IsPasswordProtected, m.ProtectionChangedTicks, m.TitleChangedTicks);
                 await _db.UpsertNoteMetaAsync(m with { ContentFingerprint = fingerprint }, ct);
             }
 
@@ -149,7 +151,8 @@ public class SqliteNoteStore : INoteStore
             deletedAtIso,
             existing?.IsPasswordProtected ?? false,
             existing?.SortOrder ?? 0,
-            existing?.ProtectionChangedTicks ?? 0), ct);
+            existing?.ProtectionChangedTicks ?? 0,
+            existing?.TitleChangedTicks ?? 0), ct);
 
         await _db.DeleteNoteContentAsync(existing?.StorageKey ?? storageKey, ct);
         try { await _audio.DeleteByNotebookAsync(id, ct); }
@@ -163,20 +166,29 @@ public class SqliteNoteStore : INoteStore
         return meta?.Title;
     }
 
-    public async Task UpdateIndexAfterSaveAsync(string id, string title, List<ChatMessage>? entriesForFingerprint = null, CancellationToken ct = default)
+    public async Task UpdateIndexAfterSaveAsync(
+        string id,
+        string title,
+        List<ChatMessage>? entriesForFingerprint = null,
+        long? titleChangedTicks = null,
+        CancellationToken ct = default)
     {
         var ns = GetPrefix();
-        var storageKey = ns + NotePrefix + id;
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
-        var normalizedTitle = string.IsNullOrWhiteSpace(title) ? "(empty)" : title;
 
         var existing = await _db.GetNoteMetaByIdAsync(ns, id, ct);
+        var storageKey = existing?.StorageKey ?? (ns + NotePrefix + id);
         var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
         var isProtected = existing?.IsPasswordProtected ?? false;
         var protectionTicks = existing?.ProtectionChangedTicks ?? 0;
         var existingTitle = existing?.Title;
-        var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle, id);
-        var contentFingerprint = SyncFingerprint.ForNote(id, resolvedTitle, entries, isProtected, protectionTicks);
+        var renameClock = titleChangedTicks is > 0
+            ? titleChangedTicks.Value
+            : existing?.TitleChangedTicks ?? 0;
+        var resolvedTitle = ChatMessageHelper.ResolveLocalPersistTitle(
+            title, existingTitle, id, titleChangedTicks is > 0);
+        var contentFingerprint = SyncFingerprint.ForNote(
+            id, resolvedTitle, entries, isProtected, protectionTicks, renameClock);
         int sortOrder;
         if (existing is null)
         {
@@ -199,7 +211,8 @@ public class SqliteNoteStore : INoteStore
             null,
             isProtected,
             sortOrder,
-            protectionTicks), ct);
+            protectionTicks,
+            renameClock), ct);
     }
 
     public async Task SetPasswordProtectedAsync(string id, bool isProtected, long? protectionChangedTicks = null, CancellationToken ct = default)
@@ -212,7 +225,8 @@ public class SqliteNoteStore : INoteStore
         var title = string.IsNullOrWhiteSpace(existing.Title) ? "(empty)" : existing.Title;
         var entries = await LoadNoteAsync(id, ct);
         var ticks = protectionChangedTicks is > 0 ? protectionChangedTicks.Value : DateTime.UtcNow.Ticks;
-        var fingerprint = SyncFingerprint.ForNote(id, title, entries, isProtected, ticks);
+        var fingerprint = SyncFingerprint.ForNote(
+            id, title, entries, isProtected, ticks, existing.TitleChangedTicks);
 
         await _db.UpsertNoteMetaAsync(existing with
         {

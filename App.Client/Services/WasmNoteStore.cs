@@ -35,7 +35,8 @@ public class WasmNoteStore : INoteStore
         string? deletedAt,
         bool? isPasswordProtected = null,
         int? sortOrder = null,
-        long? protectionChangedTicks = null);
+        long? protectionChangedTicks = null,
+        long? titleChangedTicks = null);
 
     private string GetPrefix() => StorageNamespace.GetPrefix(_auth);
 
@@ -70,7 +71,8 @@ public class WasmNoteStore : INoteStore
             {
                 var noteEntries = await LoadNoteAsync(m.id, ct);
                 var computed = SyncFingerprint.ForNote(
-                    m.id, title, noteEntries, m.isPasswordProtected == true, m.protectionChangedTicks ?? 0);
+                    m.id, title, noteEntries, m.isPasswordProtected == true, m.protectionChangedTicks ?? 0,
+                    m.titleChangedTicks ?? 0);
                 if (!string.IsNullOrEmpty(fingerprint) && !string.Equals(fingerprint, computed, StringComparison.Ordinal))
                 {
                     Console.WriteLine(
@@ -110,7 +112,8 @@ public class WasmNoteStore : INoteStore
             deletedAt = deletedAt ?? "",
             isPasswordProtected = meta.isPasswordProtected == true,
             sortOrder = meta.sortOrder ?? 0,
-            protectionChangedTicks = meta.protectionChangedTicks ?? 0
+            protectionChangedTicks = meta.protectionChangedTicks ?? 0,
+            titleChangedTicks = meta.titleChangedTicks ?? 0
         });
     }
 
@@ -139,7 +142,8 @@ public class WasmNoteStore : INoteStore
                     deletedAt = m.deletedAt ?? "",
                     isPasswordProtected = m.isPasswordProtected == true,
                     sortOrder = i,
-                    protectionChangedTicks = m.protectionChangedTicks ?? 0
+                    protectionChangedTicks = m.protectionChangedTicks ?? 0,
+                    titleChangedTicks = m.titleChangedTicks ?? 0
                 });
                 ordered[i] = m with { sortOrder = i };
             }
@@ -155,7 +159,8 @@ public class WasmNoteStore : INoteStore
                 DateTime.Parse(m.lastUpdated),
                 m.isPasswordProtected == true,
                 m.sortOrder ?? 0,
-                m.protectionChangedTicks ?? 0))
+                m.protectionChangedTicks ?? 0,
+                m.titleChangedTicks ?? 0))
             .ToList();
     }
 
@@ -195,20 +200,29 @@ public class WasmNoteStore : INoteStore
         await _js.InvokeVoidAsync("idbPutNoteContent", fullKey, toStore);
     }
 
-    public async Task UpdateIndexAfterSaveAsync(string id, string title, List<ChatMessage>? entriesForFingerprint = null, CancellationToken ct = default)
+    public async Task UpdateIndexAfterSaveAsync(
+        string id,
+        string title,
+        List<ChatMessage>? entriesForFingerprint = null,
+        long? titleChangedTicks = null,
+        CancellationToken ct = default)
     {
         var ns = GetPrefix();
-        var metaKey = ns + NotePrefix + id;
         bool syncEnabled = _auth.IsAuthenticated && !string.IsNullOrEmpty(_auth.Email);
-        var normalizedTitle = string.IsNullOrWhiteSpace(title) ? "(empty)" : title;
 
         var existing = await GetMetaByIdAsync(id);
+        var metaKey = existing?.key ?? (ns + NotePrefix + id);
         var entries = entriesForFingerprint ?? await LoadNoteAsync(id, ct);
         var isPasswordProtected = existing?.isPasswordProtected == true;
         var protectionChangedTicks = existing?.protectionChangedTicks ?? 0;
         var existingTitle = existing?.title;
-        var resolvedTitle = ChatMessageHelper.ResolveIncomingNoteTitle(normalizedTitle, existingTitle, id);
-        var contentFingerprint = SyncFingerprint.ForNote(id, resolvedTitle, entries, isPasswordProtected, protectionChangedTicks);
+        var renameClock = titleChangedTicks is > 0
+            ? titleChangedTicks.Value
+            : existing?.titleChangedTicks ?? 0;
+        var resolvedTitle = ChatMessageHelper.ResolveLocalPersistTitle(
+            title, existingTitle, id, titleChangedTicks is > 0);
+        var contentFingerprint = SyncFingerprint.ForNote(
+            id, resolvedTitle, entries, isPasswordProtected, protectionChangedTicks, renameClock);
         var sortOrder = existing?.sortOrder;
         if (sortOrder is null)
         {
@@ -228,7 +242,8 @@ public class WasmNoteStore : INoteStore
             deletedAt = "",
             isPasswordProtected,
             sortOrder,
-            protectionChangedTicks
+            protectionChangedTicks,
+            titleChangedTicks = renameClock
         });
     }
 
@@ -242,7 +257,8 @@ public class WasmNoteStore : INoteStore
         var title = string.IsNullOrWhiteSpace(existing.title) ? "(empty)" : existing.title;
         var entries = await LoadNoteAsync(id, ct);
         var ticks = protectionChangedTicks is > 0 ? protectionChangedTicks.Value : DateTime.UtcNow.Ticks;
-        var contentFingerprint = SyncFingerprint.ForNote(id, title, entries, isProtected, ticks);
+        var titleTicks = existing.titleChangedTicks ?? 0;
+        var contentFingerprint = SyncFingerprint.ForNote(id, title, entries, isProtected, ticks, titleTicks);
 
         await _js.InvokeVoidAsync("idbPutNoteMeta", new
         {
@@ -256,7 +272,8 @@ public class WasmNoteStore : INoteStore
             deletedAt = existing.deletedAt ?? "",
             isPasswordProtected = isProtected,
             sortOrder = existing.sortOrder ?? 0,
-            protectionChangedTicks = ticks
+            protectionChangedTicks = ticks,
+            titleChangedTicks = titleTicks
         });
     }
 
@@ -288,7 +305,8 @@ public class WasmNoteStore : INoteStore
                 deletedAt = m.deletedAt ?? "",
                 isPasswordProtected = m.isPasswordProtected == true,
                 sortOrder = i,
-                protectionChangedTicks = m.protectionChangedTicks ?? 0
+                protectionChangedTicks = m.protectionChangedTicks ?? 0,
+                titleChangedTicks = m.titleChangedTicks ?? 0
             });
         }
     }
@@ -315,7 +333,8 @@ public class WasmNoteStore : INoteStore
             deletedAt = deletedAtIso,
             isPasswordProtected = existing?.isPasswordProtected == true,
             sortOrder = existing?.sortOrder ?? 0,
-            protectionChangedTicks = existing?.protectionChangedTicks ?? 0
+            protectionChangedTicks = existing?.protectionChangedTicks ?? 0,
+            titleChangedTicks = existing?.titleChangedTicks ?? 0
         });
 
         await _js.InvokeVoidAsync("idbDeleteNoteContent", existing?.key ?? metaKey);

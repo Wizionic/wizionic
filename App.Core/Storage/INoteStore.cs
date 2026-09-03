@@ -10,7 +10,16 @@ public interface INoteStore
     Task<DateTime> DeleteNoteAsync(string id, CancellationToken ct = default);
 
     Task<string?> GetMetaTitleAsync(string id, CancellationToken ct = default);
-    Task UpdateIndexAfterSaveAsync(string id, string title, List<ChatMessage>? entriesForFingerprint = null, CancellationToken ct = default);
+    /// <param name="titleChangedTicks">
+    /// When set (local rename or remote LWW apply), persists that clock with the title.
+    /// Null keeps the existing rename clock (content saves must pass null).
+    /// </param>
+    Task UpdateIndexAfterSaveAsync(
+        string id,
+        string title,
+        List<ChatMessage>? entriesForFingerprint = null,
+        long? titleChangedTicks = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Marks a notebook as password-protected (or clears protection).
