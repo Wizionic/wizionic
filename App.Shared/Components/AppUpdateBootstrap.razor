@@ -21,10 +21,15 @@
 }
 
 @code {
+    private static readonly TimeSpan AutoCheckCooldown = TimeSpan.FromHours(1);
+
     private UpdateCheckResult? _result;
     private bool _showPrompt;
     private bool _busy;
     private bool _started;
+    private bool _checking;
+    private DateTimeOffset _lastCheckUtc = DateTimeOffset.MinValue;
+    private string? _dismissedVersion;
     private string _promptMessage = "";
     private Action? _wizardChanged;
 
@@ -41,23 +46,44 @@
             return;
 
         _started = true;
+        DesktopShell.OnForegrounded += OnForegrounded;
         _ = CheckWhenReadyAsync();
     }
 
+    private void OnForegrounded()
+        => _ = CheckAndPromptAsync();
+
     private async Task CheckWhenReadyAsync()
     {
+        // Let the shell paint; don't sit on top of first-run setup.
+        await Task.Delay(2500);
+        await WaitForSetupWizardAsync();
+        await CheckAndPromptAsync();
+    }
+
+    private async Task CheckAndPromptAsync()
+    {
+        if (_showPrompt || _busy || _checking)
+            return;
+        if (DateTimeOffset.UtcNow - _lastCheckUtc < AutoCheckCooldown)
+            return;
+        if (SetupWizard.IsVisible)
+            return;
+
+        _checking = true;
         try
         {
-            // Let the shell paint; don't sit on top of first-run setup.
-            await Task.Delay(2500);
-            await WaitForSetupWizardAsync();
-
             var result = await UpdateService.CheckForUpdateAsync();
+            _lastCheckUtc = DateTimeOffset.UtcNow;
             if (result.Status != UpdateCheckStatus.UpdateAvailable || result.Update is null)
                 return;
 
-            _result = result;
             var next = result.Update.Version;
+            if (!string.IsNullOrEmpty(_dismissedVersion)
+                && string.Equals(_dismissedVersion, next, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _result = result;
             var current = result.CurrentVersion;
             if (result.RequiresManualInstall)
             {
@@ -82,7 +108,11 @@
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Update] Startup check failed: {ex.Message}");
+            Console.WriteLine($"[Update] Check failed: {ex.Message}");
+        }
+        finally
+        {
+            _checking = false;
         }
     }
 
@@ -149,12 +179,14 @@
 
     private void Dismiss()
     {
+        _dismissedVersion = _result?.Update?.Version ?? _dismissedVersion;
         _showPrompt = false;
         _busy = false;
     }
 
     public void Dispose()
     {
+        DesktopShell.OnForegrounded -= OnForegrounded;
         if (_wizardChanged != null)
             SetupWizard.OnChanged -= _wizardChanged;
     }

@@ -72,6 +72,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 	public bool IsQuitRequested => _quitRequested;
 
 	public event Action? OnChanged;
+	public event Action? OnForegrounded;
 
 	internal void Attach(Adw.Application application, Adw.ApplicationWindow window)
 	{
@@ -212,6 +213,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 		}
 
 		Program.OpenAdditionalWindow();
+		RaiseForegrounded();
 	}
 
 	private void OnTrayRegistered(bool registered)
@@ -330,6 +332,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 		OnChanged?.Invoke();
 		_tray?.SetTooltip(TooltipText());
 		_ = TickAfterShowAsync();
+		RaiseForegrounded();
 		Console.WriteLine("[Desktop] shown");
 	}
 
@@ -430,6 +433,12 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 	}
 
 	private void OnSyncChanged() => InvokeOnUi(() => _tray?.SetTooltip(TooltipText()));
+
+	private void RaiseForegrounded()
+	{
+		try { OnForegrounded?.Invoke(); }
+		catch (Exception ex) { Console.WriteLine($"[Desktop] OnForegrounded: {ex.Message}"); }
+	}
 
 	private string TooltipText()
 		=> _sync.IsConnected ? "Wizionic — Connected" : "Wizionic — Offline";
