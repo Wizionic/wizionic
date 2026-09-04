@@ -6,13 +6,13 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap rescap">
 
-  <Identity Name="maui-package-name-placeholder" Publisher="CN=User Name" Version="0.0.0.0" />
+  <Identity Name="Wizionic.Wizionic" Publisher="CN=B7638B36-393C-411D-91A5-DCF5DAB35944" Version="0.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="D391A356-3D64-4945-8143-D17BD27DBD80" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>$placeholder$</DisplayName>
-    <PublisherDisplayName>User Name</PublisherDisplayName>
+    <DisplayName>Wizionic</DisplayName>
+    <PublisherDisplayName>Wizionic</PublisherDisplayName>
     <Logo>$placeholder$.png</Logo>
   </Properties>
 
@@ -28,8 +28,8 @@
   <Applications>
     <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
       <uap:VisualElements
-        DisplayName="$placeholder$"
-        Description="$placeholder$"
+        DisplayName="Wizionic"
+        Description="Wizionic"
         Square150x150Logo="$placeholder$.png"
         Square44x44Logo="$placeholder$.png"
         BackgroundColor="transparent">
@@ -51,6 +51,7 @@
     <rescap:Capability Name="runFullTrust" />
     <Capability Name="internetClient" />
     <Capability Name="privateNetworkClientServer" />
+    <DeviceCapability Name="microphone" />
   </Capabilities>
 
 </Package>

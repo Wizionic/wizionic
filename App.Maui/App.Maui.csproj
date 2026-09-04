@@ -64,7 +64,22 @@
 
         <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
         <WindowsPackageType>None</WindowsPackageType>
+    </PropertyGroup>
 
+    <!-- Store MSIX only. Default Windows output stays unpackaged + Velopack (pack-windows.ps1).
+         Pass -p:STORE_BUILD=true so constants are appended; do not overwrite DefineConstants. -->
+    <PropertyGroup Condition="'$(STORE_BUILD)' == 'true' AND $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+        <DefineConstants>$(DefineConstants);STORE_BUILD</DefineConstants>
+        <WindowsPackageType>MSIX</WindowsPackageType>
+        <WindowsAppSdkSelfContained>true</WindowsAppSdkSelfContained>
+        <SelfContained>true</SelfContained>
+        <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+        <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+        <AppxAutoIncrementPackageRevision>false</AppxAutoIncrementPackageRevision>
+        <ApplicationId>Wizionic.Wizionic</ApplicationId>
+    </PropertyGroup>
+
+    <PropertyGroup>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>

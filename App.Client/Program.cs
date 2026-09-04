@@ -108,6 +108,8 @@ builder.Services.AddSingleton<IAuthService>(sp => sp.GetRequiredService<ChatAuth
 builder.Services.AddScoped<WasmCryptoService>();
 builder.Services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<WasmCryptoService>());
 builder.Services.AddSingleton<IUpdateService>(sp => NullUpdateService.Instance);
+builder.Services.AddScoped<App.Core.Support.IExternalUriOpener, JsExternalUriOpener>();
+builder.Services.AddScoped<App.Core.Support.IContentReportService, ContentReportService>();
 builder.Services.AddSingleton<App.Core.Homeserver.IHomeserverInstallService>(
     _ => App.Shared.Services.NullHomeserverInstallService.Instance);
 builder.Services.AddSingleton<App.Core.Configuration.IAppServerEndpoint>(

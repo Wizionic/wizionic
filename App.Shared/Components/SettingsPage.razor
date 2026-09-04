@@ -698,6 +698,20 @@
         </div>
     }
 
+    <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+        <h4 class="help-heading">Report inappropriate content <HelpGlyph Topic="report-content" /></h4>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0.25rem 0 0.75rem;">
+            Generated output can be reported to Wizionic. Local models are not moderated by Wizionic.
+        </p>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => showReportDialog = true">
+            Report inappropriate content
+        </button>
+    </div>
+
+    <ReportContentDialog IsVisible="showReportDialog"
+                         IsVisibleChanged="v => showReportDialog = v"
+                         AllowSurfacePick="true" />
+
     <!-- App Updates (MAUI only) -->
     @if (AppEnvironment.IsMaui)
     {
@@ -707,13 +721,19 @@
             <div style="margin: 0.5rem 0; color: var(--color-text-muted); font-size: 0.95em;">
                 Installed version:
                 <strong>@(installedVersion ?? "unknown")</strong>
-                @if (!string.IsNullOrEmpty(latestFeedVersion))
+                @if (!updatesManagedByStore && !string.IsNullOrEmpty(latestFeedVersion))
                 {
                     <span> · Latest on GitHub: <strong>@latestFeedVersion</strong></span>
                 }
             </div>
 
-            @if (updateCheckResult?.Status == UpdateCheckStatus.UpdateAvailable && updateCheckResult.Update != null)
+            @if (updatesManagedByStore)
+            {
+                <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0.5rem 0 0;">
+                    This Microsoft Store install updates in the Store, not from GitHub.
+                </p>
+            }
+            else if (updateCheckResult?.Status == UpdateCheckStatus.UpdateAvailable && updateCheckResult.Update != null)
             {
                 <div class="cf-success-box" style="margin: 0.75rem 0; padding: 0.75rem 1rem;">
                     @if (!string.IsNullOrEmpty(updateCheckResult.Message))
@@ -749,7 +769,7 @@
                 </div>
             }
 
-            @if (!busy)
+            @if (!updatesManagedByStore && !busy)
             {
                 <button class="btn btn-outline-secondary" style="margin-top: 0.5rem;"
                         @onclick="CheckForUpdate" disabled="@busy">
@@ -817,6 +837,8 @@
     private bool busy;
     private string? installedVersion;
     private string? latestFeedVersion;
+    private bool updatesManagedByStore;
+    private bool showReportDialog;
     // Default download link for manual install; refined in LoadInstalledVersion on MAUI.
     // Avoid OperatingSystem.* here — that type can fail to resolve in trimmed WASM builds.
     private string installerDownloadUrl = "/releases/windows/Wizionic-win-Setup.exe";
@@ -1360,6 +1382,7 @@
     private void LoadInstalledVersion()
     {
         installedVersion = UpdateService.GetInstalledVersion();
+        updatesManagedByStore = UpdateService.UpdatesManagedByStore;
         installerDownloadUrl = UpdateService.InstallerDownloadUrl
             ?? App.Core.Configuration.AppServerOptions.LatestWindowsSetupUrl;
     }

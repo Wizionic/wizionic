@@ -52,10 +52,37 @@ public class MauiUpdateService : IUpdateService
 
     private string _updateUrl => AppServerOptions.GitHubRepoUrl;
 
-    public bool IsVelopackInstalled => CreateManager().IsInstalled;
+    public bool UpdatesManagedByStore
+    {
+        get
+        {
+#if STORE_BUILD
+            return true;
+#elif WINDOWS
+            return App.Maui.WindowsPackageInfo.IsPackaged;
+#else
+            return false;
+#endif
+        }
+    }
 
-    public string? GetInstalledVersion() =>
-        CreateManager().CurrentVersion?.ToString();
+    public bool IsVelopackInstalled =>
+        !UpdatesManagedByStore && CreateManager().IsInstalled;
+
+    public string? GetInstalledVersion()
+    {
+        if (UpdatesManagedByStore)
+        {
+#if WINDOWS
+            var packaged = App.Maui.WindowsPackageInfo.VersionString;
+            if (!string.IsNullOrEmpty(packaged))
+                return packaged;
+#endif
+            return typeof(MauiUpdateService).Assembly.GetName().Version?.ToString();
+        }
+
+        return CreateManager().CurrentVersion?.ToString();
+    }
 
     private Velopack.UpdateManager CreateManager() =>
         new Velopack.UpdateManager(
@@ -63,6 +90,15 @@ public class MauiUpdateService : IUpdateService
 
     public async Task<UpdateCheckResult> CheckForUpdateAsync()
     {
+        if (UpdatesManagedByStore)
+        {
+            return BuildResult(
+                UpdateCheckStatus.Unavailable,
+                GetInstalledVersion(),
+                latestFeedVersion: null,
+                message: "This Microsoft Store install updates in the Store, not from GitHub.");
+        }
+
         var mgr = CreateManager();
         var currentVersion = mgr.CurrentVersion?.ToString();
         var latestFeedVersion = await GetLatestFeedVersionAsync();
@@ -312,6 +348,9 @@ public class MauiUpdateService : IUpdateService
 
     public async Task DownloadAndInstallAsync(UpdateInfo update)
     {
+        if (UpdatesManagedByStore)
+            throw new InvalidOperationException("This Microsoft Store install updates in the Store, not from GitHub.");
+
         var appImagePath = GetLinuxAppImagePath();
         if (!IsLinuxAppImageReplaceable(appImagePath))
         {

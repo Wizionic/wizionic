@@ -150,6 +150,11 @@
             });
         };
 
+        window.openExternalUri = function (uri) {
+            if (!uri) return;
+            window.location.href = uri;
+        };
+
         window.getMenuPopupPosition = function (buttonId) {
             const btn = document.getElementById(buttonId);
             if (!btn) return { top: 120, left: 260 };

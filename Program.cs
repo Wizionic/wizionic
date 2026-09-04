@@ -249,6 +249,8 @@ builder.Services.AddDataProtection()
     .SetApplicationName("Wizionic");
 builder.Services.AddSingleton<KeyProtectionService>();
 builder.Services.AddSingleton<App.Core.Update.IUpdateService>(_ => App.Shared.Services.NullUpdateService.Instance);
+builder.Services.AddScoped<App.Core.Support.IExternalUriOpener, App.Shared.Services.JsExternalUriOpener>();
+builder.Services.AddScoped<App.Core.Support.IContentReportService, App.Shared.Services.ContentReportService>();
 builder.Services.AddSingleton<App.Core.Homeserver.IHomeserverInstallService>(
     _ => App.Shared.Services.NullHomeserverInstallService.Instance);
 builder.Services.AddSingleton<App.Core.Configuration.IAppServerEndpoint>(

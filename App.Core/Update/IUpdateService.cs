@@ -31,6 +31,9 @@ public interface IUpdateService
     /// <summary>True when running from a Velopack Setup.exe install.</summary>
     bool IsVelopackInstalled { get; }
 
+    /// <summary>True when this install is updated by the Microsoft Store (not GitHub/Velopack).</summary>
+    bool UpdatesManagedByStore { get; }
+
     /// <summary>Update feed URL (empty when updates are unavailable on this platform).</summary>
     string? UpdateFeedUrl { get; }
 

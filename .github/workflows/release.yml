@@ -92,6 +92,33 @@ jobs:
             homeserver_releases_linux/**
           if-no-files-found: error
 
+  build-windows-msix:
+    needs: version
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install MAUI Windows workload
+        run: dotnet workload install maui-windows --skip-sign-check
+
+      - name: Pack Windows Store MSIX
+        run: powershell -File scripts/pack-windows-msix.ps1 -Version ${{ needs.version.outputs.version }}
+
+      - name: Upload Store MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wizionic-store-msix
+          path: |
+            msix_releases/**/*.msix
+            msix_releases/**/*.msixbundle
+            msix_releases/**/*.msixupload
+          if-no-files-found: error
+
   publish-release:
     needs: [version, build-windows, build-linux]
     runs-on: ubuntu-latest
@@ -100,7 +127,13 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          path: dist
+          name: unsigned-windows
+          path: dist/windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-linux
+          path: dist/linux
 
       - name: Collect files and checksums
         run: |

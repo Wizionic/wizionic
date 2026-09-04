@@ -38,11 +38,11 @@ You must provide a real email address you control if you register. I may refuse 
 
 ## Third-party services
 
-If you connect Google, GitHub, Notion, Stripe, Ollama, Lemonade, MCP servers, or a cloud model provider, those providers' terms also apply. If you enroll SMS two-factor, Twilio's terms apply to delivery of those codes. Wizionic is not those providers.
+If you connect GitHub, Notion, Stripe, Ollama, Lemonade, MCP servers, or a cloud model provider, those providers' terms also apply. If you enroll SMS two-factor, Twilio's terms apply to delivery of those codes. Wizionic is not those providers.
 
 ## Desktop updates
 
-Official desktop builds check [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest) for updates. You can ignore or uninstall the app at any time. Windows uninstall is provided by the Velopack installer.
+Official desktop builds from GitHub check [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest) for updates. The Microsoft Store Windows app updates through the Store instead. You can ignore or uninstall the app at any time. Windows uninstall for the GitHub build is provided by the Velopack installer; Store uninstall is provided by Windows.
 
 ## Changes
 

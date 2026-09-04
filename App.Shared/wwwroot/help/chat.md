@@ -44,6 +44,10 @@ Use **+ → Upload a file** in the chat box.
 
 Attachments stay in the conversation on this device. They are not uploaded to wizionic.com unless you chose a hosted/proxied model.
 
+## Report a response {#report}
+
+Assistant messages have a ⋮ menu. **Report this response** opens an email to Wizionic with app version, time, and model id. It does not attach the chat. Settings has the same form for image, speech, or tool output with no single message.
+
 ## Privacy
 
 Message bodies are encrypted before they are written to IndexedDB (browser) or SQLite (desktop). Titles in the sidebar may be stored in cleartext so the list stays fast.

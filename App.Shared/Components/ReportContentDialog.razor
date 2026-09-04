@@ -1,0 +1,130 @@
+@using App.Core.Support
+@using App.Core.Update
+@inject IContentReportService Reports
+@inject IUpdateService Updates
+
+@if (IsVisible)
+{
+    <div class="newnote-overlay" @onclick="Cancel">
+        <div class="newnote-modal" @onclick:stopPropagation style="max-width: 28rem;">
+            <h4 style="margin:0 0 8px 0;font-size:1.1rem;color:var(--color-text, #1F2A37);">Report inappropriate content</h4>
+            @if (_sent)
+            {
+                <p style="margin:0 0 16px 0;font-size:0.9rem;color:#64748b;line-height:1.45;">
+                    Sent to Wizionic support. Models you installed locally are not moderated by Wizionic.
+                </p>
+                <div style="display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-primary" @onclick="Cancel">Close</button>
+                </div>
+            }
+            else
+            {
+                <p style="margin:0 0 12px 0;font-size:0.85rem;color:var(--color-text-muted);line-height:1.45;">
+                    Describe what happened. Wizionic does not attach the chat or note body.
+                </p>
+                @if (AllowSurfacePick)
+                {
+                    <label style="display:block;font-size:0.8rem;margin-bottom:8px;">
+                        Where
+                        <select @bind="_surface" style="display:block;width:100%;margin-top:4px;">
+                            @foreach (var s in Enum.GetValues<ContentReportSurface>())
+                            {
+                                <option value="@s">@ContentReportSurfaces.ToLabel(s)</option>
+                            }
+                        </select>
+                    </label>
+                }
+                <label style="display:block;font-size:0.8rem;margin-bottom:8px;">
+                    What happened
+                    <textarea @bind="_what" @bind:event="oninput" rows="3"
+                              style="display:block;width:100%;margin-top:4px;resize:vertical;"
+                              placeholder="Required"></textarea>
+                </label>
+                <label style="display:block;font-size:0.8rem;margin-bottom:12px;">
+                    Extra detail (optional)
+                    <textarea @bind="_extra" @bind:event="oninput" rows="2"
+                              style="display:block;width:100%;margin-top:4px;resize:vertical;"></textarea>
+                </label>
+                @if (!string.IsNullOrEmpty(_error))
+                {
+                    <p style="color:var(--cf-danger, #c00); font-size:0.85rem; margin:0 0 8px 0;">@_error</p>
+                }
+                <div style="display:flex;gap:8px;justify-content:flex-end;">
+                    <button type="button" class="newnote-btn newnote-btn-secondary" @onclick="Cancel" disabled="@_busy">Cancel</button>
+                    <button type="button" class="newnote-btn newnote-btn-primary"
+                            disabled="@(_busy || string.IsNullOrWhiteSpace(_what))"
+                            @onclick="Submit">@(_busy ? "Opening…" : "Open email")</button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public EventCallback<bool> IsVisibleChanged { get; set; }
+    [Parameter] public ContentReportSurface Surface { get; set; } = ContentReportSurface.Chat;
+    [Parameter] public string? ModelId { get; set; }
+    [Parameter] public bool AllowSurfacePick { get; set; }
+
+    private ContentReportSurface _surface;
+    private string _what = "";
+    private string _extra = "";
+    private string? _error;
+    private bool _busy;
+    private bool _sent;
+    private bool _wasVisible;
+
+    protected override void OnParametersSet()
+    {
+        if (IsVisible && !_wasVisible)
+        {
+            _surface = Surface;
+            _what = "";
+            _extra = "";
+            _error = null;
+            _sent = false;
+        }
+        _wasVisible = IsVisible;
+    }
+
+    private async Task Submit()
+    {
+        if (string.IsNullOrWhiteSpace(_what) || _busy)
+            return;
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            var model = string.IsNullOrWhiteSpace(ModelId) ? "unknown / local" : ModelId.Trim();
+            await Reports.SubmitAsync(new ContentReport
+            {
+                WhatHappened = _what.Trim(),
+                ExtraDetail = string.IsNullOrWhiteSpace(_extra) ? null : _extra.Trim(),
+                Surface = AllowSurfacePick ? _surface : Surface,
+                ModelId = model,
+                AppVersion = Updates.GetInstalledVersion()
+            });
+            _sent = true;
+        }
+        catch (Exception ex)
+        {
+            _error = "Could not open your mail app: " + ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Cancel()
+    {
+        _what = "";
+        _extra = "";
+        _error = null;
+        _busy = false;
+        _sent = false;
+        await IsVisibleChanged.InvokeAsync(false);
+    }
+}
