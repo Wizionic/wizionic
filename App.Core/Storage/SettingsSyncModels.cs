@@ -10,10 +10,7 @@ public sealed record SettingsSyncPayload(
     long UpdatedTicks,
     string DataJson)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(string category, long updatedTicks, string dataJson) =>
         JsonSerializer.Serialize(new SettingsSyncPayload(category, updatedTicks, dataJson), JsonOpts);
