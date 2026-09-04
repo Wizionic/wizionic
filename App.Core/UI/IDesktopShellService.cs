@@ -20,6 +20,12 @@ public interface IDesktopShellService
 
     event Action? OnChanged;
 
+    /// <summary>
+    /// Raised when the window is shown from the tray, or when a second launch
+    /// activates this process (including when a window is already visible).
+    /// </summary>
+    event Action? OnForegrounded;
+
     Task SetCloseToTrayAsync(bool enabled, CancellationToken ct = default);
     Task SetStartWithWindowsAsync(bool enabled, CancellationToken ct = default);
     Task SetStartMinimizedAsync(bool enabled, CancellationToken ct = default);

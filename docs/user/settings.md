@@ -7,7 +7,7 @@ title: Settings
 
 This page stays local except the **login server** URL on desktop (that is where the app signs in).
 
-The desktop app also checks for a newer installer when it starts. You are asked only if an update is available.
+The desktop app checks for a newer installer when it starts, when you show the window from the tray, or when you start Wizionic again while it is already running. You are asked only if an update is available. Settings still has a manual check.
 
 ## Login server (desktop only) {#login-server}
 

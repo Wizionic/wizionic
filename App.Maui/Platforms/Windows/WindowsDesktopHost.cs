@@ -66,6 +66,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     public bool IsQuitRequested => _quitRequested;
 
     public event Action? OnChanged;
+    public event Action? OnForegrounded;
 
     internal void Attach(Window window, AppWindow appWindow)
     {
@@ -327,6 +328,8 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
             shell.OpenAdditionalWindow();
             Console.WriteLine("[Desktop] opened additional window");
         }
+
+        RaiseForegrounded();
     }
 
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -401,6 +404,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         OnChanged?.Invoke();
         _tray?.SetTooltip(TooltipText());
         _ = TickAfterShowAsync();
+        RaiseForegrounded();
         Console.WriteLine("[Desktop] shown");
     }
 
@@ -469,6 +473,12 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     private void OnSyncChanged()
     {
         InvokeOnUi(() => _tray?.SetTooltip(TooltipText()));
+    }
+
+    private void RaiseForegrounded()
+    {
+        try { OnForegrounded?.Invoke(); }
+        catch (Exception ex) { Console.WriteLine($"[Desktop] OnForegrounded: {ex.Message}"); }
     }
 
     private string TooltipText()

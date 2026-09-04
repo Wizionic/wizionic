@@ -21,6 +21,12 @@ public sealed class NullDesktopShellService : IDesktopShellService
         remove { }
     }
 
+    public event Action? OnForegrounded
+    {
+        add { }
+        remove { }
+    }
+
     public Task SetCloseToTrayAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
     public Task SetStartWithWindowsAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
     public Task SetStartMinimizedAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;

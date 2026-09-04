@@ -469,7 +469,7 @@ On Windows MAUI, **closing the window is not process exit** when close-to-tray i
 | Gesture | Result |
 |---------|--------|
 | Taskbar X / Alt+F4 (close-to-tray on) | Last window hides to tray; extra windows close only. Sync + workflows keep running |
-| Second Start-menu launch | One process: restore if tray-hidden, otherwise **new window** (notes vs browser side by side) |
+| Second Start-menu launch | One process: restore if tray-hidden, otherwise **new window** (notes vs browser side by side). Tray show and second launch also run the desktop update check (same prompt as startup). |
 | Tray **New window** / Settings | Extra MAUI window in this process (not a second `Wizionic.exe`) |
 | Tray **Quit** / Settings **Quit Wizionic** | `PrepareForProcessExit` (NIM_DELETE, stop due host) then process exit — sync and workflows stop |
 | Close-to-tray off | X on the last window exits the process |
@@ -489,7 +489,7 @@ On Linux GirCore (Adwaita + WebKit), close-to-tray matches Windows when a **Stat
 | Gesture | Result |
 |---------|--------|
 | HeaderBar close (close-to-tray on **and** watcher present) | Last window hides; extra windows close only. Tray Show / Quit; sync + workflows keep running |
-| Second launcher activate | One process: restore if tray-hidden, otherwise **new window** (Blazor-only extras; native WebKit overlays stay on the first window) |
+| Second launcher activate | One process: restore if tray-hidden, otherwise **new window** (Blazor-only extras; native WebKit overlays stay on the first window). Tray show and second launch also run the desktop update check (same prompt as startup). |
 | Tray **Quit** / Settings **Quit Wizionic** | `Release()`, unexport SNI, stop due host, `Application.Quit()` |
 | No StatusNotifier watcher (stock GNOME without AppIndicator) | Close still quits; log `[Tray] no StatusNotifier watcher` |
 | Second launcher click | Same Gio app (`com.wizionic.app`); existing window is presented (never a second DI graph) |
