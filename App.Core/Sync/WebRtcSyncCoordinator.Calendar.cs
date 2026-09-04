@@ -414,7 +414,6 @@ public sealed partial class WebRtcSyncCoordinator
             if (!await _calendarStore.ShouldAcceptIncomingCalendarAsync(meta.CalendarId, meta.LastUpdatedTicks))
             {
                 SyncDebugLog.Info($"Ignoring stale calendar meta {meta.CalendarId}");
-                ScheduleAutoSyncCalendarAfterLocalSave(meta.CalendarId);
                 return;
             }
 
@@ -451,7 +450,6 @@ public sealed partial class WebRtcSyncCoordinator
             if (!await _calendarStore.ShouldAcceptIncomingEventAsync(evt.Id, evt))
             {
                 SyncDebugLog.Info($"Ignoring stale calendar event {evt.Id}");
-                ScheduleAutoSyncEventAfterLocalSave(evt.CalendarId, evt.Id);
                 return;
             }
 

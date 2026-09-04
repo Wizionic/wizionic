@@ -14,10 +14,7 @@ public record CalendarMetaSyncPayload(
     string? SubscriptionUrl = null,
     int? RefreshIntervalMinutes = null)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(
         string calendarId,
@@ -52,11 +49,7 @@ public record CalendarMetaSyncPayload(
 /// <summary>WebRTC payload for a single calendar event (full VEVENT body).</summary>
 public record CalendarEventSyncPayload(string CalendarId, CalendarEvent Event)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.CamelCase;
 
     public static string CompositeId(string calendarId, string eventId) => $"{calendarId}/{eventId}";
 

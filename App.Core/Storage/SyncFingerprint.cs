@@ -6,6 +6,22 @@ using App.Core.Browser;
 
 namespace App.Core.Storage;
 
+internal static class SyncJson
+{
+    public static readonly JsonSerializerOptions Options = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    public static readonly JsonSerializerOptions CamelCase = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+}
+
 public static class SyncFingerprint
 {
     public static string Compute(string contentJson)
@@ -182,10 +198,7 @@ public record ConvoSyncPayload(
     /// </summary>
     long? ProtectionChangedTicks = null)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(
         string convoId,
@@ -252,11 +265,7 @@ public record NoteSyncPayload(
     /// </summary>
     long? TitleChangedTicks = null)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(
         string noteId,
@@ -303,10 +312,7 @@ public record GalleryAlbumMetaPayload(
     bool? IsPasswordProtected = null,
     long? ProtectionChangedTicks = null)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(
         string albumId,
@@ -339,10 +345,7 @@ public record GalleryAlbumMetaPayload(
 /// <summary>Single image create/update over the wire.</summary>
 public record GalleryImageSyncPayload(string AlbumId, GalleryImage Image)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     /// <summary>Drop thumbnail bytes (for fingerprints only). Prefer keeping thumbs on wire and in local storage.</summary>
     public static GalleryImage WithoutThumbnail(GalleryImage image) =>
@@ -387,10 +390,7 @@ public record GalleryImageSyncPayload(string AlbumId, GalleryImage Image)
 
 public record BookmarkSyncPayload(BrowserBookmark Bookmark)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(BrowserBookmark bookmark) =>
         JsonSerializer.Serialize(new BookmarkSyncPayload(bookmark), JsonOpts);
@@ -411,10 +411,7 @@ public record BookmarkSyncPayload(BrowserBookmark Bookmark)
 
 public record BookmarkFolderSyncPayload(BrowserBookmarkFolder Folder)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(BrowserBookmarkFolder folder) =>
         JsonSerializer.Serialize(new BookmarkFolderSyncPayload(folder), JsonOpts);
@@ -435,10 +432,7 @@ public record BookmarkFolderSyncPayload(BrowserBookmarkFolder Folder)
 
 public record SidebarAppSyncPayload(SidebarApp App)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SyncJson.Options;
 
     public static string Serialize(SidebarApp app) =>
         JsonSerializer.Serialize(new SidebarAppSyncPayload(app), JsonOpts);

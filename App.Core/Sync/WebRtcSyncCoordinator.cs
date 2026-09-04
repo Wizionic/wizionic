@@ -131,6 +131,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private readonly Dictionary<string, CancellationTokenSource> _peerOnlineAutoSyncDebounce = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _pendingNotePushIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _pendingNotePushTitles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _pendingConvoPushIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string?> _pendingConvoPushTitles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ChunkAssembly> _chunkAssemblies = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Remote offers deferred while we have an outbound transfer in flight (avoids killing the DataChannel mid-image).</summary>
     private readonly Dictionary<string, string> _deferredRemoteOffers = new(StringComparer.OrdinalIgnoreCase);
@@ -793,14 +795,22 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
         if (!string.IsNullOrEmpty(remote.ContentFingerprint) && !string.IsNullOrEmpty(local.ContentFingerprint))
         {
-            // Content hash is the only dirty bit. LastUpdatedTicks often differs across
-            // devices that already have the same bytes (receive clock), which used to
-            // re-transfer 10MB+ gallery images forever.
-            return !string.Equals(remote.ContentFingerprint, local.ContentFingerprint, StringComparison.Ordinal);
+            if (string.Equals(remote.ContentFingerprint, local.ContentFingerprint, StringComparison.Ordinal))
+                return false;
+
+            // Hash mismatch: only pull if the peer is strictly newer. Requesting an older
+            // copy just gets "Ignoring stale" and re-queues forever (calendars/events).
+            return remote.LastUpdatedTicks > local.LastUpdatedTicks;
         }
 
         return remote.LastUpdatedTicks != local.LastUpdatedTicks;
     }
+
+    private static void LogManifestNeeded(string kind, SyncManifestEntry remote, SyncManifestEntry? local) =>
+        SyncDebugLog.Info(
+            $"{kind} {remote.Id} needed from peer: remoteFp={remote.ContentFingerprint} " +
+            $"localFp={local?.ContentFingerprint ?? "(none)"} " +
+            $"remoteTicks={remote.LastUpdatedTicks} localTicks={local?.LastUpdatedTicks ?? 0}");
 
     private static bool LocalDeleteShouldWinOverRemote(
         SyncManifestEntry remote,
@@ -1382,8 +1392,9 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             _syncQueues[targetDeviceId] = queue;
         }
 
-        var prioritizeNote = item.Kind == SyncItemKind.Note && !item.IsManifestExchange;
-        if (prioritizeNote)
+        var prioritize = !item.IsManifestExchange
+            && item.Kind is SyncItemKind.Note or SyncItemKind.Conversation;
+        if (prioritize)
         {
             var list = queue.ToList();
             list.RemoveAll(i => ItemsMatchForDedup(i, item));
@@ -1410,7 +1421,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 ? $"{KindLabel(item.Kind)} delete {item.ItemId}"
                 : $"{KindLabel(item.Kind)} {item.ItemId}";
         SyncDebugLog.Info($"Enqueued {itemLabel} for {targetDeviceId} (queue depth: {queue.Count}" +
-            (prioritizeNote ? ", note priority" : "") + ")");
+            (prioritize ? $", {KindLabel(item.Kind)} priority" : "") + ")");
         await ProcessSyncQueueAsync(targetDeviceId);
     }
 
@@ -1615,7 +1626,13 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
         var forceTitleSync = !string.IsNullOrWhiteSpace(title);
 
-        _ = DebouncedAutoSyncAsync($"convo:{convoId}", async () =>
+        lock (_pendingConvoPushIds)
+        {
+            _pendingConvoPushIds.Add(convoId);
+            _pendingConvoPushTitles[convoId] = title;
+        }
+
+        _ = DebouncedAutoSyncAsync($"convo:{convoId}", NoteAutoSyncDebounce, async () =>
         {
             if (EnsureConnectedAsync != null)
                 await EnsureConnectedAsync();
@@ -1630,7 +1647,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             var fingerprint = entry?.ContentFingerprint;
 
             var messages = await _conversationStore.LoadConversationAsync(convoId);
-            foreach (var targetId in GetOnlineSyncTargetIdsInternal())
+            var targets = GetOnlineSyncTargetIdsInternal().ToList();
+            foreach (var targetId in targets)
             {
                 if (!forceTitleSync
                     && await IsItemAcknowledgedAsync(targetId, SyncItemKind.Conversation, convoId, fingerprint))
@@ -1641,6 +1659,9 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
                 await EnqueueConvoSyncAsync(targetId, convoId, messages, title);
             }
+
+            if (targets.Count > 0)
+                ForgetPendingConvoPush(convoId);
         });
     }
 
@@ -2097,6 +2118,15 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         }
     }
 
+    private void ForgetPendingConvoPush(string convoId)
+    {
+        lock (_pendingConvoPushIds)
+        {
+            _pendingConvoPushIds.Remove(convoId);
+            _pendingConvoPushTitles.Remove(convoId);
+        }
+    }
+
     private static bool ManifestEntryHasPendingAck(
         Dictionary<string, string> ackState,
         SyncItemKind kind,
@@ -2303,6 +2333,25 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                     SyncDebugLog.Info($"Pushed {pendingNotes.Count} pending note(s) to {deviceId} on peer-online");
                 }
 
+                List<(string Id, string? Title)> pendingConvos;
+                lock (_pendingConvoPushIds)
+                {
+                    pendingConvos = _pendingConvoPushIds
+                        .Select(id => (id, _pendingConvoPushTitles.GetValueOrDefault(id)))
+                        .ToList();
+                }
+
+                if (AutoSyncChatHistory && pendingConvos.Count > 0)
+                {
+                    foreach (var (convoId, title) in pendingConvos)
+                    {
+                        var messages = await _conversationStore.LoadConversationAsync(convoId);
+                        await EnqueueConvoSyncAsync(deviceId, convoId, messages, title);
+                        ForgetPendingConvoPush(convoId);
+                    }
+                    SyncDebugLog.Info($"Pushed {pendingConvos.Count} pending convo(s) to {deviceId} on peer-online");
+                }
+
                 var queueBusy = _activeSyncByPeer.ContainsKey(deviceId)
                     || (_syncQueues.TryGetValue(deviceId, out var pendingQ) && pendingQ.Count > 0);
 
@@ -2310,7 +2359,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 {
                     SyncDebugLog.Info($"Skipping auto-sync manifest for {deviceId} (queue busy)");
                 }
-                else if (!hasPending && pendingNotes.Count == 0)
+                else if (!hasPending && pendingNotes.Count == 0 && pendingConvos.Count == 0)
                 {
                     SyncDebugLog.Info($"Skipping data auto-sync for {deviceId} (all items already acknowledged)");
                 }
@@ -3225,7 +3274,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
 
             if (ManifestEntryNeedsSync(remote, local))
+            {
+                LogManifestNeeded("convo", remote, local);
                 neededConvos.Add(remote.Id);
+            }
             else
                 upToDateConvos++;
         }
@@ -3255,9 +3307,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (ManifestEntryNeedsSync(remote, local))
             {
-                SyncDebugLog.Info(
-                    $"Note {remote.Id} needed from peer: remoteFp={remote.ContentFingerprint} " +
-                    $"localFp={local?.ContentFingerprint ?? "(none)"}");
+                LogManifestNeeded("note", remote, local);
                 neededNotes.Add(remote.Id);
             }
             else
@@ -3297,7 +3347,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 }
 
                 if (ManifestEntryNeedsSync(remote, local))
+                {
+                    LogManifestNeeded("album", remote, local);
                     neededAlbums.Add(remote.Id);
+                }
                 else
                     upToDateAlbums++;
             }
@@ -3464,7 +3517,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                     continue;
                 }
                 if (ManifestEntryNeedsSync(remote, local))
+                {
+                    LogManifestNeeded("calendar", remote, local);
                     neededCalendars.Add(remote.Id);
+                }
                 else
                     upToDateCalendars++;
             }
@@ -3492,7 +3548,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                     continue;
                 }
                 if (ManifestEntryNeedsSync(remote, local))
+                {
+                    LogManifestNeeded("calendar-event", remote, local);
                     neededCalendarEvents.Add(remote.Id);
+                }
                 else
                     upToDateCalendarEvents++;
             }
