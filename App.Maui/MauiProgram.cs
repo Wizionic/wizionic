@@ -42,10 +42,11 @@ public static class MauiProgram
 		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
 		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
 #endif
-		// Must be the very first line before anything else.
-		// FastCallbacks must exit quickly and must not show UI.
 		var firstRun = false;
 		var afterUpdate = false;
+#if !STORE_BUILD
+		// Must be the very first line before anything else.
+		// FastCallbacks must exit quickly and must not show UI.
 		VelopackApp.Build()
 			.OnFirstRun(_ => firstRun = true)
 			.OnAfterUpdateFastCallback(_ =>
@@ -88,6 +89,7 @@ public static class MauiProgram
 				}
 			})
 			.Run();
+#endif
 
 #if WINDOWS
 		if (!WindowsSingleInstance.TryAcquirePrimary())
@@ -379,6 +381,8 @@ public static class MauiProgram
 		services.AddSingleton<App.Core.UI.IAppNavigation, App.Shared.Services.AppNavigation>();
 		services.AddSingleton<MauiOAuthInterceptor>();
 		services.AddSingleton<IUriLauncher, MauiUriLauncher>();
+		services.AddSingleton<App.Core.Support.IExternalUriOpener, MauiExternalUriOpener>();
+		services.AddSingleton<App.Core.Support.IContentReportService, ContentReportService>();
 		services.AddSingleton<App.Shared.Services.Connectors.ConnectorHttpExecutor>();
 		services.AddSingleton<App.Shared.Services.Connectors.OpenApiConnectorToolSource>();
 		services.AddSingleton<App.Core.Connectors.IOpenApiConnectorRefresher>(sp =>

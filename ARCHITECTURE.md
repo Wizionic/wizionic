@@ -12,7 +12,7 @@
 - **Tools Available** — Native app tools (Notes, Gallery, Calendar, Browser, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, first class **Home Assistant** integration — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.  Tools can then be used in Skills or scheduled in Workflows.
 - **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. When the public server is used as the Home Server, it does not store conversation or personal content for WASM/MAUI client.
 - **Local Device to Device sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR from the Home Server is presence + signaling only.
-- **Minimal Server Footprint**  The desktop app plus a **Home Server** on the installed PC covers login, magic-link/2FA APIs, SignalR presence, and WebRTC signaling. The hosting app uses **`http://localhost:5150`**; Kestrel binds `http://*:5150` so other devices use `{hostname}.local:5150` or the LAN IPv4 (Windows Firewall Private rule on 5150). Installing Home Server from the setup wizard downloads that package from **GitHub Releases** and retargets this app’s login server to localhost. Desktop *app* updates also come from GitHub. The hosted site (Wizionic.com) is only an optional public host (web client + the same APIs) for people who do not run their own Home Server.
+- **Minimal Server Footprint**  The desktop app plus a **Home Server** on the installed PC covers login, magic-link/2FA APIs, SignalR presence, and WebRTC signaling. The hosting app uses **`http://localhost:5150`**; Kestrel binds `http://*:5150` so other devices use `{hostname}.local:5150` or the LAN IPv4 (Windows Firewall Private rule on 5150). Installing Home Server from the setup wizard downloads that package from **GitHub Releases** and retargets this app’s login server to localhost. Desktop *app* updates come from GitHub Releases (Velopack) or, for the Microsoft Store Windows install, from the Store. The hosted site (Wizionic.com) is only an optional public host (web client + the same APIs) for people who do not run their own Home Server.
 - **Mobile Device Support** The WASM website from the Home Server can be installed as a Progressive Web App (PWA) on Android and IOS devices.  A logged-in mobile device can relay chat AI to other devices over WebRTC.
 - **Easy UI** — Make setup of local AI, integrations, and the user's private data as easy as possible.
 
@@ -481,6 +481,21 @@ Workflows stay **device-local** (not moved to the homeserver, not synced). Due t
 Optional **Start with Windows** writes HKCU Run to the Velopack root stub. `--start-minimized` is only on that Run command. Single-instance mutex prevents two SQLite writers; extra views are extra **windows**, not extra processes. Velopack restart while hidden writes `tray-restore.flag` so the new process returns to the tray.
 
 **Key files:** `App.Maui/Platforms/Windows/WindowsDesktopHost.cs`, `WindowsTrayIcon.cs`, `WindowsSingleInstance.cs`, `WindowsStartupRegistration.cs`, `App.Maui/Services/WorkflowDueHost.cs`, `TrayRestoreFlag.cs`
+
+### Windows packaging (Velopack vs Store)
+
+Two Windows outputs from `App.Maui` (`net10.0-windows10.0.19041.0`, `win-x64`):
+
+| Output | How | Updates | Data |
+|--------|-----|---------|------|
+| Unpackaged + Velopack `Wizionic-win-Setup.exe` | `scripts/pack-windows.ps1` (`WindowsPackageType=None`) | GitHub Releases via Velopack | `FileSystem.AppDataDirectory` |
+| Store MSIX | `scripts/pack-windows-msix.ps1` (`STORE_BUILD=true` → `WindowsPackageType=MSIX`) | Microsoft Store only | same API; packaged LocalState |
+
+Store identity (must match Partner Center): Name `Wizionic.Wizionic`, Publisher `CN=B7638B36-393C-411D-91A5-DCF5DAB35944`, PFN `Wizionic.Wizionic_zh0qtcvkbjsn2`. Unsigned; Store re-signs. CI job `build-windows-msix` uploads artifact `wizionic-store-msix` and must not attach to the GitHub Release. `STORE_BUILD` skips `VelopackApp` hooks; `IUpdateService.UpdatesManagedByStore` also treats a packaged `Package.Current` install as Store-managed.
+
+Home Server / Lemonade / Ollama still install **outside** the package (ProgramData / their own installers) and talk to localhost.
+
+**Key files:** `App.Maui/Platforms/Windows/Package.appxmanifest`, `WindowsPackageInfo.cs`, `scripts/pack-windows-msix.ps1`, `.github/workflows/release.yml`
 
 ### Linux desktop agent (tray)
 

@@ -34,6 +34,7 @@
     { "id": "pwa-mac", "title": "PWA on Mac", "file": "pwa.md", "routes": [], "audience": "howto", "anchor": "mac", "toc": false },
     { "id": "pwa-chromeos", "title": "PWA on a Chromebook", "file": "pwa.md", "routes": [], "audience": "howto", "anchor": "chromeos", "toc": false },
     { "id": "privacy-data", "title": "What stays on this device", "file": "privacy-data.md", "routes": ["/privacy"], "audience": "reference" },
+    { "id": "report-content", "title": "Report inappropriate content", "file": "privacy-data.md", "routes": ["/settings"], "audience": "howto", "anchor": "report-content" },
     { "id": "desktop", "title": "Desktop: browser and Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true },
     { "id": "home-assistant", "title": "Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "home-assistant" },
     { "id": "home-assistant-token", "title": "Long-lived access token", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "token", "toc": false },

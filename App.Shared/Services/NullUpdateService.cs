@@ -16,6 +16,8 @@ public class NullUpdateService : IUpdateService
 
     public bool IsVelopackInstalled => false;
 
+    public bool UpdatesManagedByStore => false;
+
     public string? UpdateFeedUrl => null;
 
     public string? InstallerDownloadUrl => null;

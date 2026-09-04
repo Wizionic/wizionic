@@ -1,3 +1,8 @@
+window.openExternalUri = function (uri) {
+    if (!uri) return;
+    window.location.href = uri;
+};
+
 window.scrollChatToBottom = function () {
     const container = document.getElementById('chat-container');
     if (container) {

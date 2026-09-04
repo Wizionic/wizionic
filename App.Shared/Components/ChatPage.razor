@@ -12,6 +12,7 @@
 @using App.Core.Tools
 @using App.Core.Skills
 @using App.Core.UI
+@using App.Core.Support
 @using App.Core.Browser
 @using App.Shared.Services
 @using App.Shared.Services.Lemonade
@@ -669,6 +670,10 @@
                         Edit image
                     </div>
                 }
+                <div @onclick="OpenReportForBotMessage">
+                    <button type="button" class="menu-button"><i class="bi bi-flag"></i></button>
+                    Report this response
+                </div>
                 <div @onclick="() => PromptDeleteMessage(openMenuId)">
                     <button type="button" class="menu-button"><i class="cf-icon bi bi-trash3-fill"></i></button>
                     Delete message
@@ -948,6 +953,11 @@
                Message="@deleteConfirmMessage"
                OnConfirm="ConfirmPendingDelete"
                OnCancel="CancelPendingDelete" />
+
+<ReportContentDialog IsVisible="showReportDialog"
+                     IsVisibleChanged="v => showReportDialog = v"
+                     Surface="ContentReportSurface.Chat"
+                     ModelId="@reportModelId" />
 
 @if (renameConvoId is not null)
 {
@@ -1432,6 +1442,8 @@
     const string BotMenuPrefix = "bot-";
     const string UserMenuPrefix = "user-";
     int? _botMenuMessageIndex;
+    bool showReportDialog;
+    string? reportModelId;
     int? _userMenuMessageIndex;
 
     bool IsBotMenuOpen => openMenuId != null && openMenuId.StartsWith(BotMenuPrefix, StringComparison.Ordinal);
@@ -4319,6 +4331,14 @@
         activePopupStyle = "";
         _botMenuMessageIndex = null;
         _userMenuMessageIndex = null;
+    }
+
+    void OpenReportForBotMessage()
+    {
+        var model = EffectiveChatModelId;
+        reportModelId = string.IsNullOrWhiteSpace(model) ? "unknown / local" : model;
+        showReportDialog = true;
+        CloseMenu();
     }
 
     void ToggleUserMenu(int index)
