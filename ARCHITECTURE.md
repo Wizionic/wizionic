@@ -488,8 +488,8 @@ Two Windows outputs from `App.Maui` (`net10.0-windows10.0.19041.0`, `win-x64`):
 
 | Output | How | Updates | Data |
 |--------|-----|---------|------|
-| Unpackaged + Velopack `Wizionic-win-Setup.exe` | `scripts/pack-windows.ps1` (`WindowsPackageType=None`) | GitHub Releases via Velopack | `FileSystem.AppDataDirectory` |
-| Store MSIX | `scripts/pack-windows-msix.ps1` (`STORE_BUILD=true` → `WindowsPackageType=MSIX`) | Microsoft Store only | same API; packaged LocalState |
+| Unpackaged + Velopack `Wizionic-win-Setup.exe` | `scripts/pack-windows.ps1` (`WindowsPackageType=None`) | GitHub Releases via Velopack | `%LocalAppData%\Wizionic\userdata` (stable; not PublisherDisplayName / Identity Name) |
+| Store MSIX | `scripts/pack-windows-msix.ps1` (`STORE_BUILD=true` → `WindowsPackageType=MSIX`) | Microsoft Store only | packaged LocalState (`FileSystem.AppDataDirectory`) |
 
 Store identity (must match Partner Center): Name `Wizionic.Wizionic`, Publisher `CN=B7638B36-393C-411D-91A5-DCF5DAB35944`, PFN `Wizionic.Wizionic_zh0qtcvkbjsn2`. Unsigned; Store re-signs. CI job `build-windows-msix` uploads artifact `wizionic-store-msix` and must not attach to the GitHub Release. `STORE_BUILD` skips `VelopackApp` hooks; `IUpdateService.UpdatesManagedByStore` also treats a packaged `Package.Current` install as Store-managed.
 

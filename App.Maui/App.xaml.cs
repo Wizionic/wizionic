@@ -18,7 +18,7 @@ public partial class MauiShell : Application
 		)
 	{
 #if WINDOWS
-		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
+		var userDataFolder = Path.Combine(App.Maui.Services.MauiAppData.Directory, "WebView2");
 		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
 		_desktop = desktop;
 #endif
