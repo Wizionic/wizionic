@@ -39,7 +39,7 @@ public static class MauiProgram
 	public static MauiApp CreateMauiApp()
 	{
 #if WINDOWS
-		var userDataFolder = Path.Combine(FileSystem.AppDataDirectory, "WebView2");
+		var userDataFolder = Path.Combine(MauiAppData.Directory, "WebView2");
 		Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
 #endif
 		var firstRun = false;
