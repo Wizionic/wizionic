@@ -1212,16 +1212,25 @@
             }, 0);
         };
 
-        window.webrtcCreatePeerConnection = async (dotnetRef, peerId) => {
+        window.webrtcCreatePeerConnection = async (dotnetRef, peerId, iceServersJson) => {
             // Close any existing connection for this peer before starting a new handshake.
             // Suppress .NET callbacks so the teardown does not clear the newly queued sync item.
             if (window._webrtcConnections[peerId]) {
                 window.webrtcClose(peerId, { suppressDotNetCallbacks: true });
             }
 
-            const pc = new RTCPeerConnection({
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-            });
+            let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+            try {
+                if (iceServersJson) {
+                    const parsed = typeof iceServersJson === 'string' ? JSON.parse(iceServersJson) : iceServersJson;
+                    if (Array.isArray(parsed) && parsed.length)
+                        iceServers = parsed;
+                }
+            } catch (e) {
+                console.warn('[WebRTC] iceServers parse failed', e);
+            }
+
+            const pc = new RTCPeerConnection({ iceServers });
             window._webrtcConnections[peerId] = { pc, dotnetRef, dataChannel: null, iceQueue: [], remoteDescSet: false };
 
             pc.onicecandidate = (event) => {
@@ -1305,7 +1314,6 @@
             if (!entry) return null;
             const offer = await entry.pc.createOffer();
             await entry.pc.setLocalDescription(offer);
-            await window.webrtcWaitIceGathering(peerId);
             return JSON.stringify(entry.pc.localDescription);
         };
 
@@ -1344,7 +1352,6 @@
             if (!entry) return null;
             const answer = await entry.pc.createAnswer();
             await entry.pc.setLocalDescription(answer);
-            await window.webrtcWaitIceGathering(peerId);
             return JSON.stringify(entry.pc.localDescription);
         };
 

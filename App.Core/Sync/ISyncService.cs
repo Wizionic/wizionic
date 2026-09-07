@@ -61,6 +61,8 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     Task PublishAiCapabilitiesAsync();
 
     Task SetDeviceNameAsync(string newName);
+    /// <summary>Drop an offline leftover device from this client's roster (not while it is online).</summary>
+    Task ForgetOfflineDeviceAsync(string deviceId);
     Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds);
     Task SetSyncToAllDevicesAsync(bool enabled);
     Task SetAutoSyncChatHistoryAsync(bool enabled);

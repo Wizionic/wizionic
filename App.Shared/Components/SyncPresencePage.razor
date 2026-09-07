@@ -94,6 +94,16 @@
                                         {
                                             <span class="sync-cap-badge" title="Web browser client">browser</span>
                                         }
+                                        @if (!isSelf && !d.IsOnline)
+                                        {
+                                            <button type="button"
+                                                    class="btn btn-outline-secondary btn-sm"
+                                                    style="margin-left:0.5rem;"
+                                                    title="Remove this leftover offline device from the list"
+                                                    @onclick="() => ForgetDevice(d.DeviceId)">
+                                                Forget
+                                            </button>
+                                        }
                                     </td>
                                     <td class="cf-sync-cell sync-last-active-cell">
                                         @FormatLastActive(d.LastActiveUtc, d.IsOnline)
@@ -862,6 +872,13 @@
         if (string.IsNullOrWhiteSpace(name)) return;
         await SyncService.SetDeviceNameAsync(name);
         newDeviceName = SyncService.MyDeviceName; devices = SyncService.Devices.ToList(); StateHasChanged();
+    }
+
+    private async Task ForgetDevice(string deviceId)
+    {
+        await SyncService.ForgetOfflineDeviceAsync(deviceId);
+        devices = SyncService.Devices.ToList();
+        StateHasChanged();
     }
 
     private async Task ToggleTarget(string deviceId, ChangeEventArgs e)

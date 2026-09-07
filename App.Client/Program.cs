@@ -79,6 +79,7 @@ builder.Services.AddSingleton<App.Core.Workflows.IWorkflowStore, App.Shared.Serv
 builder.Services.AddScoped<App.Core.Workflows.IWorkflowOrchestrator, App.Shared.Services.Workflows.WorkflowOrchestrator>();
 builder.Services.AddSingleton<SettingsSyncStore>();
 builder.Services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
+builder.Services.AddSingleton<IIceServerSource, HttpIceServerSource>();
 builder.Services.AddScoped<JsWebRtcTransport>();
 builder.Services.AddScoped<IWebRtcTransport>(sp => sp.GetRequiredService<JsWebRtcTransport>());
 builder.Services.AddScoped<WasmSyncService>();

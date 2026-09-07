@@ -33,6 +33,8 @@ Secrets belong in the environment, not in git.
 | `Twilio__ApiKeySid` | Twilio API Key SID (`SK…`). Prefer this over the account auth token. |
 | `Twilio__ApiKeySecret` | Twilio API key secret. |
 | `Twilio__VerifyServiceSid` | Twilio Verify Service SID (`VA…`). Create a service named Wizionic in the Twilio console. |
+| `Turn__Cloudflare__TokenId` | Optional Cloudflare Realtime TURN token ID. Short-lived ICE credentials for sync across NATs. |
+| `Turn__Cloudflare__ApiToken` | Cloudflare TURN API token. Server-side only; never put this in the desktop/WASM client. |
 | `ZYPHRA_API_KEY` | Optional proxied Zyphra models |
 | `ConnectionStrings__DefaultConnection` | Override SQLite path |
 

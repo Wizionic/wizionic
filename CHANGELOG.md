@@ -36,6 +36,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Fixed
 
 - Windows Velopack updates no longer look like a logout / empty library when `Package.appxmanifest` identity changes. Unpackaged data is `%LocalAppData%\Wizionic\userdata`; startup copies the largest existing `wizionic_local.db` from the old MAUI `Publisher\Package\Data` folders.
+- Desktop WebRTC no longer waits for STUN gathering before sending an offer (campus firewalls were hanging until the 90s timeout). Sync retries `webrtc-need-offer` while waiting. Offline leftover devices can be forgotten on Devices & Sync.
+- Signed-in clients fetch short-lived ICE/TURN servers from `/api/sync/ice-servers` (Cloudflare Realtime when the host is configured) so sync can relay when STUN is not enough.
 - WASM first paint no longer crashes: host SSR now registers a no-op calendar ticker (`ICalendarBackgroundService`) so `WorkflowDueBootstrap` can construct.
 - Notes sync no longer sends the notebook id as the sidebar title, and a GUID title from a peer no longer overwrites a real name. Same guard for album titles.
 - WebRTC answerer (Windows MAUI vs Linux Dell): incoming DataChannels are often already open before `onopen` is wired, so the answerer never sent its own manifest, calendar, or note updates and sat on `active: manifest` for 90s then tore down the live channel. Fire open if already open (same as WASM `readyState === 'open'`), send the pending outbound item on the first inbound DataChannel message, and do not close a live channel on handshake timeout.

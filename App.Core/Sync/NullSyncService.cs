@@ -60,6 +60,7 @@ public sealed class NullSyncService : ISyncService
     public Task PublishAiCapabilitiesAsync() => Task.CompletedTask;
 
     public Task SetDeviceNameAsync(string newName) => Task.CompletedTask;
+    public Task ForgetOfflineDeviceAsync(string deviceId) => Task.CompletedTask;
     public Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds) => Task.CompletedTask;
     public Task SetSyncToAllDevicesAsync(bool enabled) => Task.CompletedTask;
     public Task SetAutoSyncChatHistoryAsync(bool enabled) => Task.CompletedTask;

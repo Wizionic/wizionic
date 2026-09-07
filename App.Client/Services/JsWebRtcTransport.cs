@@ -1,5 +1,5 @@
+using System.Text.Json;
 using App.Core.Sync;
-using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 
 namespace App.Client.Services;
@@ -9,10 +9,20 @@ namespace App.Client.Services;
 /// </summary>
 public sealed class JsWebRtcTransport : IWebRtcTransport, IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions IceJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     private readonly IJSRuntime _js;
+    private readonly IIceServerSource _iceServers;
     private readonly Dictionary<string, PeerEntry> _peers = new(StringComparer.OrdinalIgnoreCase);
 
-    public JsWebRtcTransport(IJSRuntime js) => _js = js;
+    public JsWebRtcTransport(IJSRuntime js, IIceServerSource iceServers)
+    {
+        _js = js;
+        _iceServers = iceServers;
+    }
 
     public async Task CreatePeerConnectionAsync(string peerId, IWebRtcTransportCallbacks callbacks, CancellationToken ct = default)
     {
@@ -21,7 +31,9 @@ public sealed class JsWebRtcTransport : IWebRtcTransport, IAsyncDisposable
         var bridge = new JsWebRtcCallbackBridge(callbacks);
         var objRef = DotNetObjectReference.Create(bridge);
         _peers[peerId] = new PeerEntry(bridge, objRef);
-        await _js.InvokeVoidAsync("webrtcCreatePeerConnection", ct, objRef, peerId);
+        var ice = await _iceServers.GetIceServersAsync(ct);
+        var iceJson = JsonSerializer.Serialize(ice, IceJson);
+        await _js.InvokeVoidAsync("webrtcCreatePeerConnection", ct, objRef, peerId, iceJson);
     }
 
     public Task CreateDataChannelAsync(string peerId, string label, CancellationToken ct = default) =>
