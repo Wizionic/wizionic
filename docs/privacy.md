@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** 4 September 2026  
+**Effective date:** 6 September 2026  
 **Operator:** Daniel Goodwin, operating as Wizionic  
 **Contact:** daniellgoodwin@protonmail.com  
 **Site:** https://wizionic.com  
@@ -90,6 +90,7 @@ The desktop app does not transfer information to other networked systems unless 
 - Built-in tools such as web search or URL summarize, when the model calls them
 - Checking for application updates (GitHub/Velopack on sideload installs; Microsoft Store update checks on the Store client)
 - Opening a content-report email to the operator when you use Report inappropriate content
+- Optional TURN (Cloudflare Realtime, credentials issued by the login server) when a direct WebRTC path fails. That relay carries DTLS-encrypted packets, not chat or note plaintext.
 
 ## Email
 

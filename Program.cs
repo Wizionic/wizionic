@@ -90,6 +90,12 @@ builder.Services.AddScoped<UserDeviceService>();
 builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<HaveIBeenPwnedService>();
 builder.Services.Configure<TwilioOptions>(builder.Configuration.GetSection(TwilioOptions.SectionName));
+builder.Services.Configure<TurnOptions>(builder.Configuration.GetSection(TurnOptions.SectionName));
+builder.Services.AddHttpClient("cloudflare-turn", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddSingleton<CloudflareTurnService>();
 builder.Services.PostConfigure<TwilioOptions>(opts =>
 {
     opts.AccountSid = FirstEnv("Twilio__AccountSid", "Twilio:AccountSid") ?? opts.AccountSid;

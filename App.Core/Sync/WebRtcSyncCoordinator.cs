@@ -145,11 +145,15 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private readonly HashSet<string> _offerInFlight = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Active outbound item already written to the DataChannel (waiting for ack, not handshake).</summary>
     private readonly HashSet<string> _outboundSentByPeer = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Answerer resends webrtc-need-offer until SDP arrives or handshake fails.</summary>
+    private readonly Dictionary<string, CancellationTokenSource> _needOfferPokeByPeer = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _galleryChangedDebounceCts;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly AsyncLocal<bool> _holdingGate = new();
     /// <summary>ICE/SDP until DataChannel open. Ack timer starts only after a send.</summary>
-    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan SdpCreateTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan NeedOfferPokeInterval = TimeSpan.FromSeconds(5);
     /// <summary>Small items (settings, notes, deletes) waiting for ack after send.</summary>
     private static readonly TimeSpan SmallItemAckTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan AutoSyncDebounce = TimeSpan.FromSeconds(2);
@@ -1520,7 +1524,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 }
 
                 SyncDebugLog.Info($"Sync timed out for peer {peerId} after {timeout.TotalSeconds:0}s (active: {DescribeQueueItem(active)})");
-                await FailActiveSyncAsync(peerId, "timed out waiting for peer acknowledgement");
+                var reason = !_outboundSentByPeer.Contains(peerId)
+                    ? "timed out waiting for WebRTC DataChannel (offer/ICE)"
+                    : "timed out waiting for peer acknowledgement";
+                await FailActiveSyncAsync(peerId, reason);
             });
         });
     }
@@ -1551,6 +1558,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         _activeSyncByPeer.Remove(peerId);
         _outboundSentByPeer.Remove(peerId);
         CancelSyncTimeout(peerId);
+        CancelNeedOfferPokes(peerId);
         ClearChunkAssembliesForPeer(peerId);
         _offerInFlight.Remove(peerId);
         SyncDebugLog.Info($"Active sync failed for {peerId}: {reason}");
@@ -2447,7 +2455,52 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private Task CloseWebRtcPeerAsync(string peerId)
     {
         _offerInFlight.Remove(peerId);
+        CancelNeedOfferPokes(peerId);
         return _webrtc.CloseAsync(peerId, suppressCallbacks: true);
+    }
+
+    private void StartNeedOfferPokes(string peerId)
+    {
+        CancelNeedOfferPokes(peerId);
+        var cts = new CancellationTokenSource();
+        _needOfferPokeByPeer[peerId] = cts;
+        StartDetached(async () =>
+        {
+            try
+            {
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(NeedOfferPokeInterval, cts.Token);
+                    if (await _webrtc.IsDataChannelOpenAsync(peerId))
+                        return;
+                    SyncDebugLog.WebRtc($"Re-poking offer from {peerId}");
+                    await _sendSignalingAsync(peerId, "webrtc-need-offer", "");
+                }
+            }
+            catch (Exception ex) when (ex is TaskCanceledException or ObjectDisposedException)
+            {
+            }
+            catch (Exception ex)
+            {
+                SyncDebugLog.WebRtc($"Need-offer poke failed for {peerId}: {ex.Message}");
+            }
+        });
+    }
+
+    private void CancelNeedOfferPokes(string peerId)
+    {
+        if (!_needOfferPokeByPeer.Remove(peerId, out var cts))
+            return;
+        try { cts.Cancel(); } catch { /* already canceled */ }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(250);
+                cts.Dispose();
+            }
+            catch { /* ignore */ }
+        });
     }
 
     private void ClearChunkAssembliesForPeer(string peerId)
@@ -2652,6 +2705,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         {
             SyncDebugLog.WebRtc($"Waiting for offer from {targetDeviceId} (they are designated offerer)");
             await _sendSignalingAsync(targetDeviceId, "webrtc-need-offer", "");
+            StartNeedOfferPokes(targetDeviceId);
             return;
         }
 
@@ -2663,12 +2717,19 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
         try
         {
+            SyncDebugLog.WebRtc($"Creating offer for {targetDeviceId}");
             await _webrtc.CreatePeerConnectionAsync(targetDeviceId, _transportCallbacks);
             await _webrtc.CreateDataChannelAsync(targetDeviceId, channelLabel);
 
-            var offerJson = await _webrtc.CreateOfferAsync(targetDeviceId);
+            var offerJson = await _webrtc.CreateOfferAsync(targetDeviceId).WaitAsync(SdpCreateTimeout);
             SyncDebugLog.WebRtc($"Sending offer to {targetDeviceId}");
             await _sendSignalingAsync(targetDeviceId, "webrtc-offer", offerJson ?? "");
+        }
+        catch (TimeoutException)
+        {
+            _offerInFlight.Remove(targetDeviceId);
+            SyncDebugLog.WebRtc($"CreateOffer timed out for {targetDeviceId}");
+            throw new TimeoutException($"CreateOffer timed out for {targetDeviceId}");
         }
         catch
         {
@@ -2680,7 +2741,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private async Task HandleNeedOfferAsync(string fromDeviceId)
     {
         if (!IsDesignatedOffererToward(fromDeviceId))
+        {
+            SyncDebugLog.WebRtc($"Ignoring need-offer from {fromDeviceId}; we are not the designated offerer");
             return;
+        }
         if (await _webrtc.IsDataChannelOpenAsync(fromDeviceId))
             return;
 
@@ -2695,6 +2759,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private async Task HandleWebRtcOffer(string fromDeviceId, string offerJson)
     {
         SyncDebugLog.WebRtc($"Received offer from {fromDeviceId}");
+        CancelNeedOfferPokes(fromDeviceId);
 
         // Dual-offer is what left Chromium with "Applied answer" and no DataChannel:
         // each side created a PC, then the polite side destroyed it to answer.
@@ -2719,7 +2784,16 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         await _webrtc.CreatePeerConnectionAsync(fromDeviceId, _transportCallbacks);
         await _webrtc.SetRemoteDescriptionAsync(fromDeviceId, offerJson);
 
-        var answerJson = await _webrtc.CreateAnswerAsync(fromDeviceId);
+        string? answerJson;
+        try
+        {
+            answerJson = await _webrtc.CreateAnswerAsync(fromDeviceId).WaitAsync(SdpCreateTimeout);
+        }
+        catch (TimeoutException)
+        {
+            SyncDebugLog.WebRtc($"CreateAnswer timed out for {fromDeviceId}");
+            throw;
+        }
         await _sendSignalingAsync(fromDeviceId, "webrtc-answer", answerJson ?? "");
         SyncDebugLog.WebRtc($"Sent answer to {fromDeviceId}");
     }
@@ -2812,6 +2886,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     {
         SyncDebugLog.Info($"DataChannel open for peer {peerId}");
         _offerInFlight.Remove(peerId);
+        CancelNeedOfferPokes(peerId);
         // Our offer won (or we are answerer on a live channel) — discard any deferred glare SDP.
         _deferredRemoteOffers.Remove(peerId);
         await EnsureActiveOutboundSentAsync(peerId);
@@ -4431,6 +4506,13 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             cts.Dispose();
         }
         _syncTimeoutByPeer.Clear();
+
+        foreach (var cts in _needOfferPokeByPeer.Values)
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+        _needOfferPokeByPeer.Clear();
 
         try { _gate.Dispose(); } catch { /* ignore */ }
     }

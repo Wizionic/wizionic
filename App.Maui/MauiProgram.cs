@@ -307,6 +307,7 @@ public static class MauiProgram
 		services.AddSingleton<WorkflowDueHost>();
 		services.AddSingleton<SettingsSyncStore>();
 		services.AddSingleton<ISettingsSyncStore>(sp => sp.GetRequiredService<SettingsSyncStore>());
+		services.AddSingleton<IIceServerSource, HttpIceServerSource>();
 		services.AddSingleton<SipsorceryWebRtcTransport>();
 		services.AddSingleton<IWebRtcTransport>(sp => sp.GetRequiredService<SipsorceryWebRtcTransport>());
 		services.AddSingleton<MauiSyncService>();

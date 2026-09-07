@@ -17,6 +17,7 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
 {
     private const string StunUrl = "stun:stun.l.google.com:19302";
     private const int DefaultMaxMessageSize = 256 * 1024;
+    private readonly IIceServerSource? _iceServers;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -29,8 +30,14 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
     private readonly SemaphoreSlim _peerGate = new(1, 1);
     private static readonly Regex IceHostRegex = new(@"candidate:\S+\s+\d+\s+\S+\s+\d+\s+(\S+)\s+\d+\s+typ", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    public SipsorceryWebRtcTransport(IIceServerSource? iceServers = null)
+    {
+        _iceServers = iceServers;
+    }
+
     public async Task CreatePeerConnectionAsync(string peerId, IWebRtcTransportCallbacks callbacks, CancellationToken ct = default)
     {
+        var iceServers = await BuildIceServersAsync(ct);
         await _peerGate.WaitAsync(ct);
         try
         {
@@ -38,7 +45,7 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
 
             var config = new RTCConfiguration
             {
-                iceServers = [new RTCIceServer { urls = StunUrl }]
+                iceServers = iceServers
             };
 
             var pc = new RTCPeerConnection(config);
@@ -127,7 +134,9 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
             if (!_peers.TryGetValue(peerId, out var entry))
                 return null;
 
-            var offer = entry.Pc.createOffer(new RTCOfferOptions { X_WaitForIceGatheringToComplete = true });
+            // Trickle ICE via webrtc-ice. Waiting for gather to complete hangs on campus
+            // firewalls (STUN never finishes) so the SDP offer is never sent.
+            var offer = entry.Pc.createOffer(new RTCOfferOptions { X_WaitForIceGatheringToComplete = false });
             await entry.Pc.setLocalDescription(offer);
             return SerializeSessionDescription(offer);
         }
@@ -145,7 +154,7 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
             if (!_peers.TryGetValue(peerId, out var entry))
                 return null;
 
-            var answer = entry.Pc.createAnswer(new RTCAnswerOptions { X_WaitForIceGatheringToComplete = true });
+            var answer = entry.Pc.createAnswer(new RTCAnswerOptions { X_WaitForIceGatheringToComplete = false });
             await entry.Pc.setLocalDescription(answer);
             return SerializeSessionDescription(answer);
         }
@@ -409,6 +418,40 @@ public sealed class SipsorceryWebRtcTransport : IWebRtcTransport, IAsyncDisposab
 
         foreach (var candJson in queued)
             await AddIceCandidateInternalAsync(entry, candJson);
+    }
+
+    private async Task<List<RTCIceServer>> BuildIceServersAsync(CancellationToken ct)
+    {
+        var list = new List<RTCIceServer>();
+        if (_iceServers is not null)
+        {
+            try
+            {
+                var fetched = await _iceServers.GetIceServersAsync(ct);
+                foreach (var server in fetched)
+                {
+                    foreach (var url in server.Urls)
+                    {
+                        if (string.IsNullOrWhiteSpace(url))
+                            continue;
+                        list.Add(new RTCIceServer
+                        {
+                            urls = url,
+                            username = server.Username,
+                            credential = server.Credential
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // Fall through to STUN.
+            }
+        }
+
+        if (list.Count == 0)
+            list.Add(new RTCIceServer { urls = StunUrl });
+        return list;
     }
 
     private Task ClosePeerInternalAsync(string peerId, bool suppressCallbacks, CancellationToken ct)

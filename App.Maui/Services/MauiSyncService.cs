@@ -23,6 +23,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private const string AiServerDeviceIdKey = "app-ai-server-device-id";
     private const string AiServerNameKey = "app-ai-server-name";
     private const string KnownDevicesKey = "app-known-devices";
+    private const string ForgottenDevicesKey = "app-forgotten-devices";
     private const string SyncTargetDevicesKey = "app-sync-target-devices";
     private const string AutoSyncChatKey = "app-auto-sync-chat";
     private const string AutoSyncNotesKey = "app-auto-sync-notes";
@@ -63,6 +64,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
     private readonly HashSet<string> _syncTargetDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _devicesSnapshotInitialized;
     private List<KnownDeviceRecord> _knownDevices = new();
+    private readonly HashSet<string> _forgottenDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private string? _aiServerName;
 
     private HubConnection? _hub;
@@ -186,7 +188,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
         await LoadSyncPreferencesAsync();
         await LoadKnownDevicesAsync();
-        Devices = DeviceListMerger.Merge(
+        Devices = MergeVisibleDevices(
             Array.Empty<SyncDeviceInfo>(),
             _knownDevices,
             _aiProxy.AiServerDeviceId,
@@ -353,6 +355,31 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         if (_hub?.State == HubConnectionState.Connected && !string.IsNullOrEmpty(MyDeviceId))
             await InvokeHubAsync("UpdateDeviceName", MyDeviceId, MyDeviceName);
 
+        OnChanged?.Invoke();
+    }
+
+    public async Task ForgetOfflineDeviceAsync(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId) || IsSelf(deviceId))
+            return;
+        var live = Devices.FirstOrDefault(d =>
+            string.Equals(d.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+        if (live is { IsOnline: true })
+            return;
+
+        _forgottenDeviceIds.Add(deviceId);
+        _knownDevices = DeviceListMerger.Forget(_knownDevices, deviceId);
+        _syncTargetDeviceIds.Remove(deviceId);
+        await SaveKnownDevicesAsync();
+        await SaveForgottenDevicesAsync();
+        await SetUserSettingAsync(
+            SyncTargetDevicesKey,
+            System.Text.Json.JsonSerializer.Serialize(_syncTargetDeviceIds.ToList()));
+
+        if (string.Equals(AiServerDeviceId, deviceId, StringComparison.OrdinalIgnoreCase))
+            await SetAiServerDeviceAsync(null);
+
+        Devices = MergeVisibleDevices(Devices, _knownDevices, AiServerDeviceId, _aiServerName);
         OnChanged?.Invoke();
     }
 
@@ -702,7 +729,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
                 id => SetUserSettingAsync(AiServerDeviceIdKey, id),
                 IsSelf);
             var live = Devices.Where(d => d.IsOnline).ToList();
-            Devices = DeviceListMerger.Merge(live, _knownDevices);
+            Devices = MergeVisibleDevices(live, _knownDevices);
             OnChanged?.Invoke();
             return;
         }
@@ -725,7 +752,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             id => SetUserSettingAsync(AiServerDeviceIdKey, id),
             IsSelf);
 
-        Devices = DeviceListMerger.Merge(Devices, _knownDevices, AiServerDeviceId, _aiServerName);
+        Devices = MergeVisibleDevices(Devices, _knownDevices, AiServerDeviceId, _aiServerName);
         OnChanged?.Invoke();
     }
 
@@ -933,7 +960,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             _aiServerName = await GetUserSettingAsync(AiServerNameKey);
             await LoadSyncPreferencesAsync();
             await LoadKnownDevicesAsync();
-            Devices = DeviceListMerger.Merge(
+            Devices = MergeVisibleDevices(
                 Array.Empty<SyncDeviceInfo>(),
                 _knownDevices,
                 _aiProxy.AiServerDeviceId,
@@ -1145,6 +1172,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         {
             _knownDevices = new();
         }
+
+        await LoadForgottenDevicesAsync();
     }
 
     private async Task SaveKnownDevicesAsync()
@@ -1160,6 +1189,57 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         }
     }
 
+    private async Task LoadForgottenDevicesAsync()
+    {
+        try
+        {
+            var json = await GetUserSettingAsync(ForgottenDevicesKey);
+            _forgottenDeviceIds.Clear();
+            if (string.IsNullOrWhiteSpace(json))
+                return;
+            var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+            if (ids is null)
+                return;
+            foreach (var id in ids.Where(id => !string.IsNullOrWhiteSpace(id)))
+                _forgottenDeviceIds.Add(id);
+        }
+        catch
+        {
+            _forgottenDeviceIds.Clear();
+        }
+    }
+
+    private async Task SaveForgottenDevicesAsync()
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(_forgottenDeviceIds.ToList());
+            await SetUserSettingAsync(ForgottenDevicesKey, json);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+
+    private IReadOnlyList<SyncDeviceInfo> MergeVisibleDevices(
+        IEnumerable<SyncDeviceInfo>? fromServer,
+        IEnumerable<KnownDeviceRecord>? known,
+        string? ensureDeviceId = null,
+        string? ensureDeviceName = null)
+    {
+        var before = _forgottenDeviceIds.Count;
+        var merged = DeviceListMerger.Merge(fromServer, known, ensureDeviceId, ensureDeviceName);
+        foreach (var d in merged)
+        {
+            if (d.IsOnline)
+                _forgottenDeviceIds.Remove(d.DeviceId);
+        }
+        if (_forgottenDeviceIds.Count != before)
+            _ = SaveForgottenDevicesAsync();
+        return DeviceListMerger.HideForgotten(merged, _forgottenDeviceIds);
+    }
+
     private async Task ApplyDevicesFromServerAsync(IReadOnlyList<SyncDeviceInfo>? serverList)
     {
         _knownDevices = DeviceListMerger.UpsertFromServer(_knownDevices, serverList);
@@ -1169,6 +1249,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             foreach (var d in serverList)
             {
                 if (IsSelf(d.DeviceId) || string.IsNullOrWhiteSpace(d.DeviceId))
+                    continue;
+                if (_forgottenDeviceIds.Contains(d.DeviceId))
                     continue;
                 if (_syncTargetDeviceIds.Add(d.DeviceId))
                     changed = true;
@@ -1193,7 +1275,7 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             }
         }
 
-        Devices = DeviceListMerger.Merge(serverList, _knownDevices, AiServerDeviceId, _aiServerName);
+        Devices = MergeVisibleDevices(serverList, _knownDevices, AiServerDeviceId, _aiServerName);
     }
 
     private async Task ApplyDevicesFromServerAndNotifyAsync(

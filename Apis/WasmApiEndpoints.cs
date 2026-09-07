@@ -319,6 +319,15 @@ public static class WasmApiEndpoints
         var group = endpoints.MapGroup("/api").RequireAuthorization();
         var toolsGroup = endpoints.MapGroup("/api/tools").RequireAuthorization();
 
+        group.MapGet("/sync/ice-servers", async (CloudflareTurnService turn, CancellationToken ct) =>
+        {
+            var payload = await turn.GetIceServersAsync(ct);
+            return Results.Json(payload, new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            });
+        });
+
         group.MapGet("/auth/me", async (ClaimsPrincipal user, KeyProtectionService protector, AppDbContext db, ITwilioVerifyService twilio) =>
         {
             var email = user.Identity?.Name;

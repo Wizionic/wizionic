@@ -16,6 +16,10 @@ Signed-in devices see each other through the Wizionic server (presence only). **
 
 On Windows and Linux desktop, close-to-tray keeps this device online so other devices can still sync until you Quit.
 
+**Forget** on an offline row hides a leftover device (for example after a reinstall). It comes back if that device signs in again.
+
+First-time copy of notes between a dorm network and a home PC often needs the same Wi‑Fi (or copying `wizionic_local.db`). Presence (green dots) can work while WebRTC cannot. Across the internet, sync may use a short-lived TURN relay from the login server when a direct path fails.
+
 ## Login server (desktop)
 
 The desktop app can use wizionic.com or a **Home Server**. On the PC that hosts it, Login server is `http://localhost:5150`. Other devices must use the network URL from that PC’s Settings → Home Server (not localhost). Pointing at the wrong host is a common reason 2FA or new APIs “do not exist.”

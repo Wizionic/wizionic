@@ -164,4 +164,29 @@ public static class DeviceListMerger
 
         return list;
     }
+
+    public static List<KnownDeviceRecord> Forget(
+        IEnumerable<KnownDeviceRecord>? existing,
+        string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId) || existing is null)
+            return existing?.ToList() ?? new List<KnownDeviceRecord>();
+
+        return existing
+            .Where(k => !string.Equals(k.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    /// <summary>Hide forgotten ids unless that device is currently online.</summary>
+    public static IReadOnlyList<SyncDeviceInfo> HideForgotten(
+        IEnumerable<SyncDeviceInfo> devices,
+        ISet<string> forgotten)
+    {
+        if (forgotten.Count == 0)
+            return devices as IReadOnlyList<SyncDeviceInfo> ?? devices.ToList();
+
+        return devices
+            .Where(d => d.IsOnline || !forgotten.Contains(d.DeviceId))
+            .ToList();
+    }
 }
