@@ -13,6 +13,26 @@ Security reports are accepted for the latest public release of Wizionic and for 
 
 I aim to acknowledge reports within **7 days**.
 
+Inappropriate **generated content** (chat, images, speech, tool output) can also be reported from the app: assistant message ⋮, or Settings → Report inappropriate content. That opens mail to the same address and does not attach the encrypted library. Use GitHub Security Advisories for vulnerabilities; use the in-app form when the issue is a harmful model reply.
+
+## Responsible AI
+
+Wizionic is a local-first, **user-controlled** generative-AI client. You pick Lemonade, Ollama, your own cloud keys, and/or an optional hosted proxy. Wizionic does not train on chats. There is no Microsoft RAI certification, and there is no central Azure Content Safety (or similar) pipeline on models you run on localhost — sending those chats off-device would contradict the privacy model.
+
+We design around [Microsoft’s six Responsible AI principles](https://www.microsoft.com/en-us/ai/responsible-ai) as they apply to this architecture. [Windows guidance for apps that use AI](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/security-and-responsible-ai) asks for transparency, humans in the loop for consequential actions, testing unexpected outputs, and content safety **or equivalent**. For a client that talks to *your* model, the equivalent is: you choose the backend, tools are allow-listed, locked items stay locked, you can report, and the operator acts on reports.
+
+| Principle | How Wizionic applies it |
+|---|---|
+| **Privacy and security** | Chat, notes, gallery, and calendar bodies are AES-256-GCM on the device. The login host is auth, presence, and WebRTC signaling — not a chat archive. Cloud keys stay in the on-device key store. |
+| **Transparency** | The selected model is visible. Privacy explains what leaves the device (proxied models, search tools you trigger, optional TURN). Open source so the data path can be inspected. |
+| **Reliability and safety** | Default system prompt: only listed tools, decline harmful requests, do not invent tools. Password-protected notebooks, chats, and albums are blocked from tools until unlocked in the UI. |
+| **Accountability** | In-app content report; this security policy; operator email. Store listing discloses live generative AI. |
+| **Fairness and inclusiveness** | We do not claim a local or user-keyed model is unbiased. Unexpected or offensive output can be reported. The UI is text-first; accessibility remains an ongoing obligation. |
+
+Microsoft’s AI red team ([lessons from red-teaming 100 gen-AI products](https://www.microsoft.com/en-us/security/blog/2025/01/13/3-takeaways-from-red-teaming-100-generative-ai-products/)) emphasizes that generative AI **amplifies existing risks and adds new ones** (prompt injection / jailbreaks), that **humans stay central**, and that **defense in depth** matters more than a single model filter.
+
+For this app that means: do not treat the model as the only control. Tool results (web pages, notes, MCP, connectors) are untrusted input. Home Assistant, the embedded browser, MCP, and scheduled Workflows can take real actions; they run only when you enabled them. A local uncensored model can still be jailbroken — the app will not guarantee refusal. Defense in depth here is encryption, no server-side chat store, allow-listed tools, locked items, HTTPS on wizionic.com, and the report path — not a promise that every generated token is safe.
+
 ## Scope
 
 Wizionic is local-first. Chat, notes, gallery, and calendar **bodies** are stored on the device and encrypted at rest (AES-256-GCM). The hosted service at [wizionic.com](https://wizionic.com) (or your Home Server) handles authentication, presence, WebRTC signaling, optional tool/model proxies, and OAuth app credentials — not conversation and user content.

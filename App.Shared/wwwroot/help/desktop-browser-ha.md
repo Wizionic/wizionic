@@ -55,6 +55,10 @@ Voice mode (soundwave on the chat box) listens for that name, captures until you
 
 Chat can list and control lights, media players, climate, covers, scenes, and scripts when Home Assistant is connected.
 
-## Setup wizard
+## Setup wizard {#setup-wizard}
 
-Settings → **Run setup wizard** can install a Home Server (local login site), Lemonade, and/or Ollama on this PC. After a Home Server install, other devices use the network URL under Settings → Home Server.
+On first run (or Settings → **Run setup wizard**), the Windows or Linux app can install a Home Server (local login site), Lemonade, and/or Ollama on this PC.
+
+After Home Server is installed, if it has no users yet, the wizard asks for a **username and password**. That is the first account. No email code. Create it on this PC; phones on the LAN cannot. After **Done**, the app restarts — sign in with that username and password (Password tab).
+
+Other devices use the network URL under Settings → Home Server and the same username and password.

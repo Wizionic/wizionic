@@ -44,6 +44,8 @@ The broker sends `redirect_uri` for **this host**: `https://wizionic.com/api/oau
 
 A wizard-installed Home Server listens on **all interfaces** (`http://*:5150`), not loopback only. The desktop app on that PC still uses `http://localhost:5150`. Other devices use `http://{computer-name}.local:5150` or `http://{lan-ip}:5150` (copy those from Settings → Home Server). Windows Firewall is opened for TCP 5150 on the **Private** profile.
 
+The first account is created in the setup wizard (username + password, no email code). That API only accepts requests from loopback, and only while the Users table is empty. Later sign-in is password on that username. Email login codes still need a mailer (`BREVO_API_KEY` or SMTP), which a typical Home Server does not have.
+
 The sample `free-chat` proxied provider in `appsettings.json` points at `http://127.0.0.1:11434/v1/` (local Ollama). Change or remove it if you do not run Ollama there.
 
 SMS two-factor is optional. If the Twilio variables are unset, users can still enable 2FA and complete the second step with an email code. Do not put the Twilio auth token in config; use an API key.

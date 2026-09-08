@@ -8,7 +8,7 @@ title: Account, password, and 2FA
 ## Sign in
 
 - **Login code (email)** — we email a one-time code. Type it in the app or site. Email links do not sign you in (they opened the wrong app, and mail scanners would use the code).
-- **Password** — if you set one. Faster than waiting for email.
+- **Password** — if you set one. Faster than waiting for email. On a new Home Server, the first account is a **username and password** created in the setup wizard (no email). Sign in on the Password tab with that username.
 
 Sign in is required. The same account (and encryption key) is what lets other devices decrypt your data. Changing password or signing out a session never deletes notes or chats; that device just signs in again and gets the same key.
 

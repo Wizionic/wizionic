@@ -19,8 +19,8 @@
     <div class="setup-wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="setup-wizard-title">
         <div class="setup-wizard-panel">
             <div class="setup-wizard-header">
-                <h2 id="setup-wizard-title">Wizionic setup</h2>
-                <p class="setup-wizard-sub">Optional: turn this PC into a Home Server and/or local AI. You can run this wizard again anytime from Settings.</p>
+                <h2 id="setup-wizard-title" class="help-heading">Wizionic setup <HelpGlyph Topic="setup-wizard" /></h2>
+                <p class="setup-wizard-sub">Optional: turn this PC into a Home Server with a first account, then local AI. You can run this wizard again anytime from Settings.</p>
                 <div class="setup-wizard-steps">
                     @for (var i = 0; i < StepLabels.Length; i++)
                     {
@@ -37,12 +37,12 @@
                         The Wizionic desktop app is ready. You can optionally install:
                     </p>
                     <ul>
-                        <li><strong>Home Server</strong> — login website and auth server on this PC (port 5150). Other devices use the network URL from Settings.</li>
+                        <li><strong>Home Server</strong> — login website and auth server on this PC (port 5150). Create the first username and password here (no email code). Other devices use the network URL from Settings.</li>
                         <li><strong>Lemonade</strong> (recommended) — local AI with multimodal / advanced features (port 13305)</li>
                         <li><strong>Ollama</strong> — popular local model runner (port 11434)</li>
                     </ul>
                     <p style="color: var(--color-text-muted); font-size: 0.9em;">
-                        You can install one or both AI backends. Admin account setup is not part of this wizard yet.
+                        You can install one or both AI backends. Sign-in to wizionic.com is not required for this path.
                     </p>
                 }
                 else if (step == 1)
@@ -79,6 +79,18 @@
                     }
                 }
                 else if (step == 2)
+                {
+                    <h3>First account</h3>
+                    <FirstAdminForm @ref="firstAdminForm"
+                                    BaseUrl="@HomeserverPaths.DefaultBaseUrl"
+                                    HideSubmit="true"
+                                    OnCreated="OnFirstAdminCreated" />
+                    @if (!string.IsNullOrEmpty(firstAdminMessage))
+                    {
+                        <div class="setup-msg @(firstAdminOk ? "is-ok" : "is-err")">@firstAdminMessage</div>
+                    }
+                }
+                else if (step == 3)
                 {
                     <h3>Local AI</h3>
                     <p style="font-size: 0.9em; color: var(--color-text-muted); margin-top: 0;">
@@ -199,6 +211,7 @@
                     <ul>
                         <li>Login server: use <strong>Settings</strong> to change anytime</li>
                         <li>Home Server: @(homeserverDoneLabel)</li>
+                        <li>First account: @(firstAdminDoneLabel)</li>
                         <li>Other devices: copy the network URL from Settings → Home Server</li>
                         <li>Lemonade: @(lemonadeDoneLabel)</li>
                         <li>Ollama: @(ollamaDoneLabel)</li>
@@ -218,7 +231,7 @@
             </div>
 
             <div class="setup-wizard-footer">
-                @if (step > 0 && step < 3)
+                @if (step > 0 && step < 4)
                 {
                     <button type="button" class="btn btn-outline-secondary" @onclick="Back" disabled="@busy">Back</button>
                 }
@@ -228,11 +241,11 @@
                 }
 
                 <div style="display:flex; gap:0.5rem;">
-                    @if (step < 3)
+                    @if (step < 4)
                     {
                         <button type="button" class="btn btn-outline-secondary" @onclick="SkipAll" disabled="@busy">Skip setup</button>
                         <button type="button" class="btn btn-primary" @onclick="Next" disabled="@busy">
-                            @(busy ? "Working…" : (step == 2 ? "Finish" : "Continue"))
+                            @(busy ? "Working…" : ContinueLabel)
                         </button>
                     }
                     else
@@ -317,11 +330,16 @@
 </style>
 
 @code {
-    private static readonly string[] StepLabels = ["Welcome", "Home Server", "Local AI", "Done"];
+    private static readonly string[] StepLabels = ["Welcome", "Home Server", "First account", "Local AI", "Done"];
 
     private int step;
     private bool busy;
     private bool wantHomeserver = true;
+    private bool needFirstAccount;
+    private FirstAdminForm? firstAdminForm;
+    private string? firstAdminMessage;
+    private bool firstAdminOk;
+    private string firstAdminDoneLabel = "skipped";
     private bool wantLemonade;
     private bool wantOllama;
     private readonly HashSet<string> selectedLemonadeModels = new(StringComparer.OrdinalIgnoreCase);
@@ -371,9 +389,19 @@
         else selectedOllamaModels.Remove(id);
     }
 
+    private string ContinueLabel => step switch
+    {
+        2 => "Create account",
+        3 => "Finish",
+        _ => "Continue"
+    };
+
     private void Back()
     {
-        if (step > 0) step--;
+        if (step == 3 && !needFirstAccount)
+            step = 1;
+        else if (step > 0)
+            step--;
     }
 
     private async Task Next()
@@ -387,18 +415,65 @@
         if (step == 1)
         {
             await RunHomeserverStepAsync();
-            step = 2;
+            needFirstAccount = await TryDetectFirstAccountAsync();
+            step = needFirstAccount ? 2 : 3;
             return;
         }
 
         if (step == 2)
         {
-            await RunLocalAiStepAsync();
+            if (firstAdminForm is null)
+                return;
+            busy = true;
+            StateHasChanged();
+            try
+            {
+                if (!await firstAdminForm.SubmitAsync())
+                    return;
+            }
+            finally
+            {
+                busy = false;
+            }
+
             step = 3;
+            return;
+        }
+
+        if (step == 3)
+        {
+            await RunLocalAiStepAsync();
+            step = 4;
             var state = HomeserverState.Load();
             state.OnboardingCompletedAt = DateTimeOffset.UtcNow;
             state.Save();
         }
+    }
+
+    private void OnFirstAdminCreated(string username)
+    {
+        firstAdminOk = true;
+        firstAdminDoneLabel = string.IsNullOrWhiteSpace(username) ? "created" : $"created ({username.Trim()})";
+        firstAdminMessage = "First account created. After Done, sign in with that username and password.";
+    }
+
+    private async Task<bool> TryDetectFirstAccountAsync()
+    {
+        if (!Homeserver.IsSupported || !Homeserver.GetState().IsInstalled)
+            return false;
+
+        for (var i = 0; i < 40; i++)
+        {
+            var status = await Auth.GetSetupStatusAsync(HomeserverPaths.DefaultBaseUrl);
+            if (status is not null)
+                return status.CanBootstrap;
+            await Task.Delay(500);
+        }
+
+        firstAdminMessage = "Home Server is installed but not answering yet. You can create the first account on the login page after Done.";
+        firstAdminOk = false;
+        firstAdminDoneLabel = "pending";
+        return false;
     }
 
     private async Task RunHomeserverStepAsync()

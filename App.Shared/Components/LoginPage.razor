@@ -506,6 +506,13 @@
             <div style="color: var(--cf-error-fg); margin: 0.25rem 0 0.5rem; font-size:0.9em;">@error</div>
         }
 
+        @if (showFirstAdmin)
+        {
+            <h3 style="font-size:1.05rem; margin:0.5rem 0 0.35rem 0;">Create the first account</h3>
+            <FirstAdminForm BaseUrl="@Auth.ServerBaseUrl" OnCreated="OnFirstAdminCreated" />
+        }
+        else
+        {
         <div style="display:flex; gap:0.5rem; margin: 0.75rem 0 1rem; flex-wrap:wrap;">
             <button type="button"
                     class="btn @(loginMode == LoginMode.Code ? "btn-primary" : "btn-outline-secondary") btn-sm"
@@ -531,10 +538,10 @@
         @if (loginMode == LoginMode.Password)
         {
             <div style="display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
-                <input type="email"
+                <input type="text"
                        @bind-value="email"
                        @bind-value:event="oninput"
-                       placeholder="email address"
+                       placeholder="username or email"
                        class="form-control"
                        autocomplete="username" />
                 <input type="password"
@@ -547,7 +554,7 @@
                 <div>
                     <button class="btn btn-primary"
                             @onclick="LoginWithPassword"
-                            disabled="@(busy || !IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))">
+                            disabled="@(busy || !LoginIdentifier.IsValidLoginId(email) || string.IsNullOrWhiteSpace(passwordLogin))">
                         Sign in with password
                     </button>
                 </div>
@@ -608,7 +615,7 @@
                 </button>
             </div>
         }
-
+        }
 
     }
 
@@ -713,6 +720,7 @@
     string currentPassword = "";
     bool loginSent;
     bool resettingPassword;
+    bool showFirstAdmin;
     bool busy;
     string? error;
     string? passwordError;
@@ -855,6 +863,47 @@
         }
 
         await RestoreTwoFactorChallengeAsync();
+
+        if (!Auth.IsAuthenticated)
+        {
+            if (IsLocalHomeserverLogin)
+                loginMode = LoginMode.Password;
+            await RefreshSetupStatusAsync();
+        }
+    }
+
+    private bool IsLocalHomeserverLogin
+    {
+        get
+        {
+            var url = Auth.ServerBaseUrl;
+            if (string.IsNullOrWhiteSpace(url))
+                return false;
+            return url.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+                || url.Contains("127.0.0.1", StringComparison.Ordinal)
+                || url.Contains("[::1]", StringComparison.Ordinal);
+        }
+    }
+
+    private async Task RefreshSetupStatusAsync()
+    {
+        if (Auth.IsAuthenticated)
+        {
+            showFirstAdmin = false;
+            return;
+        }
+
+        var status = await Auth.GetSetupStatusAsync();
+        showFirstAdmin = status?.CanBootstrap == true;
+    }
+
+    private void OnFirstAdminCreated(string username)
+    {
+        showFirstAdmin = false;
+        loginMode = LoginMode.Password;
+        if (!string.IsNullOrWhiteSpace(username))
+            email = username.Trim();
+        error = null;
     }
 
     async Task SendLoginCode()
@@ -966,6 +1015,8 @@
         loginCode = "";
         if (IsValidEmail(email))
             await SendLoginCode();
+        else
+            error = "Forgot password needs an email address. A local Home Server username cannot receive a code.";
     }
 
     async Task StartForgotCurrentPassword()
@@ -1043,7 +1094,7 @@
         busy = true;
         try
         {
-            if (!IsValidEmail(email) || string.IsNullOrWhiteSpace(passwordLogin))
+            if (!LoginIdentifier.IsValidLoginId(email) || string.IsNullOrWhiteSpace(passwordLogin))
                 return;
 
             var result = await Auth.LoginWithPasswordAsync(email, passwordLogin);
@@ -1070,7 +1121,7 @@
 
     async Task PasswordLoginKeyHandler(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !busy && IsValidEmail(email) && !string.IsNullOrWhiteSpace(passwordLogin))
+        if (e.Key == "Enter" && !busy && LoginIdentifier.IsValidLoginId(email) && !string.IsNullOrWhiteSpace(passwordLogin))
             await LoginWithPassword();
     }
 
@@ -1148,25 +1199,7 @@
         }
     }
 
-    private static bool IsValidEmail(string? e)
-    {
-        if (string.IsNullOrWhiteSpace(e))
-            return false;
-
-        var value = e.Trim();
-        int atIndex = value.IndexOf('@');
-        if (atIndex <= 0 || atIndex == value.Length - 1)
-            return false;
-
-        int dotIndex = value.LastIndexOf('.');
-        if (dotIndex <= atIndex + 1 || dotIndex == value.Length - 1)
-            return false;
-
-        if (value.Contains(' ') || value.Length < 5 || value.Length > 254)
-            return false;
-
-        return true;
-    }
+    private static bool IsValidEmail(string? e) => LoginIdentifier.LooksLikeEmail(e);
 
     async Task OnTwoFactorCheckboxChanged(ChangeEventArgs e)
     {

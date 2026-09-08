@@ -1,0 +1,110 @@
+@using App.Core.Auth
+@using App.Core.Homeserver
+@inject IAuthService Auth
+
+<p style="margin:0 0 0.75rem 0; font-size:0.9em; color: var(--color-text-muted);">
+    This Home Server has no users yet. Create the first account here — username and password, no email code.
+    After setup finishes, sign in with the same username and password.
+</p>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div style="color: var(--cf-error-fg); margin: 0 0 0.5rem; font-size:0.9em;">@Error</div>
+}
+
+<div style="display:flex; flex-direction:column; gap:0.5rem; max-width:420px;">
+    <input type="text"
+           @bind-value="Username"
+           @bind-value:event="oninput"
+           placeholder="username or email"
+           class="form-control"
+           autocomplete="username"
+           disabled="@Busy" />
+    <input type="password"
+           @bind-value="Password"
+           @bind-value:event="oninput"
+           placeholder="password"
+           class="form-control"
+           autocomplete="new-password"
+           disabled="@Busy" />
+    <input type="password"
+           @bind-value="ConfirmPassword"
+           @bind-value:event="oninput"
+           placeholder="confirm password"
+           class="form-control"
+           autocomplete="new-password"
+           disabled="@Busy" />
+    <p style="margin:0; font-size:0.85em; color: var(--color-text-muted);">@PasswordRules.RequirementsText</p>
+    @if (!HideSubmit)
+    {
+        <div>
+            <button type="button"
+                    class="btn btn-primary"
+                    @onclick="SubmitAsync"
+                    disabled="@Busy">
+                @(Busy ? "Working…" : SubmitLabel)
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string BaseUrl { get; set; } = HomeserverPaths.DefaultBaseUrl;
+    [Parameter] public string SubmitLabel { get; set; } = "Create account";
+    [Parameter] public bool HideSubmit { get; set; }
+    [Parameter] public EventCallback<string> OnCreated { get; set; }
+
+    private string Username { get; set; } = "";
+    private string Password { get; set; } = "";
+    private string ConfirmPassword { get; set; } = "";
+    private string? Error { get; set; }
+    private bool Busy { get; set; }
+
+    public bool CanSubmit =>
+        LoginIdentifier.IsValidLoginId(Username)
+        && !string.IsNullOrEmpty(Password)
+        && !string.IsNullOrEmpty(ConfirmPassword);
+
+    public async Task<bool> SubmitAsync()
+    {
+        Error = null;
+        if (!LoginIdentifier.TryValidate(Username, out _, out var idError))
+        {
+            Error = idError;
+            return false;
+        }
+
+        if (!PasswordRules.TryValidate(Password, out var reason))
+        {
+            Error = reason;
+            return false;
+        }
+
+        if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
+        {
+            Error = "Passwords do not match.";
+            return false;
+        }
+
+        Busy = true;
+        try
+        {
+            var (ok, err) = await Auth.BootstrapFirstAdminAsync(BaseUrl, Username, Password, ConfirmPassword);
+            if (!ok)
+            {
+                Error = err;
+                return false;
+            }
+
+            var created = Username.Trim();
+            Password = "";
+            ConfirmPassword = "";
+            await OnCreated.InvokeAsync(created);
+            return true;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+}
