@@ -190,6 +190,64 @@ public class ChatAuthService : IAuthService
         }
     }
 
+    public async Task<AuthSetupStatus?> GetSetupStatusAsync(string? baseUrl = null)
+    {
+        try
+        {
+            var root = ResolveApiRoot(baseUrl);
+            var resp = await _http.GetAsync($"{root}/api/auth/setup-status");
+            if (!resp.IsSuccessStatusCode)
+                return null;
+            return await ReadJsonOrNullAsync<AuthSetupStatus>(resp);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<(bool Success, string? Error)> BootstrapFirstAdminAsync(
+        string baseUrl, string username, string password, string confirmPassword)
+    {
+        try
+        {
+            if (!LoginIdentifier.TryValidate(username, out _, out var idError))
+                return (false, idError);
+
+            var root = ResolveApiRoot(baseUrl);
+            var payload = new
+            {
+                Username = username.Trim(),
+                Password = password,
+                ConfirmPassword = confirmPassword
+            };
+            var resp = await _http.PostAsJsonAsync($"{root}/api/auth/bootstrap-admin", payload);
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+
+            var message = await ReadApiErrorAsync(resp)
+                ?? resp.StatusCode switch
+                {
+                    HttpStatusCode.Forbidden =>
+                        "Create the first account from this PC (the app on the same computer as Home Server).",
+                    HttpStatusCode.Conflict =>
+                        "An account already exists on this Home Server. Sign in with your password.",
+                    _ => "Could not create the first account."
+                };
+            return (false, message);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Network error: " + ex.Message);
+        }
+    }
+
+    private string ResolveApiRoot(string? baseUrl)
+    {
+        var root = string.IsNullOrWhiteSpace(baseUrl) ? ServerBaseUrl : baseUrl;
+        return root.TrimEnd('/');
+    }
+
     public async Task<AuthLoginResult> LoginWithPasswordAsync(string email, string password)
     {
         try

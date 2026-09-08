@@ -18,6 +18,8 @@ namespace App.Apis;
 /// - POST /api/auth/request-magic-link  (PUBLIC) → hashed login code emailed (no clickable link; account created on verify)
 /// - POST /api/auth/verify-code         (PUBLIC) → exchange email+code for cookie session
 /// - POST /api/auth/reset-password      (PUBLIC) → email+code clears password+2FA (forgot password) then issues a cookie
+/// - GET  /api/auth/setup-status        (PUBLIC) → whether the first Home Server admin can be created (loopback)
+/// - POST /api/auth/bootstrap-admin     (PUBLIC) → first user when Users is empty; loopback only; no email
 /// - POST /api/auth/login-password      (PUBLIC) → email+password login (generic errors; no existence/password-set clues)
 /// - POST /api/auth/2fa/send            (PUBLIC) → send SMS/email code for a password-verified challenge
 /// - POST /api/auth/2fa/verify          (PUBLIC) → complete 2FA and issue cookie
@@ -183,6 +185,72 @@ public static class WasmApiEndpoints
             await AuthSignInHelper.SignOutUserAsync(ctx, sessions);
             return Results.Ok(new { signedOut = true });
         });
+
+        // First Home Server user: empty Users table, loopback only (the process listens on *:5150).
+        publicAuth.MapGet("/setup-status", async (HttpContext ctx, AppDbContext db) =>
+        {
+            var empty = !await db.Users.AnyAsync();
+            var loopback = LoopbackRequest.IsLoopback(ctx);
+            return Results.Ok(new AuthSetupStatus
+            {
+                FirstAdminRequired = empty,
+                CanBootstrap = empty && loopback
+            });
+        });
+
+        publicAuth.MapPost("/bootstrap-admin", async (HttpContext ctx, AppDbContext db, HaveIBeenPwnedService pwned, BootstrapAdminRequest req) =>
+        {
+            if (!LoopbackRequest.IsLoopback(ctx))
+            {
+                return Results.Json(new
+                {
+                    message = "Create the first account from this PC (the app on the same computer as Home Server)."
+                }, statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            if (!LoginIdentifier.TryValidate(req.Username, out var id, out var idError))
+                return Results.BadRequest(new { message = idError });
+
+            if (!PasswordRules.TryValidate(req.Password, out var reason))
+                return Results.BadRequest(new { message = reason });
+
+            if (!string.Equals(req.Password, req.ConfirmPassword, StringComparison.Ordinal))
+                return Results.BadRequest(new { message = "Passwords do not match." });
+
+            if (await pwned.IsPwnedAsync(req.Password!))
+                return Results.BadRequest(new { message = "This password appears in a known data breach. Choose a different one." });
+
+            await using var tx = await db.Database.BeginTransactionAsync();
+            if (await db.Users.AnyAsync())
+            {
+                return Results.Json(new
+                {
+                    message = "An account already exists on this Home Server. Sign in with your password."
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
+
+            var display = (req.Username ?? "").Trim();
+            var user = new User
+            {
+                Id = Guid.NewGuid(),
+                Email = id,
+                DisplayName = string.IsNullOrEmpty(display) ? id : display,
+                CreatedAt = DateTime.UtcNow,
+                LocalEncryptionKey = LocalEncryptionKeyService.GenerateRawKeyBase64(),
+                PasswordHash = PasswordHashService.Hash(req.Password!),
+                IsAdmin = true
+            };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return Results.Ok(new
+            {
+                success = true,
+                email = user.Email,
+                message = "First account created. Sign in with that username and password after restart."
+            });
+        }).RequireRateLimiting("auth");
 
         // Password login. Always returns the same generic error so callers cannot tell
         // whether the email exists or whether a password has been set.
@@ -839,6 +907,7 @@ public static class WasmApiEndpoints
     public record RequestMagicLink(string Email);
     public record VerifyLoginCode(string Email, string Code);
     public record LoginWithPassword(string Email, string Password, bool RememberDevice = true);
+    public record BootstrapAdminRequest(string? Username, string? Password, string? ConfirmPassword);
     public record SetPasswordRequest(string? Password, string? ConfirmPassword, string? CurrentPassword = null);
     public record VerifyPasswordRequest(string? Password);
     public record TwoFactorSendRequest(string? ChallengeId, string? Method);

@@ -140,12 +140,6 @@ This project is currently maintained by @daniellgoodwin .
 - **Bugs:** Open an issue for reproducible bugs.
 - **Security:** Report vulnerabilities privately via [GitHub Security Advisories](SECURITY.md) or `daniellgoodwin@protonmail.com`.
 
-## Code Signing Policy
-
-Free code signing will be provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-Until signed Windows builds ship, prefer the PowerShell install path above. Browser downloads of the unsigned `Setup.exe` still get Mark of the Web and SmartScreen.
-
 ## Architecture Highlights
 
 - **Stack:** .NET 10, Blazor Hybrid, MAUI (Windows/Linux), SQLite, SignalR, WebRTC.
@@ -155,6 +149,13 @@ Until signed Windows builds ship, prefer the PowerShell install path above. Brow
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical architecture.
 
+## Responsible AI
+
+Wizionic is a **user-controlled** generative-AI workspace. You choose the model: AMD Lemonade or Ollama on this device, your own OpenAI-compatible cloud keys, and/or an optional hosted proxy. Wizionic does not train on your chats.
+
+The product is designed around [Microsoft’s six Responsible AI principles](https://www.microsoft.com/en-us/ai/responsible-ai) (fairness, reliability and safety, privacy and security, inclusiveness, transparency, accountability) as they apply to a local-first client — not as a Microsoft RAI certification, and not as a central content filter on models you run locally. See [Windows security and responsible AI](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/security-and-responsible-ai).
+
+Report inappropriate generated content in the app (assistant message ⋮, or Settings → Report inappropriate content). How we apply those principles, and how to report AI harm or a vulnerability, is in [SECURITY.md](SECURITY.md).
 
 ## Attribution
 

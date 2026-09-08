@@ -30,6 +30,15 @@ public interface IAuthService
     /// </summary>
     Task<(bool Success, string? Error)> ResetPasswordAsync(string email, string code);
     Task<AuthLoginResult> LoginWithPasswordAsync(string email, string password);
+    /// <summary>Whether this login server has no users yet and this client may create the first admin.</summary>
+    Task<AuthSetupStatus?> GetSetupStatusAsync(string? baseUrl = null);
+    /// <summary>
+    /// Create the first Home Server user (username + password, no email code).
+    /// <paramref name="baseUrl"/> must be that Home Server (usually http://localhost:5150),
+    /// not the current signed-in host.
+    /// </summary>
+    Task<(bool Success, string? Error)> BootstrapFirstAdminAsync(
+        string baseUrl, string username, string password, string confirmPassword);
     Task<AuthLoginResult> VerifyTwoFactorAsync(string challengeId, string code, string method);
     Task<(bool Success, string? Error)> SendTwoFactorAsync(string challengeId, string method);
     Task<(bool Success, string? Error)> SetPasswordAsync(string password, string confirmPassword, string? currentPassword = null);

@@ -26,6 +26,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Chat attachments now include markdown, plain text, and common source/config files. The file is decoded and sent to the model with the message (any chat model, not only vision). Images and PDFs stay on the existing vision path; unsupported binaries are rejected in the UI.
 - Optional two-factor sign-in after a password: email code always, SMS via Twilio Verify if a phone is enrolled. Notebook/chat/album unlock stays password-only.
 - In-app Help (`/help` and a top-bar ?). Settings cards and setup pages open the matching article. No model required.
+- Setup wizard can create the first Home Server account (username + password, no email code) when the local Users table is empty. The API only accepts loopback. Login password tab accepts that username.
 
 ### Changed
 

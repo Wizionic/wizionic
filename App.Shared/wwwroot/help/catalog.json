@@ -36,6 +36,7 @@
     { "id": "privacy-data", "title": "What stays on this device", "file": "privacy-data.md", "routes": ["/privacy"], "audience": "reference" },
     { "id": "report-content", "title": "Report inappropriate content", "file": "privacy-data.md", "routes": ["/settings"], "audience": "howto", "anchor": "report-content" },
     { "id": "desktop", "title": "Desktop: browser and Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true },
+    { "id": "setup-wizard", "title": "Setup wizard", "file": "desktop-browser-ha.md", "routes": ["/settings"], "audience": "howto", "desktopOnly": true, "anchor": "setup-wizard" },
     { "id": "home-assistant", "title": "Home Assistant", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "home-assistant" },
     { "id": "home-assistant-token", "title": "Long-lived access token", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "token", "toc": false },
     { "id": "home-assistant-devices", "title": "Home Assistant devices", "file": "desktop-browser-ha.md", "routes": ["/home-assistant"], "audience": "howto", "desktopOnly": true, "anchor": "devices", "toc": false },

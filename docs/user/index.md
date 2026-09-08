@@ -9,10 +9,10 @@ Wizionic is a private AI workspace. Chat, notes, gallery, and calendar live on *
 
 ## First steps
 
-1. **Sign in.** Use a login code emailed to you, or a password if you have set one. A new email creates your account. Sign-in is required to use chat, notes, and the rest of the app.
+1. **Sign in.** On the public site, use a login code emailed to you, or a password if you have set one. A new email creates your account. On a new Home Server, the desktop setup wizard creates the first username and password (no email). Sign-in is required to use chat, notes, and the rest of the app.
 2. **Pick a model.** Open Chat and use the model menu. Local options (Ollama or Lemonade) need a server on this machine. Cloud models need an API key on [Cloud providers](/cloud-providers).
 3. **Phone, tablet, or Mac.** Install as a Progressive Web App from the login page. The **?** opens steps for your browser.
-4. **Optional desktop setup.** In the Windows or Linux app, Settings → setup wizard can install a local login server, Lemonade, and/or Ollama.
+4. **Desktop setup.** In the Windows or Linux app, first run (or Settings → setup wizard) can install a local Home Server, create the first account, and install Lemonade and/or Ollama.
 
 ## Where things live
 
