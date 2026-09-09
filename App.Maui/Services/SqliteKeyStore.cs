@@ -1156,11 +1156,42 @@ public class SqliteKeyStore : IKeyStore
                     : _lemonadeConfig.DefaultVoice
             };
             await SaveLemonadeConfigAsync(ct);
+            await ApplyLemonadeWorkspaceAfterRefreshAsync(list, ct);
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException(
                 $"Failed to refresh Lemonade models from {LemonadeBaseUrl}: {ex.Message}", ex);
+        }
+    }
+
+    private async Task ApplyLemonadeWorkspaceAfterRefreshAsync(
+        IReadOnlyList<LemonadeModelSettings> models, CancellationToken ct)
+    {
+        var existing = _modelProfiles.FirstOrDefault(p =>
+            string.Equals(p.Id, LemonadeWorkspaceSync.ProfileId, StringComparison.OrdinalIgnoreCase));
+        var filled = LemonadeWorkspaceSync.FillProfile(existing, models);
+        var idx = _modelProfiles.FindIndex(p =>
+            string.Equals(p.Id, filled.Id, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0)
+            _modelProfiles[idx] = filled;
+        else
+            _modelProfiles.Add(filled);
+        if (string.IsNullOrWhiteSpace(_activeModelProfileId))
+            _activeModelProfileId = filled.Id;
+        await SaveModelProfilesAsync(ct);
+
+        var routing = LemonadeWorkspaceSync.PickRouting(models);
+        if (!string.IsNullOrWhiteSpace(routing) && string.IsNullOrWhiteSpace(_toolRoutingModelId))
+        {
+            var mode = LemonadeWorkspaceSync.ModeAfterAutoRouting(_toolRoutingMode, filledRoutingModel: true);
+            await SetToolRoutingAsync(mode, routing, ct);
+        }
+
+        if (LemonadeWorkspaceSync.ShouldSelectLemonadeProfile(LastSelectedModel))
+        {
+            await SetActiveModelProfileIdAsync(filled.Id, ct);
+            await SetLastSelectedModelAsync(ModelProfileId.ForPicker(filled.Id), ct);
         }
     }
 

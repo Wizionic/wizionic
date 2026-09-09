@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using App.Core.Ollama;
+using App.Core.Setup;
 using App.Core.Storage;
 using Microsoft.Extensions.Logging;
 
@@ -24,24 +25,38 @@ public sealed class OllamaInstallService : IOllamaInstallService
     [
         new()
         {
-            Id = "gemma3:1b",
-            DisplayName = "Gemma 3 1B",
-            Description = "Very small chat model — good first install.",
+            Id = "qwen3.5:0.8b",
+            DisplayName = "Qwen3.5 0.8B",
+            Description = "Small model for tool routing.",
             DefaultSelected = true
         },
         new()
         {
-            Id = "llama3.2:1b",
-            DisplayName = "Llama 3.2 1B",
-            Description = "Small general instruct model.",
-            DefaultSelected = false
+            Id = "lfm2.5-thinking:1.2b",
+            DisplayName = "LFM2.5 1.2B",
+            Description = "Chat and agentic tool use.",
+            DefaultSelected = true
         },
         new()
         {
-            Id = "qwen2.5:0.5b",
-            DisplayName = "Qwen 2.5 0.5B",
-            Description = "Tiny model for quick tests.",
-            DefaultSelected = false
+            Id = "qwen3.5:4b",
+            DisplayName = "Qwen3.5 4B",
+            Description = "Larger chat / tools.",
+            Larger = true
+        },
+        new()
+        {
+            Id = "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q8_0",
+            DisplayName = "LFM2.5 2.6B Q8",
+            Description = "Larger Liquid instruct (Hugging Face).",
+            Larger = true
+        },
+        new()
+        {
+            Id = "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
+            DisplayName = "Nemotron 3 Nano 4B",
+            Description = "Larger NVIDIA Nano GGUF (Hugging Face).",
+            Larger = true
         }
     ];
 
@@ -232,12 +247,14 @@ public sealed class OllamaInstallService : IOllamaInstallService
         foreach (var model in models)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            progress?.Report($"Pulling Ollama model {model} (up to {PullTimeoutMs / 60_000} min)…");
+            progress?.Report($"Pulling {model}…");
             var (ok, detail) = await RunProcessWithOutputAsync(
                 cli,
                 $"pull {QuoteArg(model)}",
                 cancellationToken,
-                timeoutMs: PullTimeoutMs);
+                timeoutMs: PullTimeoutMs,
+                lineProgress: progress,
+                progressPrefix: $"Pulling {model}");
 
             if (!ok)
             {
@@ -304,8 +321,6 @@ public sealed class OllamaInstallService : IOllamaInstallService
 
     private OllamaDetection DetectInstallation()
     {
-        if (ProbeServerRunning())
-            return OllamaDetection.ServerResponding;
         if (IsOllamaProcessRunning())
             return OllamaDetection.ProcessRunning;
         if (ResolveOllamaCli() is not null)
@@ -364,13 +379,12 @@ public sealed class OllamaInstallService : IOllamaInstallService
         foreach (var url in new[]
                  {
                      "http://127.0.0.1:11434/api/tags",
-                     "http://localhost:11434/api/tags",
                      "http://127.0.0.1:11434/v1/models"
                  })
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(400) };
                 var resp = http.GetAsync(url).GetAwaiter().GetResult();
                 if (resp.IsSuccessStatusCode)
                     return true;
@@ -507,7 +521,9 @@ public sealed class OllamaInstallService : IOllamaInstallService
         string arguments,
         CancellationToken ct,
         int timeoutMs,
-        bool elevate = false)
+        bool elevate = false,
+        IProgress<string>? lineProgress = null,
+        string? progressPrefix = null)
     {
         try
         {
@@ -551,8 +567,18 @@ public sealed class OllamaInstallService : IOllamaInstallService
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
-            proc.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-            proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
+            proc.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                stdout.AppendLine(e.Data);
+                ReportPullLine(lineProgress, progressPrefix, e.Data);
+            };
+            proc.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                stderr.AppendLine(e.Data);
+                ReportPullLine(lineProgress, progressPrefix, e.Data);
+            };
 
             if (!proc.Start())
                 return (false, "Process failed to start.");
@@ -595,4 +621,15 @@ public sealed class OllamaInstallService : IOllamaInstallService
 
     private static string Truncate(string s, int max) =>
         string.IsNullOrEmpty(s) ? "" : (s.Length <= max ? s : s[..max] + "…");
+
+    private static void ReportPullLine(IProgress<string>? progress, string? prefix, string line)
+    {
+        if (progress is null || string.IsNullOrWhiteSpace(line))
+            return;
+        var pct = PullProgressParser.TryPercent(line);
+        var bytes = PullProgressParser.TryByteSummary(line);
+        var tail = bytes ?? PullProgressParser.TruncateLine(line);
+        var head = string.IsNullOrEmpty(prefix) ? "Pulling" : prefix;
+        progress.Report(pct is int p ? $"{head} — {p}% {tail}" : $"{head} — {tail}");
+    }
 }

@@ -33,9 +33,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Calendar: hovering an event highlights it and shows the pointer; empty slots use the default cursor. Clicking the lower part of a multi-hour event edits it instead of opening a new one.
 - Sign-in is required. Unauthenticated visitors only see the login landing page (and legal pages); chat, notes, gallery, and other app features are gated. Guest IndexedDB / guest-key migration is removed. Existing signed-in data under `u-{userId}-` is unchanged.
 - Windows install on README and the login page now leads with `irm … | iex` instead of a browser `.exe` download. Unsigned Edge downloads still hit Mark of the Web / SmartScreen.
+- Setup wizard Local AI defaults: Lemonade pulls Qwen3.5 0.8B, Whisper Small, Kokoro, and LFM2.5 1.2B Instruct (larger Qwen/LFM/Nemotron optional). Ollama pulls `qwen3.5:0.8b` and `lfm2.5-thinking:1.2b` (larger optional). After a Home Server install while signed into wizionic.com, Done signs out and restarts onto localhost. Desktop login refreshes Lemonade/Ollama model lists when those servers are installed.
+- Refreshing Lemonade models fills blank **Lemonade** profile slots (chat, STT, TTS, image, edit) and, when Qwen3.5 0.8B is present, sets it as the Hybrid routing model and selects the profile in Chat. Settings no longer has a separate Use in Chat button.
 
 ### Fixed
 
+- Setup wizard Local AI checkboxes and Finish no longer freeze the dialog for ~30s (sync HTTP probes on the UI thread). Model pulls show a moving progress bar from CLI output.
+- Windows Lemonade setup installs the Microsoft Visual C++ 2015–2022 x64 runtime when `vcruntime140.dll` / `msvcp140.dll` are missing (fresh Windows; models otherwise fail to load).
 - Windows Velopack updates no longer look like a logout / empty library when `Package.appxmanifest` identity changes. Unpackaged data is `%LocalAppData%\Wizionic\userdata`; startup copies the largest existing `wizionic_local.db` from the old MAUI `Publisher\Package\Data` folders.
 - Desktop WebRTC no longer waits for STUN gathering before sending an offer (campus firewalls were hanging until the 90s timeout). Sync retries `webrtc-need-offer` while waiting. Offline leftover devices can be forgotten on Devices & Sync.
 - Signed-in clients fetch short-lived ICE/TURN servers from `/api/sync/ice-servers` (Cloudflare Realtime when the host is configured) so sync can relay when STUN is not enough.

@@ -59,6 +59,8 @@ Chat can list and control lights, media players, climate, covers, scenes, and sc
 
 On first run (or Settings → **Run setup wizard**), the Windows or Linux app can install a Home Server (local login site), Lemonade, and/or Ollama on this PC.
 
-After Home Server is installed, if it has no users yet, the wizard asks for a **username and password**. That is the first account. No email code. Create it on this PC; phones on the LAN cannot. After **Done**, the app restarts — sign in with that username and password (Password tab).
+After Home Server is installed, if it has no users yet, the wizard asks for a **username and password**. That is the first account. No email code. Create it on this PC; phones on the LAN cannot. If you were signed in to wizionic.com, **Done** signs you out and restarts onto `localhost:5150`. Sign in with that username and password (Password tab).
+
+Local AI can install Lemonade and/or Ollama and pull a small default set (Qwen3.5 0.8B for routing, LFM2.5 1.2B for chat; Lemonade also Whisper Small and Kokoro). Larger models are optional. After you sign in, Wizionic refreshes the Lemonade/Ollama model list from the local server.
 
 Other devices use the network URL under Settings → Home Server and the same username and password.

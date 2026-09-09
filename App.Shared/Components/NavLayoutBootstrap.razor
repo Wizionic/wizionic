@@ -1,13 +1,21 @@
 @implements IAsyncDisposable
 @using App.Core.Auth
+@using App.Core.Lemonade
+@using App.Core.Ollama
+@using App.Core.Storage
 @using App.Core.UI
 @using App.Shared.Services
 @inject INavLayoutState NavLayout
 @inject IAuthService Auth
 @inject IJSRuntime JS
+@inject IKeyStore KeyStore
+@inject HttpClient Http
+@inject ILemonadeInstallService Lemonade
+@inject IOllamaInstallService Ollama
 
 @code {
     private Action? _authChangedHandler;
+    private string? _localAiRefreshedForUser;
 
     protected override void OnInitialized()
     {
@@ -35,6 +43,8 @@
                 if (NavLayout.Mode != NavLayoutMode.Top)
                     await NavLayout.SetModeAsync(NavLayoutMode.Top, JS);
             }
+
+            await RefreshLocalAiCatalogAsync();
         }
         catch
         {
@@ -49,7 +59,52 @@
             await UiStorageNamespace.ApplyAsync(JS, Auth);
             if (AppEnvironment.IsMaui)
                 await NavLayout.SyncFromStorageAndApplyAsync(JS);
+            await RefreshLocalAiCatalogAsync();
             await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task RefreshLocalAiCatalogAsync()
+    {
+        if (!AppEnvironment.IsMaui || !Auth.IsAuthenticated)
+            return;
+        var user = Auth.UserId ?? Auth.Email;
+        if (string.IsNullOrEmpty(user) || string.Equals(_localAiRefreshedForUser, user, StringComparison.Ordinal))
+            return;
+        _localAiRefreshedForUser = user;
+
+        try
+        {
+            await KeyStore.LoadAsync();
+            if (Lemonade.IsSupported && Lemonade.IsInstalled)
+            {
+                if (string.IsNullOrWhiteSpace(KeyStore.LemonadeBaseUrl))
+                    await KeyStore.SetLemonadeBaseUrlAsync(Lemonade.DefaultBaseUrl);
+                try
+                {
+                    await KeyStore.RefreshLemonadeModelsFromServerAsync(Http, Lemonade.DefaultBaseUrl, null);
+                }
+                catch
+                {
+                    // Server may still be starting.
+                }
+            }
+
+            if (Ollama.IsSupported && Ollama.IsInstalled)
+            {
+                if (string.IsNullOrWhiteSpace(KeyStore.OllamaBaseUrl))
+                    await KeyStore.SetOllamaBaseUrlAsync(Ollama.DefaultBaseUrl);
+                try
+                {
+                    await KeyStore.RefreshOllamaModelsFromServerAsync(Http, Ollama.DefaultBaseUrl);
+                }
+                catch
+                {
+                }
+            }
         }
         catch
         {
