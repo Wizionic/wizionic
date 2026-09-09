@@ -77,7 +77,7 @@ A **profile** is a named stack: chat model plus image, edit, TTS, STT, voice, op
 
 Chat lists profiles at the top of the model menu. Palette, mic, and Speak use the profile slots — they no longer follow “the provider of whatever chat model is selected.”
 
-Create or edit profiles on Settings. Add keys and refresh models on [Cloud providers](/cloud-providers) or [Lemonade](/lemonade); assign those models here.
+Create or edit profiles on Settings. Add keys and refresh models on [Cloud providers](/cloud-providers) or [Lemonade](/lemonade). Refreshing Lemonade fills blank slots on the **Lemonade** profile (chat, routing, STT, TTS, image, edit) and selects that profile in Chat when you were not already on another stack. Pick a profile at the top of the Chat model menu.
 
 If you pick a raw model in Chat (not a profile), you get that model plus its own tools and vision. Image, speech, and vision proxy stay off unless you select a profile.
 

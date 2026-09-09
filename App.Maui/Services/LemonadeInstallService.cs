@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using App.Core.Lemonade;
+using App.Core.Setup;
 using App.Core.Storage;
 using Microsoft.Extensions.Logging;
 
@@ -16,6 +17,9 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
     public const string MsiDownloadUrl =
         "https://github.com/lemonade-sdk/lemonade/releases/latest/download/lemonade.msi";
 
+    /// <summary>Latest VC++ 2015–2022 x64 runtime (MSVCP140 / VCRUNTIME140). Official Microsoft permalink.</summary>
+    public const string VcRedistX64Url = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+
     /// <summary>Per-model pull timeout (downloads can be large but must not hang forever).</summary>
     private const int PullTimeoutMs = 20 * 60 * 1000;
 
@@ -26,24 +30,52 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
     [
         new()
         {
-            Id = "Qwen3-0.6B-GGUF",
-            DisplayName = "Qwen3 0.6B",
-            Description = "Very small chat model — good first install.",
+            Id = "Qwen3.5-0.8B-GGUF",
+            DisplayName = "Qwen3.5 0.8B",
+            Description = "Small model for tool routing.",
             DefaultSelected = true
         },
         new()
         {
-            Id = "Gemma-4-E2B-it-GGUF",
-            DisplayName = "Gemma 4 E2B",
-            Description = "Small multimodal-friendly model (if listed in your Lemonade catalog).",
-            DefaultSelected = false
+            Id = "Whisper-Small",
+            DisplayName = "Whisper Small",
+            Description = "Speech to text.",
+            DefaultSelected = true
         },
         new()
         {
-            Id = "Llama-3.2-1B-Instruct-CPU",
-            DisplayName = "Llama 3.2 1B (CPU)",
-            Description = "CPU-friendly baseline instruct model.",
-            DefaultSelected = false
+            Id = "kokoro-v1",
+            DisplayName = "Kokoro v1",
+            Description = "Text to speech.",
+            DefaultSelected = true
+        },
+        new()
+        {
+            Id = "LFM2.5-1.2B-Instruct-GGUF",
+            DisplayName = "LFM2.5 1.2B Instruct",
+            Description = "Chat and agentic tool use.",
+            DefaultSelected = true
+        },
+        new()
+        {
+            Id = "Qwen3.5-4B-GGUF",
+            DisplayName = "Qwen3.5 4B",
+            Description = "Larger chat / tools.",
+            Larger = true
+        },
+        new()
+        {
+            Id = "LiquidAI/LFM2.5-2.6B-GGUF:Q8_0",
+            DisplayName = "LFM2.5 2.6B Q8",
+            Description = "Larger Liquid instruct.",
+            Larger = true
+        },
+        new()
+        {
+            Id = "nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
+            DisplayName = "Nemotron 3 Nano 4B",
+            Description = "Larger NVIDIA Nano GGUF.",
+            Larger = true
         }
     ];
 
@@ -107,6 +139,8 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
                 _logger.LogInformation("[Lemonade] Skipping install; detection={Detection} detail={Detail}", detection, detail);
                 if (detection is not LemonadeDetection.ServerResponding)
                     await TryEnsureServerRunningAsync(progress, cancellationToken);
+                if (OperatingSystem.IsWindows())
+                    await EnsureVcRedistWindowsAsync(progress, cancellationToken);
                 return LemonadeInstallResult.Ok($"Lemonade already installed ({detail}). Skipped reinstall.");
             }
 
@@ -163,6 +197,7 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         }
 
         await TryEnsureServerRunningAsync(progress, cancellationToken);
+        await EnsureVcRedistWindowsAsync(progress, cancellationToken);
         return LemonadeInstallResult.Ok("Lemonade installed.");
     }
 
@@ -242,6 +277,9 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
             return LemonadeInstallResult.Fail("Lemonade CLI not found. Install Lemonade first.");
         }
 
+        if (OperatingSystem.IsWindows())
+            await EnsureVcRedistWindowsAsync(progress, cancellationToken);
+
         if (!ProbeServerRunning())
             await TryEnsureServerRunningAsync(progress, cancellationToken);
 
@@ -249,13 +287,15 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         foreach (var model in models)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            progress?.Report($"Pulling model {model} (up to {PullTimeoutMs / 60_000} min; can be slow on first download)…");
+            progress?.Report($"Pulling {model}…");
 
             var (ok, detail) = await RunProcessWithOutputAsync(
                 cli,
                 $"pull {QuoteArg(model)}",
                 cancellationToken,
-                timeoutMs: PullTimeoutMs);
+                timeoutMs: PullTimeoutMs,
+                lineProgress: progress,
+                progressPrefix: $"Pulling {model}");
 
             if (!ok)
             {
@@ -318,9 +358,8 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
 
     private LemonadeDetection DetectInstallation()
     {
-        if (ProbeServerRunning())
-            return LemonadeDetection.ServerResponding;
-
+        // Do not HTTP-probe here — getters run on the Blazor UI thread and
+        // localhost IPv6 + GetResult() freezes the setup wizard ~30s.
         if (IsLemonadeProcessRunning())
             return LemonadeDetection.ProcessRunning;
 
@@ -400,19 +439,76 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         }
     }
 
+    /// <summary>
+    /// Lemonade's llama.cpp binaries need the VC++ 2015–2022 x64 runtime
+    /// (vcruntime140.dll / msvcp140.dll). Fresh Windows often lacks it; models then fail to load.
+    /// </summary>
+    private async Task EnsureVcRedistWindowsAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        if (HasVcRuntime140X64())
+            return;
+
+        progress?.Report("Installing Visual C++ runtime (needed for Lemonade models)…");
+        _logger.LogInformation("[Lemonade] VC++ runtime DLLs missing; installing Microsoft VC++ redistributable x64.");
+
+        var exePath = Path.Combine(Path.GetTempPath(), $"vc_redist.x64-{Guid.NewGuid():N}.exe");
+        try
+        {
+            await using (var remote = await _http.GetStreamAsync(VcRedistX64Url, ct))
+            await using (var file = File.Create(exePath))
+                await remote.CopyToAsync(file, ct);
+
+            var ok = await RunProcessAsync(
+                exePath,
+                "/install /quiet /norestart",
+                elevate: true,
+                ct,
+                timeoutMs: 10 * 60 * 1000);
+
+            if (ok && HasVcRuntime140X64())
+            {
+                progress?.Report("Visual C++ runtime installed.");
+                return;
+            }
+
+            progress?.Report(
+                "Visual C++ runtime is still missing. Lemonade models may fail to load until you install " +
+                "Microsoft Visual C++ 2015–2022 Redistributable (x64).");
+            _logger.LogWarning("[Lemonade] VC++ redist install did not place vcruntime140.dll / msvcp140.dll.");
+        }
+        catch (Exception ex)
+        {
+            progress?.Report(
+                "Could not install the Visual C++ runtime automatically. Lemonade models may fail to load " +
+                "(missing MSVCP140.dll / VCRUNTIME140.dll).");
+            _logger.LogWarning(ex, "[Lemonade] VC++ redist download/install failed");
+        }
+        finally
+        {
+            try { File.Delete(exePath); } catch { /* ignore */ }
+        }
+    }
+
+    private static bool HasVcRuntime140X64()
+    {
+        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        return File.Exists(Path.Combine(system32, "vcruntime140.dll"))
+            && File.Exists(Path.Combine(system32, "msvcp140.dll"));
+    }
+
     private static bool ProbeServerRunning()
     {
         foreach (var url in new[]
                  {
                      "http://127.0.0.1:13305/api/v1/health",
-                     "http://127.0.0.1:13305/v1/models",
-                     "http://localhost:13305/api/v1/health",
-                     "http://localhost:13305/v1/models"
+                     "http://127.0.0.1:13305/v1/models"
                  })
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(400) };
                 var resp = http.GetAsync(url).GetAwaiter().GetResult();
                 if (resp.IsSuccessStatusCode)
                     return true;
@@ -638,7 +734,9 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         string arguments,
         CancellationToken ct,
         int timeoutMs,
-        bool elevate = false)
+        bool elevate = false,
+        IProgress<string>? lineProgress = null,
+        string? progressPrefix = null)
     {
         try
         {
@@ -691,8 +789,18 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
-            proc.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-            proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
+            proc.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                stdout.AppendLine(e.Data);
+                ReportPullLine(lineProgress, progressPrefix, e.Data);
+            };
+            proc.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                stderr.AppendLine(e.Data);
+                ReportPullLine(lineProgress, progressPrefix, e.Data);
+            };
 
             if (!proc.Start())
                 return (false, "Process failed to start.");
@@ -739,4 +847,15 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
 
     private static string Truncate(string s, int max) =>
         string.IsNullOrEmpty(s) ? "" : (s.Length <= max ? s : s[..max] + "…");
+
+    private static void ReportPullLine(IProgress<string>? progress, string? prefix, string line)
+    {
+        if (progress is null || string.IsNullOrWhiteSpace(line))
+            return;
+        var pct = PullProgressParser.TryPercent(line);
+        var bytes = PullProgressParser.TryByteSummary(line);
+        var tail = bytes ?? PullProgressParser.TruncateLine(line);
+        var head = string.IsNullOrEmpty(prefix) ? "Pulling" : prefix;
+        progress.Report(pct is int p ? $"{head} — {p}% {tail}" : $"{head} — {tail}");
+    }
 }

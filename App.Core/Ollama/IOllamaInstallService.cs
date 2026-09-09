@@ -34,6 +34,7 @@ public sealed class OllamaInstallModelChoice
     public required string DisplayName { get; init; }
     public required string Description { get; init; }
     public bool DefaultSelected { get; init; }
+    public bool Larger { get; init; }
 }
 
 public sealed class OllamaInstallResult

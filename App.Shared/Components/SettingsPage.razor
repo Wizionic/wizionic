@@ -435,9 +435,6 @@
             @if (!string.IsNullOrEmpty(profileEditId))
             {
                 <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="DeleteModelProfile" disabled="@profileBusy">Delete</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ActivateModelProfile" disabled="@profileBusy">
-                    Use in Chat
-                </button>
             }
         </div>
 
@@ -1273,17 +1270,6 @@
         {
             profileBusy = false;
         }
-    }
-
-    private async Task ActivateModelProfile()
-    {
-        if (string.IsNullOrWhiteSpace(profileEditId))
-            return;
-        await KeyStore.SetActiveModelProfileIdAsync(profileEditId);
-        await KeyStore.SetLastSelectedModelAsync(App.Core.Storage.ModelProfileId.ForPicker(profileEditId));
-        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.ModelProfiles);
-        profileSaveIsError = false;
-        profileSaveMessage = "This profile is now selected in Chat.";
     }
 
     private static string? EmptyToNull(string? value) =>

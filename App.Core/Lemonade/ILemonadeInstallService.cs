@@ -39,6 +39,8 @@ public sealed class LemonadeInstallModelChoice
     public required string DisplayName { get; init; }
     public required string Description { get; init; }
     public bool DefaultSelected { get; init; }
+    /// <summary>Larger optional pull; shown in a second group, off by default.</summary>
+    public bool Larger { get; init; }
 }
 
 public sealed class LemonadeInstallResult

@@ -127,9 +127,25 @@
                             </label>
                             @if (wantLemonade)
                             {
-                                <p style="margin-top: 0.5rem; font-size: 0.9em;">Pull models (optional; each has a timeout):</p>
+                                <p style="margin-top: 0.5rem; font-size: 0.9em;">Pull by default:</p>
                                 <div class="setup-model-list">
-                                    @foreach (var m in Lemonade.AvailableInstallModels)
+                                    @foreach (var m in Lemonade.AvailableInstallModels.Where(x => !x.Larger))
+                                    {
+                                        <label class="setup-check">
+                                            <input type="checkbox"
+                                                   checked="@selectedLemonadeModels.Contains(m.Id)"
+                                                   @onchange="e => ToggleLemonadeModel(m.Id, e)"
+                                                   disabled="@busy" />
+                                            <span>
+                                                <strong>@m.DisplayName</strong>
+                                                <span class="setup-model-desc">@m.Description</span>
+                                            </span>
+                                        </label>
+                                    }
+                                </div>
+                                <p style="margin-top: 0.75rem; font-size: 0.9em;">Also pull (larger, off by default):</p>
+                                <div class="setup-model-list">
+                                    @foreach (var m in Lemonade.AvailableInstallModels.Where(x => x.Larger))
                                     {
                                         <label class="setup-check">
                                             <input type="checkbox"
@@ -181,9 +197,25 @@
                             </label>
                             @if (wantOllama)
                             {
-                                <p style="margin-top: 0.5rem; font-size: 0.9em;">Pull models (optional; each has a timeout):</p>
+                                <p style="margin-top: 0.5rem; font-size: 0.9em;">Pull by default:</p>
                                 <div class="setup-model-list">
-                                    @foreach (var m in Ollama.AvailableInstallModels)
+                                    @foreach (var m in Ollama.AvailableInstallModels.Where(x => !x.Larger))
+                                    {
+                                        <label class="setup-check">
+                                            <input type="checkbox"
+                                                   checked="@selectedOllamaModels.Contains(m.Id)"
+                                                   @onchange="e => ToggleOllamaModel(m.Id, e)"
+                                                   disabled="@busy" />
+                                            <span>
+                                                <strong>@m.DisplayName</strong>
+                                                <span class="setup-model-desc">@m.Description</span>
+                                            </span>
+                                        </label>
+                                    }
+                                </div>
+                                <p style="margin-top: 0.75rem; font-size: 0.9em;">Also pull (larger, off by default):</p>
+                                <div class="setup-model-list">
+                                    @foreach (var m in Ollama.AvailableInstallModels.Where(x => x.Larger))
                                     {
                                         <label class="setup-check">
                                             <input type="checkbox"
@@ -209,24 +241,32 @@
                 {
                     <h3>You're set</h3>
                     <ul>
-                        <li>Login server: use <strong>Settings</strong> to change anytime</li>
                         <li>Home Server: @(homeserverDoneLabel)</li>
                         <li>First account: @(firstAdminDoneLabel)</li>
                         <li>Other devices: copy the network URL from Settings → Home Server</li>
                         <li>Lemonade: @(lemonadeDoneLabel)</li>
                         <li>Ollama: @(ollamaDoneLabel)</li>
                     </ul>
-                    <p>
-                        <a href="/settings">Settings</a> ·
-                        <a href="/lemonade">Lemonade</a> ·
-                        <a href="/local-ai">Ollama</a> ·
-                        <a href="/chat">Chat</a>
-                    </p>
+                    @if (NeedsHomeserverSwitch)
+                    {
+                        <p>
+                            This app is still signed in to the public site. Sign out and restart to use
+                            <code>http://localhost:5150</code> with the account you just created.
+                        </p>
+                    }
                 }
 
-                @if (!string.IsNullOrEmpty(progressLine))
+                @if (!string.IsNullOrEmpty(progressLine) || busy)
                 {
-                    <div class="setup-progress" aria-live="polite">@progressLine</div>
+                    <div class="setup-progress" aria-live="polite">
+                        <div>@(string.IsNullOrEmpty(progressLine) ? "Working…" : progressLine)</div>
+                        <div class="setup-progress-track" role="progressbar"
+                             aria-valuemin="0" aria-valuemax="100"
+                             aria-valuenow="@(progressPercent?.ToString() ?? null)">
+                            <div class="setup-progress-bar @(progressPercent is null ? "is-indeterminate" : "")"
+                                 style="@(progressPercent is int p ? $"width:{p}%" : null)"></div>
+                        </div>
+                    </div>
                 }
             </div>
 
@@ -250,7 +290,9 @@
                     }
                     else
                     {
-                        <button type="button" class="btn btn-primary" @onclick="Close" disabled="@busy">Done</button>
+                        <button type="button" class="btn btn-primary" @onclick="Close" disabled="@busy">
+                            @(NeedsHomeserverSwitch ? "Sign out and use this PC’s Home Server" : "Done")
+                        </button>
                     }
                 </div>
             </div>
@@ -297,6 +339,23 @@
     .setup-progress {
         margin-top: 1rem; padding: 0.6rem 0.75rem; border-radius: 6px;
         background: var(--color-bg-muted, #f4f7fb); border: 1px solid var(--color-border, #d0dbe8); color: var(--color-text); font-size: 0.9em; white-space: pre-wrap;
+    }
+    .setup-progress-track {
+        margin-top: 0.45rem; height: 8px; border-radius: 99px; overflow: hidden;
+        background: var(--color-border, #d0dbe8);
+    }
+    .setup-progress-bar {
+        height: 100%; width: 0; border-radius: 99px;
+        background: var(--color-accent, #0d6efd);
+        transition: width 0.2s ease;
+    }
+    .setup-progress-bar.is-indeterminate {
+        width: 40%;
+        animation: setup-progress-slide 1.2s ease-in-out infinite;
+    }
+    @@keyframes setup-progress-slide {
+        0% { transform: translateX(-120%); }
+        100% { transform: translateX(280%); }
     }
     .setup-ai-block {
         margin: 1rem 0;
@@ -355,6 +414,14 @@
     private string lemonadeDoneLabel = "skipped";
     private string ollamaDoneLabel = "skipped";
     private bool homeserverInstalledThisRun;
+    private int? progressPercent;
+
+    private bool NeedsHomeserverSwitch =>
+        Homeserver.IsSupported
+        && Homeserver.GetState().IsInstalled
+        && AppRestart.CanRestart
+        && (homeserverInstalledThisRun
+            || (Auth.IsAuthenticated && !Homeserver.IsLoginServerThisHomeserver(Auth.ServerBaseUrl)));
 
     protected override void OnInitialized()
     {
@@ -442,6 +509,10 @@
 
         if (step == 3)
         {
+            busy = true;
+            progressLine = "Starting…";
+            progressPercent = null;
+            StateHasChanged();
             await RunLocalAiStepAsync();
             step = 4;
             var state = HomeserverState.Load();
@@ -533,6 +604,7 @@
             var progress = new Progress<string>(m =>
             {
                 progressLine = m;
+                progressPercent = PullProgressParser.TryPercent(m);
                 _ = InvokeAsync(StateHasChanged);
             });
             IProgress<string> progressIface = progress;
@@ -638,7 +710,7 @@
     {
         Wizard.MarkCompleted();
         Wizard.Hide();
-        if (!homeserverInstalledThisRun || !AppRestart.CanRestart)
+        if (!NeedsHomeserverSwitch)
             return;
         try { await Auth.SignOutAsync(); }
         catch { Auth.SignOutLocal(); }
