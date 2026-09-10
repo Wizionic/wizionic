@@ -248,6 +248,10 @@
                         <li>Lemonade: @(lemonadeDoneLabel)</li>
                         <li>Ollama: @(ollamaDoneLabel)</li>
                     </ul>
+                    @if (!homeserverOk && !string.IsNullOrEmpty(homeserverMessage))
+                    {
+                        <div class="setup-msg is-err">@homeserverMessage</div>
+                    }
                     @if (NeedsHomeserverSwitch)
                     {
                         <p>

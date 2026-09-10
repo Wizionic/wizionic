@@ -83,10 +83,12 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 await ClearStaleInstallAsync(cancellationToken);
             }
 
+            AppendInstallLog($"Install start root={HomeserverPaths.RootDirectory}");
             progress?.Report("Checking for Home Server package…");
             var manifest = await GetFeedManifestAsync(cancellationToken)
                 ?? throw new InvalidOperationException(
                     "Could not find a Home Server package on the update feed. Deploy the homeserver package first.");
+            AppendInstallLog($"Feed ok version={manifest.Version} url={manifest.Url}");
 
             progress?.Report($"Downloading Home Server {manifest.Version}…");
             var zipPath = await DownloadPackageAsync(manifest, cancellationToken);
@@ -115,6 +117,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
             var restartRequired = await RetargetMauiToLocalHomeserverAsync(state.BaseUrl);
             ShouldPromptOnStartup = false;
+            AppendInstallLog($"Install ok mode={mode} version={manifest.Version} restart={restartRequired}");
 
             var modeLabel = mode switch
             {
@@ -134,8 +137,10 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
         catch (Exception ex)
         {
+            AppendInstallLog("Install failed", ex);
             _logger.LogError(ex, "[Homeserver] Install failed");
-            return HomeserverInstallResult.Fail($"Home Server install failed: {ex.Message}");
+            return HomeserverInstallResult.Fail(
+                $"Home Server install failed: {FormatException(ex)} Log: {InstallLogPath}");
         }
     }
 
@@ -492,8 +497,10 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         }
         catch (Exception ex)
         {
+            AppendInstallLog($"Failed to read feed {url}", ex);
             _logger.LogWarning(ex, "[Homeserver] Failed to read feed {Url}", url);
-            return null;
+            throw new InvalidOperationException(
+                $"Could not read Home Server package list from {url}: {ex.Message}", ex);
         }
     }
 
@@ -1459,5 +1466,43 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         {
             // ignore
         }
+    }
+
+    internal static string InstallLogPath
+    {
+        get
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var dir = Path.Combine(local, "Wizionic", "userdata");
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, "homeserver-install.log");
+        }
+    }
+
+    private void AppendInstallLog(string message, Exception? ex = null)
+    {
+        try
+        {
+            var line = $"{DateTimeOffset.Now:u} {message}";
+            if (ex is not null)
+                line += Environment.NewLine + ex;
+            File.AppendAllText(InstallLogPath, line + Environment.NewLine + Environment.NewLine);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static string FormatException(Exception ex)
+    {
+        var parts = new List<string>();
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (!string.IsNullOrWhiteSpace(e.Message) && !parts.Contains(e.Message))
+                parts.Add(e.Message);
+        }
+
+        return parts.Count == 0 ? ex.GetType().Name : string.Join(" → ", parts);
     }
 }

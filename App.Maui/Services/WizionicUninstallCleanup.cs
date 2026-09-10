@@ -44,12 +44,7 @@ internal static class WizionicUninstallCleanup
         try { KillHomeServerProcesses(); }
         catch { /* best effort */ }
 
-        var paths = new List<string> { HomeserverPaths.RootDirectory };
-        var hsParent = Path.GetDirectoryName(HomeserverPaths.RootDirectory);
-        if (!string.IsNullOrWhiteSpace(hsParent) &&
-            string.Equals(Path.GetFileName(hsParent), "Wizionic", StringComparison.OrdinalIgnoreCase))
-            paths.Add(hsParent);
-        TryDeleteNow(paths);
+        TryDeleteNow(HomeserverDeletePaths());
     }
 
     public static void Run()
@@ -157,16 +152,28 @@ internal static class WizionicUninstallCleanup
                 paths.Add(dir);
         }
 
-        paths.Add(HomeserverPaths.RootDirectory);
-
-        var hsParent = Path.GetDirectoryName(HomeserverPaths.RootDirectory);
-        if (!string.IsNullOrWhiteSpace(hsParent) &&
-            string.Equals(Path.GetFileName(hsParent), "Wizionic", StringComparison.OrdinalIgnoreCase))
-            paths.Add(hsParent);
+        paths.AddRange(HomeserverDeletePaths());
 
         return paths
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static List<string> HomeserverDeletePaths()
+    {
+        var paths = new List<string>();
+        foreach (var root in HomeserverPaths.AllRootDirectories)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+                continue;
+            paths.Add(root);
+            var parent = Path.GetDirectoryName(root);
+            if (!string.IsNullOrWhiteSpace(parent) &&
+                string.Equals(Path.GetFileName(parent), "Wizionic", StringComparison.OrdinalIgnoreCase))
+                paths.Add(parent);
+        }
+
+        return paths;
     }
 
     private static void TryDeleteNow(IEnumerable<string> paths)
