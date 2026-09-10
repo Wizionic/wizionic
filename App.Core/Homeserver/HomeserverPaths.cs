@@ -28,7 +28,9 @@ public static class HomeserverPaths
     /// <summary>
     /// Writable root that survives app updates. Desktop uninstall removes this tree
     /// so a reinstall is a first run (best-effort; admin-owned files may need a delayed delete).
-    /// Windows: %ProgramData%\Wizionic\Homeserver
+    /// Windows: %ProgramData%\Wizionic\Homeserver when this user can write it;
+    /// otherwise %LocalAppData%\Wizionic\Homeserver (a new Windows user cannot replace
+    /// another account's ProgramData install).
     /// Linux:   ~/.local/share/Wizionic/Homeserver  (user-local; works without root)
     /// </summary>
     public static string RootDirectory
@@ -36,17 +38,90 @@ public static class HomeserverPaths
         get
         {
             if (OperatingSystem.IsLinux())
-            {
-                var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                if (string.IsNullOrWhiteSpace(local))
-                    local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
-                return Path.Combine(local, "Wizionic", "Homeserver");
-            }
+                return LinuxRootDirectory;
 
+            return _windowsRoot ??= ResolveWindowsRoot();
+        }
+    }
+
+    private static string? _windowsRoot;
+
+    public static string LinuxRootDirectory
+    {
+        get
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(local))
+                local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+            return Path.Combine(local, "Wizionic", "Homeserver");
+        }
+    }
+
+    public static string WindowsProgramDataRoot
+    {
+        get
+        {
             var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
             if (string.IsNullOrWhiteSpace(common))
-                common = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Wizionic");
+                common = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             return Path.Combine(common, "Wizionic", "Homeserver");
+        }
+    }
+
+    public static string WindowsUserLocalRoot
+    {
+        get
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Path.Combine(local, "Wizionic", "Homeserver");
+        }
+    }
+
+    /// <summary>All known install roots to wipe on uninstall (ProgramData and per-user).</summary>
+    public static IReadOnlyList<string> AllRootDirectories
+    {
+        get
+        {
+            if (OperatingSystem.IsLinux())
+                return [LinuxRootDirectory];
+            return [WindowsProgramDataRoot, WindowsUserLocalRoot];
+        }
+    }
+
+    private static string ResolveWindowsRoot()
+    {
+        if (IsWritableDirectory(WindowsProgramDataRoot))
+            return WindowsProgramDataRoot;
+        return WindowsUserLocalRoot;
+    }
+
+    private static bool IsWritableDirectory(string dir)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var probe = Path.Combine(dir, $".wizionic-write-{Guid.NewGuid():N}");
+            File.WriteAllText(probe, "ok");
+            File.Delete(probe);
+
+            // Folder Write is not enough when another Windows user owns state/binaries.
+            var state = Path.Combine(dir, "state.json");
+            if (File.Exists(state))
+            {
+                using var fs = File.Open(state, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            }
+
+            var exe = Path.Combine(dir, "app", OperatingSystem.IsWindows() ? "App.exe" : "App");
+            if (File.Exists(exe))
+            {
+                using var fs = File.Open(exe, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
