@@ -162,18 +162,43 @@ internal static class WizionicUninstallCleanup
     private static List<string> HomeserverDeletePaths()
     {
         var paths = new List<string>();
+        var velopackRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Wizionic");
+
         foreach (var root in HomeserverPaths.AllRootDirectories)
         {
             if (string.IsNullOrWhiteSpace(root))
                 continue;
             paths.Add(root);
             var parent = Path.GetDirectoryName(root);
-            if (!string.IsNullOrWhiteSpace(parent) &&
-                string.Equals(Path.GetFileName(parent), "Wizionic", StringComparison.OrdinalIgnoreCase))
-                paths.Add(parent);
+            if (string.IsNullOrWhiteSpace(parent))
+                continue;
+            if (!string.Equals(Path.GetFileName(parent), "Wizionic", StringComparison.OrdinalIgnoreCase))
+                continue;
+            // %LocalAppData%\Wizionic is the Velopack app (current\, packages\, stub).
+            // Never delete it on first run or uninstall cleanup of Home Server.
+            if (PathsEqual(parent, velopackRoot))
+                continue;
+            paths.Add(parent);
         }
 
         return paths;
+    }
+
+    private static bool PathsEqual(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static void TryDeleteNow(IEnumerable<string> paths)

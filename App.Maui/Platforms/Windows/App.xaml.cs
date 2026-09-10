@@ -17,8 +17,43 @@ public partial class WinUIApp : MauiWinUIApplication
 	public WinUIApp()
 	{
 		this.InitializeComponent();
+		AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+		{
+			if (e.ExceptionObject is Exception ex)
+				TryWriteStartupCrash(ex);
+		};
+		TaskScheduler.UnobservedTaskException += (_, e) => TryWriteStartupCrash(e.Exception);
 	}
 
-	protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp();
+	protected override MauiApp CreateMauiApp()
+	{
+		try
+		{
+			return MauiProgram.CreateMauiApp();
+		}
+		catch (Exception ex)
+		{
+			TryWriteStartupCrash(ex);
+			throw;
+		}
+	}
+
+	private static void TryWriteStartupCrash(Exception ex)
+	{
+		try
+		{
+			var dir = Path.Combine(
+				Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+				"Wizionic", "userdata");
+			Directory.CreateDirectory(dir);
+			File.AppendAllText(
+				Path.Combine(dir, "startup-crash.log"),
+				$"{DateTimeOffset.Now:u}{Environment.NewLine}{ex}{Environment.NewLine}{Environment.NewLine}");
+		}
+		catch
+		{
+			// ignore
+		}
+	}
 }
 
