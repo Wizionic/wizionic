@@ -1,8 +1,10 @@
 @using App.Core.Auth
 @using App.Core.Configuration
+@using App.Core.Homeserver
 @inject IAuthService Auth
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject IHomeserverInstallService Homeserver
 
 <div class="settings-content" style="max-width: 520px; margin: 2rem auto; padding: 0 1rem;">
     <div class="login-brand">
@@ -622,6 +624,12 @@
     @if (AppEnvironment.IsMaui && !(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)))
     {
         <div class="login-more-options">
+            @if (Homeserver.IsSupported && Homeserver.GetState().IsInstalled && !IsLocalHomeserverLogin)
+            {
+                <p style="margin:0 0 0.5rem 0; font-size:0.9em; color: var(--color-text-muted);">
+                    Home Server is installed on this PC. Choose <strong>This PC (localhost:5150)</strong> below, then restart if asked.
+                </p>
+            }
             @if (!_showLoginServerOptions)
             {
                 <button type="button"
@@ -868,6 +876,8 @@
         {
             if (IsLocalHomeserverLogin)
                 loginMode = LoginMode.Password;
+            if (AppEnvironment.IsMaui && Homeserver.IsSupported && Homeserver.GetState().IsInstalled)
+                _showLoginServerOptions = true;
             await RefreshSetupStatusAsync();
         }
     }

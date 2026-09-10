@@ -31,7 +31,7 @@ public interface IAuthService
     Task<(bool Success, string? Error)> ResetPasswordAsync(string email, string code);
     Task<AuthLoginResult> LoginWithPasswordAsync(string email, string password);
     /// <summary>Whether this login server has no users yet and this client may create the first admin.</summary>
-    Task<AuthSetupStatus?> GetSetupStatusAsync(string? baseUrl = null);
+    Task<AuthSetupStatus?> GetSetupStatusAsync(string? baseUrl = null, CancellationToken cancellationToken = default);
     /// <summary>
     /// Create the first Home Server user (username + password, no email code).
     /// <paramref name="baseUrl"/> must be that Home Server (usually http://localhost:5150),

@@ -31,6 +31,27 @@ internal static class WizionicUninstallCleanup
         }
     }
 
+    /// <summary>
+    /// Stop leftover Home Server and delete its ProgramData tree. Used on a Velopack
+    /// first run so a fast reinstall is not sitting on the previous install's SQLite.
+    /// Does not touch this user's app data.
+    /// </summary>
+    public static void WipeLeftoverHomeServer()
+    {
+        try { StopHomeServer(); }
+        catch { /* best effort */ }
+
+        try { KillHomeServerProcesses(); }
+        catch { /* best effort */ }
+
+        var paths = new List<string> { HomeserverPaths.RootDirectory };
+        var hsParent = Path.GetDirectoryName(HomeserverPaths.RootDirectory);
+        if (!string.IsNullOrWhiteSpace(hsParent) &&
+            string.Equals(Path.GetFileName(hsParent), "Wizionic", StringComparison.OrdinalIgnoreCase))
+            paths.Add(hsParent);
+        TryDeleteNow(paths);
+    }
+
     public static void Run()
     {
         try { StopHomeServer(); }

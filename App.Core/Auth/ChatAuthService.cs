@@ -190,12 +190,12 @@ public class ChatAuthService : IAuthService
         }
     }
 
-    public async Task<AuthSetupStatus?> GetSetupStatusAsync(string? baseUrl = null)
+    public async Task<AuthSetupStatus?> GetSetupStatusAsync(string? baseUrl = null, CancellationToken cancellationToken = default)
     {
         try
         {
             var root = ResolveApiRoot(baseUrl);
-            var resp = await _http.GetAsync($"{root}/api/auth/setup-status");
+            using var resp = await _http.GetAsync($"{root}/api/auth/setup-status", cancellationToken);
             if (!resp.IsSuccessStatusCode)
                 return null;
             return await ReadJsonOrNullAsync<AuthSetupStatus>(resp);

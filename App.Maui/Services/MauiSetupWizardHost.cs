@@ -68,15 +68,9 @@ public sealed class MauiSetupWizardHost : ISetupWizardHost
     {
         try
         {
-            if (File.Exists(MauiAppData.OnboardingCompletedPath))
-                return true;
-
-            // Older builds only wrote ProgramData. Honor that on an upgrade that still
-            // has this user's library; ignore it for a blank Windows profile.
-            if (!HomeserverState.Load().OnboardingCompletedAt.HasValue)
-                return false;
-
-            return MauiAppData.HasLocalDatabase();
+            // Per-user only. Machine-wide ProgramData leftover from an incomplete
+            // uninstall must not skip the wizard for this Windows user.
+            return File.Exists(MauiAppData.OnboardingCompletedPath);
         }
         catch
         {
