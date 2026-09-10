@@ -84,6 +84,8 @@ public static class MauiProgram
 			.Run();
 #endif
 		WizionicUninstallCleanup.CancelPending();
+		if (firstRun)
+			WizionicUninstallCleanup.WipeLeftoverHomeServer();
 
 #if WINDOWS
 		if (!WindowsSingleInstance.TryAcquirePrimary())
@@ -168,6 +170,8 @@ public static class MauiProgram
 			})
 			.Run();
 		WizionicUninstallCleanup.CancelPending();
+		if (firstRun)
+			WizionicUninstallCleanup.WipeLeftoverHomeServer();
 		AppEnvironment.SetMaui();
 
 		var configuration = BuildConfiguration();

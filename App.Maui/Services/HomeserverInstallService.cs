@@ -77,6 +77,12 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
         try
         {
+            if (!HomeserverState.Load().IsInstalled)
+            {
+                progress?.Report("Clearing leftover Home Server data…");
+                await ClearStaleInstallAsync(cancellationToken);
+            }
+
             progress?.Report("Checking for Home Server package…");
             var manifest = await GetFeedManifestAsync(cancellationToken)
                 ?? throw new InvalidOperationException(
@@ -104,6 +110,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             state.AskedAt ??= DateTimeOffset.UtcNow;
             state.InstalledAt = DateTimeOffset.UtcNow;
             state.DeclinedAt = null;
+            state.OnboardingCompletedAt = null;
             state.Save();
 
             var restartRequired = await RetargetMauiToLocalHomeserverAsync(state.BaseUrl);
@@ -1390,6 +1397,32 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             _logger.LogDebug(ex, "[Homeserver] ufw probe failed");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Incomplete uninstall can leave homeserver.db (and a running process) while
+    /// state.json says "not installed". A later wizard install would skip first-admin.
+    /// </summary>
+    private async Task ClearStaleInstallAsync(CancellationToken ct)
+    {
+        try
+        {
+            await StopHostAsync(HomeserverInstallMode.WindowsService, ct);
+        }
+        catch { /* best effort */ }
+
+        try
+        {
+            await StopHostAsync(HomeserverInstallMode.UserSession, ct);
+        }
+        catch { /* best effort */ }
+
+        try { await Task.Delay(400, ct); }
+        catch { /* ignore */ }
+
+        TryDelete(HomeserverPaths.DatabasePath);
+        TryDeleteDirectory(HomeserverPaths.DataDirectory);
+        TryDelete(HomeserverPaths.StateFilePath);
     }
 
     private void DeleteInstallRoot()

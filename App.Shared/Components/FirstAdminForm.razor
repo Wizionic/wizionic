@@ -60,6 +60,8 @@
     private string? Error { get; set; }
     private bool Busy { get; set; }
 
+    public string? LastError => Error;
+
     public bool CanSubmit =>
         LoginIdentifier.IsValidLoginId(Username)
         && !string.IsNullOrEmpty(Password)

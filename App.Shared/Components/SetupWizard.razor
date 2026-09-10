@@ -1,3 +1,4 @@
+@using App.Core.Auth
 @using App.Core.Homeserver
 @using App.Core.Lemonade
 @using App.Core.Ollama
@@ -415,6 +416,7 @@
     private string ollamaDoneLabel = "skipped";
     private bool homeserverInstalledThisRun;
     private int? progressPercent;
+    private int progressEpoch;
 
     private bool NeedsHomeserverSwitch =>
         Homeserver.IsSupported
@@ -473,51 +475,55 @@
 
     private async Task Next()
     {
-        if (step == 0)
+        try
         {
-            step = 1;
-            return;
-        }
-
-        if (step == 1)
-        {
-            await RunHomeserverStepAsync();
-            needFirstAccount = await TryDetectFirstAccountAsync();
-            step = needFirstAccount ? 2 : 3;
-            return;
-        }
-
-        if (step == 2)
-        {
-            if (firstAdminForm is null)
+            if (step == 0)
+            {
+                step = 1;
                 return;
-            busy = true;
-            StateHasChanged();
-            try
+            }
+
+            if (step == 1)
             {
-                if (!await firstAdminForm.SubmitAsync())
+                await RunHomeserverStepAsync();
+                needFirstAccount = await ShouldShowFirstAccountAsync();
+                step = needFirstAccount ? 2 : 3;
+                return;
+            }
+
+            if (step == 2)
+            {
+                if (firstAdminForm is null)
                     return;
+                busy = true;
+                StateHasChanged();
+                if (!await firstAdminForm.SubmitAsync())
+                {
+                    if (!IsExistingAccountError(firstAdminForm.LastError))
+                        return;
+                    firstAdminOk = true;
+                    firstAdminDoneLabel = "already exists";
+                    firstAdminMessage = firstAdminForm.LastError;
+                }
+
+                step = 3;
+                return;
             }
-            finally
+
+            if (step == 3)
             {
-                busy = false;
+                busy = true;
+                progressLine = "Starting…";
+                progressPercent = null;
+                StateHasChanged();
+                await RunLocalAiStepAsync();
+                step = 4;
             }
-
-            step = 3;
-            return;
         }
-
-        if (step == 3)
+        finally
         {
-            busy = true;
-            progressLine = "Starting…";
-            progressPercent = null;
-            StateHasChanged();
-            await RunLocalAiStepAsync();
-            step = 4;
-            var state = HomeserverState.Load();
-            state.OnboardingCompletedAt = DateTimeOffset.UtcNow;
-            state.Save();
+            EndProgress();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -528,23 +534,61 @@
         firstAdminMessage = "First account created. After Done, sign in with that username and password.";
     }
 
-    private async Task<bool> TryDetectFirstAccountAsync()
+    private static bool IsExistingAccountError(string? error) =>
+        !string.IsNullOrWhiteSpace(error)
+        && error.Contains("already exists", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<bool> ShouldShowFirstAccountAsync()
     {
         if (!Homeserver.IsSupported || !Homeserver.GetState().IsInstalled)
             return false;
 
-        for (var i = 0; i < 40; i++)
+        // A Home Server installed in this wizard must always offer the first-account form.
+        // Leftover users from an incomplete uninstall used to skip this step (green "done").
+        if (homeserverInstalledThisRun)
         {
-            var status = await Auth.GetSetupStatusAsync(HomeserverPaths.DefaultBaseUrl);
-            if (status is not null)
-                return status.CanBootstrap;
+            await WaitForHomeserverReadyAsync();
+            return true;
+        }
+
+        var status = await WaitForHomeserverReadyAsync();
+        if (status is null)
+        {
+            firstAdminMessage = "Home Server is installed but not answering yet. You can create the first account on the login page after Done.";
+            firstAdminOk = false;
+            firstAdminDoneLabel = "pending";
+            return false;
+        }
+
+        return status.CanBootstrap || status.FirstAdminRequired;
+    }
+
+    private async Task<AuthSetupStatus?> WaitForHomeserverReadyAsync()
+    {
+        busy = true;
+        progressLine = "Waiting for Home Server…";
+        progressPercent = null;
+        StateHasChanged();
+
+        AuthSetupStatus? last = null;
+        for (var i = 0; i < 30; i++)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                last = await Auth.GetSetupStatusAsync(HomeserverPaths.DefaultBaseUrl, cts.Token);
+                if (last is not null)
+                    return last;
+            }
+            catch
+            {
+                // not listening yet
+            }
+
             await Task.Delay(500);
         }
 
-        firstAdminMessage = "Home Server is installed but not answering yet. You can create the first account on the login page after Done.";
-        firstAdminOk = false;
-        firstAdminDoneLabel = "pending";
-        return false;
+        return last;
     }
 
     private async Task RunHomeserverStepAsync()
@@ -577,12 +621,7 @@
         StateHasChanged();
         try
         {
-            var progress = new Progress<string>(m =>
-            {
-                progressLine = m;
-                _ = InvokeAsync(StateHasChanged);
-            });
-            var result = await Homeserver.InstallAsync(progress);
+            var result = await Homeserver.InstallAsync(BindProgress());
             homeserverOk = result.Success;
             homeserverMessage = result.Message;
             homeserverDoneLabel = result.Success ? $"installed ({result.BaseUrl})" : "failed";
@@ -590,9 +629,29 @@
         }
         finally
         {
-            busy = false;
-            progressLine = null;
+            EndProgress();
         }
+    }
+
+    private IProgress<string> BindProgress()
+    {
+        var gen = ++progressEpoch;
+        return new Progress<string>(m =>
+        {
+            if (gen != progressEpoch)
+                return;
+            progressLine = m;
+            progressPercent = PullProgressParser.TryPercent(m);
+            _ = InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void EndProgress()
+    {
+        progressEpoch++;
+        progressLine = null;
+        progressPercent = null;
+        busy = false;
     }
 
     private async Task RunLocalAiStepAsync()
@@ -601,21 +660,13 @@
         StateHasChanged();
         try
         {
-            var progress = new Progress<string>(m =>
-            {
-                progressLine = m;
-                progressPercent = PullProgressParser.TryPercent(m);
-                _ = InvokeAsync(StateHasChanged);
-            });
-            IProgress<string> progressIface = progress;
-
-            await RunLemonadePartAsync(progressIface);
-            await RunOllamaPartAsync(progressIface);
+            var progress = BindProgress();
+            await RunLemonadePartAsync(progress);
+            await RunOllamaPartAsync(progress);
         }
         finally
         {
-            busy = false;
-            progressLine = null;
+            EndProgress();
         }
     }
 
@@ -651,7 +702,17 @@
         }
 
         await KeyStore.LoadAsync();
-        var cfg = await Lemonade.ConfigureAppAsync(Http, KeyStore);
+        progress.Report("Configuring Wizionic for Lemonade…");
+        LemonadeInstallResult cfg;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            cfg = await Lemonade.ConfigureAppAsync(Http, KeyStore, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            cfg = LemonadeInstallResult.Ok("Lemonade is installed. Refresh models after you sign in.");
+        }
         lemonadeMessage = string.Join(" ", new[] { install.Message, lemonadeMessage, cfg.Message }.Where(s => !string.IsNullOrWhiteSpace(s)));
         lemonadeOk = cfg.Success || install.Success || Lemonade.IsInstalled;
         lemonadeDoneLabel = lemonadeOk
@@ -691,7 +752,17 @@
         }
 
         await KeyStore.LoadAsync();
-        var cfg = await Ollama.ConfigureAppAsync(Http, KeyStore);
+        progress.Report("Configuring Wizionic for Ollama…");
+        OllamaInstallResult cfg;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            cfg = await Ollama.ConfigureAppAsync(Http, KeyStore, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            cfg = OllamaInstallResult.Ok("Ollama is installed. Refresh models after you sign in.");
+        }
         ollamaMessage = string.Join(" ", new[] { install.Message, ollamaMessage, cfg.Message }.Where(s => !string.IsNullOrWhiteSpace(s)));
         ollamaOk = cfg.Success || install.Success || Ollama.IsInstalled;
         ollamaDoneLabel = ollamaOk

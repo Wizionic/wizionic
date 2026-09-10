@@ -286,7 +286,9 @@ public sealed class OllamaInstallService : IOllamaInstallService
             await keyStore.SetOllamaBaseUrlAsync(DefaultBaseUrl, cancellationToken);
             try
             {
-                await keyStore.RefreshOllamaModelsFromServerAsync(http, DefaultBaseUrl, cancellationToken);
+                using var refreshCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                refreshCts.CancelAfter(TimeSpan.FromSeconds(20));
+                await keyStore.RefreshOllamaModelsFromServerAsync(http, DefaultBaseUrl, refreshCts.Token);
             }
             catch (Exception ex)
             {

@@ -328,7 +328,9 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         try
         {
             await keyStore.SetLemonadeBaseUrlAsync(DefaultBaseUrl, cancellationToken);
-            await keyStore.RefreshLemonadeModelsFromServerAsync(http, DefaultBaseUrl, null, cancellationToken);
+            using var refreshCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            refreshCts.CancelAfter(TimeSpan.FromSeconds(20));
+            await keyStore.RefreshLemonadeModelsFromServerAsync(http, DefaultBaseUrl, null, refreshCts.Token);
             var chat = keyStore.LemonadeModelSettingsList.FirstOrDefault(m => m.IsChatEligible);
             if (chat is not null)
                 await keyStore.SetLastSelectedModelAsync($"lemonade/{chat.Name}", cancellationToken);
