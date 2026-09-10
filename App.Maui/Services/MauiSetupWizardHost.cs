@@ -9,9 +9,12 @@ public sealed class MauiSetupWizardHost : ISetupWizardHost
 
     public MauiSetupWizardHost(bool autoShowOnFirstRun)
     {
-        // Show until the user finishes or skips once. Re-run later from Settings.
-        _ = autoShowOnFirstRun;
-        ShouldAutoShow = !IsOnboardingCompleted();
+        // A new Velopack install always shows the wizard, even if leftover ProgramData
+        // still has onboardingCompletedAt from a previous Windows user or incomplete uninstall.
+        if (autoShowOnFirstRun)
+            ClearOnboardingFlags();
+
+        ShouldAutoShow = autoShowOnFirstRun || !IsOnboardingCompleted();
         if (ShouldAutoShow)
             _visible = true;
     }
@@ -36,9 +39,27 @@ public sealed class MauiSetupWizardHost : ISetupWizardHost
 
     public void MarkCompleted()
     {
-        var state = HomeserverState.Load();
-        state.OnboardingCompletedAt = DateTimeOffset.UtcNow;
-        state.Save();
+        try
+        {
+            Directory.CreateDirectory(MauiAppData.Directory);
+            File.WriteAllText(MauiAppData.OnboardingCompletedPath, DateTimeOffset.UtcNow.ToString("O"));
+        }
+        catch
+        {
+            // still try machine-wide state below
+        }
+
+        try
+        {
+            var state = HomeserverState.Load();
+            state.OnboardingCompletedAt = DateTimeOffset.UtcNow;
+            state.Save();
+        }
+        catch
+        {
+            // per-user file is enough to skip on this Windows user
+        }
+
         ShouldAutoShow = false;
         Hide();
     }
@@ -47,11 +68,45 @@ public sealed class MauiSetupWizardHost : ISetupWizardHost
     {
         try
         {
-            return HomeserverState.Load().OnboardingCompletedAt.HasValue;
+            if (File.Exists(MauiAppData.OnboardingCompletedPath))
+                return true;
+
+            // Older builds only wrote ProgramData. Honor that on an upgrade that still
+            // has this user's library; ignore it for a blank Windows profile.
+            if (!HomeserverState.Load().OnboardingCompletedAt.HasValue)
+                return false;
+
+            return MauiAppData.HasLocalDatabase();
         }
         catch
         {
             return false;
+        }
+    }
+
+    private static void ClearOnboardingFlags()
+    {
+        try
+        {
+            if (File.Exists(MauiAppData.OnboardingCompletedPath))
+                File.Delete(MauiAppData.OnboardingCompletedPath);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        try
+        {
+            var state = HomeserverState.Load();
+            if (!state.OnboardingCompletedAt.HasValue)
+                return;
+            state.OnboardingCompletedAt = null;
+            state.Save();
+        }
+        catch
+        {
+            // ProgramData may be admin-owned after an incomplete uninstall
         }
     }
 }

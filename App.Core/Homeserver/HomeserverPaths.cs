@@ -26,7 +26,8 @@ public static class HomeserverPaths
             : "releases/homeserver/windows";
 
     /// <summary>
-    /// Writable root that survives app updates and uninstall of binaries.
+    /// Writable root that survives app updates. Desktop uninstall removes this tree
+    /// so a reinstall is a first run (best-effort; admin-owned files may need a delayed delete).
     /// Windows: %ProgramData%\Wizionic\Homeserver
     /// Linux:   ~/.local/share/Wizionic/Homeserver  (user-local; works without root)
     /// </summary>
