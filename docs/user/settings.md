@@ -41,6 +41,8 @@ If Linux has no system-tray service (typical stock GNOME without the AppIndicato
 
 The Home Server service is separate: it can stay running after you Quit, but it does not run workflows or hold chat/note bodies.
 
+Uninstalling the GitHub desktop app also stops and removes Home Server (service, website files, and login accounts on this PC) and deletes this Windows user’s local Wizionic data, so the next install is a first run with the setup wizard. AMD Lemonade and Ollama are separate products and stay installed unless you uninstall them yourself.
+
 ## Voice {#voice}
 
 **Assistant name** is the wake word for Voice mode in Chat (soundwave button). If Home Assistant is connected on the desktop app, the same name addresses smart-home commands (`Hey Bro, turn off the kitchen light`). Two or more syllables work better than a short common word. Stored on this device (and synced with **About you**).

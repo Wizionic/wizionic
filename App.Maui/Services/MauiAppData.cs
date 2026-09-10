@@ -5,10 +5,12 @@ namespace App.Maui.Services;
 /// Windows unpackaged must not use <see cref="FileSystem.AppDataDirectory"/>: that path
 /// includes PublisherDisplayName and Identity Name, so a Store-manifest change moves
 /// SQLite and looks like a logout / empty library. Velopack install root is
-/// %LocalAppData%\Wizionic; userdata lives in a sibling folder that Velopack does not replace.
+/// %LocalAppData%\Wizionic; userdata lives in a sibling folder that Velopack does not replace
+/// on update. Desktop uninstall deletes userdata so a reinstall is a first run.
 /// </summary>
 internal static class MauiAppData
 {
+	internal const string OnboardingCompletedFileName = "onboarding-completed";
 	private const string DbFileName = "wizionic_local.db";
 	private static readonly object Gate = new();
 	private static string? _directory;
@@ -27,6 +29,41 @@ internal static class MauiAppData
 				return _directory;
 			}
 		}
+	}
+
+	public static string OnboardingCompletedPath =>
+		Path.Combine(Directory, OnboardingCompletedFileName);
+
+	public static bool HasLocalDatabase()
+	{
+		try
+		{
+			var db = Path.Combine(Directory, DbFileName);
+			return File.Exists(db) && new FileInfo(db).Length > 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// Known per-user data folders to wipe on uninstall. Does not create directories
+	/// and does not include the Velopack install root.
+	/// </summary>
+	public static IReadOnlyList<string> DataDirectoriesForCleanup()
+	{
+		var dirs = new List<string>();
+		var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+#if WINDOWS
+		if (!string.IsNullOrWhiteSpace(local))
+			dirs.Add(Path.Combine(local, "Wizionic", "userdata"));
+		dirs.AddRange(UnpackagedLegacyDirectories());
+#else
+		if (!string.IsNullOrWhiteSpace(local))
+			dirs.Add(Path.Combine(local, "Wizionic"));
+#endif
+		return dirs;
 	}
 
 	private static string Resolve()

@@ -7,7 +7,7 @@ public interface ISetupWizardHost
 {
     bool IsVisible { get; }
 
-    /// <summary>True when first-run should open the wizard (not yet completed).</summary>
+    /// <summary>True when this install should open the wizard (Velopack first run or not yet completed on this Windows user).</summary>
     bool ShouldAutoShow { get; }
 
     event Action? OnChanged;

@@ -66,17 +66,10 @@ public static class MauiProgram
 			{
 				try
 				{
-					// Stop homeserver service before MAUI uninstall; leave SQLite data intact.
+					// Remove Home Server + this user's app data so a reinstall is a first run.
+					WizionicUninstallCleanup.Run();
 					if (OperatingSystem.IsWindows())
 					{
-						var psi = new System.Diagnostics.ProcessStartInfo
-						{
-							FileName = "sc.exe",
-							Arguments = $"stop {HomeserverPaths.ServiceName}",
-							UseShellExecute = false,
-							CreateNoWindow = true
-						};
-						System.Diagnostics.Process.Start(psi)?.WaitForExit(5000);
 #if WINDOWS
 						WindowsStartupRegistration.Delete();
 						WindowsSingleInstance.RequestQuit();
@@ -90,6 +83,7 @@ public static class MauiProgram
 			})
 			.Run();
 #endif
+		WizionicUninstallCleanup.CancelPending();
 
 #if WINDOWS
 		if (!WindowsSingleInstance.TryAcquirePrimary())
@@ -165,10 +159,15 @@ public static class MauiProgram
 			})
 			.OnBeforeUninstallFastCallback(_ =>
 			{
-				try { LinuxAutostartRegistration.Delete(); }
+				try
+				{
+					WizionicUninstallCleanup.Run();
+					LinuxAutostartRegistration.Delete();
+				}
 				catch { /* uninstall continues */ }
 			})
 			.Run();
+		WizionicUninstallCleanup.CancelPending();
 		AppEnvironment.SetMaui();
 
 		var configuration = BuildConfiguration();
