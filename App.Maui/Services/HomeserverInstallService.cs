@@ -83,6 +83,8 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 await ClearStaleInstallAsync(cancellationToken);
             }
 
+            KillHostProcesses();
+            await PrepareWindowsInstallRootAsync(progress, cancellationToken);
             AppendInstallLog($"Install start root={HomeserverPaths.RootDirectory}");
             progress?.Report("Checking for Home Server package…");
             var manifest = await GetFeedManifestAsync(cancellationToken)
@@ -95,7 +97,31 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
             progress?.Report("Installing files…");
             EnsureDataLayout();
-            ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
+            try
+            {
+                ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
+            }
+            catch (Exception ex) when (OperatingSystem.IsWindows()
+                && IsAccessFailure(ex)
+                && IsProgramDataRoot())
+            {
+                AppendInstallLog("ProgramData replace failed, requesting administrator to reset leftover service", ex);
+                progress?.Report("Administrator permission needed to replace leftover Home Server…");
+                if (await TryElevatedResetLeftoverWindowsInstallAsync(cancellationToken))
+                {
+                    HomeserverPaths.ResetWindowsRootCache();
+                    EnsureDataLayout();
+                    ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
+                }
+                else
+                {
+                    AppendInstallLog("Elevation denied or leftover reset failed; installing under this user folder (not a second Windows service).");
+                    HomeserverPaths.ForceUserLocalRoot();
+                    progress?.Report("Installing files (this user folder)…");
+                    EnsureDataLayout();
+                    ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
+                }
+            }
             EnsureHostExecutable();
             WriteHomeserverAppsettings(HomeserverPaths.DefaultPort);
             await EnsureLanFirewallAsync(cancellationToken);
@@ -529,11 +555,88 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         return zipPath;
     }
 
+    private async Task PrepareWindowsInstallRootAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        HomeserverPaths.ResetWindowsRootCache();
+        var programApp = Path.Combine(HomeserverPaths.WindowsProgramDataRoot, "app");
+        if (Directory.Exists(programApp) && !CanReplaceAppDirectory(programApp))
+        {
+            progress?.Report("Administrator permission needed to replace leftover Home Server…");
+            AppendInstallLog("ProgramData app is locked or not deletable; requesting elevation to reset leftover service.");
+            if (await TryElevatedResetLeftoverWindowsInstallAsync(ct))
+            {
+                HomeserverPaths.ResetWindowsRootCache();
+                AppendInstallLog("Leftover ProgramData Home Server removed with administrator permission.");
+            }
+            else
+            {
+                HomeserverPaths.ForceUserLocalRoot();
+                AppendInstallLog("Elevation denied; will use this user's folder if ProgramData stays blocked.");
+            }
+        }
+
+        _ = HomeserverPaths.RootDirectory;
+    }
+
+    private async Task<bool> TryElevatedResetLeftoverWindowsInstallAsync(CancellationToken ct)
+    {
+#if WINDOWS
+        var root = HomeserverPaths.WindowsProgramDataRoot;
+        var script = $"""
+            sc.exe stop {HomeserverPaths.ServiceName}
+            sc.exe delete {HomeserverPaths.ServiceName}
+            takeown /f "{root}" /r /d y
+            icacls "{root}" /grant *S-1-5-32-544:F /t /c
+            rmdir /s /q "{root}"
+            """;
+        var ok = await RunElevatedCmdScriptAsync(script, ct);
+        AppendInstallLog(ok
+            ? "Elevated leftover Home Server reset finished."
+            : "Elevated leftover Home Server reset did not complete (UAC cancelled or command failed).");
+        return ok && !Directory.Exists(Path.Combine(root, "app"));
+#else
+        await Task.CompletedTask;
+        return false;
+#endif
+    }
+
+    private static bool IsProgramDataRoot() =>
+        string.Equals(
+            Path.GetFullPath(HomeserverPaths.RootDirectory).TrimEnd('\\', '/'),
+            Path.GetFullPath(HomeserverPaths.WindowsProgramDataRoot).TrimEnd('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAccessFailure(Exception ex) =>
+        ex is UnauthorizedAccessException or IOException;
+
+    private static bool CanReplaceAppDirectory(string appDir)
+    {
+        try
+        {
+            NormalizeDirectoryAttributes(appDir);
+            var probe = Path.Combine(appDir, "App.Client.dll");
+            if (!File.Exists(probe))
+                probe = Path.Combine(appDir, OperatingSystem.IsWindows() ? "App.exe" : "App");
+            if (!File.Exists(probe))
+                return true;
+            File.SetAttributes(probe, FileAttributes.Normal);
+            using var fs = new FileStream(
+                probe, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static void ExtractPackage(string zipPath, string targetDir)
     {
         var staging = targetDir + ".staging";
-        if (Directory.Exists(staging))
-            Directory.Delete(staging, recursive: true);
+        DeleteDirectoryRobust(staging);
         Directory.CreateDirectory(staging);
 
         ZipFile.ExtractToDirectory(zipPath, staging, overwriteFiles: true);
@@ -543,28 +646,26 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         {
             var inner = entries[0];
             var unwrap = staging + ".unwrap";
-            if (Directory.Exists(unwrap))
-                Directory.Delete(unwrap, recursive: true);
+            DeleteDirectoryRobust(unwrap);
             Directory.Move(inner, unwrap);
-            Directory.Delete(staging, recursive: true);
+            DeleteDirectoryRobust(staging);
             staging = unwrap;
         }
 
         if (Directory.Exists(targetDir))
         {
             var backup = targetDir + ".old";
-            if (Directory.Exists(backup))
-                Directory.Delete(backup, recursive: true);
+            DeleteDirectoryRobust(backup);
             Directory.Move(targetDir, backup);
             try
             {
                 Directory.Move(staging, targetDir);
-                try { Directory.Delete(backup, recursive: true); } catch { /* best effort */ }
+                try { DeleteDirectoryRobust(backup); } catch { /* leftover .old is ok */ }
             }
             catch
             {
                 if (Directory.Exists(targetDir))
-                    Directory.Delete(targetDir, recursive: true);
+                    DeleteDirectoryRobust(targetDir);
                 Directory.Move(backup, targetDir);
                 throw;
             }
@@ -947,13 +1048,17 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
     private static void KillHostProcesses()
     {
+        var appRoots = HomeserverPaths.AllRootDirectories
+            .Select(r => Path.Combine(r, "app") + Path.DirectorySeparatorChar)
+            .ToArray();
+
         foreach (var p in Process.GetProcessesByName("App"))
         {
             try
             {
                 var path = p.MainModule?.FileName;
                 if (path is not null &&
-                    path.StartsWith(HomeserverPaths.AppDirectory, StringComparison.OrdinalIgnoreCase))
+                    appRoots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
                 {
                     p.Kill(entireProcessTree: true);
                     p.WaitForExit(5000);
@@ -1051,6 +1156,44 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
     // ── elevation helpers ────────────────────────────────────────────────
 
 #if WINDOWS
+    private async Task<bool> RunElevatedCmdScriptAsync(string scriptBody, CancellationToken ct)
+    {
+        var marker = Path.Combine(Path.GetTempPath(), $"wizionic-elev-{Guid.NewGuid():N}.exit");
+        TryDelete(marker);
+        var bat = Path.Combine(Path.GetTempPath(), $"wizionic-elev-{Guid.NewGuid():N}.cmd");
+        var batBody = $"""
+            @echo off
+            {scriptBody}
+            echo %ERRORLEVEL%> "{marker}"
+            """;
+        await File.WriteAllTextAsync(bat, batBody, ct);
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = bat,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null)
+                return false;
+            await proc.WaitForExitAsync(ct);
+            return File.Exists(marker);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+        finally
+        {
+            TryDelete(bat);
+            TryDelete(marker);
+        }
+    }
+
     private static async Task<bool> RunElevatedWindowsAsync(
         string fileName,
         string arguments,
@@ -1427,6 +1570,14 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         try { await Task.Delay(400, ct); }
         catch { /* ignore */ }
 
+        KillHostProcesses();
+        foreach (var root in HomeserverPaths.AllRootDirectories)
+        {
+            TryDeleteDirectory(Path.Combine(root, "app"));
+            TryDeleteDirectory(Path.Combine(root, "app.old"));
+            TryDeleteDirectory(Path.Combine(root, "app.staging"));
+        }
+
         TryDelete(HomeserverPaths.DatabasePath);
         TryDeleteDirectory(HomeserverPaths.DataDirectory);
         TryDelete(HomeserverPaths.StateFilePath);
@@ -1446,12 +1597,57 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
     {
         try
         {
-            if (Directory.Exists(path))
-                Directory.Delete(path, recursive: true);
+            DeleteDirectoryRobust(path);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Homeserver] Could not fully delete {Path}", path);
+        }
+    }
+
+    private static void DeleteDirectoryRobust(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+
+        Exception? last = null;
+        for (var i = 0; i < 6; i++)
+        {
+            try
+            {
+                NormalizeDirectoryAttributes(path);
+                Directory.Delete(path, recursive: true);
+                if (!Directory.Exists(path))
+                    return;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+                Thread.Sleep(200 * (i + 1));
+            }
+        }
+
+        NormalizeDirectoryAttributes(path);
+        if (last is not null)
+            throw last;
+        Directory.Delete(path, recursive: true);
+    }
+
+    private static void NormalizeDirectoryAttributes(string path)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(path);
+            dir.Attributes = FileAttributes.Normal;
+            foreach (var info in dir.EnumerateFileSystemInfos("*", SearchOption.AllDirectories))
+            {
+                try { info.Attributes = FileAttributes.Normal; }
+                catch { /* skip locked entries */ }
+            }
+        }
+        catch
+        {
+            // ignore
         }
     }
 
