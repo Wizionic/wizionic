@@ -1,4 +1,5 @@
 using App.Contracts;
+using App.Core.Auth;
 using App.Core.Chat;
 using App.Core.Cloud;
 using App.Core.Storage;
@@ -16,12 +17,14 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
 {
     private readonly IKeyStore _keyStore;
     private readonly HttpClient _proxyHttp;
+    private readonly IAuthService _auth;
     private List<ProxiedProviderContracts.ProxiedProviderDto> _proxiedProviders = new();
 
-    public ChatModelCatalogService(IKeyStore keyStore, HttpClient proxyHttp)
+    public ChatModelCatalogService(IKeyStore keyStore, HttpClient proxyHttp, IAuthService auth)
     {
         _keyStore = keyStore;
         _proxyHttp = proxyHttp;
+        _auth = auth;
     }
 
     public IReadOnlyList<ProxiedProviderContracts.ProxiedProviderDto> ProxiedProviders => _proxiedProviders;
@@ -87,6 +90,12 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
     {
         try
         {
+            if (IsLocalHomeServer(_auth.ServerBaseUrl))
+            {
+                _proxiedProviders = new List<ProxiedProviderContracts.ProxiedProviderDto>();
+                return;
+            }
+
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(8));
 
@@ -262,5 +271,14 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
         }
 
         return null;
+    }
+
+    private static bool IsLocalHomeServer(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+        if (uri.Host is "localhost" or "127.0.0.1" or "::1" or "[::1]")
+            return true;
+        return uri.Scheme == Uri.UriSchemeHttp && uri.Port == 5150;
     }
 }

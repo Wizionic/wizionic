@@ -84,7 +84,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             }
 
             KillHostProcesses();
-            await PrepareWindowsInstallRootAsync(progress, cancellationToken);
+            HomeserverPaths.ResetWindowsRootCache();
             AppendInstallLog($"Install start root={HomeserverPaths.RootDirectory}");
             progress?.Report("Checking for Home Server package…");
             var manifest = await GetFeedManifestAsync(cancellationToken)
@@ -105,30 +105,20 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
                 && IsAccessFailure(ex)
                 && IsProgramDataRoot())
             {
-                AppendInstallLog("ProgramData replace failed, requesting administrator to reset leftover service", ex);
-                progress?.Report("Administrator permission needed to replace leftover Home Server…");
-                if (await TryElevatedResetLeftoverWindowsInstallAsync(cancellationToken))
-                {
-                    HomeserverPaths.ResetWindowsRootCache();
-                    EnsureDataLayout();
-                    ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
-                }
-                else
-                {
-                    AppendInstallLog("Elevation denied or leftover reset failed; installing under this user folder (not a second Windows service).");
-                    HomeserverPaths.ForceUserLocalRoot();
-                    progress?.Report("Installing files (this user folder)…");
-                    EnsureDataLayout();
-                    ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
-                }
+                AppendInstallLog("ProgramData replace failed without elevation; extracting to this user folder first.", ex);
+                HomeserverPaths.ForceUserLocalRoot();
+                progress?.Report("Installing files (this user folder)…");
+                EnsureDataLayout();
+                ExtractPackage(zipPath, HomeserverPaths.AppDirectory);
             }
             EnsureHostExecutable();
             WriteHomeserverAppsettings(HomeserverPaths.DefaultPort);
-            await EnsureLanFirewallAsync(cancellationToken);
             TryDelete(zipPath);
 
-            progress?.Report("Starting Home Server…");
+            progress?.Report("Starting Home Server (one permission prompt)…");
             var mode = await StartAsServiceOrUserSessionAsync(cancellationToken);
+            if (mode == HomeserverInstallMode.UserSession)
+                await EnsureLanFirewallAsync(cancellationToken);
 
             var state = HomeserverState.Load();
             state.InstallMode = mode;
@@ -555,54 +545,6 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
         return zipPath;
     }
 
-    private async Task PrepareWindowsInstallRootAsync(IProgress<string>? progress, CancellationToken ct)
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        HomeserverPaths.ResetWindowsRootCache();
-        var programApp = Path.Combine(HomeserverPaths.WindowsProgramDataRoot, "app");
-        if (Directory.Exists(programApp) && !CanReplaceAppDirectory(programApp))
-        {
-            progress?.Report("Administrator permission needed to replace leftover Home Server…");
-            AppendInstallLog("ProgramData app is locked or not deletable; requesting elevation to reset leftover service.");
-            if (await TryElevatedResetLeftoverWindowsInstallAsync(ct))
-            {
-                HomeserverPaths.ResetWindowsRootCache();
-                AppendInstallLog("Leftover ProgramData Home Server removed with administrator permission.");
-            }
-            else
-            {
-                HomeserverPaths.ForceUserLocalRoot();
-                AppendInstallLog("Elevation denied; will use this user's folder if ProgramData stays blocked.");
-            }
-        }
-
-        _ = HomeserverPaths.RootDirectory;
-    }
-
-    private async Task<bool> TryElevatedResetLeftoverWindowsInstallAsync(CancellationToken ct)
-    {
-#if WINDOWS
-        var root = HomeserverPaths.WindowsProgramDataRoot;
-        var script = $"""
-            sc.exe stop {HomeserverPaths.ServiceName}
-            sc.exe delete {HomeserverPaths.ServiceName}
-            takeown /f "{root}" /r /d y
-            icacls "{root}" /grant *S-1-5-32-544:F /t /c
-            rmdir /s /q "{root}"
-            """;
-        var ok = await RunElevatedCmdScriptAsync(script, ct);
-        AppendInstallLog(ok
-            ? "Elevated leftover Home Server reset finished."
-            : "Elevated leftover Home Server reset did not complete (UAC cancelled or command failed).");
-        return ok && !Directory.Exists(Path.Combine(root, "app"));
-#else
-        await Task.CompletedTask;
-        return false;
-#endif
-    }
-
     private static bool IsProgramDataRoot() =>
         string.Equals(
             Path.GetFullPath(HomeserverPaths.RootDirectory).TrimEnd('\\', '/'),
@@ -611,27 +553,6 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
 
     private static bool IsAccessFailure(Exception ex) =>
         ex is UnauthorizedAccessException or IOException;
-
-    private static bool CanReplaceAppDirectory(string appDir)
-    {
-        try
-        {
-            NormalizeDirectoryAttributes(appDir);
-            var probe = Path.Combine(appDir, "App.Client.dll");
-            if (!File.Exists(probe))
-                probe = Path.Combine(appDir, OperatingSystem.IsWindows() ? "App.exe" : "App");
-            if (!File.Exists(probe))
-                return true;
-            File.SetAttributes(probe, FileAttributes.Normal);
-            using var fs = new FileStream(
-                probe, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 
     private static void ExtractPackage(string zipPath, string targetDir)
     {
@@ -728,6 +649,9 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
               "ConnectionStrings": {
                 "DefaultConnection": "Data Source={{dbPath}}"
               },
+              "AiProviders": {
+                "Proxied": []
+              },
               "Logging": {
                 "LogLevel": {
                   "Default": "Information",
@@ -784,42 +708,69 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
     {
         try
         {
-            var binPath = $"\"{HomeserverPaths.HostExecutablePath}\"";
-            var createArgs =
-                $"create {HomeserverPaths.ServiceName} binPath= {binPath} start= auto " +
-                $"DisplayName= \"{HomeserverPaths.ServiceDisplayName}\"";
-
-            if (!await RunElevatedWindowsAsync("sc.exe", createArgs, ct))
+            var destRoot = HomeserverPaths.WindowsProgramDataRoot;
+            var srcRoot = HomeserverPaths.RootDirectory;
+            var destExe = Path.Combine(destRoot, "app", "App.exe");
+            var copyFiles = !PathsEqual(srcRoot, destRoot);
+            var script = BuildWindowsServiceInstallScript(srcRoot, destRoot, destExe, copyFiles);
+            AppendInstallLog($"One-shot elevated service install copy={copyFiles} src={srcRoot} dest={destRoot}");
+            var ok = await RunElevatedCmdScriptAsync(script, ct);
+            if (!ok)
             {
-                // Service may already exist
-            }
-            else
-            {
-                await RunElevatedWindowsAsync("sc.exe",
-                    $"description {HomeserverPaths.ServiceName} \"Wizionic local login server and website\"",
-                    ct);
+                AppendInstallLog("Elevated Home Server service install was cancelled or failed.");
+                return false;
             }
 
-            await RunElevatedWindowsAsync("sc.exe",
-                $"config {HomeserverPaths.ServiceName} binPath= {binPath} start= auto",
-                ct);
-
-            await EnsureWindowsServiceListenEnvAsync(HomeserverPaths.DefaultPort, ct);
-
-            await RunElevatedWindowsAsync("sc.exe", $"start {HomeserverPaths.ServiceName}", ct, acceptAnyExitCode: true);
+            if (copyFiles && File.Exists(destExe))
+                HomeserverPaths.ResetWindowsRootCache();
 
             await Task.Delay(1500, ct);
             using var sc = new ServiceController(HomeserverPaths.ServiceName);
             sc.Refresh();
-            return sc.Status is ServiceControllerStatus.Running
-                or ServiceControllerStatus.StartPending;
+            var running = sc.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
+            AppendInstallLog($"Service status after one-shot install: {sc.Status}");
+            return running;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Homeserver] Windows service path failed");
+            AppendInstallLog("Windows service path failed", ex);
             return false;
         }
     }
+
+    private static string BuildWindowsServiceInstallScript(
+        string srcRoot, string destRoot, string destExe, bool copyFiles)
+    {
+        var binPath = "\"" + destExe + "\"";
+        var copyBlock = copyFiles
+            ? $"""
+                takeown /f "{destRoot}" /r /d y
+                icacls "{destRoot}" /grant *S-1-5-32-544:F /t /c
+                rmdir /s /q "{destRoot}"
+                mkdir "{destRoot}"
+                robocopy "{srcRoot}" "{destRoot}" /E /NFL /NDL /NJH /NJS /nc /ns /np
+                """
+            : "";
+        return $"""
+            sc.exe stop {HomeserverPaths.ServiceName}
+            sc.exe delete {HomeserverPaths.ServiceName}
+            {copyBlock}
+            sc.exe create {HomeserverPaths.ServiceName} binPath= {binPath} start= auto DisplayName= "{HomeserverPaths.ServiceDisplayName}"
+            sc.exe description {HomeserverPaths.ServiceName} "Wizionic local login server and website"
+            sc.exe config {HomeserverPaths.ServiceName} binPath= {binPath} start= auto
+            reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\{HomeserverPaths.ServiceName}" /v Environment /t REG_MULTI_SZ /d "ASPNETCORE_URLS=http://0.0.0.0:{HomeserverPaths.DefaultPort}\0APP_HOMESERVER=1" /f
+            netsh advfirewall firewall delete rule name="{HomeserverPaths.FirewallRuleName}"
+            netsh advfirewall firewall add rule name="{HomeserverPaths.FirewallRuleName}" dir=in action=allow protocol=TCP localport={HomeserverPaths.DefaultPort} profile=any enable=yes
+            sc.exe start {HomeserverPaths.ServiceName}
+            """;
+    }
+
+    private static bool PathsEqual(string a, string b) =>
+        string.Equals(
+            Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase);
 
     private async Task DeleteWindowsServiceAsync(CancellationToken ct)
     {
