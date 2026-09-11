@@ -46,6 +46,15 @@ public static class HomeserverPaths
 
     private static string? _windowsRoot;
 
+    public static void ResetWindowsRootCache() => _windowsRoot = null;
+
+    public static void ForceUserLocalRoot()
+    {
+        if (OperatingSystem.IsLinux())
+            return;
+        _windowsRoot = WindowsUserLocalRoot;
+    }
+
     public static string LinuxRootDirectory
     {
         get
