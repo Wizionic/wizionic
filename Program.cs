@@ -70,7 +70,9 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 EnsureSqliteDirectory(connectionString);
 
 // Homeserver / HTTP-only: cookie Secure=Always breaks login on plain http://localhost.
-var homeserverHttpCookies = builder.Configuration.GetValue("Homeserver:AllowHttpCookies", false)
+// Installed Home Server is always HTTP on :5150 — never require Secure / __Host- cookies.
+var homeserverHttpCookies = isHomeserverHost
+    || builder.Configuration.GetValue("Homeserver:AllowHttpCookies", false)
     || homeserverConfigLoaded;
 builder.Services.AddDbContext<AppDbContext>(options =>
 {

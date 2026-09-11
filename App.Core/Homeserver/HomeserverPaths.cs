@@ -99,12 +99,25 @@ public static class HomeserverPaths
 
     private static string ResolveWindowsRoot()
     {
-        if (IsWritableDirectory(WindowsProgramDataRoot))
-            return WindowsProgramDataRoot;
+        var programData = WindowsProgramDataRoot;
+        // Prefer an existing machine install. Do not open App.exe exclusively: the Windows
+        // Service is that file, and FileShare.None would look like "not writable" and
+        // skip ProgramData (Secure cookies on http://localhost, login appears to fail).
+        if (LooksLikeInstall(programData))
+            return programData;
+
+        if (CanCreateDirectory(programData))
+            return programData;
+
         return WindowsUserLocalRoot;
     }
 
-    private static bool IsWritableDirectory(string dir)
+    private static bool LooksLikeInstall(string dir) =>
+        File.Exists(Path.Combine(dir, "appsettings.Homeserver.json"))
+        || File.Exists(Path.Combine(dir, "state.json"))
+        || File.Exists(Path.Combine(dir, "app", "App.exe"));
+
+    private static bool CanCreateDirectory(string dir)
     {
         try
         {
@@ -112,20 +125,6 @@ public static class HomeserverPaths
             var probe = Path.Combine(dir, $".wizionic-write-{Guid.NewGuid():N}");
             File.WriteAllText(probe, "ok");
             File.Delete(probe);
-
-            // Folder Write is not enough when another Windows user owns state/binaries.
-            var state = Path.Combine(dir, "state.json");
-            if (File.Exists(state))
-            {
-                using var fs = File.Open(state, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-            }
-
-            var exe = Path.Combine(dir, "app", OperatingSystem.IsWindows() ? "App.exe" : "App");
-            if (File.Exists(exe))
-            {
-                using var fs = File.Open(exe, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            }
-
             return true;
         }
         catch
