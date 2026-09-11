@@ -166,14 +166,27 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         await using (var file = File.Create(msiPath))
             await remote.CopyToAsync(file, cancellationToken);
 
-        progress?.Report("Installing Lemonade (may prompt for permission)…");
-        var silentOk = await RunProcessAsync(
-            "msiexec.exe",
-            $"/i \"{msiPath}\" /qn /norestart",
-            elevate: true,
-            cancellationToken,
-            timeoutMs: 15 * 60 * 1000);
+        progress?.Report("Installing Lemonade (one permission prompt)…");
+        string? vcPath = null;
+        var needVc = !HasVcRuntime140X64();
+        if (needVc)
+        {
+            vcPath = Path.Combine(Path.GetTempPath(), $"vc_redist.x64-{Guid.NewGuid():N}.exe");
+            await using (var remote = await _http.GetStreamAsync(VcRedistX64Url, cancellationToken))
+            await using (var file = File.Create(vcPath))
+                await remote.CopyToAsync(file, cancellationToken);
+        }
 
+        var script = $"""
+            msiexec.exe /i "{msiPath}" /qn /norestart
+            """;
+        if (needVc && vcPath is not null)
+            script += $"""
+
+                "{vcPath}" /install /quiet /norestart
+                """;
+
+        var silentOk = await RunElevatedCmdAsync(script, cancellationToken, timeoutMs: 20 * 60 * 1000);
         if (!silentOk)
         {
             progress?.Report("Silent install failed or was cancelled — opening interactive installer…");
@@ -187,6 +200,8 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         }
 
         try { File.Delete(msiPath); } catch { /* ignore */ }
+        if (vcPath is not null)
+            try { File.Delete(vcPath); } catch { /* ignore */ }
 
         await Task.Delay(2000, cancellationToken);
         if (DetectInstallation() is LemonadeDetection.NotFound)
@@ -197,7 +212,8 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         }
 
         await TryEnsureServerRunningAsync(progress, cancellationToken);
-        await EnsureVcRedistWindowsAsync(progress, cancellationToken);
+        if (!HasVcRuntime140X64())
+            await EnsureVcRedistWindowsAsync(progress, cancellationToken);
         return LemonadeInstallResult.Ok("Lemonade installed.");
     }
 
@@ -725,6 +741,53 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
     {
         var (ok, _) = await RunProcessWithOutputAsync(fileName, arguments, ct, timeoutMs, elevate);
         return ok;
+    }
+
+    private async Task<bool> RunElevatedCmdAsync(string scriptBody, CancellationToken ct, int timeoutMs)
+    {
+        if (!OperatingSystem.IsWindows())
+            return false;
+
+        var marker = Path.Combine(Path.GetTempPath(), $"wizionic-elev-{Guid.NewGuid():N}.exit");
+        var bat = Path.Combine(Path.GetTempPath(), $"wizionic-elev-{Guid.NewGuid():N}.cmd");
+        var batBody = $"""
+            @echo off
+            {scriptBody}
+            echo %ERRORLEVEL%> "{marker}"
+            """;
+        await File.WriteAllTextAsync(bat, batBody, ct);
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = bat,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null)
+                return false;
+            using var reg = ct.Register(() => { try { proc.Kill(true); } catch { } });
+            var done = await Task.Run(() => proc.WaitForExit(timeoutMs > 0 ? timeoutMs : 600_000), ct);
+            if (!done)
+            {
+                try { proc.Kill(true); } catch { }
+                return false;
+            }
+
+            return File.Exists(marker);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+        finally
+        {
+            try { File.Delete(bat); } catch { /* ignore */ }
+            try { File.Delete(marker); } catch { /* ignore */ }
+        }
     }
 
     /// <summary>

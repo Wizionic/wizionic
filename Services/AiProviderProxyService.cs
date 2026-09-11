@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using App.Contracts;
+using App.Core.Homeserver;
 using Microsoft.Extensions.Options;
 
 namespace App.Services;
@@ -35,6 +36,8 @@ public class AiProviderProxyService
         CancellationToken ct = default)
     {
         var result = new List<ProxiedProviderContracts.ProxiedProviderDto>();
+        if (IsHomeserverHost())
+            return result;
 
         foreach (var provider in _options.Proxied)
         {
@@ -73,6 +76,9 @@ public class AiProviderProxyService
             throw new ArgumentException("Model is required.");
         if (request.Messages is not { Count: > 0 })
             throw new ArgumentException("At least one message is required.");
+
+        if (IsHomeserverHost())
+            throw new InvalidOperationException("Hosted Free Chat is not available on a local Home Server.");
 
         var provider = _options.Proxied.FirstOrDefault(p =>
             string.Equals(p.Id, request.ProviderId, StringComparison.OrdinalIgnoreCase));
@@ -625,6 +631,29 @@ public class AiProviderProxyService
         }
 
         return false;
+    }
+
+    private static bool IsHomeserverHost()
+    {
+        var flag = Environment.GetEnvironmentVariable("APP_HOMESERVER");
+        if (string.Equals(flag, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(flag, "yes", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
+        {
+            var baseDir = Path.GetFullPath(AppContext.BaseDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var appDir = Path.GetFullPath(HomeserverPaths.AppDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return baseDir.Equals(appDir, StringComparison.OrdinalIgnoreCase)
+                || baseDir.StartsWith(appDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool IsOllama(ProxiedProviderOptions provider) =>
