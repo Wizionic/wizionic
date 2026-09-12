@@ -115,7 +115,7 @@ public sealed class HomeserverInstallService : IHomeserverInstallService
             WriteHomeserverAppsettings(HomeserverPaths.DefaultPort);
             TryDelete(zipPath);
 
-            progress?.Report("Starting Home Server (one permission prompt)…");
+            progress?.Report("Starting Home Server …");
             var mode = await StartAsServiceOrUserSessionAsync(cancellationToken);
             if (mode == HomeserverInstallMode.UserSession)
                 await EnsureLanFirewallAsync(cancellationToken);
