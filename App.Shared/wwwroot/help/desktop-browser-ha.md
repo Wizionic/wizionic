@@ -53,7 +53,7 @@ In Chat, address the assistant name from Settings → Voice, then the command: `
 
 Voice mode (soundwave on the chat box) listens for that name, captures until you pause, then sends the turn. By default it waits for the wake word again so it does not transcribe music or background noise.
 
-Chat can list and control lights, media players, climate, covers, scenes, and scripts when Home Assistant is connected.
+Chat can list and control lights, media players, climate, covers, scenes, and scripts when Home Assistant is connected. The assistant is instructed to ask or refuse high-risk actions (locks, garage doors, alarms, unnamed scripts).
 
 ## Setup wizard {#setup-wizard}
 

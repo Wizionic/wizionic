@@ -77,7 +77,9 @@ public sealed class ContextualRequestRouter : IRequestRouter
             var sticky = useSessionStickiness && session.IsActive("HomeAssistant", SessionTtl);
             if (wake || sticky)
             {
-                var modules = new List<string> { "HomeAssistant", "Native" };
+                var modules = new List<string> { "HomeAssistant" };
+                if (MessageSuggestsUtilityTools(message) && Has("Native"))
+                    modules.Add("Native");
                 if (MessageSuggestsGalleryTools(message) && Has("Gallery"))
                     modules.Add("Gallery");
                 if (MessageSuggestsCalendarTools(message) && Has("Calendar"))
@@ -95,19 +97,21 @@ public sealed class ContextualRequestRouter : IRequestRouter
                         ? "Home Assistant wake word"
                         : "Home Assistant active session (rules stickiness)",
                     targetModule: "HomeAssistant",
-                    includeMcp: true,
+                    includeMcp: MessageSuggestsConnectorTools(message),
                     source: "Rules");
             }
 
             // Device-control language (play music on AVR, kitchen light, …) without repeating the wake word.
             if (MessageSuggestsHomeAssistant(message))
             {
-                var modules = new List<string> { "HomeAssistant", "Native" };
+                var modules = new List<string> { "HomeAssistant" };
+                if (MessageSuggestsUtilityTools(message) && Has("Native"))
+                    modules.Add("Native");
                 return RequestRoute.WithModules(
                     modules,
                     "Home Assistant device intent",
                     targetModule: "HomeAssistant",
-                    includeMcp: true,
+                    includeMcp: MessageSuggestsConnectorTools(message),
                     source: "Rules");
             }
         }
@@ -315,6 +319,22 @@ public sealed class ContextualRequestRouter : IRequestRouter
             return true;
 
         return false;
+    }
+
+    /// <summary>
+    /// MCP / OAuth connectors (Gmail, GitHub, …). Do not attach on a pure smart-home turn.
+    /// </summary>
+    public static bool MessageSuggestsConnectorTools(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+        return m.Contains("github") || m.Contains("gmail") || m.Contains("inbox")
+            || m.Contains("notion") || m.Contains("stripe") || m.Contains("slack")
+            || m.Contains("jira") || m.Contains("linear") || m.Contains("oauth")
+            || m.Contains("pull request") || m.Contains(" repo") || m.StartsWith("repo ")
+            || m.Contains("my issues") || m.Contains("email ") || m.Contains(" e-mail");
     }
 
     /// <summary>

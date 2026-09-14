@@ -10,7 +10,27 @@ namespace App.Core.Lemonade;
 /// </summary>
 public static class LemonadeModelCatalogResolver
 {
-    private const int DefaultContextSize = 8192;
+    /// <summary>
+    /// Floor for chat loads. Lemonade auto-load is often 4096, which cannot hold
+    /// Home Assistant tool schemas. Advertised <c>max_context_window</c> is used when larger.
+    /// </summary>
+    public const int MinChatContextSize = 16_384;
+
+    private const int DefaultContextSize = MinChatContextSize;
+
+    /// <summary>
+    /// Context to send on <c>/v1/load</c>: advertised/saved size, never the 4096 auto-load default.
+    /// Explicit user saves below the floor are kept.
+    /// </summary>
+    public static int ResolveLoadCtxSize(LemonadeModelSettings? settings)
+    {
+        var ctx = settings?.ContextSize ?? 0;
+        if (ctx <= 0)
+            return MinChatContextSize;
+        if (ctx < MinChatContextSize && settings?.UserOverrideContext != true)
+            return MinChatContextSize;
+        return ctx;
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -246,6 +266,126 @@ public static class LemonadeModelCatalogResolver
             list.Any(n => n.Equals(current, StringComparison.OrdinalIgnoreCase)))
             return current;
         return list[0];
+    }
+
+    /// <summary>
+    /// Persist <c>ctx_size</c> into Lemonade's per-model recipe options (merged, no load).
+    /// Returns null on success, otherwise a short error.
+    /// </summary>
+    /// <summary>
+    /// Write each chat model's context size into Lemonade recipe options so auto-load
+    /// is not stuck at 4096. Failures are ignored (server down / old Lemonade).
+    /// </summary>
+    public static async Task PersistChatCtxSizesAsync(
+        HttpClient http,
+        string baseUrl,
+        string? apiKey,
+        IEnumerable<LemonadeModelSettings> models,
+        CancellationToken ct = default)
+    {
+        foreach (var m in models)
+        {
+            if (m is not { IsChatEligible: true, ContextSize: > 0 })
+                continue;
+            var ctx = Math.Max(m.ContextSize, MinChatContextSize);
+            try
+            {
+                await SaveCtxSizeOptionAsync(http, baseUrl, apiKey, m.Name, ctx, ct);
+            }
+            catch
+            {
+                // Refresh must still succeed if options POST is missing on older Lemonade.
+            }
+        }
+    }
+
+    public static async Task<string?> SaveCtxSizeOptionAsync(
+        HttpClient http,
+        string baseUrl,
+        string? apiKey,
+        string modelName,
+        int ctxSize,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(modelName) || ctxSize <= 0)
+            return null;
+
+        var origin = NormalizeBaseUrl(baseUrl);
+        var url = origin + "/v1/models/" + Uri.EscapeDataString(modelName.Trim()) + "/options";
+        using var req = CreateRequest(HttpMethod.Post, url, apiKey);
+        req.Content = JsonContent.Create(new Dictionary<string, object?> { ["ctx_size"] = ctxSize });
+        using var resp = await http.SendAsync(req, ct);
+        var text = await resp.Content.ReadAsStringAsync(ct);
+        return resp.IsSuccessStatusCode ? null : LemonadeHttpError(resp, text);
+    }
+
+    /// <summary>
+    /// <c>POST /v1/load</c>. Pass <paramref name="ctxSize"/> so llama.cpp is not left at the
+    /// 4096 auto-load default. Chat completions do not apply Wizionic's context field.
+    /// Returns null on success.
+    /// </summary>
+    public static async Task<string?> LoadModelAsync(
+        HttpClient http,
+        string baseUrl,
+        string? apiKey,
+        string modelName,
+        int? ctxSize,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+            return "Model name is required.";
+
+        var origin = NormalizeBaseUrl(baseUrl);
+        var body = new Dictionary<string, object?> { ["model_name"] = modelName.Trim() };
+        if (ctxSize is > 0)
+            body["ctx_size"] = ctxSize.Value;
+
+        using var req = CreateRequest(HttpMethod.Post, origin + "/v1/load", apiKey);
+        req.Content = JsonContent.Create(body);
+        var started = DateTime.UtcNow;
+        using var resp = await http.SendAsync(req, ct);
+        var text = await resp.Content.ReadAsStringAsync(ct);
+        App.Core.Chat.ChatHttpInspector.Record(
+            "load",
+            "POST",
+            origin + "/v1/load",
+            body,
+            text,
+            (int)resp.StatusCode,
+            (int)(DateTime.UtcNow - started).TotalMilliseconds,
+            model: modelName.Trim(),
+            ctxSize: ctxSize,
+            error: resp.IsSuccessStatusCode ? null : LemonadeHttpError(resp, text));
+        if (!resp.IsSuccessStatusCode)
+            return LemonadeHttpError(resp, text);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text);
+            if (doc.RootElement.TryGetProperty("status", out var status)
+                && status.ValueKind == JsonValueKind.String
+                && status.GetString()?.Equals("error", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : text;
+                return string.IsNullOrWhiteSpace(msg) ? "Lemonade load failed." : msg;
+            }
+        }
+        catch (JsonException)
+        {
+            // Non-JSON success body is still success.
+        }
+
+        return null;
+    }
+
+    private static string LemonadeHttpError(HttpResponseMessage resp, string body)
+    {
+        var snippet = (body ?? "").Trim().Replace('\n', ' ');
+        if (snippet.Length > 240)
+            snippet = snippet[..240] + "…";
+        return string.IsNullOrWhiteSpace(snippet)
+            ? $"Lemonade HTTP {(int)resp.StatusCode}"
+            : $"Lemonade HTTP {(int)resp.StatusCode}: {snippet}";
     }
 }
 

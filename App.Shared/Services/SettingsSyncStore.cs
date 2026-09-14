@@ -319,8 +319,8 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
     private string ExportSystemPrompt()
     {
         var dto = new SystemPromptSyncDto(
-            _keys.IsSystemPromptCustomized,
-            _keys.IsSystemPromptCustomized ? _keys.GetSystemPrompt() : null);
+            _keys.HasCustomInstructions,
+            _keys.HasCustomInstructions ? _keys.GetCustomInstructions() : null);
         return JsonSerializer.Serialize(dto, JsonOpts);
     }
 
@@ -527,9 +527,15 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         if (dto == null) return;
 
         if (dto.IsCustomized)
-            await _keys.SetSystemPromptAsync(dto.Prompt ?? "", ct);
+        {
+            var migrated = KeyStoreDefaults.MigrateStoredSystemPrompt(dto.Prompt);
+            if (string.IsNullOrEmpty(migrated))
+                await _keys.ResetCustomInstructionsAsync(ct);
+            else
+                await _keys.SetCustomInstructionsAsync(migrated, ct);
+        }
         else
-            await _keys.ResetSystemPromptAsync(ct);
+            await _keys.ResetCustomInstructionsAsync(ct);
     }
 
     private async Task ApplyProfileAsync(string dataJson, CancellationToken ct)

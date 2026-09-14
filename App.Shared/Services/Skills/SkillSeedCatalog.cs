@@ -82,7 +82,7 @@ metadata:
   version: "1.0"
   tags: home-assistant,lights
   trigger-phrases: party lights, random colors, colorful lights
-allowed-tools: HomeAssistant ListEntities ListLights ControlLight CallService
+allowed-tools: HomeAssistant ListEntities ControlLight CallService
 ---
 
 # Random house lights
@@ -92,12 +92,12 @@ Turn house lights into a colorful scene: each light gets a random color at rough
 Do **not** merely toggle lights off/on. Colors and ~40% brightness are required.
 
 ## Steps
-1. Discover lights with Home Assistant tools (`ListLights` or `ListEntities` for domain light). Prefer `ListLights`.
+1. Discover lights with `ListEntities(domain='light')`.
 2. For **each** light entity found (skip only if permanently unavailable if the tool cannot target it):
    - Turn the light **on** with a **random vivid color** (vary hue across lights — e.g. different RGB or named colors).
    - Set brightness to approximately **40%** (brightness ~102 on 0–255, or brightness_pct 40).
    - Prefer `ControlLight` with color + brightness parameters; otherwise `CallService` `light.turn_on` with `rgb_color` / `hs_color` and brightness.
-3. Do **not** use Assist/`ProcessConversation` as the primary path — use ListLights + ControlLight/CallService.
+3. Do **not** use Assist/`ProcessConversation` as the primary path — use ListEntities + ControlLight/CallService.
 4. If no lights are found, say so clearly and stop.
 5. Summarize each light with the color you applied.
 

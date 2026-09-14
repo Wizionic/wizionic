@@ -102,9 +102,9 @@ public sealed class AiRequestRouter
                 text = ExtractText(response);
             }
 
-            var parsed = TryParseRoute(text, available, sourceLabel);
+            var parsed = TryParseRoute(text, available, sourceLabel, message);
             if (parsed != null)
-                return MergeHardConstraints(parsed, fallback, available, sourceLabel);
+                return MergeHardConstraints(parsed, fallback, available, sourceLabel, message);
 
             // AI empty / non-JSON: prefer rules if strong; else smart-home heuristic without wake word.
             var soft = TrySoftHomeAssistant(message, available, sourceLabel);
@@ -168,14 +168,15 @@ public sealed class AiRequestRouter
             return null;
 
         var modules = new List<string> { "HomeAssistant" };
-        if (available.Contains("Native", StringComparer.OrdinalIgnoreCase))
+        if (ContextualRequestRouter.MessageSuggestsUtilityTools(message)
+            && available.Contains("Native", StringComparer.OrdinalIgnoreCase))
             modules.Add("Native");
 
         return RequestRoute.WithModules(
             modules,
             "smart-home intent (AI fallback heuristic)",
             targetModule: "HomeAssistant",
-            includeMcp: true,
+            includeMcp: ContextualRequestRouter.MessageSuggestsConnectorTools(message),
             source: sourceLabel + "→HA-heuristic");
     }
 
@@ -186,7 +187,8 @@ public sealed class AiRequestRouter
         RequestRoute ai,
         RequestRoute rules,
         IReadOnlyList<string> available,
-        string sourceLabel)
+        string sourceLabel,
+        string message)
     {
         if (rules.TargetModule is not ("HomeAssistant" or "BrowserAgent"))
             return ai;
@@ -209,7 +211,9 @@ public sealed class AiRequestRouter
             modules.Count > 0 ? modules : rules.Modules,
             ai.Reason ?? rules.Reason ?? "AI classification",
             targetModule: target,
-            includeMcp: true,
+            includeMcp: ai.IncludeMcp
+                || rules.IncludeMcp
+                || ContextualRequestRouter.MessageSuggestsConnectorTools(message),
             source: sourceLabel + "→AI");
     }
 
@@ -232,7 +236,7 @@ public sealed class AiRequestRouter
     {
         var sb = new StringBuilder();
         sb.AppendLine("Available modules: " + string.Join(", ", available));
-        sb.AppendLine("Example HomeAssistant: {\"modules\":[\"HomeAssistant\",\"Native\"],\"pure_chat\":false,\"target_module\":\"HomeAssistant\",\"reason\":\"kitchen light\"}");
+        sb.AppendLine("Example HomeAssistant: {\"modules\":[\"HomeAssistant\"],\"pure_chat\":false,\"target_module\":\"HomeAssistant\",\"reason\":\"kitchen light\"}");
         sb.AppendLine("Example weather: {\"modules\":[\"Native\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"weather\"}");
         sb.AppendLine("Example chat: {\"modules\":[],\"pure_chat\":true,\"target_module\":null,\"reason\":\"chit-chat\"}");
         sb.AppendLine();
@@ -243,7 +247,7 @@ public sealed class AiRequestRouter
         return sb.ToString();
     }
 
-    private static RequestRoute? TryParseRoute(string? text, IReadOnlyList<string> available, string sourceLabel)
+    private static RequestRoute? TryParseRoute(string? text, IReadOnlyList<string> available, string sourceLabel, string message)
     {
         if (string.IsNullOrWhiteSpace(text))
             return null;
@@ -310,6 +314,7 @@ public sealed class AiRequestRouter
                 modules.Insert(0, target);
 
             if (modules.Count > 0
+                && ContextualRequestRouter.MessageSuggestsUtilityTools(message)
                 && available.Contains("Native", StringComparer.OrdinalIgnoreCase)
                 && !modules.Contains("Native", StringComparer.OrdinalIgnoreCase))
                 modules.Add("Native");
@@ -317,7 +322,7 @@ public sealed class AiRequestRouter
             if (pureChat || modules.Count == 0)
                 return RequestRoute.PureChat(reason ?? "AI pure chat", sourceLabel + "→AI");
 
-            var includeMcp = target != null;
+            var includeMcp = ContextualRequestRouter.MessageSuggestsConnectorTools(message);
             return RequestRoute.WithModules(
                 modules,
                 reason ?? "AI classification",

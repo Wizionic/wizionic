@@ -17,11 +17,11 @@ public sealed class NullKeyStore : IKeyStore
     public Task LoadAsync(CancellationToken ct = default) => Task.CompletedTask;
 
     public string LastSelectedModel => "";
-    public bool IsSystemPromptCustomized => false;
+    public bool HasCustomInstructions => false;
 
-    public string GetSystemPrompt() => KeyStoreDefaults.GetDefaultSystemPrompt();
-    public Task SetSystemPromptAsync(string prompt, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ResetSystemPromptAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public string GetCustomInstructions() => "";
+    public Task SetCustomInstructionsAsync(string text, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ResetCustomInstructionsAsync(CancellationToken ct = default) => Task.CompletedTask;
 
     public UserProfileSettings GetUserProfile() => new();
     public Task SetUserProfileAsync(UserProfileSettings profile, CancellationToken ct = default) => Task.CompletedTask;

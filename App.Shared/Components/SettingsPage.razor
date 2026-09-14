@@ -253,7 +253,7 @@
     <div class="settings-card">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Memories <HelpGlyph Topic="settings-memories" /></h3>
         <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 1rem;">
-            Facts Wizionic should remember across conversations. Each memory is sent with your system prompt.
+            Facts Wizionic should remember across conversations. Each memory is sent with every chat.
         </p>
 
         <div class="memory-search-wrap">
@@ -419,6 +419,30 @@
     </div>
 
     <div class="settings-card" style="margin-top: 1rem;">
+        <h3 class="help-heading" style="margin: 0 0 0.25rem;">Chat HTTP inspector</h3>
+        <p style="color: var(--color-text-muted); font-size: 0.85em; margin: 0 0 0.75rem;">
+            This session only. Shows router, model load, and chat request/response bodies (what DevTools cannot see on desktop).
+            Off by default. Nothing is written to disk or to encrypted chat history. Copy if you want a dump.
+        </p>
+        <div class="ollama-toggle-row" style="border-top: none; margin-top: 0; padding-top: 0;">
+            <div>
+                <label class="ollama-toggle-label">Log chat HTTP this session</label>
+            </div>
+            <label class="ollama-toggle">
+                <input type="checkbox" checked="@ChatHttpInspector.Enabled" @onchange="OnChatHttpInspectorToggled" />
+                <span class="ollama-toggle-slider"></span>
+            </label>
+        </div>
+        <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearChatHttpInspector">Clear</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CopyChatHttpInspector">
+                @(_httpInspectorCopied ? "Copied" : "Copy")
+            </button>
+        </div>
+        <pre class="sync-debug-log" style="margin-top: 0.5rem;">@(_httpInspectorText.Length == 0 ? "(empty — turn the log on, then send a chat)" : _httpInspectorText)</pre>
+    </div>
+
+    <div class="settings-card" style="margin-top: 1rem;">
         <h3 class="help-heading" style="margin: 0 0 0.25rem;">Model profiles <HelpGlyph Topic="settings-model-profiles" /></h3>
         <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
             <select class="form-select form-select-sm" style="max-width: 16rem;" @bind="profileEditId" @bind:after="LoadProfileDraft">
@@ -570,21 +594,32 @@
         }
     </div>
 
-    <!-- System prompt -->
-    <h3 class="help-heading" style="margin: 1.25rem 0 0.5rem;">System prompt <HelpGlyph Topic="settings-system-prompt" /></h3>
+    <!-- Locked core (read-only) + additive custom instructions -->
+    <details style="margin: 1.25rem 0 0.35rem;">
+        <summary style="cursor: pointer; color: var(--color-link, #3b82f6); font-size: 0.9em; text-decoration: underline;">View System Prompt</summary>
+        <pre style="margin: 0.5rem 0 0; padding: 0.75rem; font-size: 0.78em; line-height: 1.45; white-space: pre-wrap; overflow: auto; max-height: 22rem; background: var(--color-bg-muted, rgba(127,127,127,0.08)); border-radius: 4px;">@KeyStoreDefaults.GetDefaultSystemPrompt()</pre>
+    </details>
+
+    <h3 class="help-heading" style="margin: 0.5rem 0 0.5rem;">Custom instructions <HelpGlyph Topic="settings-system-prompt" /></h3>
     <p style="color: var(--color-text-muted); font-size: 0.85em; margin-bottom: 0.5rem;">
-        Sent as a system message at the start of each chat request. 
+        Extra preferences sent with every chat. They cannot change Wizionic’s operating rules or tool list.
+        Assistant name is under Voice; facts about you are under About you and Memories.
     </p>
 
     <textarea @bind="systemPromptDraft"
-              rows="18"
+              @bind:event="oninput"
+              rows="8"
+              maxlength="@KeyStoreDefaults.MaxCustomInstructionsChars"
               class="form-control"
               style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em; line-height: 1.45;"
-              placeholder="Enter a system prompt for the model..."></textarea>
+              placeholder="Optional. Example: Prefer short replies. Call me by my first name."></textarea>
+    <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0.35rem 0 0;">
+        @(systemPromptDraft?.Length ?? 0) / @KeyStoreDefaults.MaxCustomInstructionsChars
+    </p>
 
     <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
         <button @onclick="SavePrompt" class="btn btn-primary btn-sm">Save</button>
-        <button @onclick="ResetPrompt" class="btn btn-outline-secondary btn-sm">Reset to default</button>
+        <button @onclick="ResetPrompt" class="btn btn-outline-secondary btn-sm">Clear</button>
         <button @onclick="@(() => Nav.NavigateTo("/chat"))" class="btn btn-outline-secondary btn-sm">Back to Chat</button>
     </div>
 
@@ -904,6 +939,8 @@
     private bool profileBusy;
     private string? profileSaveMessage;
     private bool profileSaveIsError;
+    private bool _httpInspectorCopied;
+    private string _httpInspectorText = "";
 
     private string updateStatusMessage => updateCheckResult?.Status switch
     {
@@ -933,8 +970,10 @@
             DesktopShell.OnChanged += OnDesktopShellChanged;
             await DesktopShell.AcknowledgeTrayHintAsync();
         }
+        ChatHttpInspector.Changed += OnChatHttpInspectorLogChanged;
+        RefreshChatHttpInspectorText();
         await KeyStore.LoadAsync();
-        systemPromptDraft = KeyStore.GetSystemPrompt();
+        systemPromptDraft = KeyStore.GetCustomInstructions();
         profileDraft = KeyStore.GetUserProfile();
         notesSttDraft = profileDraft.NotesSttModelId ?? "";
         ReloadMemories();
@@ -1521,6 +1560,7 @@
 
     public void Dispose()
     {
+        ChatHttpInspector.Changed -= OnChatHttpInspectorLogChanged;
         Theme.OnChanged -= OnThemeChangedFromService;
         Auth.OnChanged -= OnAuthOrServerChanged;
         ServerEndpoint.OnChanged -= OnAuthOrServerChanged;
@@ -1528,6 +1568,45 @@
             NavLayout.OnChanged -= OnNavLayoutChangedFromService;
         if (DesktopShell.IsSupported)
             DesktopShell.OnChanged -= OnDesktopShellChanged;
+    }
+
+    private void OnChatHttpInspectorLogChanged()
+        => InvokeAsync(() =>
+        {
+            RefreshChatHttpInspectorText();
+            StateHasChanged();
+        });
+
+    private void RefreshChatHttpInspectorText()
+        => _httpInspectorText = ChatHttpInspector.SnapshotText();
+
+    private void OnChatHttpInspectorToggled(ChangeEventArgs e)
+    {
+        ChatHttpInspector.Enabled = IsChecked(e);
+        RefreshChatHttpInspectorText();
+    }
+
+    private void ClearChatHttpInspector()
+    {
+        ChatHttpInspector.Clear();
+        RefreshChatHttpInspectorText();
+    }
+
+    private async Task CopyChatHttpInspector()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _httpInspectorText);
+            _httpInspectorCopied = true;
+            StateHasChanged();
+            await Task.Delay(1500);
+            _httpInspectorCopied = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Clipboard may be blocked
+        }
     }
 
     private void OnAuthOrServerChanged() => InvokeAsync(StateHasChanged);
@@ -1688,13 +1767,14 @@
     {
         try
         {
-            await KeyStore.SetSystemPromptAsync( systemPromptDraft);
+            await KeyStore.SetCustomInstructionsAsync(systemPromptDraft);
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.SystemPrompt);
-            await ShowSaveFeedbackAsync("System prompt saved to your browser.", isError: false);
+            systemPromptDraft = KeyStore.GetCustomInstructions();
+            await ShowSaveFeedbackAsync("Custom instructions saved on this device.", isError: false);
         }
         catch (Exception ex)
         {
-            await ShowSaveFeedbackAsync($"Could not save system prompt: {ex.Message}", isError: true);
+            await ShowSaveFeedbackAsync($"Could not save custom instructions: {ex.Message}", isError: true);
         }
     }
 
@@ -1702,14 +1782,14 @@
     {
         try
         {
-            await KeyStore.ResetSystemPromptAsync();
+            await KeyStore.ResetCustomInstructionsAsync();
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.SystemPrompt);
-            systemPromptDraft = KeyStoreDefaults.GetDefaultSystemPrompt();
-            await ShowSaveFeedbackAsync("System prompt reset to default.", isError: false);
+            systemPromptDraft = "";
+            await ShowSaveFeedbackAsync("Custom instructions cleared.", isError: false);
         }
         catch (Exception ex)
         {
-            await ShowSaveFeedbackAsync($"Could not reset system prompt: {ex.Message}", isError: true);
+            await ShowSaveFeedbackAsync($"Could not clear custom instructions: {ex.Message}", isError: true);
         }
     }
 

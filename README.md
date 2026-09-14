@@ -65,6 +65,22 @@ Windows builds are not code-signed yet, but you may still download the installer
 
 ---
 
+## Safety
+
+As Wizionic allows the control of Physical devices through Home Assistant, much thought has been put into a safe system prompt that does **NOT** allow the 2001: A Space Odyssey scenerio below:
+>**Dave**: Open the pod bay doors, HAL.
+>
+>**HAL**: I'm sorry, Dave. I'm afraid I can't do that.
+
+
+- **You stay in control.** Stop a reply, disable a tool, turn off a workflow, disconnect Home Assistant, or close the app. The assistant is instructed not to resist shutdown, hide what it did, or copy itself.
+- **Tools are allow-listed.** Home Assistant, MCP, the embedded browser, and connectors run only after you enable them. There is no tool that edits Wizionic itself or copies model weights.
+- **Physical devices.** Home Assistant can move lights, locks, garage doors, climate, and scripts. The locked system prompt tells the model not to cause injury, fire, flood, or lock-out, and to ask or refuse when a high-risk action is ambiguous. You still decide which Home Assistant instance to connect.
+- **Do not help with harm.** The locked prompt also refuses child sexual abuse material, help planning or covering up a murder, and help planning harm to a person. That outranks the user, memories, and custom instructions.
+- **Honest limit.** A local uncensored model can ignore a prompt. Wizionic does not claim otherwise. Defense in depth is encryption, allow-listed tools, locked items, and you in the loop — see [SECURITY.md](SECURITY.md).
+
+---
+
 ## 🖥️ Screenshots
 
 ### 1. Chat

@@ -53,11 +53,11 @@ Voice mode listens for the wake word, captures until you pause, sends the comman
 
 ## About you {#about-you}
 
-Optional name and occupation injected into the system prompt when customization is on. Stored on this device (and synced if you enable settings sync).
+Optional name and occupation sent with every chat when customization is on. Stored on this device (and synced if you enable settings sync).
 
 ## Memories {#memories}
 
-Short facts sent with the system prompt. They are not uploaded to wizionic.com as a memory service.
+Short facts sent with every chat. They are not uploaded to wizionic.com as a memory service. They cannot override Wizionic’s operating rules.
 
 ## Reply length {#reply-length}
 
@@ -72,6 +72,10 @@ Decides which tool **modules** (Native, Lemonade, Gallery, Notes, and so on) are
 - **AI router** — always classify with the routing model; falls back to rules if that fails.
 
 This is not the same as enabling MCP servers. Routing only chooses among modules that are already available.
+
+## Chat HTTP inspector {#chat-http-inspector}
+
+Optional. Settings toggle logs router, model-load, and chat request/response for this session in memory. Desktop chat does not appear in the browser Network tab (those calls are native). Nothing is written to disk or to encrypted chat history. Copy if you want a dump.
 
 ## Model profiles {#model-profiles}
 
@@ -93,6 +97,8 @@ Optional. The Help panel can **Ask** a chat model using only the shipped help ar
 
 A cloud answer model sends the question and a few article excerpts to that provider. Browse never needs a model.
 
-## System prompt {#system-prompt}
+## Custom instructions {#system-prompt}
 
-Extra instructions for every chat. The app also sends a built-in default (date, how storage works, tool habits). Your text is added on this device.
+Optional extra preferences sent with every chat (tone, length, how you like answers). They cannot change Wizionic’s operating rules, tool list, or safety. The locked core (identity, workspace, tool habits, do-not-harm, no help with child sexual abuse material or planning harm to a person) is always sent; Settings shows it under **View System Prompt**.
+
+For your name and job use **About you**. For facts to remember use **Memories**. For the wake word use **Voice**.

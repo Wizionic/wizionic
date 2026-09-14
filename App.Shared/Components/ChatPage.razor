@@ -199,7 +199,10 @@
                                 <div class="message-bot-menu" @onclick:stopPropagation>
                                     <button id="bot-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleBotMenu(capturedIndex)" title="Message options">⋮</button>
                                 </div>
-                                @if (!string.IsNullOrWhiteSpace(msg.ToolTrace) || !string.IsNullOrWhiteSpace(msg.StatsLine))
+                                @{
+                                    var httpDump = HttpDumpFor(msg);
+                                }
+                                @if (!string.IsNullOrWhiteSpace(msg.ToolTrace) || !string.IsNullOrWhiteSpace(msg.StatsLine) || !string.IsNullOrWhiteSpace(httpDump))
                                 {
                                     <details style="margin-bottom: 2px; font-size: 0.7em;">
                                         <summary style="cursor:pointer; color:var(--cf-text-muted);">Model reasoning / tool calls / stats</summary>
@@ -213,6 +216,13 @@
                                         @if (!string.IsNullOrWhiteSpace(msg.ToolTrace))
                                         {
                                             <pre style="white-space:pre-wrap; font-size:0.85em; background:var(--cf-bg-subtle); padding:4px; border-radius:3px; margin:2px 0;">@msg.ToolTrace</pre>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(httpDump))
+                                        {
+                                            <details style="margin:4px 0;">
+                                                <summary style="cursor:pointer;">This turn’s HTTP (session only)</summary>
+                                                <pre style="white-space:pre-wrap; font-size:0.85em; background:var(--cf-bg-subtle); padding:4px; border-radius:3px; margin:2px 0; max-height:18rem; overflow:auto;">@httpDump</pre>
+                                            </details>
                                         }
                                     </details>
                                 }
@@ -1133,6 +1143,8 @@
     private string _pendingToolTrace = "";
     private List<Attachment>? _pendingResultAttachments;
     private string? _pendingStatsLine;
+    private string? _pendingInspectorTurnId;
+    private readonly Dictionary<string, string> _httpDumpByItemId = new(StringComparer.Ordinal);
     private CancellationTokenSource? _sendCts;
 
     // Context window indicator + compact
@@ -1780,6 +1792,13 @@
 
         if (!preferServerUsage || _contextUsed is null or <= 0)
             _contextUsed = EstimateVisibleMessagesTokens();
+    }
+
+    private string? HttpDumpFor(ChatMessage msg)
+    {
+        if (string.IsNullOrWhiteSpace(msg.ItemId))
+            return null;
+        return _httpDumpByItemId.TryGetValue(msg.ItemId, out var dump) ? dump : null;
     }
 
     private int EstimateVisibleMessagesTokens()
@@ -3055,6 +3074,8 @@
             _pendingResultAttachments = null;
             var statsLine = _pendingStatsLine;
             _pendingStatsLine = null;
+            var inspectorTurnId = _pendingInspectorTurnId;
+            _pendingInspectorTurnId = null;
             if (string.IsNullOrWhiteSpace(accumulated) &&
                 !string.IsNullOrWhiteSpace(messages[botIndex].Content))
             {
@@ -3070,6 +3091,12 @@
                 StatsLine = statsLine
             };
             _pendingToolTrace = ""; // consumed
+            if (!string.IsNullOrWhiteSpace(inspectorTurnId) && !string.IsNullOrWhiteSpace(messages[botIndex].ItemId))
+            {
+                var dump = ChatHttpInspector.FormatTurn(inspectorTurnId);
+                if (!string.IsNullOrWhiteSpace(dump))
+                    _httpDumpByItemId[messages[botIndex].ItemId!] = dump;
+            }
             RequestScrollToBottom();
             StateHasChanged();
 
@@ -3430,12 +3457,14 @@
             _pendingToolTrace = result.ToolTrace;
             _pendingResultAttachments = result.Attachments?.ToList();
             _pendingStatsLine = result.Stats?.FormatLine();
+            _pendingInspectorTurnId = result.InspectorTurnId;
             ApplyStatsToContext(result.Stats);
 
             if (!string.IsNullOrEmpty(result.Error))
             {
                 _pendingToolTrace = string.IsNullOrEmpty(result.ToolTrace) ? "" : result.ToolTrace;
                 _pendingResultAttachments = null;
+                _pendingInspectorTurnId = result.InspectorTurnId;
                 return result.Error.StartsWith("Error calling provider", StringComparison.OrdinalIgnoreCase)
                     ? result.Error
                     : $"Error calling provider: {result.Error}";

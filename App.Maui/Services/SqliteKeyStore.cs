@@ -166,8 +166,13 @@ public class SqliteKeyStore : IKeyStore
         }
 
         var systemPromptJson = await GetItemAsync(SystemPromptKey, ct);
-        _systemPromptCustomized = systemPromptJson != null;
-        _systemPrompt = systemPromptJson;
+        var migrated = KeyStoreDefaults.MigrateStoredSystemPrompt(systemPromptJson);
+        _systemPrompt = migrated;
+        _systemPromptCustomized = !string.IsNullOrEmpty(migrated);
+        if (systemPromptJson != null && migrated is null)
+            await RemoveItemAsync(SystemPromptKey, ct);
+        else if (migrated != null && migrated != systemPromptJson)
+            await SetItemAsync(SystemPromptKey, migrated, ct);
 
         var profileJson = await GetItemAsync(UserProfileKey, ct);
         if (!string.IsNullOrEmpty(profileJson))
@@ -270,19 +275,26 @@ public class SqliteKeyStore : IKeyStore
         _db.RemoveAsync(Prefixed(baseKey), ct);
 
     public string LastSelectedModel => _lastSelectedModel;
-    public bool IsSystemPromptCustomized => _systemPromptCustomized;
+    public bool HasCustomInstructions => _systemPromptCustomized;
 
-    public string GetSystemPrompt() =>
-        _systemPromptCustomized ? (_systemPrompt ?? "") : KeyStoreDefaults.GetDefaultSystemPrompt();
+    public string GetCustomInstructions() =>
+        _systemPromptCustomized ? (_systemPrompt ?? "") : "";
 
-    public async Task SetSystemPromptAsync(string prompt, CancellationToken ct = default)
+    public async Task SetCustomInstructionsAsync(string text, CancellationToken ct = default)
     {
-        _systemPrompt = prompt ?? "";
+        var clamped = KeyStoreDefaults.ClampCustomInstructions(text);
+        if (string.IsNullOrEmpty(clamped))
+        {
+            await ResetCustomInstructionsAsync(ct);
+            return;
+        }
+
+        _systemPrompt = clamped;
         _systemPromptCustomized = true;
         await SetItemAsync(SystemPromptKey, _systemPrompt, ct);
     }
 
-    public async Task ResetSystemPromptAsync(CancellationToken ct = default)
+    public async Task ResetCustomInstructionsAsync(CancellationToken ct = default)
     {
         _systemPrompt = null;
         _systemPromptCustomized = false;
@@ -1156,6 +1168,8 @@ public class SqliteKeyStore : IKeyStore
                     : _lemonadeConfig.DefaultVoice
             };
             await SaveLemonadeConfigAsync(ct);
+            await LemonadeModelCatalogResolver.PersistChatCtxSizesAsync(
+                http, LemonadeBaseUrl, LemonadeApiKey, list, ct);
             await ApplyLemonadeWorkspaceAfterRefreshAsync(list, ct);
         }
         catch (Exception ex)

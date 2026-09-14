@@ -35,6 +35,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Windows install on README and the login page now leads with `irm … | iex` instead of a browser `.exe` download. Unsigned Edge downloads still hit Mark of the Web / SmartScreen.
 - Setup wizard Local AI defaults: Lemonade pulls Qwen3.5 0.8B, Whisper Small, Kokoro, and LFM2.5 1.2B Instruct (larger Qwen/LFM/Nemotron optional). Ollama pulls `qwen3.5:0.8b` and `lfm2.5-thinking:1.2b` (larger optional). After a Home Server install while signed into wizionic.com, Done signs out and restarts onto localhost. Desktop login refreshes Lemonade/Ollama model lists when those servers are installed.
 - Refreshing Lemonade models fills blank **Lemonade** profile slots (chat, STT, TTS, image, edit) and, when Qwen3.5 0.8B is present, sets it as the Hybrid routing model and selects the profile in Chat. Settings no longer has a separate Use in Chat button.
+- Settings no longer replaces the chat system prompt. A locked core (identity, tool habits, do-not-harm, human control) is always sent. **Custom instructions**, About you, Memories, and the assistant name are additive. Existing saved full prompts migrate to custom instructions unless they were the old default.
+- Home Assistant chat instructions no longer say “never refuse” device control. High-risk actions (locks, garage, alarms, unnamed scripts, extreme climate) ask or refuse; ordinary lights and media still run as before.
+- Locked core also refuses child sexual abuse material, help planning or covering up a murder, and help planning harm to a person. Human control (interruptibility) does not override that.
+- Lemonade **Context size** is sent as `ctx_size` on `POST /v1/load` before chat (and saved to Lemonade model options). Chat auto-load was ignoring the Wizionic field and staying at 4096.
+- Refresh Models now writes each chat model’s advertised window into Lemonade options. Chat loads with that size without clicking Save. Loads never sit at 4096 (floor 16k unless you saved a smaller override).
+- Home Assistant turns no longer attach Native search tools or MCP/GitHub unless the message needs them. Dropped redundant ListLights/ListServices schemas and shortened HA tool text. A kitchen-light command should be HA tools only.
+- Settings → **Chat HTTP inspector**: opt-in, this-session log of router / load / chat request bodies (desktop chat never appears in the browser Network tab). Memory only — not written to disk or encrypted chat history. Tool turns now log each inner HTTP round (`chat-1` tool_calls, `tool` invoke, `chat-2` final text).
 
 ### Fixed
 

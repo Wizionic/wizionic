@@ -135,6 +135,9 @@
                     {
                         <label>Context size</label>
                         <input type="number" min="0" step="1" @bind="lemonadeEditDraft.ContextSize" class="form-control" />
+                        <div class="ollama-field-hint">
+                            Filled from Lemonade’s advertised window on Refresh. Chat loads the model with this size (never the 4096 auto-load default). Save only if you change it.
+                        </div>
 
                         <div class="ollama-toggle-row">
                             <div>
@@ -531,10 +534,27 @@
             await KeyStore.SetLemonadeApiKeyAsync(lemonadeApiKey);
             await KeyStore.SaveLemonadeModelSettingsAsync(lemonadeEditDraft);
             await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Lemonade);
+            var ctxNote = "";
+            if (lemonadeEditDraft.IsChatEligible && lemonadeEditDraft.ContextSize > 0)
+            {
+                try
+                {
+                    var err = await LemonadeModelCatalogResolver.SaveCtxSizeOptionAsync(
+                        Http, lemonadeBaseUrl, lemonadeApiKey,
+                        lemonadeEditDraft.Name, lemonadeEditDraft.ContextSize);
+                    ctxNote = string.IsNullOrWhiteSpace(err)
+                        ? " Context size saved to Lemonade."
+                        : $" Lemonade did not store ctx_size ({err}). Chat will still try to load with it.";
+                }
+                catch (Exception ex)
+                {
+                    ctxNote = $" Lemonade was not reachable to store ctx_size ({ex.Message}).";
+                }
+            }
             ReloadAll();
             editingLemonadeName = lemonadeEditDraft.Name;
             lemonadeEditDraft = KeyStore.GetLemonadeModelSettings(lemonadeEditDraft.Name)?.Clone();
-            await ShowSaveFeedbackAsync("Lemonade model settings saved.", isError: false);
+            await ShowSaveFeedbackAsync("Lemonade model settings saved." + ctxNote, isError: false);
         }
         catch (Exception ex)
         {
