@@ -23,7 +23,7 @@
     { "id": "tool-routing", "title": "Tool routing", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "tool-routing", "toc": false },
     { "id": "settings-model-profiles", "title": "Model profiles", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "model-profiles", "toc": false },
     { "id": "settings-help-answers", "title": "Help answers", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "help-answers", "toc": false },
-    { "id": "settings-system-prompt", "title": "System prompt", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "system-prompt", "toc": false },
+    { "id": "settings-system-prompt", "title": "Custom instructions", "file": "settings.md", "routes": ["/settings"], "audience": "howto", "anchor": "system-prompt", "toc": false },
     { "id": "tools", "title": "Tools, MCP, and connectors", "file": "tools-mcp.md", "routes": ["/tools"], "audience": "howto" },
     { "id": "skills", "title": "Skills and workflows", "file": "skills-workflows.md", "routes": ["/tools"], "audience": "howto" },
     { "id": "account", "title": "Account, password, and 2FA", "file": "account-password-2fa.md", "routes": ["/", "/account", "/login"], "audience": "howto" },

@@ -28,7 +28,6 @@ public sealed class HomeAssistantToolModule : IToolModule
         _tools =
         [
             AIFunctionFactory.Create(ListEntities),
-            AIFunctionFactory.Create(ListLights),
             AIFunctionFactory.Create(ControlLight),
             AIFunctionFactory.Create(ControlMediaPlayer),
             AIFunctionFactory.Create(ControlClimate),
@@ -37,7 +36,6 @@ public sealed class HomeAssistantToolModule : IToolModule
             AIFunctionFactory.Create(RunScript),
             AIFunctionFactory.Create(GetEntityState),
             AIFunctionFactory.Create(CallService),
-            AIFunctionFactory.Create(ListServices),
             AIFunctionFactory.Create(ProcessConversation)
         ];
     }
@@ -45,10 +43,7 @@ public sealed class HomeAssistantToolModule : IToolModule
     public IReadOnlyList<AITool> GetTools() => IsAvailable ? _tools : [];
 
     [Description(
-        "Discover Home Assistant entities. Call this when you need entity_id for a device, room, or domain " +
-        "(light, switch, media_player, climate, cover, fan, lock, scene, script, remote, vacuum, etc.). " +
-        "domain is optional (omit for all controllable domains). search matches friendly_name or entity_id " +
-        "(e.g. search='kitchen' or 'denon'). Never invent entity_ids — always list/search first if unknown.")]
+        "Find Home Assistant entity_ids by domain and/or search (room or name). Never invent entity_ids.")]
     private async Task<string> ListEntities(
         [Description("Optional HA domain filter, e.g. 'media_player', 'light', 'switch', 'climate', 'cover', 'scene'")] string? domain = null,
         [Description("Optional search text matching friendly name or entity_id, e.g. 'kitchen', 'denon', 'living room'")] string? search = null)
@@ -59,16 +54,7 @@ public sealed class HomeAssistantToolModule : IToolModule
         return result;
     }
 
-    [Description("List all Home Assistant light entities. Prefer ListEntities(domain='light', search=...) when searching by room name.")]
-    private async Task<string> ListLights()
-    {
-        _trace.Record("🏠 list_lights()");
-        var result = await _ha.ListLightEntitiesAsync();
-        TraceResult(result);
-        return result;
-    }
-
-    [Description("Control a Home Assistant light entity. Can turn on/off, set brightness, or change color. For non-light devices use CallService.")]
+    [Description("Turn a light on/off; optional color and brightness 0-255.")]
     private async Task<string> ControlLight(
         [Description("Entity ID, e.g. 'light.kitchen'")] string entityId,
         [Description("State: 'on' or 'off'")] string state,
@@ -110,10 +96,7 @@ public sealed class HomeAssistantToolModule : IToolModule
     }
 
     [Description(
-        "Control a Home Assistant media_player (AVR, TV, speaker, Shield, etc.). " +
-        "Prefer this over CallService for play/pause/stop/power/volume. " +
-        "volume_percent is 0-100 (converted to HA volume_level 0.0-1.0). " +
-        "If entity_id is unknown, call ListEntities(domain='media_player', search=...) first.")]
+        "Control a media_player. volume_percent is 0-100. ListEntities(domain='media_player') if entity_id is unknown.")]
     private async Task<string> ControlMediaPlayer(
         [Description("Media player entity_id, e.g. 'media_player.denon_avr_x1700h_2'")] string entityId,
         [Description("Action: play, pause, stop, on, off, volume, or select_source")] string action,
@@ -183,9 +166,7 @@ public sealed class HomeAssistantToolModule : IToolModule
     }
 
     [Description(
-        "Control a Home Assistant climate entity (thermostat, HVAC). " +
-        "Prefer this over CallService for temperature and HVAC mode. " +
-        "If entity_id is unknown, call ListEntities(domain='climate', search=...) first.")]
+        "Climate/HVAC. Do not set dangerous temperatures. ListEntities(domain='climate') if entity_id is unknown.")]
     private async Task<string> ControlClimate(
         [Description("Climate entity_id, e.g. 'climate.living_room'")] string entityId,
         [Description("Action: set_temperature, set_hvac_mode, off, or on")] string action,
@@ -235,8 +216,7 @@ public sealed class HomeAssistantToolModule : IToolModule
     }
 
     [Description(
-        "Control a Home Assistant cover (garage, blinds, curtains, shade). " +
-        "If entity_id is unknown, call ListEntities(domain='cover', search=...) first.")]
+        "Cover/blinds/garage. Garage doors only when the user named the door. ListEntities(domain='cover') if unknown.")]
     private async Task<string> ControlCover(
         [Description("Cover entity_id, e.g. 'cover.garage_door'")] string entityId,
         [Description("Action: open, close, stop, or set_position")] string action,
@@ -280,7 +260,7 @@ public sealed class HomeAssistantToolModule : IToolModule
         return IsSuccess(result) ? $"Cover {entityId}: {service} succeeded.\n{result}" : result;
     }
 
-    [Description("Activate a Home Assistant scene. If entity_id is unknown, ListEntities(domain='scene', search=...) first.")]
+    [Description("Activate a scene. ListEntities(domain='scene') if entity_id is unknown.")]
     private async Task<string> ActivateScene(
         [Description("Scene entity_id, e.g. 'scene.movie_time'")] string entityId)
     {
@@ -293,7 +273,7 @@ public sealed class HomeAssistantToolModule : IToolModule
         return IsSuccess(result) ? $"Activated scene {entityId}.\n{result}" : result;
     }
 
-    [Description("Run a Home Assistant script. If entity_id is unknown, ListEntities(domain='script', search=...) first.")]
+    [Description("Run a named script only. ListEntities(domain='script') if entity_id is unknown.")]
     private async Task<string> RunScript(
         [Description("Script entity_id, e.g. 'script.good_night'")] string entityId)
     {
@@ -306,7 +286,7 @@ public sealed class HomeAssistantToolModule : IToolModule
         return IsSuccess(result) ? $"Ran script {entityId}.\n{result}" : result;
     }
 
-    [Description("Get the current state of any Home Assistant entity (light, switch, media_player, sensor, climate, cover, etc.).")]
+    [Description("Current state of one entity_id.")]
     private async Task<string> GetEntityState(
         [Description("Entity ID, e.g. 'light.kitchen', 'media_player.living_room', 'sensor.temperature'")] string entityId)
     {
@@ -341,15 +321,8 @@ public sealed class HomeAssistantToolModule : IToolModule
     }
 
     [Description(
-        "Call any Home Assistant service (POST /api/services/{domain}/{service}). " +
-        "PRIMARY control path for non-light devices. Always put entity_id in service_data JSON. " +
-        "Examples: " +
-        "media_player turn_on/media_play/media_pause/volume_set/select_source/play_media " +
-        "(play_media needs media_content_id + media_content_type); " +
-        "switch turn_on/turn_off; climate set_temperature/set_hvac_mode; " +
-        "cover open_cover/close_cover; scene turn_on; script turn_on; fan turn_on/turn_off/set_percentage; " +
-        "lock lock/unlock; remote send_command. " +
-        "If entity_id is unknown, call ListEntities first.")]
+        "Call any HA service. Always include entity_id in service_data JSON. " +
+        "Ask first for locks, garage, alarms, unnamed scripts, or extreme climate. ListEntities if entity_id is unknown.")]
     private async Task<string> CallService(
         [Description("Service domain, e.g. 'media_player', 'switch', 'climate', 'cover', 'scene', 'script', 'light'")] string domain,
         [Description("Service name, e.g. 'turn_on', 'turn_off', 'media_play', 'play_media', 'set_temperature', 'open_cover'")] string service,
@@ -375,21 +348,9 @@ public sealed class HomeAssistantToolModule : IToolModule
         return result;
     }
 
-    [Description("List Home Assistant services for a domain (or all domains). Use when unsure which service name to call for a device type.")]
-    private async Task<string> ListServices(
-        [Description("Optional domain filter, e.g. 'media_player', 'climate', 'cover'")] string? domain = null)
-    {
-        _trace.Record($"🏠 list_services(domain=\"{domain ?? ""}\")");
-        var result = await _ha.ListServicesAsync(domain);
-        TraceResult(result);
-        return result;
-    }
-
     [Description(
-        "Send a natural-language command to Home Assistant Assist (built-in conversation agent). " +
-        "SECONDARY path — good for area phrases like 'turn off kitchen lights'. " +
-        "For media players, climate setpoints, or when Assist returns no_intent_match, use ListEntities + CallService instead. " +
-        "Do not refuse smart-home control; fall back to structured tools.")]
+        "HA Assist for area phrases like 'turn off kitchen lights'. If it fails, ListEntities then ControlLight/CallService. " +
+        "Refuse harm to a person; confirm locks, garage, alarms, unnamed scripts.")]
     private async Task<string> ProcessConversation(
         [Description("Natural language command without the wake word, e.g. 'turn off the kitchen lights'")] string text,
         [Description("Optional conversation_id from a previous Assist response for multi-turn")] string? conversationId = null)

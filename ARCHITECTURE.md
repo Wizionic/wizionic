@@ -73,7 +73,7 @@ User types in ChatPage.razor
 ChatCompletionService.CompleteAsync()  (Shared)
         │
         ├── Build history from IConversationStore (decrypted messages)
-        ├── Prepend system prompt (profile settings from IKeyStore)
+        ├── Prepend locked core system prompt (KeyStoreDefaults) + About you / Memories / custom instructions from IKeyStore
         ├── Trim history to context window (reserve room for reply); track stats
         ├── If model supports tools → CompositeRequestRouter (Rules / AI / Hybrid)
         │       ├── Native tools (search_web, summarize_url, get_time, …) via /api/tools/*
@@ -620,7 +620,7 @@ CompositeRequestRouter (Rules / AI / Hybrid)
         ▼
 ChatCompletionService
         ├── Tools = HomeAssistant + Native (+ MCP when the route includes them)
-        ├── System prompt: BuildHomeAssistantPrompt() (catalog + session)
+        ├── System prompt: locked core + BuildHomeAssistantPrompt() (catalog + session; high-risk actions ask/refuse)
         ├── Model function-invocation
         └── On success → IRoutingSessionStore + catalog refresh
 ```
@@ -1038,7 +1038,7 @@ Exported/applied by `SettingsSyncStore` over WebRTC (`SyncItemKind.Settings`):
 | `profile` | About-you fields **and** assistant name / voice follow-up flag |
 | `tools` | Enabled MCP, MCP tokens, custom MCP URLs, OAuth connector installs/tokens (auto-sync toggle on Sync page) |
 | `skills` | User SKILL.md library (markdown + enabled flags); auto-sync toggle on Sync page |
-| `system-prompt` | Custom system prompt |
+| `system-prompt` | Additive custom instructions (locked core is not synced) |
 | `memories` | User memory list |
 | `appearance` | Theme + nav layout preferences |
 
@@ -1232,7 +1232,7 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  | `Components/SyncPresencePage.razor` | `/sync` | Device list, sync targets (incl. gallery/calendar/settings), AI server pick |
  | `Components/LocalAiPage.razor` | `/local-ai` | Ollama + Lemonade URLs, model discovery, modality defaults, tool routing model |
  | `Components/CloudProvidersPage.razor` | `/cloud-providers` | Add OpenAI-compatible cloud providers (name, base URL, key); refresh models |
- | `Components/SettingsPage.razor` | `/settings` | Voice (wake word), profile, system prompt, help answer/embed models, preferences, setup wizard entry |
+ | `Components/SettingsPage.razor` | `/settings` | Voice (wake word), profile, custom instructions (additive), help answer/embed models, preferences, setup wizard entry |
  | `Components/HelpPage.razor` | `/help` | Full-page help (browse + optional Ask) |
  | `Components/HelpView.razor` | (in `/help` + modal) | TOC, articles, Ask box, citations |
  | `Components/HelpPanel.razor` | (overlay) | Centered resizable help modal |

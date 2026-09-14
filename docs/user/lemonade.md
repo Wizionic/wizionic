@@ -13,6 +13,7 @@ title: Lemonade (local AI)
 - Enter the base URL (and an API key only if you set `LEMONADE_API_KEY` on the server).
 - **Save and Test**, then **Refresh Models from Lemonade**.
 - Enable the chat models you want in the list. Image, speech, and other specialty models are configured on the same page.
+- **Context size** is filled from Lemonade’s advertised window when you Refresh models. Chat loads the model with that size (Wizionic will not leave Lemonade at the 4096 auto-load default). Save the model only if you type a different number.
 
 ## Browser on wizionic.com
 

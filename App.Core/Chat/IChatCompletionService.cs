@@ -27,7 +27,9 @@ public record ChatCompletionResult(
     /// embedded as data-URIs in the assistant content.
     /// </summary>
     IReadOnlyList<Attachment>? Attachments = null,
-    ChatCompletionStats? Stats = null);
+    ChatCompletionStats? Stats = null,
+    /// <summary>Session-only id for Chat HTTP inspector. Not stored in the conversation.</summary>
+    string? InspectorTurnId = null);
 
 /// <summary>Timing and token metrics for a completion (streaming or not).</summary>
 public record ChatCompletionStats(

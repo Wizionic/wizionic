@@ -42,7 +42,7 @@ public static class SettingsSyncCategory
         ModelProfiles => "Model profiles",
         HomeAssistant => "Home Assistant",
         Tools => "Tools (MCP + Connectors)",
-        SystemPrompt => "System prompt",
+        SystemPrompt => "Custom instructions",
         Profile => "About you",
         Memories => "Memories",
         Appearance => "Appearance",

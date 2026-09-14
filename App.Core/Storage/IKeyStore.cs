@@ -8,10 +8,12 @@ public interface IKeyStore
     Task LoadAsync(CancellationToken ct = default);
 
     string LastSelectedModel { get; }
-    bool IsSystemPromptCustomized { get; }
-    string GetSystemPrompt();
-    Task SetSystemPromptAsync(string prompt, CancellationToken ct = default);
-    Task ResetSystemPromptAsync(CancellationToken ct = default);
+    /// <summary>True when the user has additive custom instructions (the locked core is never stored).</summary>
+    bool HasCustomInstructions { get; }
+    /// <summary>User add-on only. Empty when none. The locked core is <see cref="KeyStoreDefaults.GetDefaultSystemPrompt"/>.</summary>
+    string GetCustomInstructions();
+    Task SetCustomInstructionsAsync(string text, CancellationToken ct = default);
+    Task ResetCustomInstructionsAsync(CancellationToken ct = default);
 
     UserProfileSettings GetUserProfile();
     Task SetUserProfileAsync(UserProfileSettings profile, CancellationToken ct = default);

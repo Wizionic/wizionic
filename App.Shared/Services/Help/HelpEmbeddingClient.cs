@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using App.Core.Chat;
 using App.Core.Storage;
 
 namespace App.Shared.Services.Help;
@@ -165,11 +166,11 @@ public sealed class HelpEmbeddingClient
             ["temperature"] = 0
         };
 
-        var (ok, body) = await PostJsonAsync(url, apiKey, withJson, ct);
+        var (ok, body) = await PostJsonAsync(url, apiKey, withJson, ct, inspectKind: "router", model: model);
         if (!ok && LooksLikeUnknownField(body))
-            (ok, body) = await PostJsonAsync(url, apiKey, thinkingOff, ct);
+            (ok, body) = await PostJsonAsync(url, apiKey, thinkingOff, ct, inspectKind: "router", model: model);
         if (!ok && LooksLikeUnknownField(body))
-            (ok, body) = await PostJsonAsync(url, apiKey, simple, ct);
+            (ok, body) = await PostJsonAsync(url, apiKey, simple, ct, inspectKind: "router", model: model);
         if (!ok)
             throw new InvalidOperationException($"Router completion failed: {Trim(body)}");
 
@@ -294,14 +295,30 @@ public sealed class HelpEmbeddingClient
         string url,
         string? apiKey,
         object payload,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? inspectKind = null,
+        string? model = null)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         if (!string.IsNullOrWhiteSpace(apiKey))
             req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + apiKey);
         req.Content = JsonContent.Create(payload);
+        var started = DateTime.UtcNow;
         using var resp = await _http.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!string.IsNullOrWhiteSpace(inspectKind))
+        {
+            ChatHttpInspector.Record(
+                inspectKind,
+                "POST",
+                url,
+                payload,
+                body,
+                (int)resp.StatusCode,
+                (int)(DateTime.UtcNow - started).TotalMilliseconds,
+                model: model,
+                error: resp.IsSuccessStatusCode ? null : Trim(body));
+        }
         return (resp.IsSuccessStatusCode, body);
     }
 

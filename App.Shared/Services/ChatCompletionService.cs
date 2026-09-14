@@ -18,6 +18,7 @@ using StoreChatMessage = App.Core.Storage.ChatMessage;
 using App.Core.Browser;
 using App.Core.Chat;
 using App.Core.Cloud;
+using App.Core.Lemonade;
 using App.Core.Skills;
 using App.Core.SmartHome;
 using App.Core.Tools;
@@ -49,6 +50,9 @@ public sealed class ChatCompletionService : IChatCompletionService
     private IReadOnlyList<AITool> _currentTools = [];
     private RequestRoute? _currentRoute;
     private static readonly HttpClient OllamaHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private static readonly object LemonadeLoadGate = new();
+    private static string? _lemonadeLoadedName;
+    private static int _lemonadeLoadedCtx;
 
     public ChatCompletionService(
         ChatModelCatalogService catalog,
@@ -110,6 +114,7 @@ public sealed class ChatCompletionService : IChatCompletionService
         int messagesTrimmed = 0;
         int contextLimit = contextSize > 0 ? contextSize : 8192;
 
+        IDisposable? inspectTurn = ChatHttpInspector.Enabled ? ChatHttpInspector.BeginTurn() : null;
         try
         {
             _toolConvo.ConversationId = string.IsNullOrWhiteSpace(conversationId) ? "_default" : conversationId;
@@ -248,15 +253,16 @@ public sealed class ChatCompletionService : IChatCompletionService
                     AppendSystemInstruction(chatHistory, BuildBrowserToolEnforcementPrompt());
 
                 // Pure chat / empty tools: skip UseFunctionInvocation entirely (big TTFT win).
+                var inner = WrapForInspector(baseClient, modelId);
                 if (_currentTools.Count == 0)
                 {
-                    client = baseClient;
+                    client = inner;
                     chatOptions = new ChatOptions { MaxOutputTokens = defaultMaxOutputTokens };
                     supportsTools = false;
                 }
                 else
                 {
-                    client = baseClient
+                    client = inner
                         .AsBuilder()
                         .UseFunctionInvocation()
                         .Build();
@@ -270,11 +276,16 @@ public sealed class ChatCompletionService : IChatCompletionService
             else
             {
                 _currentTools = [];
+                client = WrapForInspector(baseClient, modelId);
                 chatOptions = new ChatOptions { MaxOutputTokens = defaultMaxOutputTokens };
                 _trace.Record("🧭 Route: PureChat (model tools disabled)");
             }
 
             var prepMs = (DateTime.UtcNow - wallStart).TotalMilliseconds;
+            await EnsureLemonadeLoadedAsync(modelId, ct);
+            chatOptions ??= new ChatOptions { MaxOutputTokens = defaultMaxOutputTokens };
+            CapMaxOutputTokens(chatOptions, chatHistory, contextLimit, defaultMaxOutputTokens);
+
             const int maxAttempts = 3;
             Exception? lastEx = null;
 
@@ -499,7 +510,11 @@ public sealed class ChatCompletionService : IChatCompletionService
                     var (promptTok, completionTok, totalTok) = ExtractUsage(response, text, chatHistory);
                     var contextUsed = (promptTok ?? 0) + (completionTok ?? 0);
                     if (contextUsed <= 0 && promptTok == null)
-                        contextUsed = EstimateMessageListTokens(chatHistory) + EstimateTokens(text);
+                    {
+                        contextUsed = EstimateMessageListTokens(chatHistory)
+                            + EstimateToolsTokens(_currentTools)
+                            + EstimateTokens(text);
+                    }
                     var stats = new ChatCompletionStats(
                         PrepMs: prepMs,
                         TtftMs: ttftMs,
@@ -517,7 +532,9 @@ public sealed class ChatCompletionService : IChatCompletionService
                     await TryLogChatSkillRunAsync(
                         modelId, text, toolTrace, cancelled, wallStart, ct);
 
-                    return new ChatCompletionResult(text, toolTrace, null, resultAttachments, stats);
+                    return new ChatCompletionResult(
+                        text, toolTrace, null, resultAttachments, stats,
+                        InspectorTurnId: ChatHttpInspector.CurrentTurnId);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -574,6 +591,10 @@ public sealed class ChatCompletionService : IChatCompletionService
         catch (Exception ex)
         {
             return new ChatCompletionResult("", "", $"Error calling provider: {ex.Message}");
+        }
+        finally
+        {
+            inspectTurn?.Dispose();
         }
     }
 
@@ -1060,37 +1081,19 @@ public sealed class ChatCompletionService : IChatCompletionService
         var assistantName = _keyStore.HomeAssistantAssistantName;
         var sb = new StringBuilder();
         sb.AppendLine($"You have access to a Home Assistant integration named \"{assistantName}\".");
-        sb.AppendLine($"When the user addresses \"{assistantName}\" directly, or continues an active smart-home session, control ANY Home Assistant device (lights, media players, switches, climate, covers, scenes, scripts, locks, fans, etc.) using tools.");
+        sb.AppendLine($"When the user addresses \"{assistantName}\" directly, or continues an active smart-home session, control Home Assistant devices using the tools below.");
+        sb.AppendLine("Do not refuse because you lack capability if these tools are listed. Ordinary home control (lights, media, named climate) is allowed. Do refuse when the request is to harm a person, or when the action is high-risk or ambiguous: locks, garage doors, alarms, life-safety equipment (smoke/CO/leak/medical), unnamed scripts, or extreme climate. Operating rules still apply.");
         sb.AppendLine();
-        sb.AppendLine("PRIMARY workflow (REST tools — preferred for precise control):");
-        sb.AppendLine("1. If entity_id is unknown, call ListEntities with domain and/or search from the user's words (room, device name, brand).");
-        sb.AppendLine("2. Optionally GetEntityState to confirm current state.");
-        sb.AppendLine("3. Lights: ControlLight (include brightness and color when the user asks).");
-        sb.AppendLine("4. Media players (play/pause/volume/source): ControlMediaPlayer — volume_percent is 0-100 (e.g. 50 → half volume).");
-        sb.AppendLine("5. Climate: ControlClimate (set_temperature / set_hvac_mode / on / off).");
-        sb.AppendLine("6. Covers (garage, blinds): ControlCover (open / close / stop / set_position).");
-        sb.AppendLine("7. Scenes: ActivateScene. Scripts: RunScript.");
-        sb.AppendLine("8. Everything else: CallService(domain, service, service_data JSON with entity_id).");
-        sb.AppendLine("9. If unsure of service names, call ListServices(domain). Search includes area/room names.");
-        sb.AppendLine();
-        sb.AppendLine("SECONDARY: ProcessConversation sends natural language to HA Assist (good for area phrases). If Assist fails, use ListEntities + CallService/ControlMediaPlayer. Never claim success without a tool result.");
-        sb.AppendLine();
-        sb.AppendLine("You MUST call a tool before claiming you changed a device. Never invent entity_ids. Never refuse a device type without first calling ListEntities. Never invent volume or color changes.");
-        sb.AppendLine();
-        sb.AppendLine("Service cheat sheet:");
-        sb.AppendLine("- light: ControlLight with state on/off, optional brightness 0-255, color name or #hex");
-        sb.AppendLine("- media_player: ControlMediaPlayer (play/pause/stop/on/off/volume/select_source); or CallService volume_set with volume_level 0.0-1.0");
-        sb.AppendLine("- switch: turn_on / turn_off");
-        sb.AppendLine("- climate: ControlClimate; or CallService set_temperature / set_hvac_mode");
-        sb.AppendLine("- cover: ControlCover (open/close/stop/set_position)");
-        sb.AppendLine("- scene: ActivateScene; script: RunScript");
-        sb.AppendLine("- fan: turn_on, turn_off, set_percentage; lock: lock, unlock");
+        sb.AppendLine("If entity_id is unknown, ListEntities(domain, search) first. Lights: ControlLight. Media: ControlMediaPlayer (volume 0-100). Climate: ControlClimate. Covers: ControlCover. Else CallService with entity_id in JSON. ProcessConversation is optional for area phrases. Never invent entity_ids. Never claim a change without a tool result.");
 
         var summary = _keyStore.HomeAssistantDeviceSummary;
         if (!string.IsNullOrWhiteSpace(summary))
         {
+            const int maxCatalogChars = 3000;
+            if (summary.Length > maxCatalogChars)
+                summary = summary[..maxCatalogChars] + "\n… truncated; ListEntities for more.";
             sb.AppendLine();
-            sb.AppendLine("Current known devices (may be truncated; use ListEntities for live search):");
+            sb.AppendLine("Known devices (truncated; ListEntities for live search):");
             sb.AppendLine(summary);
         }
 
@@ -1273,17 +1276,25 @@ public sealed class ChatCompletionService : IChatCompletionService
 
     private string ResolveSystemPrompt()
     {
-        var template = _keyStore.GetSystemPrompt();
-        if (string.IsNullOrWhiteSpace(template))
-            return "";
-
         var now = DateTime.Now;
         var formatted = now.ToString("dddd, MMMM d, yyyy h:mm tt", CultureInfo.CurrentCulture) + " (local)";
-        var text = template.Replace("{{datetime}}", formatted, StringComparison.OrdinalIgnoreCase).Trim();
+        var assistantName = KeyStoreDefaults.NormalizeAssistantName(_keyStore.AssistantName);
+
+        var text = KeyStoreDefaults.GetDefaultSystemPrompt()
+            .Replace(KeyStoreDefaults.DateTimePlaceholder, formatted, StringComparison.OrdinalIgnoreCase)
+            .Replace(KeyStoreDefaults.AssistantNamePlaceholder, assistantName, StringComparison.OrdinalIgnoreCase)
+            .Trim();
 
         var userContext = _keyStore.BuildUserContextForPrompt();
         if (!string.IsNullOrWhiteSpace(userContext))
-            text = string.IsNullOrWhiteSpace(text) ? userContext : $"{text}\n\n{userContext}";
+            text = $"{text}\n\n{userContext}";
+
+        var custom = _keyStore.GetCustomInstructions();
+        if (!string.IsNullOrWhiteSpace(custom))
+            text = $"{text}\n\n**Custom instructions (lower authority than operating rules):**\n{custom.Trim()}";
+
+        if (!string.IsNullOrWhiteSpace(userContext) || !string.IsNullOrWhiteSpace(custom))
+            text = $"{text}\n\n{KeyStoreDefaults.OperatingRulesRecencyLine}";
 
         return text.Trim();
     }
@@ -2010,6 +2021,121 @@ public sealed class ChatCompletionService : IChatCompletionService
         return Math.Max(1, (int)Math.Ceiling(text.Length / 4.0));
     }
 
+    /// <summary>
+    /// Tool JSON schemas are the bulk of a first Home Assistant turn — often a few thousand
+    /// tokens — and are not in the message list the UI estimates from.
+    /// </summary>
+    private static int EstimateToolsTokens(IReadOnlyList<AITool> tools)
+    {
+        if (tools == null || tools.Count == 0)
+            return 0;
+
+        int n = 0;
+        foreach (var tool in tools.OfType<AIFunction>())
+        {
+            n += 8;
+            n += EstimateTokens(tool.Name);
+            n += EstimateTokens(tool.Description);
+            try
+            {
+                if (tool.JsonSchema.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
+                    n += EstimateTokens(tool.JsonSchema.GetRawText());
+            }
+            catch
+            {
+                n += 64;
+            }
+        }
+
+        return n;
+    }
+
+    private void CapMaxOutputTokens(
+        ChatOptions? options,
+        List<AiChatMessage> history,
+        int contextLimit,
+        int defaultMax)
+    {
+        if (options == null || contextLimit <= 0)
+            return;
+
+        var promptEst = EstimateMessageListTokens(history) + EstimateToolsTokens(_currentTools);
+        var room = contextLimit - promptEst - 64;
+        if (room < 256)
+            room = 256;
+        var cap = Math.Min(defaultMax, room);
+        if (options.MaxOutputTokens is null or <= 0 || options.MaxOutputTokens > cap)
+            options.MaxOutputTokens = cap;
+    }
+
+    private IChatClient WrapForInspector(IChatClient inner, string modelId)
+    {
+        if (!ChatHttpInspector.Enabled)
+            return inner;
+        var url = modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase)
+            ? _keyStore.LemonadeBaseUrl.TrimEnd('/') + "/v1/chat/completions"
+            : modelId.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase)
+                ? _keyStore.OllamaBaseUrl.TrimEnd('/') + "/v1/chat/completions"
+                : "(chat client) " + modelId;
+        return new InspectingChatClient(inner, modelId, url);
+    }
+
+    private async Task EnsureLemonadeLoadedAsync(string modelId, CancellationToken ct)
+    {
+        if (!modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var name = modelId.Split('/', 2)[1];
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        var settings = _keyStore.GetLemonadeModelSettings(name);
+        var ctx = LemonadeModelCatalogResolver.ResolveLoadCtxSize(settings);
+        var ctxKey = ctx;
+
+        lock (LemonadeLoadGate)
+        {
+            if (string.Equals(_lemonadeLoadedName, name, StringComparison.OrdinalIgnoreCase)
+                && _lemonadeLoadedCtx == ctxKey)
+                return;
+        }
+
+        _trace.Record(ctx is > 0
+            ? $"🍋 Loading {name} with ctx_size={ctx}…"
+            : $"🍋 Loading {name}…");
+
+        try
+        {
+            var err = await LemonadeModelCatalogResolver.LoadModelAsync(
+                OllamaHttp,
+                _keyStore.LemonadeBaseUrl,
+                _keyStore.LemonadeApiKey,
+                name,
+                ctx,
+                ct);
+            if (!string.IsNullOrWhiteSpace(err))
+            {
+                _trace.Record($"⚠️ Lemonade load: {err}");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            _trace.Record($"⚠️ Lemonade load: {ex.Message}");
+            return;
+        }
+
+        lock (LemonadeLoadGate)
+        {
+            _lemonadeLoadedName = name;
+            _lemonadeLoadedCtx = ctxKey;
+        }
+
+        _trace.Record(ctx is > 0
+            ? $"🍋 Loaded {name} (ctx_size={ctx})."
+            : $"🍋 Loaded {name}.");
+    }
+
     private static int EstimateMessageListTokens(IList<AiChatMessage> history)
     {
         int n = 0;
@@ -2166,7 +2292,7 @@ public sealed class ChatCompletionService : IChatCompletionService
         if (modelId.StartsWith("lemonade/", StringComparison.OrdinalIgnoreCase))
         {
             var name = modelId.Split('/', 2)[1];
-            return _keyStore.GetLemonadeModelSettings(name)?.ContextSize ?? 0;
+            return LemonadeModelCatalogResolver.ResolveLoadCtxSize(_keyStore.GetLemonadeModelSettings(name));
         }
 
         if (CloudModelId.TryParse(modelId, out var cloudProviderId, out var cloudModelName))
