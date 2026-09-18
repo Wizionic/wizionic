@@ -6,6 +6,7 @@ using App.Maui.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
+using Windows.Graphics;
 
 namespace App.Maui;
 
@@ -19,6 +20,7 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     public const string StartWithWindowsKey = "app-start-with-windows";
     public const string StartMinimizedKey = "app-start-minimized";
     public const string TrayHintShownKey = "app-tray-hint-shown";
+    public const string WindowBoundsKey = DesktopWindowBounds.SettingsKey;
 
     private const string BalloonText = "Wizionic is still running. Right-click the tray icon to Quit.";
 
@@ -41,6 +43,14 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
     private bool _balloonShown;
     private bool _hintPersisted;
     private bool _disposed;
+    private bool _boundsReady;
+    private bool _applyingBounds;
+    private bool _boundsHooked;
+    private int _restoredX;
+    private int _restoredY;
+    private int _restoredW;
+    private int _restoredH;
+    private CancellationTokenSource? _saveBoundsCts;
 
     public WindowsDesktopHost(
         WorkflowDueHost due,
@@ -231,6 +241,9 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
             if (_hintPersisted)
                 _balloonShown = true;
 
+            var savedBounds = DesktopWindowBounds.Parse(await _db.GetStringAsync(WindowBoundsKey));
+            InvokeOnUi(() => ApplyAndHookWindowBounds(savedBounds));
+
             OnChanged?.Invoke();
             Console.WriteLine(
                 $"[Desktop] prefs closeToTray={CloseToTray} startWithWindows={StartWithWindows} startMinimized={StartMinimized}");
@@ -334,6 +347,9 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
+        if (ReferenceEquals(sender, _appWindow))
+            PersistWindowBoundsNow();
+
         if (_quitRequested)
             return;
 
@@ -427,6 +443,15 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
         catch (Exception ex) { Console.WriteLine($"[Desktop] stop wait loop: {ex.Message}"); }
 
         UnsubscribePowerResume();
+
+        PersistWindowBoundsNow();
+
+        if (_appWindow is not null && _boundsHooked)
+        {
+            try { _appWindow.Changed -= OnAppWindowChanged; }
+            catch { /* ignore */ }
+            _boundsHooked = false;
+        }
 
         foreach (var tracked in _windows.ToArray())
         {
@@ -527,6 +552,178 @@ public sealed class WindowsDesktopHost : IDesktopShellService, IDisposable
 
         BindTray(hwnd);
         Console.WriteLine("[Desktop] tray rebound to remaining window");
+    }
+
+    private void ApplyAndHookWindowBounds(DesktopWindowBounds? saved)
+    {
+        var appWindow = _appWindow;
+        if (appWindow is null)
+            return;
+
+        _applyingBounds = true;
+        try
+        {
+            if (saved is null)
+            {
+                MaximizePrimaryWindow(appWindow);
+                Console.WriteLine("[Desktop] first launch: maximized");
+            }
+            else if (saved.Maximized)
+            {
+                if (saved.HasRestoredSize)
+                    MoveResizeClamped(appWindow, saved);
+                MaximizePrimaryWindow(appWindow);
+                RememberRestored(saved);
+                Console.WriteLine("[Desktop] restored maximized");
+            }
+            else if (saved.HasRestoredSize)
+            {
+                MoveResizeClamped(appWindow, saved);
+                RememberRestored(saved);
+                Console.WriteLine($"[Desktop] restored {saved.W}x{saved.H} at {saved.X},{saved.Y}");
+            }
+            else
+            {
+                MaximizePrimaryWindow(appWindow);
+                Console.WriteLine("[Desktop] no usable saved size: maximized");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Desktop] apply window bounds failed: {ex.Message}");
+        }
+        finally
+        {
+            _applyingBounds = false;
+            _boundsReady = true;
+        }
+
+        if (_boundsHooked)
+            return;
+        try
+        {
+            appWindow.Changed += OnAppWindowChanged;
+            _boundsHooked = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Desktop] window Changed hook failed: {ex.Message}");
+        }
+    }
+
+    private static void MaximizePrimaryWindow(AppWindow appWindow)
+    {
+        if (appWindow.Presenter is OverlappedPresenter presenter)
+            presenter.Maximize();
+        else
+            appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+    }
+
+    private void RememberRestored(DesktopWindowBounds saved)
+    {
+        _restoredX = saved.X;
+        _restoredY = saved.Y;
+        _restoredW = saved.W;
+        _restoredH = saved.H;
+    }
+
+    private static void MoveResizeClamped(AppWindow appWindow, DesktopWindowBounds saved)
+    {
+        var display = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest)
+                      ?? DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Primary);
+        var work = display?.WorkArea ?? new RectInt32(0, 0, saved.W, saved.H);
+
+        var w = Math.Clamp(saved.W, DesktopWindowBounds.MinWidth, Math.Max(DesktopWindowBounds.MinWidth, work.Width));
+        var h = Math.Clamp(saved.H, DesktopWindowBounds.MinHeight, Math.Max(DesktopWindowBounds.MinHeight, work.Height));
+        var x = saved.X;
+        var y = saved.Y;
+        if (x + 80 < work.X || x >= work.X + work.Width - 80)
+            x = work.X;
+        if (y + 80 < work.Y || y >= work.Y + work.Height - 80)
+            y = work.Y;
+        x = Math.Clamp(x, work.X, work.X + Math.Max(0, work.Width - w));
+        y = Math.Clamp(y, work.Y, work.Y + Math.Max(0, work.Height - h));
+        appWindow.MoveAndResize(new RectInt32(x, y, w, h));
+    }
+
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (!args.DidSizeChange && !args.DidPositionChange && !args.DidPresenterChange)
+            return;
+        if (!_boundsReady || _applyingBounds)
+            return;
+        if (!ReferenceEquals(sender, _appWindow))
+            return;
+        SchedulePersistWindowBounds();
+    }
+
+    private void SchedulePersistWindowBounds()
+    {
+        _saveBoundsCts?.Cancel();
+        _saveBoundsCts = new CancellationTokenSource();
+        var token = _saveBoundsCts.Token;
+        _ = PersistWindowBoundsSoonAsync(token);
+    }
+
+    private async Task PersistWindowBoundsSoonAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(300, token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        PersistWindowBoundsNow();
+    }
+
+    private void PersistWindowBoundsNow()
+    {
+        if (!_boundsReady || _applyingBounds)
+            return;
+        var appWindow = _appWindow;
+        if (appWindow is null)
+            return;
+
+        try
+        {
+            var maximized = false;
+            if (appWindow.Presenter is OverlappedPresenter presenter)
+            {
+                if (presenter.State == OverlappedPresenterState.Minimized)
+                    return;
+                maximized = presenter.State == OverlappedPresenterState.Maximized;
+            }
+
+            if (!maximized)
+            {
+                var pos = appWindow.Position;
+                var size = appWindow.Size;
+                if (size.Width >= DesktopWindowBounds.MinWidth && size.Height >= DesktopWindowBounds.MinHeight)
+                {
+                    _restoredX = pos.X;
+                    _restoredY = pos.Y;
+                    _restoredW = size.Width;
+                    _restoredH = size.Height;
+                }
+            }
+
+            var bounds = new DesktopWindowBounds
+            {
+                X = _restoredW > 0 ? _restoredX : appWindow.Position.X,
+                Y = _restoredH > 0 ? _restoredY : appWindow.Position.Y,
+                W = _restoredW > 0 ? _restoredW : appWindow.Size.Width,
+                H = _restoredH > 0 ? _restoredH : appWindow.Size.Height,
+                Maximized = maximized
+            };
+            _ = _db.SetStringAsync(WindowBoundsKey, bounds.ToJson());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Desktop] persist window bounds failed: {ex.Message}");
+        }
     }
 
     private void InvokeOnUi(Action action)

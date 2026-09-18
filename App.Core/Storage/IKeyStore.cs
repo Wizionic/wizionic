@@ -5,6 +5,9 @@ namespace App.Core.Storage;
 
 public interface IKeyStore
 {
+    /// <summary>Raised after local model catalogs or profiles change (Lemonade/Ollama refresh).</summary>
+    event Action? Changed;
+
     Task LoadAsync(CancellationToken ct = default);
 
     string LastSelectedModel { get; }

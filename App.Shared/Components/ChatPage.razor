@@ -26,6 +26,7 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject IKeyStore KeyStore
+@inject LocalAiCatalogWarmup LocalAiCatalog
 @inject IConversationStore ConversationStore
 @inject IChatModelCatalog ModelCatalog
 @inject IAuthService AuthService
@@ -1516,6 +1517,7 @@
     private Action? _browserPanelChangedHandler;
     private Action? _chatPanelChangedHandler;
     private Action? _syncChangedHandler;
+    private Action? _keyStoreChangedHandler;
     private string? _lastSyncedAiServerId;
     private int _lastSyncedRemoteModelCount = -1;
     private bool _lastSyncedAiProxyConnected;
@@ -1567,6 +1569,14 @@
             StateHasChanged();
         });
         SyncService.OnChanged += _syncChangedHandler;
+
+        _keyStoreChangedHandler = () => InvokeAsync(() =>
+        {
+            ReloadModelListFromCatalog(preferRemote: true);
+            EnsureValidModelSelection();
+            StateHasChanged();
+        });
+        KeyStore.Changed += _keyStoreChangedHandler;
     }
 
     private async Task InitializeChatDataAsync()
@@ -1574,13 +1584,14 @@
         _chatIndexLoading = true;
 
         // Phase 1 — local only (fast): paint titles + model list before network/sync.
-        await KeyStore.LoadAsync();
-        try { await SkillStore.LoadAsync(); } catch { /* optional */ }
         await AuthService.LoadAsync();
         if (AuthService.IsAuthenticated && !string.IsNullOrEmpty(AuthService.Email))
             currentUser = AuthService.Email;
+        await LocalAiCatalog.EnsureForCurrentUserAsync();
+        await KeyStore.LoadAsync();
+        try { await SkillStore.LoadAsync(); } catch { /* optional */ }
 
-        // Local catalog from KeyStore — no HTTP wait for proxy providers.
+        // Local catalog from KeyStore — Lemonade profile is filled by warmup after first login.
         ReloadModelListFromCatalog(preferRemote: false);
         EnsureValidModelSelection();
 
@@ -1669,6 +1680,7 @@
     {
         try
         {
+            await LocalAiCatalog.EnsureForCurrentUserAsync();
             await ModelCatalog.RefreshAsync();
             ReloadModelListFromCatalog(preferRemote: true);
             // Keep gallery-edit model if we still have a pending image attachment.
@@ -2209,6 +2221,9 @@
 
         if (_syncChangedHandler != null)
             SyncService.OnChanged -= _syncChangedHandler;
+
+        if (_keyStoreChangedHandler != null)
+            KeyStore.Changed -= _keyStoreChangedHandler;
 
         _micCts?.Cancel();
         _imageCts?.Cancel();

@@ -375,6 +375,7 @@ public static class MauiProgram
 		services.AddSingleton<IPwaDetector>(sp => sp.GetRequiredService<MauiPwaDetector>());
 		services.AddSingleton<SqliteKeyStore>();
 		services.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<SqliteKeyStore>());
+		services.AddScoped<LocalAiCatalogWarmup>();
 		services.AddScoped<MauiCryptoService>();
 		services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<MauiCryptoService>());
 		services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
