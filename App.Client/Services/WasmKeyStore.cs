@@ -64,6 +64,8 @@ public class WasmKeyStore : IKeyStore
     private List<OAuthConnectorInstall> _oauthConnectors = new();
     private HomeAssistantConfig _homeAssistantConfig = new();
 
+    public event Action? Changed;
+
     public WasmKeyStore(IJSRuntime js, IAuthService auth, IServiceScopeFactory scopeFactory)
     {
         _js = js;
@@ -909,6 +911,7 @@ public class WasmKeyStore : IKeyStore
                 ModelSettings = next
             };
             await SaveOllamaConfigAsync(ct);
+            RaiseChanged();
         }
         catch (Exception ex)
         {
@@ -1214,6 +1217,14 @@ public class WasmKeyStore : IKeyStore
             await SetActiveModelProfileIdAsync(filled.Id, ct);
             await SetLastSelectedModelAsync(ModelProfileId.ForPicker(filled.Id), ct);
         }
+
+        RaiseChanged();
+    }
+
+    private void RaiseChanged()
+    {
+        try { Changed?.Invoke(); }
+        catch { /* listeners */ }
     }
 
     private async Task SaveLemonadeConfigAsync(CancellationToken ct)

@@ -279,6 +279,7 @@ builder.Services.AddSingleton<App.Core.UI.IUrlEmbedOverlay>(
 // WASM/MAUI; the host only needs a no-op so SSR DI can construct those components.
 builder.Services.AddSingleton<App.Core.Storage.IKeyStore>(
     _ => App.Shared.Services.NullKeyStore.Instance);
+builder.Services.AddScoped<App.Shared.Services.LocalAiCatalogWarmup>();
 // Skills storage/runner live on WASM/MAUI clients. Host only needs no-ops for SSR DI.
 builder.Services.AddSingleton<App.Core.Skills.ISkillStore>(
     _ => App.Shared.Services.Skills.NullSkillStore.Instance);

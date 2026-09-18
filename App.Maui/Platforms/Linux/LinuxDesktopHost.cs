@@ -15,6 +15,7 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 	public const string StartWithWindowsKey = "app-start-with-windows";
 	public const string StartMinimizedKey = "app-start-minimized";
 	public const string TrayHintShownKey = "app-tray-hint-shown";
+	public const string WindowBoundsKey = DesktopWindowBounds.SettingsKey;
 
 	private const string HintBody = "Wizionic is still running. Right-click the tray icon to Quit.";
 
@@ -39,6 +40,13 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 	private bool _disposed;
 	private bool _canHideToTray;
 	private bool _restoreHidden;
+	private bool _boundsReady;
+	private bool _applyingBounds;
+	private bool _boundsHooked;
+	private int _restoredW;
+	private int _restoredH;
+	private CancellationTokenSource? _saveBoundsCts;
+	private GObject.SignalHandler<GObject.Object, GObject.Object.NotifySignalArgs>? _windowNotifyHandler;
 
 	public LinuxDesktopHost(
 		WorkflowDueHost due,
@@ -180,6 +188,9 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 
 	private bool OnCloseRequest(Gtk.Window sender, EventArgs args)
 	{
+		if (ReferenceEquals(sender, _window))
+			PersistWindowBoundsNow();
+
 		if (_quitRequested)
 		{
 			ReleaseHoldIfNeeded();
@@ -256,6 +267,9 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 			_hintPersisted = await _db.GetStringAsync(TrayHintShownKey) == "1";
 			if (_hintPersisted)
 				_hintShown = true;
+
+			var savedBounds = DesktopWindowBounds.Parse(await _db.GetStringAsync(WindowBoundsKey));
+			InvokeOnUi(() => ApplyAndHookWindowBounds(savedBounds));
 
 			OnChanged?.Invoke();
 			Console.WriteLine(
@@ -387,6 +401,9 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 			return;
 		_prepared = true;
 
+		PersistWindowBoundsNow();
+		UnhookWindowBounds();
+
 		foreach (var w in _windows.ToArray())
 		{
 			try { w.OnCloseRequest -= OnCloseRequest; }
@@ -469,6 +486,142 @@ public sealed class LinuxDesktopHost : IDesktopShellService, IDisposable
 		}
 
 		return false;
+	}
+
+	private void ApplyAndHookWindowBounds(DesktopWindowBounds? saved)
+	{
+		var window = _window;
+		if (window is null)
+			return;
+
+		_applyingBounds = true;
+		try
+		{
+			if (saved is null || saved.Maximized || !saved.HasRestoredSize)
+			{
+				if (saved is { HasRestoredSize: true })
+				{
+					window.SetDefaultSize(saved.W, saved.H);
+					_restoredW = saved.W;
+					_restoredH = saved.H;
+				}
+				window.Maximize();
+				Console.WriteLine(saved is null
+					? "[Desktop] first launch: maximized"
+					: "[Desktop] restored maximized");
+			}
+			else
+			{
+				window.SetDefaultSize(saved.W, saved.H);
+				_restoredW = saved.W;
+				_restoredH = saved.H;
+				Console.WriteLine($"[Desktop] restored {saved.W}x{saved.H}");
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Desktop] apply window bounds failed: {ex.Message}");
+		}
+		finally
+		{
+			_applyingBounds = false;
+			_boundsReady = true;
+		}
+
+		HookWindowBounds(window);
+	}
+
+	private void HookWindowBounds(Adw.ApplicationWindow window)
+	{
+		if (_boundsHooked)
+			return;
+		try
+		{
+			_windowNotifyHandler ??= OnWindowNotify;
+			window.OnNotify += _windowNotifyHandler;
+			_boundsHooked = true;
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Desktop] window notify hook failed: {ex.Message}");
+		}
+	}
+
+	private void UnhookWindowBounds()
+	{
+		if (!_boundsHooked || _window is null || _windowNotifyHandler is null)
+			return;
+		try { _window.OnNotify -= _windowNotifyHandler; }
+		catch { /* ignore */ }
+		_boundsHooked = false;
+	}
+
+	private void OnWindowNotify(GObject.Object sender, GObject.Object.NotifySignalArgs args)
+	{
+		if (!_boundsReady || _applyingBounds)
+			return;
+		var name = args.Pspec?.GetName();
+		if (name is not ("maximized" or "default-width" or "default-height"))
+			return;
+		SchedulePersistWindowBounds();
+	}
+
+	private void SchedulePersistWindowBounds()
+	{
+		_saveBoundsCts?.Cancel();
+		_saveBoundsCts = new CancellationTokenSource();
+		var token = _saveBoundsCts.Token;
+		_ = PersistWindowBoundsSoonAsync(token);
+	}
+
+	private async Task PersistWindowBoundsSoonAsync(CancellationToken token)
+	{
+		try
+		{
+			await Task.Delay(300, token);
+		}
+		catch (OperationCanceledException)
+		{
+			return;
+		}
+
+		InvokeOnUi(PersistWindowBoundsNow);
+	}
+
+	private void PersistWindowBoundsNow()
+	{
+		if (!_boundsReady || _applyingBounds)
+			return;
+		var window = _window;
+		if (window is null)
+			return;
+
+		try
+		{
+			var maximized = window.IsMaximized();
+			if (!maximized)
+			{
+				var w = Math.Max(window.GetWidth(), window.GetAllocatedWidth());
+				var h = Math.Max(window.GetHeight(), window.GetAllocatedHeight());
+				if (w >= DesktopWindowBounds.MinWidth && h >= DesktopWindowBounds.MinHeight)
+				{
+					_restoredW = w;
+					_restoredH = h;
+				}
+			}
+
+			var bounds = new DesktopWindowBounds
+			{
+				W = _restoredW > 0 ? _restoredW : DesktopWindowBounds.MinWidth,
+				H = _restoredH > 0 ? _restoredH : DesktopWindowBounds.MinHeight,
+				Maximized = maximized
+			};
+			_ = _db.SetStringAsync(WindowBoundsKey, bounds.ToJson());
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[Desktop] persist window bounds failed: {ex.Message}");
+		}
 	}
 
 	private void InvokeOnUi(Action action)

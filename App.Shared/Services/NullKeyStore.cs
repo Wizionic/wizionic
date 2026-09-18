@@ -14,6 +14,8 @@ public sealed class NullKeyStore : IKeyStore
 
     private NullKeyStore() { }
 
+    public event Action? Changed { add { } remove { } }
+
     public Task LoadAsync(CancellationToken ct = default) => Task.CompletedTask;
 
     public string LastSelectedModel => "";

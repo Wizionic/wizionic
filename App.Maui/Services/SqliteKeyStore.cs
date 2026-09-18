@@ -62,6 +62,8 @@ public class SqliteKeyStore : IKeyStore
     private List<OAuthConnectorInstall> _oauthConnectors = new();
     private HomeAssistantConfig _homeAssistantConfig = new();
 
+    public event Action? Changed;
+
     public SqliteKeyStore(SqliteSettingsDatabase db, IAuthService auth, IServiceScopeFactory scopeFactory)
     {
         _db = db;
@@ -903,6 +905,7 @@ public class SqliteKeyStore : IKeyStore
                 ModelSettings = next
             };
             await SaveOllamaConfigAsync(ct);
+            RaiseChanged();
         }
         catch (Exception ex)
         {
@@ -1207,6 +1210,14 @@ public class SqliteKeyStore : IKeyStore
             await SetActiveModelProfileIdAsync(filled.Id, ct);
             await SetLastSelectedModelAsync(ModelProfileId.ForPicker(filled.Id), ct);
         }
+
+        RaiseChanged();
+    }
+
+    private void RaiseChanged()
+    {
+        try { Changed?.Invoke(); }
+        catch { /* listeners */ }
     }
 
     private async Task SaveLemonadeConfigAsync(CancellationToken ct)
