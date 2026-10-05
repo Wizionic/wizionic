@@ -61,6 +61,10 @@ public sealed class MauiPwaDetector : IPwaDetector
     {
         _agent = agent;
         _sidebar = sidebar;
+        // Some hosts reject a client with no User-Agent. The WebView already loaded the page.
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+        _http.DefaultRequestHeaders.Accept.ParseAdd("application/manifest+json, application/json;q=0.9, */*;q=0.8");
         _agent.UrlChanged += url => _ = ScheduleDetectAsync(url, delayMs: 350);
         _agent.LoadingChanged += loading =>
         {
@@ -309,21 +313,27 @@ public sealed class MauiPwaDetector : IPwaDetector
     private async Task<string> FetchManifestJsonAsync(string manifestUrl, CancellationToken ct)
     {
         var pageJson = UnquoteJsString(await _agent.EvaluateScriptAsync(FetchManifestScript, ct));
-        if (!string.IsNullOrWhiteSpace(pageJson)
-            && !pageJson.StartsWith("Script error", StringComparison.OrdinalIgnoreCase)
-            && pageJson.TrimStart().StartsWith('{'))
+        if (TryParseJsonObject(pageJson, out var parsedFromPage))
         {
-            Console.WriteLine($"[Browser/PWA] fetched manifest via XHR ({pageJson.Length} chars)");
-            return pageJson;
+            Console.WriteLine($"[Browser/PWA] fetched manifest via XHR ({parsedFromPage.Length} chars)");
+            return parsedFromPage;
         }
 
-        Console.WriteLine("[Browser/PWA] in-page XHR fetch failed, trying HttpClient");
+        if (!string.IsNullOrWhiteSpace(pageJson))
+            Console.WriteLine($"[Browser/PWA] in-page manifest was not JSON ({pageJson.Length} chars), trying HttpClient");
+        else
+            Console.WriteLine("[Browser/PWA] in-page XHR fetch failed, trying HttpClient");
 
         try
         {
             var json = await _http.GetStringAsync(manifestUrl, ct);
-            Console.WriteLine($"[Browser/PWA] fetched manifest via HttpClient ({json.Length} chars)");
-            return json;
+            if (TryParseJsonObject(json, out var parsed))
+            {
+                Console.WriteLine($"[Browser/PWA] fetched manifest via HttpClient ({parsed.Length} chars)");
+                return parsed;
+            }
+
+            Console.WriteLine("[Browser/PWA] HttpClient body was not a JSON object");
         }
         catch (Exception ex)
         {
@@ -333,6 +343,12 @@ public sealed class MauiPwaDetector : IPwaDetector
         return "";
     }
 
+    /// <summary>
+    /// WebView2's ExecuteScriptAsync JSON-encodes the return value. MAUI's Windows
+    /// WebView then only Trim('"')s that text, so a manifest body arrives as
+    /// {\"name\":\"Excalidraw\"} and JsonDocument.Parse throws. Linux WebKit returns
+    /// the raw string. Accept both, and repair the half-decoded Windows shape.
+    /// </summary>
     private static string UnquoteJsString(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -340,12 +356,70 @@ public sealed class MauiPwaDetector : IPwaDetector
 
         var trimmed = value.Trim();
         if (trimmed.Equals("null", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("undefined", StringComparison.OrdinalIgnoreCase))
+            || trimmed.Equals("undefined", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("Script error", StringComparison.OrdinalIgnoreCase))
             return "";
 
+        if (TryDecodeJsonString(trimmed, out var decoded))
+            return decoded;
+
+        // Outer quotes already removed; escapes such as \" and \n are still there.
+        if (LooksLikeTrimmedJsonString(trimmed)
+            && TryDecodeJsonString("\"" + trimmed + "\"", out decoded))
+            return decoded;
+
         if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
-            return trimmed[1..^1].Replace("\\\"", "\"").Replace("\\n", "\n");
+            return trimmed[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal).Replace("\\n", "\n", StringComparison.Ordinal);
 
         return trimmed;
+    }
+
+    private static bool LooksLikeTrimmedJsonString(string value) =>
+        value.Contains("\\\"", StringComparison.Ordinal)
+        || value.Contains("\\n", StringComparison.Ordinal)
+        || value.Contains("\\u", StringComparison.Ordinal)
+        || value.Contains("\\/", StringComparison.Ordinal)
+        || value.Contains("\\t", StringComparison.Ordinal);
+
+    private static bool TryDecodeJsonString(string json, out string decoded)
+    {
+        decoded = "";
+        if (json.Length < 2 || json[0] != '"')
+            return false;
+
+        try
+        {
+            var value = JsonSerializer.Deserialize<string>(json);
+            if (value is null)
+                return false;
+
+            decoded = value;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryParseJsonObject(string json, out string normalized)
+    {
+        normalized = "";
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+
+            normalized = json.Trim();
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }

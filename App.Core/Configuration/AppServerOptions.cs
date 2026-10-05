@@ -19,6 +19,9 @@ public class AppServerOptions
     public static string LatestWindowsSetupUrl => GitHubLatestDownloadUrl("Wizionic-win-Setup.exe");
     public static string LatestWindowsInstallScriptUrl => GitHubLatestDownloadUrl("install.ps1");
     public const string HostedWindowsInstallScriptUrl = "https://wizionic.com/install.ps1";
+
+    /// <summary>Microsoft Store product page. Product id only; no locale or share query.</summary>
+    public const string MicrosoftStoreUrl = "https://apps.microsoft.com/detail/9MX9NNG2FN2B";
     public static string LatestSha256SumsUrl => GitHubLatestDownloadUrl("SHA256SUMS");
     public static string LatestLinuxAppImageUrl => GitHubLatestDownloadUrl("Wizionic.AppImage");
     public static string LatestLinuxInstallScriptUrl => GitHubLatestDownloadUrl("install.sh");

@@ -69,7 +69,7 @@ Decides which tool **modules** (Native, Lemonade, Gallery, Notes, and so on) are
 
 - **Rules** — instant, no extra model call. Default.
 - **Hybrid** — rules for clear cases; a small model when the message is ambiguous.
-- **AI router** — always classify with the routing model; falls back to rules if that fails.
+- **AI router** — always classify with the routing model; falls back to rules only when that call fails. A Home Assistant pick is kept only when the message is a device command or includes the wake word.
 
 This is not the same as enabling MCP servers. Routing only chooses among modules that are already available.
 

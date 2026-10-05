@@ -655,14 +655,9 @@
             var idx = editingMessageIndex!.Value;
             var editingItemId = currentNoteMessages[idx].ItemId;
 
-            string? html = _activeEditDraftHtml;
-            if (html is null && quillEditor is not null)
-            {
-                try { html = await quillEditor.GetHTML(); }
-                catch { /* editor may be mid-dispose */ }
-            }
-
-            var draftDirty = _editDirty && html is not null && !NoteHtmlEquals(html, currentNoteMessages[idx].Content);
+            var draft = await ReadNoteDraftAsync(idx);
+            var html = draft.Readable ? draft.Html : null;
+            var draftDirty = draft.Changed;
 
             if (draftDirty)
             {
@@ -851,26 +846,52 @@
         if (editingMessageIndex is not int index || index < 0 || index >= currentNoteMessages.Count)
             return false;
 
-        string? html = _activeEditDraftHtml;
-        if (html is null && quillEditor is not null)
-            html = await quillEditor.GetHTML();
-
-        if (html is null)
+        var draft = await ReadNoteDraftAsync(index);
+        if (!draft.Readable)
             return null;
-
-        if (!_editDirty || NoteHtmlEquals(html, currentNoteMessages[index].Content))
+        if (!draft.Changed)
             return false;
+
+        currentNoteMessages[index] = ChatMessageHelper.TouchModified(
+            currentNoteMessages[index],
+            content: draft.Html,
+            contentFormat: NoteContentFormatter.FormatHtml);
+        _activeEditDraftHtml = draft.Html;
+        _editDirty = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the live Quill DOM. A paste often never flips <see cref="_editDirty"/>
+    /// before Ctrl+S, the check button, or a click outside, because that first
+    /// text-change used to be kept as the mount baseline.
+    /// </summary>
+    private async Task<NoteDraftRead> ReadNoteDraftAsync(int index)
+    {
+        string? html = null;
+        if (quillEditor is not null)
+        {
+            try { html = await quillEditor.GetHTML(); }
+            catch { /* editor may be mid-dispose */ }
+        }
+
+        html ??= _activeEditDraftHtml;
+        if (html is null)
+            return new NoteDraftRead(false, false, "");
 
         if (IsBlankQuillHtml(html))
             html = "";
 
-        currentNoteMessages[index] = ChatMessageHelper.TouchModified(
-            currentNoteMessages[index],
-            content: html,
-            contentFormat: NoteContentFormatter.FormatHtml);
-        _activeEditDraftHtml = html;
-        return true;
+        // Before the mount snapshot lands, Quill's canonical HTML can differ
+        // from the stored note without a user edit. Do not treat that as a change.
+        var changed = _editBaselineCaptured && !NoteHtmlEquals(html, _editBaselineHtml);
+        if (changed && NoteHtmlEquals(html, currentNoteMessages[index].Content))
+            changed = false;
+
+        return new NoteDraftRead(true, changed, html);
     }
+
+    private readonly record struct NoteDraftRead(bool Readable, bool Changed, string Html);
 
     private async Task ApplyDraftToEditingMessageAsync()
     {
