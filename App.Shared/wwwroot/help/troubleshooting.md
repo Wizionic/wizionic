@@ -53,4 +53,4 @@ On Linux, KDE Plasma and Linux Mint Cinnamon show the tray icon. Stock GNOME oft
 
 Official builds check [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest), not wizionic.com, for new installers.
 
-First-time Windows install: prefer `irm https://wizionic.com/install.ps1 | iex` in PowerShell. Browser downloads of the unsigned `Setup.exe` get Mark of the Web; Edge then hides a clear Run path behind Keep / SmartScreen.
+First-time Windows install: [Microsoft Store](https://apps.microsoft.com/detail/9MX9NNG2FN2B). Store installs update in the Store.

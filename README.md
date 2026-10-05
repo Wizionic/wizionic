@@ -34,22 +34,9 @@ curl -fsSL https://github.com/Wizionic/wizionic/releases/latest/download/install
 
 **Install for Windows**:
 
-```powershell
-irm https://wizionic.com/install.ps1 | iex
-```
+[Get it from the Microsoft Store](https://apps.microsoft.com/detail/9MX9NNG2FN2B)
 
-
-
-Windows builds are not code-signed yet, but you may still download the installer in a browser. SmartScreen will give you scary warnings. 
-<details>
-<summary>Download the installer in a browser</summary>
-
-1. Download [Wizionic-win-Setup.exe](https://github.com/Wizionic/wizionic/releases/latest/download/Wizionic-win-Setup.exe).
-2. Edge: **Keep** → **…** → **Keep anyway**.
-3. SmartScreen: **More info** → **Run anyway**.
-4. Optional: verify SHA256 against [SHA256SUMS](https://github.com/Wizionic/wizionic/releases/latest/download/SHA256SUMS) on the same release.
-
-</details>
+Windows 10 and 11. The Store app is signed and updates itself.
 
 ---
 

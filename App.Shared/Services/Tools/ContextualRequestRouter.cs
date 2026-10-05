@@ -569,10 +569,16 @@ public sealed class ContextualRequestRouter : IRequestRouter
             || m.Contains("shield") || m.Contains("speaker") || m.Contains("stereo"))
             return true;
 
-        // Play/pause/stop media on a house device
-        if ((m.Contains("play") || m.Contains("pause") || m.Contains("resume") || m.Contains("stop"))
+        // Play/pause/stop media on a house device.
+        // "on the" / "on my" are not devices ("stop limits on the trade").
+        if ((ContainsWord(m, "play") || ContainsWord(m, "pause") || ContainsWord(m, "resume") || ContainsWord(m, "stop"))
             && (m.Contains("music") || m.Contains("song") || m.Contains("media")
-                || m.Contains("on my") || m.Contains("on the")))
+                || m.Contains("playback") || m.Contains("spotify") || m.Contains("plex")
+                || ContainsWord(m, "tv")
+                || m.Contains("speaker") || m.Contains("avr") || m.Contains("denon")
+                || m.Contains("soundbar") || m.Contains("sound bar") || m.Contains("receiver")
+                || m.Contains("sonos") || m.Contains("yamaha") || m.Contains("heos")
+                || m.Contains("chromecast") || m.Contains("stereo")))
             return true;
 
         // Actions commonly paired with HA
@@ -590,6 +596,37 @@ public sealed class ContextualRequestRouter : IRequestRouter
 
         return false;
     }
+
+    /// <summary>
+    /// A named house device or media target. Used when Assist fails, so a loose
+    /// "turn on the kitchen" match does not replace a normal answer with the HA error.
+    /// </summary>
+    public static bool MessageNamesConcreteHomeAssistantDevice(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+        return m.Contains("light") || m.Contains("lamp") || m.Contains("lights")
+            || m.Contains("switch") || m.Contains("outlet") || m.Contains("plug")
+            || m.Contains("thermostat") || m.Contains("climate") || m.Contains("hvac")
+            || m.Contains("media player") || m.Contains("media_player")
+            || m.Contains("volume") || m.Contains("mute") || m.Contains("unmute")
+            || m.Contains("cover") || m.Contains("blinds") || m.Contains("garage")
+            || m.Contains("lock") || m.Contains("unlock") || m.Contains("vacuum")
+            || m.Contains("scene")
+            || m.Contains("avr") || m.Contains("receiver") || m.Contains("soundbar")
+            || m.Contains("sound bar") || m.Contains("denon") || m.Contains("sonos")
+            || m.Contains("yamaha") || m.Contains("heos") || m.Contains("chromecast")
+            || m.Contains("speaker") || m.Contains("stereo")
+            || m.Contains("music") || m.Contains("song") || m.Contains("playback")
+            || m.Contains("spotify") || m.Contains("plex")
+            || m.Contains("shield") || m.Contains("fan") || m.Contains("bulb")
+            || ContainsWord(m, "tv");
+    }
+
+    private static bool ContainsWord(string lowerMessage, string word) =>
+        Regex.IsMatch(lowerMessage, $@"\b{Regex.Escape(word)}\b", RegexOptions.CultureInvariant);
 
     public static string? TryExtractAlbumName(string message)
     {

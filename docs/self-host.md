@@ -71,11 +71,7 @@ The `Dockerfile` builds the host + WASM client only. It does not build the Windo
 
 Desktop installers are built by GitHub Actions (see `.github/workflows/release.yml`) and published to [GitHub Releases](https://github.com/Wizionic/wizionic/releases/latest). Point a desktop client at your host by using that host as the account / sync server in the app.
 
-Windows (PowerShell, per-user — prefer this over a browser `.exe` download until builds are code-signed):
-
-```powershell
-irm https://wizionic.com/install.ps1 | iex
-```
+Windows: install from the [Microsoft Store](https://apps.microsoft.com/detail/9MX9NNG2FN2B), then point Login server at this host.
 
 Linux:
 

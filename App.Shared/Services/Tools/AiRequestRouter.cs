@@ -104,7 +104,10 @@ public sealed class AiRequestRouter
 
             var parsed = TryParseRoute(text, available, sourceLabel, message);
             if (parsed != null)
-                return MergeHardConstraints(parsed, fallback, available, sourceLabel, message);
+            {
+                var merged = MergeHardConstraints(parsed, fallback, available, sourceLabel, message);
+                return DropImplausibleHomeAssistant(merged, message);
+            }
 
             // AI empty / non-JSON: prefer rules if strong; else smart-home heuristic without wake word.
             var soft = TrySoftHomeAssistant(message, available, sourceLabel);
@@ -217,13 +220,51 @@ public sealed class AiRequestRouter
             source: sourceLabel + "→AI");
     }
 
+    /// <summary>
+    /// A small routing model often names Home Assistant for ordinary questions.
+    /// Keep that module only for a wake word or a real device command.
+    /// </summary>
+    private RequestRoute DropImplausibleHomeAssistant(RequestRoute route, string message)
+    {
+        var hasHa = string.Equals(route.TargetModule, "HomeAssistant", StringComparison.OrdinalIgnoreCase)
+            || route.Modules.Any(m => m.Equals("HomeAssistant", StringComparison.OrdinalIgnoreCase));
+        if (!hasHa)
+            return route;
+
+        if (ContextualRequestRouter.ContainsWakeWord(message, _keyStore.HomeAssistantAssistantName)
+            || ContextualRequestRouter.MessageSuggestsHomeAssistant(message))
+            return route;
+
+        var modules = route.Modules
+            .Where(m => !m.Equals("HomeAssistant", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        const string note = "dropped HomeAssistant (not a device command)";
+        var reason = string.IsNullOrWhiteSpace(route.Reason) ? note : route.Reason + " · " + note;
+        var source = string.IsNullOrWhiteSpace(route.Source) ? "AI→AI" : route.Source;
+
+        if (modules.Count == 0 && string.IsNullOrWhiteSpace(route.SkillId))
+            return RequestRoute.PureChat(reason, source);
+
+        return RequestRoute.WithModules(
+            modules,
+            reason,
+            targetModule: string.Equals(route.TargetModule, "HomeAssistant", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : route.TargetModule,
+            includeMcp: route.IncludeMcp,
+            source: source,
+            skillId: route.SkillId);
+    }
+
     private static string SystemPrompt =>
         "You are a tool router. Reply with ONLY one JSON object. No markdown, no prose, no thinking tags. " +
         "Schema: {\"modules\":[\"...\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"short\"}. " +
         "modules must be from the available list only. " +
-        "pure_chat=true only for general chat/coding with no tools. " +
-        "HomeAssistant: lights, switches, climate, media players, covers, scenes, locks, vacuum, " +
-        "brightness, color, turn on/off, volume, thermostat — even without a wake word. " +
+        "Include a module only when one of its tools can carry out the request. If unsure, pure_chat=true. " +
+        "pure_chat=true for general chat, coding, advice, stocks, crypto, and finance questions. " +
+        "HomeAssistant only controls house devices: lights, switches, climate, media players, covers, scenes, locks, vacuum, " +
+        "brightness, color, turn on/off, volume, thermostat. It cannot trade, look up stocks, or answer questions. " +
         "When using HomeAssistant set target_module to \"HomeAssistant\" and include it in modules. " +
         "Cloud: generate/edit images with the selected cloud provider (use instead of Lemonade when Cloud is listed). " +
         "Lemonade: local draw/generate/create images. Gallery: albums/save photos. " +
@@ -236,9 +277,10 @@ public sealed class AiRequestRouter
     {
         var sb = new StringBuilder();
         sb.AppendLine("Available modules: " + string.Join(", ", available));
+        sb.AppendLine("Example chat: {\"modules\":[],\"pure_chat\":true,\"target_module\":null,\"reason\":\"chit-chat\"}");
+        sb.AppendLine("Example finance: {\"modules\":[],\"pure_chat\":true,\"target_module\":null,\"reason\":\"general question\"}");
         sb.AppendLine("Example HomeAssistant: {\"modules\":[\"HomeAssistant\"],\"pure_chat\":false,\"target_module\":\"HomeAssistant\",\"reason\":\"kitchen light\"}");
         sb.AppendLine("Example weather: {\"modules\":[\"Native\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"weather\"}");
-        sb.AppendLine("Example chat: {\"modules\":[],\"pure_chat\":true,\"target_module\":null,\"reason\":\"chit-chat\"}");
         sb.AppendLine();
         sb.AppendLine("User message:");
         sb.AppendLine(message.Length > 1500 ? message[..1500] : message);

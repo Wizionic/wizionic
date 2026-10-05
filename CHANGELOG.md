@@ -5,7 +5,21 @@ All notable changes to Wizionic are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.21] — 2026-10-05
+
+### Changed
+
+- Windows install on the README and the login page points to the [Microsoft Store](https://apps.microsoft.com/detail/9MX9NNG2FN2B). The sideload script remains in the repo and is not shown on those pages.
+
+### Fixed
+
+- AI tool routing keeps non related to home assistant questions as a normal chat answer. A Home Assistant route is kept only for a device command or the assistant wake word. If the chat model already answered and the message does not name a device, that answer is kept.
+- Notes: a paste followed immediately by save (checkmark, Ctrl+S, or clicking outside the note) is stored. Opening a note still does not count as an edit for sync.
+- Windows embedded browser: a site with a web app manifest (for example Excalidraw) is detected when pinning from the sidebar, so **Install app** is offered along with **Pin page**.
+
+## [0.3.20] — 2026-09-17
+
+Microsoft Store release, published 2026-09-22.
 
 ### Added
 

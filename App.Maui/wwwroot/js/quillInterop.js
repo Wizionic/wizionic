@@ -96,15 +96,26 @@
             });
 
             if (dotNetHelper && textChangeMethod) {
-                quill.on('text-change', function () {
+                const notify = function () {
                     dotNetHelper.invokeMethodAsync(textChangeMethod, quill.root.innerHTML);
+                };
+                quill.on('text-change', function (_delta, _old, source) {
+                    if (source === 'silent') return;
+                    notify();
+                });
+                // setContents during new Quill() already ran, before this listener.
+                // Without this snapshot the first user edit (a paste is often just
+                // one event) is stored as the baseline and then discarded on save.
+                notify();
+                quill.root.addEventListener('paste', function () {
+                    setTimeout(notify, 0);
                 });
             }
         },
 
         getQuillHTML: function (editorElement) {
             const quill = getQuillInstance(editorElement);
-            return quill ? quill.root.innerHTML : '';
+            return quill ? quill.root.innerHTML : null;
         },
 
         getQuillText: function (editorElement) {

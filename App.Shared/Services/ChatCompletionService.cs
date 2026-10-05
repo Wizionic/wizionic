@@ -350,6 +350,7 @@ public sealed class ChatCompletionService : IChatCompletionService
 
                         // Always re-drive the function-invocation client so tools can actually run
                         // (raw Ollama path returns on first text and skips tool execution).
+                        var answerBeforeRetry = responseText;
                         var retryHistory = BuildRetryHistoryForHomeAssistant(chatHistory);
                         try
                         {
@@ -367,14 +368,17 @@ public sealed class ChatCompletionService : IChatCompletionService
                         {
                             // 1) Structured REST fallback (volume/media/lights) — survives weak tool-calling models
                             // 2) Clean Assist sentence (no raw entity_ids, domain-correct target)
-                            // 3) Honest failure
+                            // 3) Honest failure — only when the user actually named a device.
+                            //    A mismatched route must not replace a normal answer.
+                            var originalAnswer = responseText;
                             var recovered = await RecoverHomeAssistantWithoutModelToolsAsync(
                                 lastUserMessage, conversationId, ct);
                             if (!string.IsNullOrWhiteSpace(recovered))
                             {
                                 responseText = recovered;
                             }
-                            else
+                            else if (string.IsNullOrWhiteSpace(originalAnswer)
+                                     || ContextualRequestRouter.MessageNamesConcreteHomeAssistantDevice(lastUserMessage))
                             {
                                 _trace.Record("⚠️ Home Assistant action was NOT performed — model, structured fallback, and Assist all failed.");
                                 var assistantName = _keyStore.HomeAssistantAssistantName;
@@ -383,6 +387,13 @@ public sealed class ChatCompletionService : IChatCompletionService
                                     "and automatic recovery (direct control + Assist) could not complete the request. " +
                                     $"Try naming the device clearly (e.g. \"{assistantName}, set volume to 40 on Helios Denon\"), " +
                                     "or use a model with stronger tool calling.";
+                            }
+                            else
+                            {
+                                _trace.Record("⚠️ Home Assistant recovery failed — kept the model's answer (no device named).");
+                                responseText = string.IsNullOrWhiteSpace(answerBeforeRetry)
+                                    ? originalAnswer
+                                    : answerBeforeRetry;
                             }
                         }
                     }
