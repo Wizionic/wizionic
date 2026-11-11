@@ -26,6 +26,15 @@ public interface ILemonadeInstallService
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Windows only: if Lemonade would auto-install the NVIDIA CUDA llama.cpp package,
+    /// install and select Vulkan instead. AMD ROCm, CPU-only, an already-installed CUDA
+    /// package, and an explicit backend choice are left alone.
+    /// </summary>
+    Task<LemonadeInstallResult> EnsureChatBackendAsync(
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Set KeyStore base URL and refresh model list from the running server.</summary>
     Task<LemonadeInstallResult> ConfigureAppAsync(
         HttpClient http,

@@ -10,6 +10,7 @@ title: Lemonade (local AI)
 ## Install
 
 - Desktop app: Settings → **Run setup wizard**, or install from [the Lemonade guide](https://lemonade-server.ai/docs/guide/install/).
+- On Windows, if Lemonade would download the NVIDIA CUDA llama.cpp package, the wizard installs and selects Vulkan instead. That CUDA package needs Windows 11 22H2 to unpack, and a failed unpack hangs the first chat. AMD ROCm and CPU-only PCs are left on Lemonade’s own choice.
 - Enter the base URL (and an API key only if you set `LEMONADE_API_KEY` on the server).
 - **Save and Test**, then **Refresh Models from Lemonade**.
 - Enable the chat models you want in the list. Image, speech, and other specialty models are configured on the same page.

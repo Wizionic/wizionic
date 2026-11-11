@@ -55,6 +55,7 @@ App/
 - User requests a login code → email via Brevo (SMTP fallback) → type the 10-character code in the app or site. `/magic-login` does **not** consume a token (wrong-app clicks and mail scanners). Password and optional 2FA are alternatives. Recovery codes are shown once when 2FA is enabled. A confirmed device is remembered for 30 days. Forgot password (`POST /api/auth/reset-password`) uses the same emailed login code to **clear** the password and turn 2FA off so the account page shows **Add a password** again; it does not bypass 2FA for ordinary code login.
 - Persistent cookie (`AppAuth`, or `__Host-AppAuth` on public HTTPS) with a **server-side session** row (revocable). Sliding 10-year expiry; no idle logout. Password change, password reset, and “sign out other devices” revoke other sessions. Existing cookies are upgraded, not rejected.
 - Per-user **encryption key** is generated once and never rotated on login, password change, password reset, or session revoke. WASM calls `/api/auth/me` and `/api/user/encryption-key` (cookie + `X-Wizionic-Device-Id`). A bound session used from a different device must sign in again before it can fetch the key or join sync; old clients that omit the header still work.
+- Desktop and WASM keep a local sign-in snapshot (server URL, user id, email, encryption key, account flags) after a successful `/api/auth/me`. If the next start cannot reach that same server, the snapshot restores local notes and history (`UsingSavedSignIn`). A 401/403 or sign-out deletes it. A snapshot for a different login server is not restored. On Windows the snapshot is DPAPI-wrapped for the current user (`MauiAuthProfileCache`); WASM uses same-origin `localStorage` (`WasmAuthProfileCache`). The Blazor Server host does not keep a snapshot.
 - Data namespace: `u-{userId}-`. Signed-out UI prefs may still use a historical `wasmchat-` prefix so they never land on authenticated keys.
 
 ### At-rest encryption
@@ -1078,7 +1079,7 @@ Optional first-run (and re-run from Settings) wizard on **desktop MAUI** (`Setup
 | **Lemonade** | `ILemonadeInstallService` | Local multimodal AI (default **13305**) |
 | **Ollama** | `IOllamaInstallService` | Local model runner (**11434**) |
 
-Installs prefer OS services (Windows Service / systemd) when supported. Admin account creation is separate from the wizard. After install, Local AI / Login server settings are updated so the desktop client talks to localhost backends.
+Installs prefer OS services (Windows Service / systemd) when supported. Admin account creation is separate from the wizard. After install, Local AI / Login server settings are updated so the desktop client talks to localhost backends. On Windows, if Lemonade’s auto llama.cpp backend is CUDA and that package is not already installed, the wizard installs `llamacpp:vulkan` and sets `llamacpp.backend` to vulkan. ROCm, CPU-only, an already-installed CUDA package, and an explicit backend choice are left alone.
 
 **Key files:** `SetupWizard.razor`, `App.Core/Homeserver/*`, `App.Core/Lemonade/ILemonadeInstallService`, `App.Core/Ollama/IOllamaInstallService`, platform install implementations under `App.Maui`.
 

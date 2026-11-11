@@ -12,6 +12,8 @@ title: Account, password, and 2FA
 
 Sign in is required. The same account (and encryption key) is what lets other devices decrypt your data. Changing password or signing out a session never deletes notes or chats; that device just signs in again and gets the same key.
 
+The sign-in screen and the account page name the login server (`https://wizionic.com`, or **Localhost login** for a Home Server on this PC). **More options** on the desktop sign-in screen changes it. The desktop app and the installed site remember that sign-in on this device. After one online open, a later start with no internet still opens local notes and history. Sync waits until the login server answers. Sign out clears the saved sign-in.
+
 ## Password
 
 Optional. Used to:
