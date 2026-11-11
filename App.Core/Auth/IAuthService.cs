@@ -6,6 +6,11 @@ public interface IAuthService
     string? UserId { get; }
     string? LocalEncryptionKeyB64 { get; }
     bool IsAuthenticated { get; }
+    /// <summary>
+    /// True when this process restored a saved sign-in because the login server did not answer.
+    /// A live sign-in clears it.
+    /// </summary>
+    bool UsingSavedSignIn { get; }
     /// <summary>True when the signed-in account has set a login password.</summary>
     bool HasPassword { get; }
     /// <summary>True when password login requires a second factor.</summary>

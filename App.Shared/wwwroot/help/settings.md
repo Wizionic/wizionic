@@ -11,7 +11,7 @@ The desktop app checks for a newer installer when it starts, when you show the w
 
 ## Login server (desktop only) {#login-server}
 
-Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server on **this PC** uses `http://localhost:5150`. Other devices on your network use the **On your network** URL from Settings → Home Server (computer name `.local` or the PC’s IP, port 5150). After you change it, restart if the app asks you to. On the desktop sign-in screen, **More options** opens the same choice.
+Where this app authenticates and announces presence. Public default is `https://wizionic.com`. A Home Server on **this PC** uses `http://localhost:5150`. Other devices on your network use the **On your network** URL from Settings → Home Server (computer name `.local` or the PC’s IP, port 5150). After you change it, restart if the app asks you to. The desktop sign-in screen shows the current login server. **More options** changes it.
 
 The website always uses its own origin.
 

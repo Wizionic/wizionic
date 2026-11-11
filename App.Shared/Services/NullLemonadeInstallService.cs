@@ -28,6 +28,11 @@ public sealed class NullLemonadeInstallService : ILemonadeInstallService
         CancellationToken cancellationToken = default) =>
         Task.FromResult(LemonadeInstallResult.Fail("Not supported."));
 
+    public Task<LemonadeInstallResult> EnsureChatBackendAsync(
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(LemonadeInstallResult.Ok(""));
+
     public Task<LemonadeInstallResult> ConfigureAppAsync(
         HttpClient http,
         IKeyStore keyStore,

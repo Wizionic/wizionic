@@ -69,6 +69,19 @@
     <p style="color: var(--color-text-muted);">Sign in to use Wizionic. A new email creates your account.
     </p>
     }
+    @if (!(Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email)) && !string.IsNullOrEmpty(LoginServerUrl))
+    {
+        <p style="margin: 0 0 0.75rem; color: var(--color-text-muted);">
+            @if (IsLocalHomeserverLogin)
+            {
+                <span>Login server: <strong>Localhost login</strong> (@LoginServerUrl).</span>
+            }
+            else
+            {
+                <span>Login server: <strong>@LoginServerUrl</strong>.</span>
+            }
+        </p>
+    }
 
     @if (Auth.IsAuthenticated && !string.IsNullOrEmpty(Auth.Email))
     {
@@ -82,6 +95,18 @@
             </button>
             <div class="cf-success-box" style="margin: 0 0 0.75rem; padding: 0.75rem 1rem;">
                 Logged in as <strong>@Auth.Email</strong>.<br />
+                @if (IsLocalHomeserverLogin)
+                {
+                    <span>Login server: <strong>Localhost login</strong> (@LoginServerUrl).</span><br />
+                }
+                else if (!string.IsNullOrEmpty(LoginServerUrl))
+                {
+                    <span>Login server: <strong>@LoginServerUrl</strong>.</span><br />
+                }
+                @if (Auth.UsingSavedSignIn)
+                {
+                    <span style="font-size:0.9em;">Saved sign-in on this device. Sync waits until the login server is reachable.</span><br />
+                }
                 <span style="font-size:0.9em;">You can now sync your encrypted app data (chat history, notes, calendar, albums, bookmarks, settings) across devices with Wizionic.</span>
             </div>
             @if (Auth.HasPassword && !Auth.TwoFactorEnabled)
@@ -847,17 +872,20 @@
         }
     }
 
-    private bool IsLocalHomeserverLogin
+    private string LoginServerUrl => (Auth.ServerBaseUrl ?? "").Trim().TrimEnd('/');
+
+    private bool IsLocalHomeserverLogin => IsLoopbackUrl(LoginServerUrl);
+
+    private static bool IsLoopbackUrl(string? url)
     {
-        get
-        {
-            var url = Auth.ServerBaseUrl;
-            if (string.IsNullOrWhiteSpace(url))
-                return false;
-            return url.Contains("localhost", StringComparison.OrdinalIgnoreCase)
-                || url.Contains("127.0.0.1", StringComparison.Ordinal)
-                || url.Contains("[::1]", StringComparison.Ordinal);
-        }
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+        var host = uri.IdnHost;
+        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("127.0.0.1", StringComparison.Ordinal)
+            || host.Equals("::1", StringComparison.Ordinal);
     }
 
     private async Task RefreshSetupStatusAsync()

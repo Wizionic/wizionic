@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using App.Core.Lemonade;
 using App.Core.Setup;
 using App.Core.Storage;
@@ -336,6 +337,92 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         return LemonadeInstallResult.Ok($"Pulled {models.Count} model(s).");
     }
 
+    public async Task<LemonadeInstallResult> EnsureChatBackendAsync(
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows())
+            return LemonadeInstallResult.Ok("");
+
+        var cli = ResolveLemonadeCli();
+        if (cli is null)
+        {
+            _logger.LogInformation("[Lemonade] CLI not found; leaving the llama.cpp backend unchanged.");
+            return LemonadeInstallResult.Ok("");
+        }
+
+        var pinned = ReadPinnedLlamaCppBackend();
+        if (!string.IsNullOrWhiteSpace(pinned)
+            && !pinned.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("[Lemonade] Keeping explicit llama.cpp backend {Backend}.", pinned);
+            return LemonadeInstallResult.Ok("");
+        }
+
+        if (!ProbeServerRunning())
+            await TryEnsureServerRunningAsync(progress, cancellationToken);
+
+        var choice = await ReadLlamaCppChoiceAsync(cancellationToken);
+        if (choice is null)
+        {
+            progress?.Report("Could not read Lemonade hardware info. The llama.cpp backend was left unchanged.");
+            return LemonadeInstallResult.Ok(
+                "Could not read Lemonade hardware info. The llama.cpp backend was left unchanged.");
+        }
+
+        // AMD ROCm, Vulkan, and CPU-only stay on Lemonade's choice. Only an
+        // automatic CUDA download is replaced — that package is a .7z archive
+        // Windows tar cannot extract before Windows 11 22H2, and the first chat hangs.
+        if (!string.Equals(choice.DefaultBackend, "cuda", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation(
+                "[Lemonade] Leaving llama.cpp backend {Backend} (not the CUDA auto-install path).",
+                choice.DefaultBackend ?? "(none)");
+            return LemonadeInstallResult.Ok("");
+        }
+
+        if (CudaPackageAlreadyInstalled(choice.CudaState))
+        {
+            _logger.LogInformation(
+                "[Lemonade] CUDA llama.cpp backend is already installed ({State}). Leaving it.",
+                choice.CudaState);
+            return LemonadeInstallResult.Ok("");
+        }
+
+        progress?.Report("Installing the Vulkan llama.cpp backend…");
+        var install = await RunProcessWithOutputAsync(
+            cli,
+            "backends install llamacpp:vulkan",
+            cancellationToken,
+            timeoutMs: PullTimeoutMs,
+            lineProgress: progress,
+            progressPrefix: "Vulkan backend");
+        if (!install.Ok)
+        {
+            _logger.LogWarning("[Lemonade] Vulkan backend install failed: {Detail}", install.Detail);
+            progress?.Report(
+                "Could not install the Vulkan backend. The first NVIDIA chat may try the CUDA package, which needs Windows 11 22H2 to unpack.");
+            return LemonadeInstallResult.Ok(
+                "Could not install the Vulkan llama.cpp backend. The first NVIDIA chat may try the CUDA package, which needs Windows 11 22H2 to unpack.");
+        }
+
+        var pin = await RunProcessWithOutputAsync(
+            cli,
+            "config set llamacpp.backend=vulkan",
+            cancellationToken,
+            timeoutMs: 30_000);
+        if (!pin.Ok)
+        {
+            _logger.LogWarning("[Lemonade] Could not select Vulkan backend: {Detail}", pin.Detail);
+            progress?.Report("Vulkan backend installed, but it could not be selected. Lemonade may still try CUDA.");
+            return LemonadeInstallResult.Ok(
+                "Vulkan llama.cpp backend installed, but it could not be selected. Lemonade may still try CUDA.");
+        }
+
+        progress?.Report("Selected the Vulkan llama.cpp backend instead of CUDA.");
+        return LemonadeInstallResult.Ok("Selected the Vulkan llama.cpp backend instead of CUDA.");
+    }
+
     public async Task<LemonadeInstallResult> ConfigureAppAsync(
         HttpClient http,
         IKeyStore keyStore,
@@ -515,6 +602,99 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
         return File.Exists(Path.Combine(system32, "vcruntime140.dll"))
             && File.Exists(Path.Combine(system32, "msvcp140.dll"));
     }
+
+    private static bool CudaPackageAlreadyInstalled(string? state) =>
+        state is "installed" or "update_available" or "update_required";
+
+    /// <summary>
+    /// Explicit <c>llamacpp.backend</c> from Lemonade config, or null when the file
+    /// is missing (Lemonade treats that as auto).
+    /// </summary>
+    private static string? ReadPinnedLlamaCppBackend()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        foreach (var path in new[]
+                 {
+                     Path.Combine(home, ".config", "lemonade", "config.json"),
+                     Path.Combine(home, ".cache", "lemonade", "config.json")
+                 })
+        {
+            if (!File.Exists(path))
+                continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                    return null;
+
+                if (root.TryGetProperty("llamacpp", out var llama)
+                    && llama.ValueKind == JsonValueKind.Object
+                    && llama.TryGetProperty("backend", out var backend)
+                    && backend.ValueKind == JsonValueKind.String)
+                    return backend.GetString();
+
+                if (root.TryGetProperty("llamacpp.backend", out var dotted)
+                    && dotted.ValueKind == JsonValueKind.String)
+                    return dotted.GetString();
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<LlamaCppChoice?> ReadLlamaCppChoiceAsync(CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        foreach (var url in new[]
+                 {
+                     "http://127.0.0.1:13305/api/v1/system-info",
+                     "http://127.0.0.1:13305/v1/system-info"
+                 })
+        {
+            try
+            {
+                using var resp = await http.GetAsync(url, ct);
+                if (!resp.IsSuccessStatusCode)
+                    continue;
+
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+                if (!doc.RootElement.TryGetProperty("recipes", out var recipes)
+                    || !recipes.TryGetProperty("llamacpp", out var llama))
+                    continue;
+
+                string? defaultBackend = null;
+                if (llama.TryGetProperty("default_backend", out var chosen)
+                    && chosen.ValueKind == JsonValueKind.String)
+                    defaultBackend = chosen.GetString();
+
+                string? cudaState = null;
+                if (llama.TryGetProperty("backends", out var backends)
+                    && backends.TryGetProperty("cuda", out var cuda)
+                    && cuda.TryGetProperty("state", out var state)
+                    && state.ValueKind == JsonValueKind.String)
+                    cudaState = state.GetString();
+
+                return new LlamaCppChoice(defaultBackend, cudaState);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[Lemonade] system-info failed for {Url}", url);
+            }
+        }
+
+        return null;
+    }
+
+    private sealed record LlamaCppChoice(string? DefaultBackend, string? CudaState);
 
     private static bool ProbeServerRunning()
     {

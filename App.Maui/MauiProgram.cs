@@ -242,6 +242,8 @@ public static class MauiProgram
 
 		services.AddSingleton<MauiAuthCookieStore>();
 		services.AddSingleton<IAuthSessionPersistence>(sp => sp.GetRequiredService<MauiAuthCookieStore>());
+		services.AddSingleton<MauiAuthProfileCache>();
+		services.AddSingleton<IAuthProfileCache>(sp => sp.GetRequiredService<MauiAuthProfileCache>());
 		services.AddSingleton<HttpClient>(sp =>
 		{
 			var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppServerOptions>>().Value;

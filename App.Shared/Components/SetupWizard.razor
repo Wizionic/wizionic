@@ -692,6 +692,9 @@
             return;
         }
 
+        var backend = await Lemonade.EnsureChatBackendAsync(progress);
+        var backendMessage = string.IsNullOrWhiteSpace(backend.Message) ? null : backend.Message;
+
         if (selectedLemonadeModels.Count > 0)
         {
             progress.Report("Pulling Lemonade models…");
@@ -716,7 +719,7 @@
         {
             cfg = LemonadeInstallResult.Ok("Lemonade is installed. Refresh models after you sign in.");
         }
-        lemonadeMessage = string.Join(" ", new[] { install.Message, lemonadeMessage, cfg.Message }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        lemonadeMessage = string.Join(" ", new[] { install.Message, backendMessage, lemonadeMessage, cfg.Message }.Where(s => !string.IsNullOrWhiteSpace(s)));
         lemonadeOk = cfg.Success || install.Success || Lemonade.IsInstalled;
         lemonadeDoneLabel = lemonadeOk
             ? (Lemonade.IsInstalled ? "configured (existing install)" : "configured")

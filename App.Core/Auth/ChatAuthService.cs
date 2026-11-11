@@ -12,10 +12,13 @@ namespace App.Core.Auth;
 /// </summary>
 public class ChatAuthService : IAuthService
 {
+    private static readonly TimeSpan AuthProbeTimeout = TimeSpan.FromSeconds(5);
+
     private readonly HttpClient _http;
     private readonly AppServerOptions? _serverOptions;
     private readonly IAppServerEndpoint? _endpoint;
     private readonly IAuthSessionPersistence? _sessionPersistence;
+    private readonly IAuthProfileCache? _profileCache;
     private readonly IClientDeviceId? _deviceId;
 
     public string? Email { get; private set; }
@@ -29,6 +32,7 @@ public class ChatAuthService : IAuthService
     public bool HasRecoveryCodes { get; private set; }
     public IReadOnlyList<string>? LastRecoveryCodes { get; private set; }
     public bool IsAuthenticated => !string.IsNullOrEmpty(Email) && !string.IsNullOrEmpty(LocalEncryptionKeyB64);
+    public bool UsingSavedSignIn { get; private set; }
 
     public string ServerBaseUrl =>
         !string.IsNullOrWhiteSpace(_endpoint?.BaseUrl)
@@ -52,26 +56,26 @@ public class ChatAuthService : IAuthService
         IOptions<AppServerOptions>? serverOptions = null,
         IAuthSessionPersistence? sessionPersistence = null,
         IAppServerEndpoint? endpoint = null,
-        IClientDeviceId? deviceId = null)
+        IClientDeviceId? deviceId = null,
+        IAuthProfileCache? profileCache = null)
     {
         _http = http;
         _serverOptions = serverOptions?.Value;
         _sessionPersistence = sessionPersistence;
         _endpoint = endpoint;
         _deviceId = deviceId;
+        _profileCache = profileCache;
     }
 
     public async Task LoadAsync()
     {
         await EnsureDeviceIdAsync();
-        var result = await TryFetchAuthStateAsync();
-        if (result == AuthFetchResult.Success)
-        {
-            OnChanged?.Invoke();
-            return;
-        }
+        var snapshot = await TryLoadMatchingSnapshotAsync();
 
-        if (result == AuthFetchResult.TransientError)
+        var result = await TryFetchAuthStateAsync();
+        // One retry only when nothing is saved yet (a home server may still be waking).
+        // A saved sign-in skips the second probe so airplane mode opens local data quickly.
+        if (result == AuthFetchResult.TransientError && snapshot is null)
         {
             await Task.Delay(750);
             result = await TryFetchAuthStateAsync();
@@ -80,16 +84,28 @@ public class ChatAuthService : IAuthService
         switch (result)
         {
             case AuthFetchResult.Success:
+                UsingSavedSignIn = false;
                 if (_sessionPersistence is not null)
                     await _sessionPersistence.PersistCookiesAsync();
+                await SaveSnapshotAsync();
                 break;
             case AuthFetchResult.Unauthorized:
                 ClearAuthState();
                 if (_sessionPersistence is not null)
                     await _sessionPersistence.ClearCookiesAsync();
+                await ClearSnapshotAsync();
                 break;
             case AuthFetchResult.TransientError:
-                Console.WriteLine("[Auth] Auth check failed after retry (server may be waking); keeping prior auth state if any.");
+                if (!IsAuthenticated && snapshot is not null)
+                {
+                    ApplySnapshot(snapshot);
+                    UsingSavedSignIn = true;
+                    Console.WriteLine("[Auth] Login server unreachable; using saved sign-in for local data.");
+                }
+                else
+                {
+                    Console.WriteLine("[Auth] Auth check failed after retry (server may be waking); keeping prior auth state if any.");
+                }
                 break;
             case AuthFetchResult.Incomplete:
                 ClearAuthState();
@@ -607,6 +623,7 @@ public class ChatAuthService : IAuthService
         ClearAuthState();
         if (_sessionPersistence is not null)
             await _sessionPersistence.ClearCookiesAsync();
+        await ClearSnapshotAsync();
         OnChanged?.Invoke();
     }
 
@@ -615,6 +632,7 @@ public class ChatAuthService : IAuthService
         ClearAuthState();
         if (_sessionPersistence is not null)
             _ = _sessionPersistence.ClearCookiesAsync();
+        _ = ClearSnapshotAsync();
         OnChanged?.Invoke();
     }
 
@@ -631,9 +649,10 @@ public class ChatAuthService : IAuthService
 
     private async Task<AuthFetchResult> TryFetchAuthStateAsync()
     {
+        using var probe = new CancellationTokenSource(AuthProbeTimeout);
         try
         {
-            using var meResponse = await _http.GetAsync("api/auth/me");
+            using var meResponse = await _http.GetAsync("api/auth/me", probe.Token);
             if (meResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 return AuthFetchResult.Unauthorized;
 
@@ -647,7 +666,7 @@ public class ChatAuthService : IAuthService
             if (me == null || string.IsNullOrEmpty(me.Email))
                 return AuthFetchResult.Unauthorized;
 
-            using var keyResponse = await _http.GetAsync("api/user/encryption-key");
+            using var keyResponse = await _http.GetAsync("api/user/encryption-key", probe.Token);
             if (keyResponse.StatusCode is HttpStatusCode.Unauthorized)
                 return AuthFetchResult.Unauthorized;
             if (keyResponse.StatusCode is HttpStatusCode.Forbidden)
@@ -682,7 +701,7 @@ public class ChatAuthService : IAuthService
             Console.WriteLine($"[Auth] Network error during auth check: {ex.Message}");
             return AuthFetchResult.TransientError;
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
             Console.WriteLine("[Auth] Auth check timed out.");
             return AuthFetchResult.TransientError;
@@ -755,6 +774,92 @@ public class ChatAuthService : IAuthService
         return !string.IsNullOrWhiteSpace(value);
     }
 
+    private async Task<AuthProfileSnapshot?> TryLoadMatchingSnapshotAsync()
+    {
+        if (_profileCache is null)
+            return null;
+
+        try
+        {
+            var snapshot = await _profileCache.LoadAsync();
+            if (snapshot is null)
+                return null;
+            if (string.IsNullOrEmpty(snapshot.Email)
+                || string.IsNullOrEmpty(snapshot.UserId)
+                || string.IsNullOrEmpty(snapshot.LocalEncryptionKeyB64))
+                return null;
+            if (!string.Equals(NormalizeServer(snapshot.ServerBaseUrl), NormalizeServer(ServerBaseUrl), StringComparison.OrdinalIgnoreCase))
+                return null;
+            return snapshot;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Auth] Could not read saved sign-in: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task SaveSnapshotAsync()
+    {
+        if (_profileCache is null
+            || string.IsNullOrEmpty(Email)
+            || string.IsNullOrEmpty(UserId)
+            || string.IsNullOrEmpty(LocalEncryptionKeyB64))
+            return;
+
+        try
+        {
+            await _profileCache.SaveAsync(new AuthProfileSnapshot
+            {
+                ServerBaseUrl = NormalizeServer(ServerBaseUrl),
+                UserId = UserId,
+                Email = Email,
+                LocalEncryptionKeyB64 = LocalEncryptionKeyB64,
+                HasPassword = HasPassword,
+                TwoFactorEnabled = TwoFactorEnabled,
+                HasTwoFactorPhone = HasTwoFactorPhone,
+                TwoFactorPhoneMasked = TwoFactorPhoneMasked,
+                SmsTwoFactorAvailable = SmsTwoFactorAvailable,
+                HasRecoveryCodes = HasRecoveryCodes
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Auth] Could not save sign-in: {ex.Message}");
+        }
+    }
+
+    private async Task ClearSnapshotAsync()
+    {
+        if (_profileCache is null)
+            return;
+        try
+        {
+            await _profileCache.ClearAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Auth] Could not clear saved sign-in: {ex.Message}");
+        }
+    }
+
+    private void ApplySnapshot(AuthProfileSnapshot snapshot)
+    {
+        Email = snapshot.Email;
+        UserId = snapshot.UserId;
+        LocalEncryptionKeyB64 = snapshot.LocalEncryptionKeyB64;
+        HasPassword = snapshot.HasPassword;
+        TwoFactorEnabled = snapshot.TwoFactorEnabled;
+        HasTwoFactorPhone = snapshot.HasTwoFactorPhone;
+        TwoFactorPhoneMasked = snapshot.TwoFactorPhoneMasked;
+        SmsTwoFactorAvailable = snapshot.SmsTwoFactorAvailable;
+        HasRecoveryCodes = snapshot.HasRecoveryCodes;
+        LastRecoveryCodes = null;
+    }
+
+    private static string NormalizeServer(string? url) =>
+        (url ?? "").Trim().TrimEnd('/');
+
     private void ClearAuthState()
     {
         Email = null;
@@ -767,6 +872,7 @@ public class ChatAuthService : IAuthService
         SmsTwoFactorAvailable = false;
         HasRecoveryCodes = false;
         LastRecoveryCodes = null;
+        UsingSavedSignIn = false;
     }
 
     /// <summary>

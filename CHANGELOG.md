@@ -5,6 +5,20 @@ All notable changes to Wizionic are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.22] — 2026-11-11
+
+### Added
+
+- Desktop and the installed site remember a sign-in on this device. After one online open, a later start with no internet still opens local notes and history. The account page says when that saved sign-in is in use. Sign out, a rejected session, or a login-server change clears it. On Windows the saved sign-in is protected with your Windows account.
+
+### Changed
+
+- The sign-in screen and the account page name the login server (`https://wizionic.com`, or **Localhost login** with the URL, such as `http://localhost:5150`). You do not have to open **More options** to see which host you are signing into.
+
+### Fixed
+
+- Windows setup wizard: when Lemonade would download the NVIDIA CUDA llama.cpp package, it installs and selects Vulkan instead. That CUDA package needs Windows 11 22H2 to unpack, and a failed unpack hangs the first chat. AMD ROCm, CPU-only, an already-installed CUDA package, and a backend you set yourself are left unchanged.
+
 ## [0.3.21] — 2026-10-05
 
 ### Changed
