@@ -17,13 +17,15 @@
 <div class="settings-content cf-connectors-page">
     <div class="cf-conn-top">
         <div class="cf-conn-tabs">
-            <HelpGlyph Topic="@(activeTab == "skills" ? "skills" : activeTab == "workflows" ? "skills" : "tools")" />
+            <HelpGlyph Topic="@(activeTab is "skills" or "workflows" or "fleet" ? "skills" : "tools")" />
             <button type="button" class="cf-conn-tab @(activeTab == "tools" ? "cf-conn-tab-active" : "")"
                     @onclick="ShowToolsTab">Tools</button>
             <button type="button" class="cf-conn-tab @(activeTab == "skills" ? "cf-conn-tab-active" : "")"
                     @onclick="ShowSkillsTab">Skills</button>
             <button type="button" class="cf-conn-tab @(activeTab == "workflows" ? "cf-conn-tab-active" : "")"
                     @onclick="ShowWorkflowsTab">Workflows</button>
+            <button type="button" class="cf-conn-tab @(activeTab == "fleet" ? "cf-conn-tab-active" : "")"
+                    @onclick="ShowFleetTab">Agents</button>
         </div>
         @if (activeTab == "tools")
         {
@@ -68,6 +70,16 @@
                 Schedule skills with model routing. Runs show on the Workflows calendar and in Skills → Recent runs.
             </p>
             <WorkflowsPanel />
+        </section>
+    }
+    else if (activeTab == "fleet")
+    {
+        <section class="cf-conn-section">
+            <h2 class="cf-conn-section-title help-heading">Agents <HelpGlyph Topic="skills" /></h2>
+            <p class="text-muted" style="font-size:0.88rem;margin:-0.35rem 0 0.85rem;">
+                One signed-in device runs a skill on another. The worker keeps the log and sends each step back.
+            </p>
+            <FleetPanel />
         </section>
     }
     else
@@ -450,6 +462,7 @@
     private string activeTab = "tools";
     private void ShowSkillsTab() => activeTab = "skills";
     private void ShowWorkflowsTab() => activeTab = "workflows";
+    private void ShowFleetTab() => activeTab = "fleet";
     private void ShowToolsTab() => activeTab = "tools";
 
     /// <summary>Compact list of always-on app tool modules (no enable/disable UI yet).</summary>
@@ -573,6 +586,8 @@
                         activeTab = "workflows";
                     else if (val.Equals("skills", StringComparison.OrdinalIgnoreCase))
                         activeTab = "skills";
+                    else if (val.Equals("fleet", StringComparison.OrdinalIgnoreCase))
+                        activeTab = "fleet";
                     break;
                 }
             }

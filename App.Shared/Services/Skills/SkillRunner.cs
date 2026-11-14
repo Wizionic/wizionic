@@ -20,6 +20,9 @@ public sealed class SkillRunner : ISkillRunner
     private readonly IToolProvider _tools;
     private readonly IToolExecutionTrace _trace;
     private readonly ISkillRunLogStore? _runLogs;
+    private readonly SemaphoreSlim _persistGate = new(1, 1);
+    private int _persistGen;
+    private int _appliedGen;
 
     public SkillRunner(
         ISkillStore skills,
@@ -43,6 +46,12 @@ public sealed class SkillRunner : ISkillRunner
             return Fail("No skill specified.");
 
         await _skills.LoadAsync(ct);
+        if (_runLogs is not null)
+        {
+            try { await _runLogs.LoadAsync(ct); }
+            catch { /* history is optional */ }
+        }
+
         var record = _skills.Get(request.SkillId);
         if (record is null)
             return Fail($"Skill '{request.SkillId}' not found.");
@@ -80,23 +89,45 @@ public sealed class SkillRunner : ISkillRunner
             ? request.BodyOverride!
             : doc.BodyMarkdown;
 
-        var system = BuildSkillSystemPrompt(doc, body, request.Parameters, resolution, modelId);
+        var prior = SkillPriorOutcomes.Format(_runLogs, record.Id);
+        var system = BuildSkillSystemPrompt(doc, body, request.Parameters, resolution, modelId, prior);
         var userMsg = string.IsNullOrWhiteSpace(request.UserMessageOverride)
             ? $"Execute the skill `{doc.Name}` now. Follow every step completely and use the available tools."
             : request.UserMessageOverride!.Trim();
 
         var started = DateTimeOffset.UtcNow;
-        _trace.Clear();
-        void PushLog()
+        var source = string.IsNullOrWhiteSpace(request.Source) ? SkillRunSource.Manual : request.Source.Trim();
+        var log = new SkillRunLog
         {
-            try { request.OnLog?.Invoke(_trace.GetCurrentTrace()); }
+            SkillId = record.Id,
+            SkillName = doc.Name,
+            ModelId = modelId,
+            Source = source,
+            WorkflowId = request.WorkflowId,
+            WorkflowName = request.WorkflowName,
+            TriggerDetail = request.TriggerDetail,
+            TaskId = request.TaskId,
+            State = SkillRunState.Running,
+            StartedAtUtc = started,
+            EndedAtUtc = started,
+            Success = false
+        };
+
+        _trace.Clear();
+        void Push()
+        {
+            log.LogLines = _trace.GetCurrentTrace().ToList();
+            log.Steps = _trace.GetSteps().Select(s => s.Clone()).ToList();
+            try { request.OnLog?.Invoke(log.LogLines); }
             catch { /* UI may be gone */ }
+            try { request.OnSteps?.Invoke(log.Steps); }
+            catch { /* UI may be gone */ }
+            SchedulePersist(log);
         }
 
-        void OnTraceChanged() => PushLog();
+        void OnTraceChanged() => Push();
         _trace.Changed += OnTraceChanged;
 
-        var source = string.IsNullOrWhiteSpace(request.Source) ? SkillRunSource.Manual : request.Source.Trim();
         _trace.Record($"🎯 Skill run: {doc.Name}");
         _trace.Record($"📥 Source: {source}"
             + (string.IsNullOrWhiteSpace(request.WorkflowId) ? "" : $" · workflow={request.WorkflowId}")
@@ -105,6 +136,11 @@ public sealed class SkillRunner : ISkillRunner
         _trace.Record($"🔧 Modules: [{string.Join(", ", modules)}] · MCP={resolution.IncludeMcp}");
         _trace.Record("📜 Loading skill instructions…");
         _trace.Record("▶ Starting model + tools…");
+
+        // The id has to be on disk before the model runs so a mid-run note can find the step.
+        await PersistNowAsync(log);
+        try { request.OnRunStarted?.Invoke(log.Id); }
+        catch { /* listener is optional */ }
 
         SkillExecutionContext.Current = new SkillExecutionContext
         {
@@ -138,7 +174,6 @@ public sealed class SkillRunner : ISkillRunner
             var logLines = _trace.GetCurrentTrace().ToList();
             if (!string.IsNullOrWhiteSpace(result.ToolTrace))
             {
-                // Ensure full tooltrace is captured if not already in live steps
                 foreach (var line in result.ToolTrace.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                 {
                     if (!logLines.Any(l => l.Contains(line.Trim(), StringComparison.Ordinal)))
@@ -146,42 +181,53 @@ public sealed class SkillRunner : ISkillRunner
                 }
             }
 
-            var ended = DateTimeOffset.UtcNow;
-            var log = new SkillRunLog
-            {
-                SkillId = record.Id,
-                SkillName = doc.Name,
-                ModelId = modelId,
-                Source = source,
-                WorkflowId = request.WorkflowId,
-                WorkflowName = request.WorkflowName,
-                TriggerDetail = request.TriggerDetail,
-                StartedAtUtc = started,
-                EndedAtUtc = ended,
-                Success = string.IsNullOrWhiteSpace(result.Error),
-                Error = result.Error,
-                ResultText = result.Text,
-                LogLines = logLines
-            };
-
-            if (_runLogs is not null)
-            {
-                try { await _runLogs.AddAsync(log, ct); }
-                catch { /* non-fatal */ }
-            }
+            log.LogLines = logLines;
+            log.Steps = _trace.GetSteps().Select(s => s.Clone()).ToList();
+            log.EndedAtUtc = DateTimeOffset.UtcNow;
+            log.Success = string.IsNullOrWhiteSpace(result.Error);
+            log.Error = result.Error;
+            log.ResultText = result.Text;
+            log.State = log.Success ? SkillRunState.Completed : SkillRunState.Failed;
 
             _trace.Record(log.Success
                 ? $"✅ Skill finished in {log.DurationSeconds:0.0}s · model {modelId} · source={source}"
                 : $"❌ Skill failed · model {modelId}: {result.Error}");
-            PushLog();
+            log.LogLines = _trace.GetCurrentTrace().ToList();
+            log.Steps = _trace.GetSteps().Select(s => s.Clone()).ToList();
+            await PersistNowAsync(log);
+            try { request.OnLog?.Invoke(log.LogLines); }
+            catch { /* UI may be gone */ }
+            try { request.OnSteps?.Invoke(log.Steps); }
+            catch { /* UI may be gone */ }
 
             outcome = new SkillRunResult
             {
                 Success = log.Success,
                 Text = result.Text,
-                ToolTrace = string.Join("\n", logLines),
+                ToolTrace = string.Join("\n", log.LogLines),
                 Error = result.Error,
                 ConversationId = request.ConversationId,
+                ModelId = modelId,
+                Log = log
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            _trace.Record("❌ Canceled");
+            log.EndedAtUtc = DateTimeOffset.UtcNow;
+            log.Success = false;
+            log.Error = "Canceled";
+            log.State = SkillRunState.Canceled;
+            log.LogLines = _trace.GetCurrentTrace().ToList();
+            log.Steps = _trace.GetSteps().Select(s => s.Clone()).ToList();
+            await PersistNowAsync(log);
+            try { request.OnSteps?.Invoke(log.Steps); }
+            catch { /* UI may be gone */ }
+            outcome = new SkillRunResult
+            {
+                Success = false,
+                Error = "Canceled",
+                ToolTrace = string.Join("\n", log.LogLines),
                 ModelId = modelId,
                 Log = log
             };
@@ -189,27 +235,15 @@ public sealed class SkillRunner : ISkillRunner
         catch (Exception ex)
         {
             _trace.Record("❌ " + ex.Message);
-            PushLog();
-            var log = new SkillRunLog
-            {
-                SkillId = record.Id,
-                SkillName = doc.Name,
-                ModelId = modelId,
-                Source = source,
-                WorkflowId = request.WorkflowId,
-                WorkflowName = request.WorkflowName,
-                TriggerDetail = request.TriggerDetail,
-                StartedAtUtc = started,
-                EndedAtUtc = DateTimeOffset.UtcNow,
-                Success = false,
-                Error = ex.Message,
-                LogLines = _trace.GetCurrentTrace().ToList()
-            };
-            if (_runLogs is not null)
-            {
-                try { await _runLogs.AddAsync(log, ct); }
-                catch { /* ignore */ }
-            }
+            log.EndedAtUtc = DateTimeOffset.UtcNow;
+            log.Success = false;
+            log.Error = ex.Message;
+            log.State = SkillRunState.Failed;
+            log.LogLines = _trace.GetCurrentTrace().ToList();
+            log.Steps = _trace.GetSteps().Select(s => s.Clone()).ToList();
+            await PersistNowAsync(log);
+            try { request.OnSteps?.Invoke(log.Steps); }
+            catch { /* UI may be gone */ }
             outcome = new SkillRunResult
             {
                 Success = false,
@@ -228,12 +262,67 @@ public sealed class SkillRunner : ISkillRunner
         return outcome;
     }
 
+    private void SchedulePersist(SkillRunLog log)
+    {
+        if (_runLogs is null) return;
+        var gen = Interlocked.Increment(ref _persistGen);
+        var snap = CloneLog(log);
+        _ = PersistSequentialAsync(snap, gen);
+    }
+
+    private async Task PersistNowAsync(SkillRunLog log)
+    {
+        if (_runLogs is null) return;
+        var gen = Interlocked.Increment(ref _persistGen);
+        await PersistSequentialAsync(CloneLog(log), gen);
+    }
+
+    /// <summary>
+    /// Writes are serialized. A snapshot taken earlier than one already stored is skipped,
+    /// so a slow mid-run save cannot replace the finished log.
+    /// </summary>
+    private async Task PersistSequentialAsync(SkillRunLog snap, int gen)
+    {
+        await _persistGate.WaitAsync();
+        try
+        {
+            if (gen < Volatile.Read(ref _appliedGen))
+                return;
+            Volatile.Write(ref _appliedGen, gen);
+            await _runLogs!.UpdateAsync(snap);
+        }
+        catch { /* non-fatal */ }
+        finally { _persistGate.Release(); }
+    }
+
+    private static SkillRunLog CloneLog(SkillRunLog log) => new()
+    {
+        Id = log.Id,
+        SkillId = log.SkillId,
+        SkillName = log.SkillName,
+        ModelId = log.ModelId,
+        Source = log.Source,
+        WorkflowId = log.WorkflowId,
+        WorkflowName = log.WorkflowName,
+        TriggerDetail = log.TriggerDetail,
+        TaskId = log.TaskId,
+        State = log.State,
+        StartedAtUtc = log.StartedAtUtc,
+        EndedAtUtc = log.EndedAtUtc,
+        Success = log.Success,
+        Error = log.Error,
+        ResultText = log.ResultText,
+        LogLines = log.LogLines?.ToList() ?? new(),
+        Steps = log.Steps?.Select(s => s.Clone()).ToList() ?? new()
+    };
+
     private static string BuildSkillSystemPrompt(
         SkillDocument doc,
         string body,
         Dictionary<string, string>? parameters,
         SkillToolResolver.Resolution resolution,
-        string modelId)
+        string modelId,
+        string priorOutcomes)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"You are executing the Agent Skill `{doc.Name}`.");
@@ -253,6 +342,8 @@ public sealed class SkillRunner : ISkillRunner
                 sb.Append("- **").Append(kv.Key).Append("**: ").AppendLine(kv.Value ?? "");
             sb.AppendLine();
         }
+        if (!string.IsNullOrWhiteSpace(priorOutcomes))
+            sb.Append(priorOutcomes);
         sb.AppendLine("## Skill instructions");
         sb.AppendLine();
         sb.Append(body?.Trim() ?? "");

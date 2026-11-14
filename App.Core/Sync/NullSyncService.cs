@@ -59,6 +59,16 @@ public sealed class NullSyncService : ISyncService
     public Task RefreshAsync() => Task.CompletedTask;
     public Task PublishAiCapabilitiesAsync() => Task.CompletedTask;
 
+    public Task<AgentCardPublishResult> PublishAgentCardAsync(
+        IReadOnlyList<AgentSkillCard> skills,
+        bool claimOrchestrator,
+        bool releaseOrchestrator) =>
+        Task.FromResult(new AgentCardPublishResult(Ok: true, Denied: false));
+
+    public Task<bool> SendA2AAsync(string targetDeviceId, string envelopeJson) => Task.FromResult(false);
+
+    public event Action<string, string>? OnA2AFrameReceived;
+
     public Task SetDeviceNameAsync(string newName) => Task.CompletedTask;
     public Task ForgetOfflineDeviceAsync(string deviceId) => Task.CompletedTask;
     public Task SetSyncTargetDevicesAsync(IEnumerable<string> deviceIds) => Task.CompletedTask;

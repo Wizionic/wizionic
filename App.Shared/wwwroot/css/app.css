@@ -6382,6 +6382,55 @@ html[data-theme="nord"] {
   color: var(--color-text, #222);
   opacity: 0.9;
 }
+.cf-skill-step {
+  padding: 0.15rem 0 0.35rem;
+  border-bottom: 1px solid var(--color-border, #eee);
+}
+.cf-skill-step-failed .cf-skill-live-log-line {
+  color: #9f1239;
+}
+.cf-skill-step-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0.15rem 0 0.25rem;
+}
+.cf-skill-fb-on {
+  font-weight: 700;
+}
+.cf-skill-step-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+  margin-bottom: 0.25rem;
+}
+.cf-fleet-note {
+  font-size: 0.85rem;
+  margin: 0.35rem 0;
+}
+.cf-fleet-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+.cf-fleet-device {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.45rem;
+}
+.cf-fleet-skill {
+  display: inline-block;
+  margin: 0.25rem 0.35rem 0 0;
+  font-size: 0.78rem;
+}
+.cf-fleet-run {
+  margin-top: 0.85rem;
+}
+.cf-fleet-receipt-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
 .cf-skill-run-result {
   white-space: pre-wrap;
   border: 1px solid var(--color-border, #e5e7eb);

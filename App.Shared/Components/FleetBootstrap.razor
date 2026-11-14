@@ -1,0 +1,30 @@
+@using Microsoft.Extensions.DependencyInjection
+@using App.Core.Auth
+@using App.Core.Skills
+@using App.Core.Storage
+@using App.Core.Sync
+@using App.Shared.Services.Agents
+@inject IServiceProvider Services
+
+@*
+    Attaches the fleet service to this circuit's sync and skill runner.
+    The host renders this too, with NullSyncService. Attach ignores that so server
+    prerender does not capture a scoped service inside the singleton.
+*@
+@code {
+    protected override void OnInitialized()
+    {
+        var fleet = Services.GetService<AgentFleetService>();
+        var sync = Services.GetService<ISyncService>();
+        if (fleet is null || sync is null || sync is NullSyncService)
+            return;
+        fleet.Attach(
+            sync,
+            Services.GetService<ISkillRunner>(),
+            Services.GetService<ICryptoService>(),
+            Services.GetService<IAuthService>(),
+            Services.GetService<ISyncPreferencesStore>(),
+            Services.GetService<ISkillStore>(),
+            Services.GetService<ISkillRunLogStore>());
+    }
+}

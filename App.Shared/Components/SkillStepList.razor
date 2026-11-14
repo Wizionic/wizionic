@@ -1,0 +1,85 @@
+@using App.Core.Skills
+
+@if (Steps is null || Steps.Count == 0)
+{
+    @if (ChildContent is not null)
+    {
+        @ChildContent
+    }
+}
+else
+{
+    @foreach (var step in Steps)
+    {
+        <div class="cf-skill-step @(step.Status == SkillStepStatus.Failed ? "cf-skill-step-failed" : "")">
+            <div class="cf-skill-live-log-line">@step.Text</div>
+            @if (IsToolStep(step) && step.Status != SkillStepStatus.Running)
+            {
+                @if (AllowFeedback)
+                {
+                    <div class="cf-skill-step-actions">
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm @(step.FeedbackVerdict == SkillStepFeedbackVerdict.Positive ? "cf-skill-fb-on" : "")"
+                                @onclick="() => MarkAsync(step, SkillStepFeedbackVerdict.Positive)">Worked</button>
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm @(step.FeedbackVerdict == SkillStepFeedbackVerdict.Negative ? "cf-skill-fb-on" : "")"
+                                @onclick="() => OpenNegative(step)">Failed</button>
+                    </div>
+                }
+                @if (step.FeedbackVerdict == SkillStepFeedbackVerdict.Positive)
+                {
+                    <div class="cf-skill-step-note">Confirmed. The next run can call this again.</div>
+                }
+                else if (step.FeedbackVerdict == SkillStepFeedbackVerdict.Negative)
+                {
+                    <div class="cf-skill-step-note">@(string.IsNullOrWhiteSpace(step.FeedbackNote) ? "Marked failed." : step.FeedbackNote)</div>
+                }
+                @if (AllowFeedback && feedbackOpen == step.StepId)
+                {
+                    <textarea class="cf-dialog-input cf-skill-textarea" rows="2" @bind="feedbackNote"
+                              placeholder="What should the agent do differently?"></textarea>
+                    <button type="button" class="btn btn-primary btn-sm" @onclick="() => SaveNegativeAsync(step)">Save note</button>
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public IReadOnlyList<SkillStep>? Steps { get; set; }
+    [Parameter] public bool AllowFeedback { get; set; }
+    [Parameter] public EventCallback<SkillStepFeedback> Feedback { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private string? feedbackOpen;
+    private string feedbackNote = "";
+
+    private static bool IsToolStep(SkillStep step) =>
+        step.Kind is SkillStepKind.ToolCall or SkillStepKind.ToolResult;
+
+    private void OpenNegative(SkillStep step)
+    {
+        feedbackOpen = step.StepId;
+        feedbackNote = step.FeedbackNote ?? "";
+    }
+
+    private async Task MarkAsync(SkillStep step, string verdict)
+    {
+        await Feedback.InvokeAsync(new SkillStepFeedback
+        {
+            StepId = step.StepId,
+            Verdict = verdict
+        });
+    }
+
+    private async Task SaveNegativeAsync(SkillStep step)
+    {
+        await Feedback.InvokeAsync(new SkillStepFeedback
+        {
+            StepId = step.StepId,
+            Verdict = SkillStepFeedbackVerdict.Negative,
+            Note = feedbackNote
+        });
+        feedbackOpen = null;
+    }
+}

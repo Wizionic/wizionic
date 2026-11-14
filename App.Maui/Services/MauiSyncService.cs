@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.Json;
+using App.Core.Agents;
 using App.Core.Auth;
 using App.Core.Browser;
 using App.Core.Chat;
@@ -331,6 +333,46 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         catch (Exception ex)
         {
             Console.WriteLine($"[MauiSyncService] UpdateAiCapabilities failed: {ex.Message}");
+        }
+    }
+
+    public event Action<string, string>? OnA2AFrameReceived;
+
+    public async Task<AgentCardPublishResult> PublishAgentCardAsync(
+        IReadOnlyList<AgentSkillCard> skills,
+        bool claimOrchestrator,
+        bool releaseOrchestrator)
+    {
+        if (_hub?.State != HubConnectionState.Connected || string.IsNullOrEmpty(MyDeviceId))
+            return new AgentCardPublishResult(false, false);
+
+        try
+        {
+            var json = JsonSerializer.Serialize(skills ?? Array.Empty<AgentSkillCard>(), A2AJson.Options);
+            var accepted = await _hub.InvokeAsync<bool>(
+                "UpdateAgentCard", MyDeviceId, json, claimOrchestrator, releaseOrchestrator);
+            return new AgentCardPublishResult(accepted, Denied: claimOrchestrator && !accepted);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MauiSyncService] UpdateAgentCard failed: {ex.Message}");
+            return new AgentCardPublishResult(false, false);
+        }
+    }
+
+    public async Task<bool> SendA2AAsync(string targetDeviceId, string envelopeJson)
+    {
+        if (_hub?.State != HubConnectionState.Connected || string.IsNullOrWhiteSpace(targetDeviceId))
+            return false;
+        try
+        {
+            await _hub.InvokeAsync("SendToDevice", targetDeviceId, A2AChannel.MessageType, envelopeJson);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MauiSyncService] SendA2A failed: {ex.Message}");
+            return false;
         }
     }
 
@@ -942,6 +984,12 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
 
         _hub.On<string, string, string>("ReceiveSignaling", async (fromDeviceId, type, payload) =>
         {
+            if (string.Equals(type, A2AChannel.MessageType, StringComparison.OrdinalIgnoreCase))
+            {
+                OnA2AFrameReceived?.Invoke(fromDeviceId, payload);
+                return;
+            }
+
             if (await _aiProxy.TryHandleSignalingAsync(fromDeviceId, type, payload))
                 return;
 
