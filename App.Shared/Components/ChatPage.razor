@@ -32,6 +32,7 @@
 @inject IAuthService AuthService
 @inject ISyncService SyncService
 @inject IChatCompletionService ChatCompletionService
+@inject IToolExecutionTrace ToolTrace
 @inject ILemonadeImageService LemonadeImages
 @inject ILemonadeSpeechService LemonadeSpeech
 @inject ICloudImageService CloudImages
@@ -320,7 +321,7 @@
                 @if (isTyping && !IsActiveChatLocked)
                 {
                     <div class="message-row">
-                        <div class="message-bot typing">@typingLabel</div>
+                        <div class="message-bot typing" role="status" aria-live="polite">@typingLabel</div>
                     </div>
                 }
             </div>
@@ -1072,7 +1073,8 @@
     string selectedModel = ""; // will be set to a valid model from the current list in OnInitializedAsync
     bool isTyping = false;
     bool isSending = false;
-    string typingLabel = "Wizionic is thinking…";
+    const string ThinkingLabel = "Wizionic is thinking…";
+    string typingLabel = ThinkingLabel;
 
     // Lemonade image gen / edit panel
     bool showImagePanel;
@@ -1518,6 +1520,8 @@
     private Action? _chatPanelChangedHandler;
     private Action? _syncChangedHandler;
     private Action? _keyStoreChangedHandler;
+    private Action? _toolTraceChangedHandler;
+    private bool _pageDisposed;
     private string? _lastSyncedAiServerId;
     private int _lastSyncedRemoteModelCount = -1;
     private bool _lastSyncedAiProxyConnected;
@@ -1546,6 +1550,9 @@
 
         _chatPanelChangedHandler = () => InvokeAsync(OnChatPanelChangedAsync);
         ChatPanel.OnChanged += _chatPanelChangedHandler;
+
+        _toolTraceChangedHandler = OnToolTraceChanged;
+        ToolTrace.Changed += _toolTraceChangedHandler;
 
         SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
 
@@ -2206,8 +2213,44 @@
             imageHeight = settings.DefaultHeight.Value.ToString();
     }
 
+    // Tool notes land while the call is still waiting (web search records, then the HTTP
+    // call). Only a tool-call with no later tool-result changes the bubble.
+    void OnToolTraceChanged()
+    {
+        if (_pageDisposed)
+            return;
+        try
+        {
+            _ = InvokeAsync(ApplyToolActivityLabel);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    void ApplyToolActivityLabel()
+    {
+        if (_pageDisposed || !isTyping)
+            return;
+        if (typingLabel is "Editing image…" or "Generating image…" or "Upscaling…")
+            return;
+
+        var next = ToolActivityLabel.ForInFlightTool(ToolTrace.GetSteps()) ?? ThinkingLabel;
+        if (next == typingLabel)
+            return;
+
+        typingLabel = next;
+        RequestScrollToBottom();
+        StateHasChanged();
+    }
+
     public void Dispose()
     {
+        _pageDisposed = true;
+
         if (_sidebarStateChangedHandler != null)
             SidebarState.OnChanged -= _sidebarStateChangedHandler;
 
@@ -2224,6 +2267,9 @@
 
         if (_keyStoreChangedHandler != null)
             KeyStore.Changed -= _keyStoreChangedHandler;
+
+        if (_toolTraceChangedHandler != null)
+            ToolTrace.Changed -= _toolTraceChangedHandler;
 
         _micCts?.Cancel();
         _imageCts?.Cancel();
@@ -3051,6 +3097,7 @@
             ItemId: Guid.NewGuid().ToString("N"), ModifiedAt: now));
 
         isTyping = true;
+        typingLabel = ThinkingLabel;
         pendingFiles.Clear();
         attachStatusMessage = null;
         try { await JS.InvokeVoidAsync("resetChatTextarea", messageTextarea); } catch { }
@@ -3302,7 +3349,7 @@
         {
             isTyping = false;
             isSending = false;
-            typingLabel = "Wizionic is thinking…";
+            typingLabel = ThinkingLabel;
         }
 
         if (string.IsNullOrWhiteSpace(resultB64))
@@ -4124,7 +4171,7 @@
             imageBusy = false;
             isSending = false;
             isTyping = false;
-            typingLabel = "Wizionic is thinking…";
+            typingLabel = ThinkingLabel;
         }
 
         if (string.IsNullOrWhiteSpace(panelB64))

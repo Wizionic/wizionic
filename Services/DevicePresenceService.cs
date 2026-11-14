@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using App.Core.Agents;
+using App.Core.Sync;
 
 namespace App.Services;
 
@@ -35,7 +37,10 @@ public class DevicePresenceService
         bool CanRelayAi = false,
         int AiModelCount = 0,
         bool SupportsBrowserSync = false,
-        bool IsNativeApp = false);
+        bool IsNativeApp = false,
+        List<AgentSkillCard>? Skills = null,
+        bool IsOrchestrator = false,
+        string? AgentProtocol = null);
 
     private class DeviceEntry
     {
@@ -45,6 +50,9 @@ public class DevicePresenceService
         public int AiModelCount { get; set; }
         public bool SupportsBrowserSync { get; set; }
         public bool IsNativeApp { get; set; }
+        public List<AgentSkillCard> Skills { get; set; } = new();
+        public bool IsOrchestrator { get; set; }
+        public string? AgentProtocol { get; set; }
         public HashSet<string> ConnectionIds { get; } = new(StringComparer.Ordinal);
     }
 
@@ -119,6 +127,57 @@ public class DevicePresenceService
     }
 
     /// <summary>
+    /// Publish the device's agent card and optionally claim or release the orchestrator lease.
+    /// Skill updates do not change the lease. A claim is refused while another online device holds it.
+    /// An offline holder is not a holder: the flag is cleared when that device has no connections.
+    /// </summary>
+    public (IReadOnlyList<DeviceInfo> Devices, bool Accepted) UpdateAgentCard(
+        string? userId,
+        string? email,
+        string deviceId,
+        IReadOnlyList<AgentSkillCard>? skills,
+        bool claimOrchestrator,
+        bool releaseOrchestrator)
+    {
+        var userKey = GetUserKey(userId, email);
+        var accepted = true;
+        if (_users.TryGetValue(userKey, out var bucket) &&
+            bucket.TryGetValue(deviceId, out var entry))
+        {
+            foreach (var other in bucket.Values)
+            {
+                if (other.ConnectionIds.Count == 0)
+                    other.IsOrchestrator = false;
+            }
+
+            if (skills is not null)
+                entry.Skills = CapSkills(skills);
+
+            entry.AgentProtocol = A2AChannel.ProtocolVersion;
+            entry.LastActiveUtc = DateTime.UtcNow;
+
+            if (releaseOrchestrator)
+                entry.IsOrchestrator = false;
+
+            if (claimOrchestrator)
+            {
+                var held = bucket.Values.FirstOrDefault(o =>
+                    !ReferenceEquals(o, entry) && o.IsOrchestrator && o.ConnectionIds.Count > 0);
+                if (held is not null)
+                    accepted = false;
+                else
+                    entry.IsOrchestrator = true;
+            }
+        }
+        else if (claimOrchestrator)
+        {
+            accepted = false;
+        }
+
+        return (GetDevicesSnapshot(userKey), accepted);
+    }
+
+    /// <summary>
     /// Update just the friendly name for a device (user-initiated rename on this client).
     /// </summary>
     public IReadOnlyList<DeviceInfo> UpdateName(string? userId, string? email, string deviceId, string newName)
@@ -168,8 +227,9 @@ public class DevicePresenceService
             entry.ConnectionIds.Remove(connectionId);
             entry.LastActiveUtc = DateTime.UtcNow; // last-seen moment
 
-            // If this was the last connection for the device, the device is now "offline"
-            // but we keep the record so the UI can still show it with a last-active time.
+            // Offline devices do not keep the orchestrator lease.
+            if (entry.ConnectionIds.Count == 0)
+                entry.IsOrchestrator = false;
         }
 
         return GetDevicesSnapshot(userKey);
@@ -215,7 +275,10 @@ public class DevicePresenceService
                 CanRelayAi: entry.CanRelayAi,
                 AiModelCount: entry.AiModelCount,
                 SupportsBrowserSync: entry.SupportsBrowserSync,
-                IsNativeApp: entry.IsNativeApp
+                IsNativeApp: entry.IsNativeApp,
+                Skills: entry.Skills.Count == 0 ? null : entry.Skills.Select(CloneCard).ToList(),
+                IsOrchestrator: isOnline && entry.IsOrchestrator,
+                AgentProtocol: entry.AgentProtocol
             ));
         }
 
@@ -230,4 +293,36 @@ public class DevicePresenceService
     /// For diagnostics / future admin UI.
     /// </summary>
     public int GetOnlineConnectionCount() => _connections.Count;
+
+    private static List<AgentSkillCard> CapSkills(IReadOnlyList<AgentSkillCard> skills)
+    {
+        var list = new List<AgentSkillCard>();
+        foreach (var skill in skills)
+        {
+            if (list.Count >= 40)
+                break;
+            if (string.IsNullOrWhiteSpace(skill.Id) && string.IsNullOrWhiteSpace(skill.Name))
+                continue;
+            list.Add(new AgentSkillCard
+            {
+                Id = Trim(skill.Id, 64),
+                Name = Trim(skill.Name, 80),
+                Description = Trim(skill.Description, 180)
+            });
+        }
+        return list;
+    }
+
+    private static AgentSkillCard CloneCard(AgentSkillCard skill) => new()
+    {
+        Id = skill.Id,
+        Name = skill.Name,
+        Description = skill.Description
+    };
+
+    private static string Trim(string? value, int max)
+    {
+        var text = (value ?? "").Trim();
+        return text.Length <= max ? text : text[..max];
+    }
 }

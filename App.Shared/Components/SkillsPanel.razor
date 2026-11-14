@@ -12,6 +12,7 @@
 @inject ISyncService? SyncService
 @inject NavigationManager Nav
 @inject IJSRuntime Js
+@inject IAuthService? Auth
 @implements IDisposable
 
 <div class="cf-skills-panel">
@@ -115,6 +116,8 @@
                         @onclick="() => _runFilter = SkillRunSource.Chat">Chat</button>
                 <button type="button" class="cf-skill-filter-chip @(_runFilter == SkillRunSource.Workflow ? "is-active" : "")"
                         @onclick="() => _runFilter = SkillRunSource.Workflow">Workflow</button>
+                <button type="button" class="cf-skill-filter-chip @(_runFilter == SkillRunSource.A2A ? "is-active" : "")"
+                        @onclick="() => _runFilter = SkillRunSource.A2A">Agent</button>
             </div>
             <div class="cf-skill-run-history">
                 @if (!FilteredRecentRuns.Any())
@@ -129,7 +132,7 @@
                             <span class="cf-skill-source-badge">@SourceLabel(log.Source)</span>
                         </span>
                         <span class="cf-skill-run-history-meta">
-                            @(log.Success ? "OK" : "Failed") · @log.ModelId · @log.DurationSeconds.ToString("0.0")s
+                            @(log.State == SkillRunState.Running ? "Running" : log.Success ? "OK" : "Failed") · @log.ModelId · @log.DurationSeconds.ToString("0.0")s
                             · @log.StartedAtUtc.ToLocalTime().ToString("g")
                             @if (!string.IsNullOrWhiteSpace(log.WorkflowName))
                             {
@@ -253,7 +256,7 @@
                     <span class="cf-skill-run-model"> · @runModelId</span>
                 }
             </div>
-            @if (!busy && string.IsNullOrEmpty(runResult) && runLogLines.Count == 0)
+            @if (!busy && string.IsNullOrEmpty(runResult) && runLogLines.Count == 0 && runSteps.Count == 0)
             {
                 <p class="text-muted" style="font-size:0.88rem;">
                     Model: <strong>@(runModelId ?? KeyStore.LastSelectedModel ?? "none")</strong>
@@ -296,13 +299,20 @@
                 }
             </div>
             <div class="cf-skill-live-log" @ref="runLogEl">
-                @if (runLogLines.Count == 0 && !busy)
+                @if (runSteps.Count == 0 && runLogLines.Count == 0 && !busy)
                 {
                     <div class="text-muted" style="font-size:0.85rem;">Start the skill to see steps, tools, and model activity.</div>
                 }
-                @foreach (var line in runLogLines)
+                @if (runSteps.Count > 0)
                 {
-                    <div class="cf-skill-live-log-line">@line</div>
+                    <SkillStepList Steps="runSteps" AllowFeedback="@(!string.IsNullOrEmpty(runLogId))" Feedback="OnStepFeedback" />
+                }
+                else
+                {
+                    @foreach (var line in runLogLines)
+                    {
+                        <div class="cf-skill-live-log-line">@line</div>
+                    }
                 }
                 @if (!string.IsNullOrEmpty(runPartial))
                 {
@@ -368,6 +378,8 @@
     private string? runModelId;
     private string runPartial = "";
     private List<string> runLogLines = new();
+    private List<SkillStep> runSteps = new();
+    private string? runLogId;
     private List<SkillRunLog> allRecentRuns = new();
     private string? _runFilter; // null = all; else SkillRunSource.*
     private IEnumerable<SkillRunLog> FilteredRecentRuns =>
@@ -438,6 +450,8 @@
             ?? new SkillRecord { Id = log.SkillId, Name = log.SkillName, Markdown = "" };
         runModelId = log.ModelId;
         runLogLines = log.LogLines?.ToList() ?? new();
+        runSteps = log.Steps?.Select(s => s.Clone()).ToList() ?? new();
+        runLogId = log.Id;
         runResult = log.ResultText;
         runError = log.Error;
         runPartial = "";
@@ -731,6 +745,8 @@
         runResult = null;
         runPartial = "";
         runLogLines = new();
+        runSteps = new();
+        runLogId = null;
         runModelId = KeyStore.LastSelectedModel;
         modelPickerOpen = false;
         modelOptions = new();
@@ -744,6 +760,8 @@
         runResult = null;
         runPartial = "";
         runLogLines = new();
+        runSteps = new();
+        runLogId = null;
         if (string.IsNullOrWhiteSpace(runModelId))
             runModelId = KeyStore.LastSelectedModel;
         StateHasChanged();
@@ -757,6 +775,22 @@
                 TriggerDetail = "skills-ui",
                 UserMessageOverride = string.IsNullOrWhiteSpace(runUserMessage) ? null : runUserMessage,
                 BodyOverride = string.IsNullOrWhiteSpace(runBodyOverride) ? null : runBodyOverride,
+                OnRunStarted = id =>
+                {
+                    _ = InvokeAsync(() =>
+                    {
+                        runLogId = id;
+                        StateHasChanged();
+                    });
+                },
+                OnSteps = steps =>
+                {
+                    _ = InvokeAsync(() =>
+                    {
+                        runSteps = steps.Select(s => s.Clone()).ToList();
+                        StateHasChanged();
+                    });
+                },
                 OnLog = lines =>
                 {
                     _ = InvokeAsync(() =>
@@ -776,6 +810,10 @@
             });
 
             runModelId = result.ModelId ?? runModelId;
+            if (!string.IsNullOrEmpty(result.Log?.Id))
+                runLogId = result.Log.Id;
+            if (result.Log?.Steps is { Count: > 0 })
+                runSteps = result.Log.Steps.Select(s => s.Clone()).ToList();
             if (result.Log?.LogLines is { Count: > 0 })
                 runLogLines = result.Log.LogLines.ToList();
             else if (!string.IsNullOrWhiteSpace(result.ToolTrace))
@@ -806,6 +844,26 @@
         }
     }
 
+    private async Task OnStepFeedback(SkillStepFeedback feedback)
+    {
+        if (string.IsNullOrEmpty(runLogId))
+            return;
+        var ok = await RunLogs.SetFeedbackAsync(runLogId, feedback.StepId, feedback.Verdict, feedback.Note, Auth?.Email);
+        if (!ok)
+        {
+            banner = "That step is still saving. Try again in a moment.";
+            bannerError = true;
+            return;
+        }
+        var stored = RunLogs.Get(runLogId);
+        if (stored?.Steps is { Count: > 0 })
+            runSteps = stored.Steps.Select(s => s.Clone()).ToList();
+        banner = feedback.Verdict == SkillStepFeedbackVerdict.Positive
+            ? "Saved. The next run can call this again."
+            : "Saved. The next run will see this note.";
+        bannerError = false;
+    }
+
     private async Task AfterSkillsChanged()
     {
         if (SettingsSync is not null && SyncService is not null)
@@ -816,6 +874,7 @@
     {
         SkillRunSource.Chat => "Chat",
         SkillRunSource.Workflow => "Workflow",
+        SkillRunSource.A2A => "Agent",
         _ => "Manual"
     };
 }

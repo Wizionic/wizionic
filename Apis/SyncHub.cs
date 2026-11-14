@@ -1,4 +1,6 @@
+using System.Text.Json;
 using App.Core.Auth;
+using App.Core.Sync;
 using App.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -157,6 +159,41 @@ public class SyncHub : Hub
 
         var list = _presence.UpdateBrowserCapabilities(userId, email, deviceId, supportsBrowserSync, isNativeApp);
         await Clients.Group(GetUserGroup()).SendAsync("DevicesUpdated", list);
+    }
+
+    /// <summary>
+    /// Publish this device's agent card (skill id, name, description) and optionally
+    /// claim or release the single orchestrator lease. Returns false when the claim is refused.
+    /// The hub stores the card for presence. It does not read skill bodies.
+    /// </summary>
+    public async Task<bool> UpdateAgentCard(
+        string deviceId,
+        string skillsJson,
+        bool claimOrchestrator,
+        bool releaseOrchestrator)
+    {
+        var userId = GetUserId();
+        var email = GetEmail();
+        List<AgentSkillCard>? skills = null;
+        if (!string.IsNullOrWhiteSpace(skillsJson))
+        {
+            try
+            {
+                skills = JsonSerializer.Deserialize<List<AgentSkillCard>>(skillsJson, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+            catch
+            {
+                skills = null;
+            }
+        }
+
+        var (list, accepted) = _presence.UpdateAgentCard(
+            userId, email, deviceId, skills, claimOrchestrator, releaseOrchestrator);
+        await Clients.Group(GetUserGroup()).SendAsync("DevicesUpdated", list);
+        return accepted;
     }
 
     /// <summary>

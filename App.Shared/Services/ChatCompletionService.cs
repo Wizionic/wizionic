@@ -226,7 +226,17 @@ public sealed class ChatCompletionService : IChatCompletionService
                             {
                                 var doc = App.Core.Skills.SkillMarkdown.Parse(rec.Markdown);
                                 var res = App.Core.Skills.SkillToolResolver.Resolve(doc.AllowedTools);
-                                var skillSys = BuildChatSkillSystemPrompt(doc, res, modelId);
+                                var prior = "";
+                                if (_services.GetService(typeof(ISkillRunLogStore)) is ISkillRunLogStore priorLogs)
+                                {
+                                    try
+                                    {
+                                        await priorLogs.LoadAsync(ct);
+                                        prior = App.Shared.Services.Skills.SkillPriorOutcomes.Format(priorLogs, rec.Id);
+                                    }
+                                    catch { /* history is optional */ }
+                                }
+                                var skillSys = BuildChatSkillSystemPrompt(doc, res, modelId, prior);
                                 AppendSystemInstruction(chatHistory, skillSys);
                                 _trace.Record($"🎯 Skill instructions injected: {doc.Name} · model {modelId}");
                                 _trace.Record($"🔧 Skill modules: [{string.Join(", ", res.Modules)}] mcp={res.IncludeMcp}");
@@ -264,7 +274,10 @@ public sealed class ChatCompletionService : IChatCompletionService
                 {
                     client = inner
                         .AsBuilder()
-                        .UseFunctionInvocation()
+                        .UseFunctionInvocation(configure: c =>
+                        {
+                            c.FunctionInvoker = TraceAndInvokeAsync;
+                        })
                         .Build();
                     chatOptions = new ChatOptions
                     {
@@ -1046,9 +1059,13 @@ public sealed class ChatCompletionService : IChatCompletionService
                 Success = !cancelled && !string.IsNullOrWhiteSpace(text),
                 Error = cancelled ? "cancelled" : null,
                 ResultText = text,
+                State = cancelled
+                    ? SkillRunState.Canceled
+                    : string.IsNullOrWhiteSpace(text) ? SkillRunState.Failed : SkillRunState.Completed,
                 LogLines = string.IsNullOrWhiteSpace(toolTrace)
                     ? new List<string>()
-                    : toolTrace.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList()
+                    : toolTrace.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                Steps = _trace.GetSteps().Select(s => s.Clone()).ToList()
             };
             await logs.AddAsync(log, ct);
         }
@@ -1061,7 +1078,8 @@ public sealed class ChatCompletionService : IChatCompletionService
     private static string BuildChatSkillSystemPrompt(
         App.Core.Skills.SkillDocument doc,
         App.Core.Skills.SkillToolResolver.Resolution resolution,
-        string modelId)
+        string modelId,
+        string priorOutcomes)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"You are executing the Agent Skill `{doc.Name}`.");
@@ -1075,10 +1093,102 @@ public sealed class ChatCompletionService : IChatCompletionService
         if (resolution.IncludeMcp)
             sb.AppendLine("MCP and OAuth connector tools may also be available.");
         sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(priorOutcomes))
+            sb.Append(priorOutcomes);
         sb.AppendLine("## Skill instructions");
         sb.AppendLine();
         sb.Append((doc.BodyMarkdown ?? "").Trim());
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Replaces the default function invoker so each tool call is a structured step.
+    /// Must call <see cref="AIFunction.InvokeAsync"/> itself — the default invoker is not used.
+    /// </summary>
+    private async ValueTask<object?> TraceAndInvokeAsync(FunctionInvocationContext ctx, CancellationToken ct)
+    {
+        var name = ctx.Function.Name ?? "tool";
+        var args = SummarizeToolArgs(ctx.Arguments);
+        var callText = string.IsNullOrEmpty(args) ? $"🔧 {name}()" : $"🔧 {name}({args})";
+        _trace.RecordStep(new SkillStep
+        {
+            Kind = SkillStepKind.ToolCall,
+            ToolName = name,
+            ArgsSummary = args,
+            Status = SkillStepStatus.Running,
+            Text = callText
+        });
+
+        try
+        {
+            var result = await ctx.Function.InvokeAsync(ctx.Arguments, ct);
+            var text = ToolResultText(result);
+            var failed = ToolResultLooksFailed(text);
+            var shown = string.IsNullOrEmpty(text) ? "(empty)" : text;
+            if (shown.Length > 500)
+                shown = shown[..500] + "…";
+            _trace.RecordStep(new SkillStep
+            {
+                Kind = SkillStepKind.ToolResult,
+                ToolName = name,
+                ArgsSummary = args,
+                Status = failed ? SkillStepStatus.Failed : SkillStepStatus.Succeeded,
+                Text = failed ? $"❌ {name} → {shown}" : $"✅ {name} → {shown}",
+                EndedAtUtc = DateTimeOffset.UtcNow
+            });
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _trace.RecordStep(new SkillStep
+            {
+                Kind = SkillStepKind.ToolResult,
+                ToolName = name,
+                ArgsSummary = args,
+                Status = SkillStepStatus.Failed,
+                Text = $"❌ {name} failed: {ex.Message}",
+                EndedAtUtc = DateTimeOffset.UtcNow
+            });
+            throw;
+        }
+    }
+
+    private static string SummarizeToolArgs(AIFunctionArguments? args)
+    {
+        if (args is null || args.Count == 0)
+            return "";
+        var parts = new List<string>();
+        foreach (var kv in args)
+        {
+            if (string.IsNullOrEmpty(kv.Key) || !char.IsLetter(kv.Key[0]))
+                continue;
+            var value = kv.Value?.ToString() ?? "";
+            if (value.Length > 80)
+                value = value[..80] + "…";
+            parts.Add($"{kv.Key}={value}");
+            if (parts.Count >= 6)
+                break;
+        }
+        var summary = string.Join(", ", parts);
+        return summary.Length > 240 ? summary[..240] + "…" : summary;
+    }
+
+    private static string ToolResultText(object? result) => result switch
+    {
+        null => "",
+        string s => s,
+        JsonElement el => el.ToString(),
+        _ => result.ToString() ?? ""
+    };
+
+    private static bool ToolResultLooksFailed(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        var trimmed = text.TrimStart();
+        return trimmed.StartsWith("Tool '", StringComparison.Ordinal)
+               && (trimmed.Contains("failed", StringComparison.OrdinalIgnoreCase)
+                   || trimmed.Contains("not available", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildBrowserToolEnforcementPrompt() =>
@@ -2463,8 +2573,14 @@ public sealed class ChatCompletionService : IChatCompletionService
                     ? prop.Value.GetString()
                     : prop.Value.GetRawText();
 
-            var result = await fn.InvokeAsync(new AIFunctionArguments(args), ct);
-            return result?.ToString() ?? "";
+            var result = await TraceAndInvokeAsync(
+                new FunctionInvocationContext
+                {
+                    Function = fn,
+                    Arguments = new AIFunctionArguments(args)
+                },
+                ct);
+            return ToolResultText(result);
         }
         catch (Exception ex)
         {

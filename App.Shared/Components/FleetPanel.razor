@@ -1,0 +1,237 @@
+@using App.Core.Agents
+@using App.Core.Skills
+@using App.Core.Sync
+@using App.Shared.Services.Agents
+@inject AgentFleetService Fleet
+@implements IDisposable
+
+<div class="cf-fleet">
+    <label class="cf-fleet-toggle">
+        <input type="checkbox" checked="@Fleet.WantOrchestrator" @onchange="OnToggle" />
+        This device is the orchestrator
+    </label>
+    @if (!string.IsNullOrEmpty(Fleet.StatusMessage))
+    {
+        <p class="text-muted cf-fleet-note">@Fleet.StatusMessage</p>
+    }
+    @if (!string.IsNullOrEmpty(Fleet.LastError))
+    {
+        <p class="cf-dialog-error">@Fleet.LastError</p>
+    }
+
+    @if (!Fleet.IsAttached)
+    {
+        <p class="text-muted">Open the signed-in app on this device to see other agents.</p>
+    }
+    else if (!Fleet.IsConnected)
+    {
+        <p class="text-muted">Connecting to your other devices…</p>
+    }
+    else if (!Fleet.OnlinePeers().Any())
+    {
+        <p class="text-muted">No other Wizionic device is online.</p>
+    }
+    else
+    {
+        @foreach (var device in Fleet.OnlinePeers())
+        {
+            <div class="cf-fleet-device">
+                <strong>@device.Name</strong>
+                @if (device.IsOrchestrator)
+                {
+                    <span class="text-muted"> · Orchestrator</span>
+                }
+                <div>
+                    @if (device.Skills is null || device.Skills.Count == 0)
+                    {
+                        <span class="text-muted">No skills published</span>
+                    }
+                    else
+                    {
+                        @foreach (var skill in device.Skills)
+                        {
+                            <span class="cf-fleet-skill" title="@skill.Description">@skill.Name</span>
+                        }
+                    }
+                </div>
+            </div>
+        }
+    }
+
+    @if (Fleet.IsOrchestrator)
+    {
+        <div class="cf-fleet-run">
+            <label class="cf-conn-label">Device</label>
+            <select class="cf-dialog-input" value="@deviceId" @onchange="OnDevice">
+                @foreach (var device in Fleet.OnlinePeers())
+                {
+                    <option value="@device.DeviceId">@device.Name</option>
+                }
+            </select>
+            <label class="cf-conn-label">Skill</label>
+            <select class="cf-dialog-input" @bind="skillId">
+                @if (SelectedSkills().Count == 0)
+                {
+                    <option value="">No skills</option>
+                }
+                else
+                {
+                    @foreach (var skill in SelectedSkills())
+                    {
+                        <option value="@skill.Id">@skill.Name</option>
+                    }
+                }
+            </select>
+            <label class="cf-conn-label">Message</label>
+            <textarea class="cf-dialog-input cf-skill-textarea" rows="2" @bind="message"
+                      placeholder="Execute this skill now…"></textarea>
+            <button type="button" class="btn btn-primary btn-sm" @onclick="RunAsync" disabled="@string.IsNullOrEmpty(skillId)">
+                Run skill
+            </button>
+        </div>
+    }
+
+    @if (Fleet.Receipts.Count > 0)
+    {
+        <h3 class="cf-conn-section-title" style="font-size:0.98rem;margin-top:1.1rem;">Receipts</h3>
+        <div class="cf-fleet-receipts">
+            @foreach (var receipt in Fleet.Receipts)
+            {
+                <button type="button"
+                        class="cf-skill-run-history-item @(OpenReceipt()?.TaskId == receipt.TaskId ? "is-active" : "")"
+                        @onclick="() => selectedReceiptId = receipt.TaskId">
+                    <span class="cf-skill-run-history-name">@receipt.SkillName</span>
+                    <span class="cf-skill-run-history-meta">@receipt.WorkerName · @ReceiptLabel(receipt)</span>
+                </button>
+            }
+        </div>
+        @if (OpenReceipt() is AgentTaskReceipt open)
+        {
+            <div class="cf-fleet-receipt">
+                <div class="cf-skill-live-log-head">
+                    <span>@open.SkillName · @open.WorkerName</span>
+                    <span>@ReceiptLabel(open)</span>
+                </div>
+                @if (!string.IsNullOrEmpty(open.Error))
+                {
+                    <p class="@(open.State == A2ATaskState.Failed ? "cf-dialog-error" : "text-muted cf-fleet-note")">@open.Error</p>
+                }
+                @if (open.Steps.Count == 0 && open.State is A2ATaskState.Submitted or A2ATaskState.Working)
+                {
+                    <p class="text-muted cf-fleet-note">Waiting for the first step…</p>
+                }
+                <SkillStepList Steps="open.Steps"
+                               AllowFeedback="@(!string.IsNullOrEmpty(open.WorkerLogId))"
+                               Feedback="OnFeedback" />
+                @if (!string.IsNullOrEmpty(open.ResultText))
+                {
+                    <label class="cf-conn-label">Result</label>
+                    <div class="cf-skill-run-result">@open.ResultText</div>
+                }
+                <div class="cf-fleet-receipt-actions">
+                    @if (open.State is A2ATaskState.Submitted or A2ATaskState.Working)
+                    {
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => Fleet.CancelAsync(open.TaskId)">Cancel</button>
+                    }
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveAsync(open.TaskId)" title="Removes this receipt only">
+                        Remove receipt
+                    </button>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string deviceId = "";
+    private string skillId = "";
+    private string message = "";
+    private string? selectedReceiptId;
+
+    protected override void OnInitialized()
+    {
+        Fleet.Changed += OnChanged;
+        var first = Fleet.OnlinePeers().FirstOrDefault();
+        if (first is not null)
+        {
+            deviceId = first.DeviceId;
+            skillId = first.Skills?.FirstOrDefault()?.Id ?? "";
+        }
+    }
+
+    private void OnChanged() => _ = InvokeAsync(() =>
+    {
+        var peers = Fleet.OnlinePeers();
+        if (peers.Count > 0 && (string.IsNullOrEmpty(deviceId) || peers.All(p => p.DeviceId != deviceId)))
+        {
+            deviceId = peers[0].DeviceId;
+            skillId = peers[0].Skills?.FirstOrDefault()?.Id ?? "";
+        }
+        StateHasChanged();
+    });
+
+    private void OnDevice(ChangeEventArgs e)
+    {
+        deviceId = e.Value?.ToString() ?? "";
+        skillId = SelectedSkills().FirstOrDefault()?.Id ?? "";
+    }
+
+    private List<AgentSkillCard> SelectedSkills()
+    {
+        var peer = Fleet.OnlinePeers().FirstOrDefault(d => d.DeviceId == deviceId);
+        return peer?.Skills ?? new List<AgentSkillCard>();
+    }
+
+    private AgentTaskReceipt? OpenReceipt()
+    {
+        var receipts = Fleet.Receipts;
+        return receipts.FirstOrDefault(r => r.TaskId == selectedReceiptId) ?? receipts.FirstOrDefault();
+    }
+
+    private async Task OnToggle(ChangeEventArgs e)
+    {
+        var want = e.Value is bool b && b;
+        await Fleet.SetOrchestratorAsync(want);
+    }
+
+    private async Task RunAsync()
+    {
+        var id = await Fleet.StartSkillAsync(deviceId, skillId, message);
+        if (!string.IsNullOrEmpty(id))
+            selectedReceiptId = id;
+    }
+
+    private async Task OnFeedback(SkillStepFeedback feedback)
+    {
+        if (string.IsNullOrEmpty(selectedReceiptId) && Fleet.Receipts.Count > 0)
+            selectedReceiptId = Fleet.Receipts[0].TaskId;
+        var id = selectedReceiptId;
+        if (string.IsNullOrEmpty(id))
+            return;
+        await Fleet.SendFeedbackAsync(id, feedback.StepId, feedback.Verdict, feedback.Note);
+    }
+
+    private async Task RemoveAsync(string taskId)
+    {
+        await Fleet.DeleteReceiptAsync(taskId);
+        if (selectedReceiptId == taskId)
+            selectedReceiptId = Fleet.Receipts.FirstOrDefault()?.TaskId;
+    }
+
+    private static string ReceiptLabel(AgentTaskReceipt receipt)
+    {
+        if (receipt.Behind && receipt.State == A2ATaskState.Working)
+            return "Behind";
+        return receipt.State switch
+        {
+            A2ATaskState.Submitted => "Sending",
+            A2ATaskState.Working => "Running",
+            A2ATaskState.Completed => "Done",
+            A2ATaskState.Canceled => "Canceled",
+            A2ATaskState.Failed => "Failed",
+            _ => receipt.State
+        };
+    }
+
+    public void Dispose() => Fleet.Changed -= OnChanged;
+}

@@ -60,6 +60,23 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     Task RefreshAsync();
     Task PublishAiCapabilitiesAsync();
 
+    /// <summary>
+    /// Announce this device's skills and, when asked, claim or release the orchestrator lease.
+    /// <see cref="AgentCardPublishResult.Denied"/> is true only when another online device holds the lease.
+    /// </summary>
+    Task<AgentCardPublishResult> PublishAgentCardAsync(
+        IReadOnlyList<AgentSkillCard> skills,
+        bool claimOrchestrator,
+        bool releaseOrchestrator);
+
+    /// <summary>
+    /// Route one A2A envelope to a device. The payload is already encrypted; this method does not read it.
+    /// </summary>
+    Task<bool> SendA2AAsync(string targetDeviceId, string envelopeJson);
+
+    /// <summary>Raised for SignalR message type <c>a2a</c> before WebRTC signaling sees it.</summary>
+    event Action<string, string>? OnA2AFrameReceived;
+
     Task SetDeviceNameAsync(string newName);
     /// <summary>Drop an offline leftover device from this client's roster (not while it is online).</summary>
     Task ForgetOfflineDeviceAsync(string deviceId);

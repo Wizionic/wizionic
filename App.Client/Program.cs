@@ -76,6 +76,7 @@ builder.Services.AddSingleton<ISyncPreferencesStore>(sp => sp.GetRequiredService
 builder.Services.AddSingleton<App.Core.Skills.ISkillStore, App.Shared.Services.Skills.PreferencesSkillStore>();
 builder.Services.AddSingleton<App.Core.Skills.ISkillRunLogStore, App.Shared.Services.Skills.SkillRunLogStore>();
 builder.Services.AddScoped<App.Core.Skills.ISkillRunner, App.Shared.Services.Skills.SkillRunner>();
+builder.Services.AddSingleton<App.Shared.Services.Agents.AgentFleetService>();
 builder.Services.AddSingleton<App.Core.Workflows.IWorkflowStore, App.Shared.Services.Workflows.PreferencesWorkflowStore>();
 builder.Services.AddScoped<App.Core.Workflows.IWorkflowOrchestrator, App.Shared.Services.Workflows.WorkflowOrchestrator>();
 builder.Services.AddSingleton<SettingsSyncStore>();
