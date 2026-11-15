@@ -43,6 +43,18 @@ On the Password tab, **Forgot password?** Enter the emailed login code. That rem
 
 If 2FA is on, enter your password first. Then use the email code or the link to finish. If you forgot the password, use **Forgot password?** instead.
 
+## Agents: Could not publish this device
+
+You can see your other devices, but the login server does not have the Agents API. Update and restart your Home Server from this build, then check **This device is the orchestrator** again. On wizionic.com, Agents works after that site is updated. Other installs also need this build before their skills appear.
+
+## Another device is the orchestrator
+
+Only one device can hold that role. Turn it off on the device that has it, or wait until that device is offline, then try again.
+
+## No skills published
+
+That install is an older build, or it has no enabled skills. Syncing skills does not publish them until that app is this version and online.
+
 ## I closed the app but it is still in the tray
 
 On Windows and Linux desktop, the close button **hides** Wizionic so sync and scheduled workflows keep running. Right-click the tray icon and choose **Quit**, or use **Settings → Desktop → Quit Wizionic**. Turn off **Close window to system tray** if you want X to exit.

@@ -13,12 +13,14 @@ Full legal text: [Privacy](/privacy) and [Terms](/terms).
 - Your cloud API keys (on-device key store; they can sync between your devices over WebRTC)
 - Connector access tokens and MCP tokens
 - Device-local workflows
+- Agent receipts (the orchestrator’s copy of a remote skill run) and the “this device is the orchestrator” choice
 
 ## On the Wizionic host (if you have an account)
 
 - Email, optional password hash, optional 2FA flag and phone
 - A per-user encryption key so your devices can read the same data
-- Presence and WebRTC signaling (not chat payloads)
+- Presence and WebRTC signaling (not chat payloads). While Agents is in use, presence also includes the skill **names** an online device has enabled
+- Encrypted agent messages between your devices. The server routes them and does not keep the skill text or the result
 - Transactional email (login codes) via Brevo
 - SMS codes via Twilio if you enrolled a number
 - Tool-proxy and model-proxy traffic you actually trigger

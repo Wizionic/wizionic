@@ -28,6 +28,10 @@ The desktop app can use wizionic.com or a **Home Server**. On the PC that hosts 
 
 A device with Ollama or Lemonade can serve as the AI backend for another peer over a dedicated data channel. Pick that on the Sync page.
 
+## Agents
+
+Running a skill on another device is separate from sync. See [Agents](/help/agents). Notes and chats still move only over WebRTC. Agent messages are encrypted and sent through the login server to that one device. The server does not keep the skill text or the result.
+
 ## What the server sees
 
 Presence, WebRTC signaling (offers, answers, ICE). Not message or note bodies.

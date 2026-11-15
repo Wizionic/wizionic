@@ -14,7 +14,7 @@
 
 ### Your private AI workspace with smart-home automation and P2P sync.
 
-A private AI workspace built for your home: encrypted data that syncs peer-to-peer across your devices, plus first-class Home Assistant control through natural language, Skills, and Workflows.
+A private AI workspace built for your home: encrypted data that syncs peer-to-peer across your devices, plus first-class Home Assistant control through natural language, Skills, Workflows, and Agents.
 
 Built from the ground up for 🍋 **AMD Lemonade Server** and 🦙 **Ollama**, with optional **OpenAI-compatible cloud** providers and first-class **Home Assistant** integration.
 
@@ -47,7 +47,7 @@ Windows 10 and 11. The Store app is signed and updates itself.
 - **🔒 Privacy-First Architecture:** All your data lives locally on your devices and is encrypted at rest (AES-256-GCM).
 - **🔄 Peer to Peer (P2P) Sync:** Wizionic isn't just an isolated app—it's designed to connect all of your devices. Sync chats, notes, calendar, bookmarks, settings across all your devices via encrypted **WebRTC**. No cloud storage required to keep your data backed up and private.  
 - 🍋 **AMD Lemonade integration** — Image generation & editing, speech-to-text, text-to-speech, and Omni multimodal collections are first-class. The setup wizard can install Lemonade for you.
-- **🛠️Tools + Skills + Workflows** — Built-in tools (web search, browser, notes, gallery, calendar, Lemonade modalities, Home Assistant), MCP servers, OAuth connectors, Agent Skills (`SKILL.md`), and scheduled Workflows.   All your workflows are displayed on the Calendar.
+- **🛠️Tools + Skills + Workflows + Agents** — Built-in tools (web search, browser, notes, gallery, calendar, Lemonade modalities, Home Assistant), MCP servers, OAuth connectors, Agent Skills (`SKILL.md`), and scheduled Workflows. All your workflows are displayed on the Calendar. **Agents** lets one signed-in device run a skill on another device and watch each step come back. The worker keeps the log. 
 - **📱Mobile as PWA:** Install the Wizionic web client as a Progressive Web App (PWA) on Android/iOS. Your mobile device can sync data and even use one of your more powerful devices for chat using WebRTC.
 
 ---
@@ -94,6 +94,8 @@ Import or create Skills that combine multiple tools into reusable AI actions.
 
 Automate repetitive tasks by scheduling AI Skills to run whenever you want. Import or create **Workflows** and schedule them to run with assigned models.
 <p align="center"><img src="wwwroot/screenshots/Workflows.png" alt="Wizionic Workflows"></p>
+
+**Agents** (Tools → Agents) is the orchestrator. Check **This device is the orchestrator** on one install, pick a skill another online device has published, and send a message. Steps show up under Receipts while that device runs the skill with its own model and tools. **Worked** or **Failed** on a step is saved on the worker so the next run of that skill can repeat what worked or avoid what failed. 
 
 Edit Workflows to change their schedule or model they use.  Scheduled workflows will appear on the calendar
 <p align="center"><img src="wwwroot/screenshots/EditWorkflow.png" alt="Wizionic Edit Workflow"></p>
@@ -148,6 +150,7 @@ This project is currently maintained by @daniellgoodwin .
 - **Stack:** .NET 10, Blazor Hybrid, MAUI (Windows/Linux), SQLite, SignalR, WebRTC.
 - **Security:** AES-256-GCM encryption for all local data. Magic-link auth + 2FA (Twilio).
 - **Sync:** WebRTC DataChannels for P2P data sync; SignalR for presence/signaling only.
+- **Agents:** One device (the orchestrator) runs a skill on another signed-in device. Skill names ride presence. The run itself is an encrypted [A2A](https://a2a-protocol.org/latest/specification/) frame on SignalR. The worker keeps the log.
 - **Linux Support:** First-class support via GirCore (GTK4/Adwaita) and WebKitGTK.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical architecture.

@@ -23,7 +23,7 @@ Wizionic is a private AI workspace. Chat, notes, gallery, and calendar live on *
 | Lemonade | [Lemonade](/lemonade) |
 | API keys | [Cloud providers](/cloud-providers) |
 | Notes / gallery / calendar | Their icons in the top bar |
-| Skills and MCP tools | [Tools](/tools) |
+| Skills, workflows, agents, and MCP tools | [Tools](/tools) |
 | Other devices | [Sync](/sync) |
 | Password and 2FA | Account page (home / Account) |
 

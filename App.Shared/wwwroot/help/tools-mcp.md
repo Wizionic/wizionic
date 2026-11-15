@@ -5,7 +5,7 @@ title: Tools, MCP, and connectors
 
 # Tools, MCP, and connectors
 
-Open [Tools](/tools). Tabs: **Tools**, **Skills**, **Workflows**.
+Open [Tools](/tools). Tabs: **Tools**, **Skills**, **Workflows**, **Agents**.
 
 ## Built-in tools
 
@@ -21,6 +21,6 @@ Gmail, Google Calendar, GitHub, Notion, Stripe, and similar **app** logins. Wizi
 
 Enable only what you need. The model should prefer the smallest set of tools that finishes the request.
 
-## Skills and workflows
+## Skills, workflows, and agents
 
-See [Skills and workflows](/help/skills).
+See [Skills, workflows, and agents](/help/skills). To run a skill on another device, see [Agents](/help/agents).
