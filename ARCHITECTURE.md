@@ -9,7 +9,7 @@
 ## Core Values
 
 - **Local AI** — **AMD Lemonade Server** and **Ollama** can be installed with the setup wizard on the user's machine as first-class local AI providers (chat, multimodal, and Lemonade-specific modalities). 
-- **Tools Available** — Native app tools (Notes, Gallery, Calendar, Browser, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, first class **Home Assistant** integration — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.  Tools can then be used in Skills or scheduled in Workflows.
+- **Tools Available** — Native app tools (Notes, Gallery, Calendar, Browser, web search, weather), optional OAuth OpenAPI connectors, user-selected MCP servers, first class **Home Assistant** integration — all via `Microsoft.Extensions.AI` function calling and a rules / AI / hybrid tool router.  Tools can then be used in Skills, scheduled in Workflows, or run on another signed-in device from **Agents**.
 - **Privacy-first** — Chat history, notes, gallery images, and calendar events live on the client (IndexedDB / SQLite), encrypted at rest. When the public server is used as the Home Server, it does not store conversation or personal content for WASM/MAUI client.
 - **Local Device to Device sync** — WebRTC DataChannel carries encrypted chats, notes, gallery, calendar, and selected settings; SignalR from the Home Server is presence + signaling only.
 - **Minimal Server Footprint**  The desktop app plus a **Home Server** on the installed PC covers login, magic-link/2FA APIs, SignalR presence, and WebRTC signaling. The hosting app uses **`http://localhost:5150`**; Kestrel binds `http://*:5150` so other devices use `{hostname}.local:5150` or the LAN IPv4 (Windows Firewall Private rule on 5150). Installing Home Server from the setup wizard downloads that package from **GitHub Releases** and retargets this app’s login server to localhost. Desktop *app* updates come from GitHub Releases (Velopack) or, for the Microsoft Store Windows install, from the Store. The hosted site (Wizionic.com) is only an optional public host (web client + the same APIs) for people who do not run their own Home Server.
@@ -459,9 +459,56 @@ flowchart TB
   Runner --> Log
 ```
 
-**Hierarchy (product UI):** Tools (built-in + installed) → Skills (procedures over tools) → Workflows (schedules that call one skill). Skills **do** sync across devices; workflows **do not**.
+**Hierarchy (product UI):** Tools (built-in + installed) → Skills (procedures over tools) → Workflows (schedules that call one skill on **this** device) and Agents (one device runs a skill on **another** device). Skills **do** sync across devices; workflows **do not**. Agent receipts and the orchestrator checkbox do not sync either.
 
 **Key files:** `App.Core/Skills/*`, `App.Core/Workflows/*`, `App.Shared/Services/Skills/*`, `App.Shared/Services/Workflows/*`, `SkillsPanel.razor`, `WorkflowsPanel.razor`, `WorkflowDueBootstrap.razor`, `App.Maui/Services/WorkflowDueHost.cs`
+
+### Agents (orchestrator and workers)
+
+One signed-in install can ask another install of the **same account** to run a skill. This is not note sync, not the AI-server data channel, and not the workflow scheduler. The worker owns the run: its model, browser, Home Assistant, MCP tokens, and the canonical log stay on that machine. The orchestrator stores a read-only receipt.
+
+| Piece | Detail |
+|-------|--------|
+| **Roles** | Every online install can be a worker. At most one online device holds the orchestrator lease. `DevicePresenceService.UpdateAgentCard` refuses a second claim and clears the flag when a holder has no connections. The checkbox preference is `app-fleet-orchestrator` (`"1"` / `"0"`). A denied claim writes `"0"` so the device does not keep trying to take the lease. |
+| **Card** | Presence on `SyncDeviceInfo`: enabled skills as `AgentSkillCard` `{id, name, description}` only (cap 40; name 80; description 180; id 64). No skill body, tokens, or tool secrets. `AgentProtocol` is `1.0`. |
+| **Hub** | `SyncHub.UpdateAgentCard(deviceId, skillsJson, claimOrchestrator, releaseOrchestrator)` returns whether the claim was accepted, then broadcasts `DevicesUpdated`. The hub does not decrypt or interpret task bodies. An older hub without this method surfaces as **Could not publish this device.** |
+| **Wire** | [A2A](https://a2a-protocol.org/latest/specification/) objects, not a second vocabulary. Frames are SignalR `SendToDevice` with type `a2a` (`A2AChannel`). Envelope `{ taskId, seq, method, cipher }`. `cipher` is AES-256-GCM with the per-user key (the same key as local content). Methods: `send`, `step`, `status`, `feedback`, `feedback-saved`, `cancel`. Missing key → do not send plaintext. |
+| **Run** | Orchestrator `StartSkillAsync` refuses self. Worker runs `ISkillRunner` with `SkillRunSource.A2A` (`"a2a"`). States: `submitted` → `working` → `completed` / `failed` / `canceled`. One step update per trace step, then a final result. |
+| **Delivery** | No per-event ack (that would stall the skill on every tool). SignalR send is the delivery boundary. Worker heartbeat about every 20s. No `submitted` within ~15s → receipt `failed` (“did not accept”). Silence of ~45s while `working` sets `Behind` and does **not** fail the task. The worker log remains the record. |
+| **Receipts** | Local preference `app-agent-receipts-v1`, cap 40. Not EF, not WebRTC, not `ISkillRunLogStore`. **Remove receipt** does not delete the worker log. |
+| **Feedback** | **Worked** / **Failed** (+ note) is a later frame on the same task. The worker stores it on the step (`SetFeedbackAsync`). The next run of that skill, including chat `/skill-name`, gets a capped **Prior outcomes** block (`SkillPriorOutcomes`: 8 notes, 2 per tool). `SKILL.md` is not rewritten. |
+| **UI** | Tools → **Agents** (`?tab=fleet`, `FleetPanel.razor`). `FleetBootstrap` in `AppLayout` calls `AgentFleetService.Attach` and returns immediately for `NullSyncService` (the host does not join the fleet). Help topic `agents`. |
+| **Not in this cut** | `GET /.well-known/agent-card.json`, inbound `POST /a2a`, a workflow that starts a remote task, waking an orchestrator that has quit, and non-Wizionic agents. |
+
+```mermaid
+flowchart LR
+  subgraph orch["Orchestrator device"]
+    UI["Tools → Agents"]
+    Receipt["Receipts<br/>app-agent-receipts-v1"]
+  end
+
+  subgraph hub["Home Server"]
+    Presence["UpdateAgentCard<br/>skill names + lease"]
+    Route["SendToDevice type a2a<br/>routes cipher, does not store it"]
+  end
+
+  subgraph worker["Worker device"]
+    Run["SkillRunner source a2a"]
+    Log["Skill run log + step feedback"]
+    Tools["That device's tools<br/>HA · browser · local models"]
+  end
+
+  UI -->|"claim lease + card"| Presence
+  UI -->|"send / cancel / feedback"| Route
+  Route --> Run
+  Run --> Tools
+  Run --> Log
+  Run -->|"step + status"| Route
+  Route --> Receipt
+  Log -->|"prior outcomes on the next run"| Run
+```
+
+**Key files:** `App.Core/Agents/A2AMessages.cs`, `App.Core/Sync/AgentSkillCard.cs`, `App.Shared/Services/Agents/AgentFleetService.cs`, `FleetPanel.razor`, `FleetBootstrap.razor`, `SkillStepList.razor`, `SkillPriorOutcomes.cs`, `Apis/SyncHub.cs` (`UpdateAgentCard`), `Services/DevicePresenceService.cs`, `WasmSyncService.cs`, `MauiSyncService.cs`
 
 ### Windows desktop agent (tray)
 
@@ -518,7 +565,7 @@ Optional **Start with session** writes `~/.config/autostart/com.wizionic.app.des
 
 ## Tools page, MCP registry & OAuth connectors
 
-**UI:** `ToolsPage.razor` (`/tools`) — tabs **Tools → Skills → Workflows** (hierarchy):
+**UI:** `ToolsPage.razor` (`/tools`) — tabs **Tools → Skills → Workflows → Agents** (hierarchy). Agents is the orchestrator panel above; it does not install tools.
 
 1. **Built-in** — compact chips for always-on app tools (web search, notes, gallery, calendar, …); no install/toggle UI yet.
 2. **Installed** — OAuth connectors with tokens + enabled MCP (and custom MCP URLs).
@@ -1002,7 +1049,7 @@ sequenceDiagram
 ### Phase 1 — Presence (SignalR)
 1. Authenticated client connects to `/sync-hub` (`SyncHub`, `[Authorize]`).
 2. Client calls `RegisterDevice(deviceId, deviceName)`; server tracks connections in `DevicePresenceService` (in-memory).
-3. Hub broadcasts `DevicesUpdated` to the user's group `user:{userId}`.
+3. Hub broadcasts `DevicesUpdated` to the user's group `user:{userId}`. Each device may include an agent card (enabled skill id, name, and description) and whether it holds the orchestrator lease. See [Agents](#agents-orchestrator-and-workers).
 4. **`SyncPresencePage.razor`** (`/sync`) — online devices, rename, AI-server selection, per-kind auto-sync toggles (chats, notes, gallery, calendar, settings, …).
 
 ### Phase 2 — Data sync (WebRTC DataChannel)
@@ -1066,6 +1113,7 @@ A phone/tablet without Ollama can designate another online device as **AI server
 | Chats, notes, gallery, normal calendars | **Workflow** definitions (`IWorkflowStore`) |
 | Settings: tools, skills, local-ai, … | **Workflows** calendar + events with `WorkflowId` |
 | Browser bookmarks/apps (MAUI) | Login server URL (never a settings category) |
+| — | **Agent receipts** and the orchestrator checkbox (local preferences). Skill **names** are presence, not a sync item. Run bodies are encrypted SignalR frames, not WebRTC. |
 
 ---
 
@@ -1342,6 +1390,7 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
  12. For **new API endpoints** → `WasmApiEndpoints.cs`, `AiProxyEndpoints.cs`, OAuth/connector APIs; register in host `Program.cs`.
  13. For **tools / MCP / OAuth connectors** → `ToolsPage.razor`, `McpToolSource`, `OpenApiConnectorToolSource`, `CompositeToolProvider`, OAuth broker endpoints, SQLite `Connectors` / `OAuthProviders`.
  13b. For **Agent Skills (SKILL.md)** → `App.Core/Skills/*`, `SkillRunner`, `SkillsPanel.razor`, `ISkillStore`, settings sync category `skills`.
+ 13c. For **Agents (orchestrator / worker)** → `AgentFleetService`, `A2AMessages`, `FleetPanel.razor`, `SyncHub.UpdateAgentCard`, `DevicePresenceService`, Help `docs/user/skills-workflows.md` (`{#agents}`). Not WebRTC note sync.
  14. For **setup wizard / Home Server / local installers** → `SetupWizard.razor`, `IHomeserverInstallService`, Lemonade/Ollama install services (MAUI).
  15. For **Home Assistant** → `ISmartHomeService`, `HaModels`, `HomeAssistantPage.razor`, `HomeAssistantToolModule`, `HomeAssistantFallback`, routers, `ChatCompletionService`, Settings → Voice (`IKeyStore.AssistantName`), Help `desktop-browser-ha.md`.
  15b. For **Voice mode** → `ChatPage.razor`, `chatInterop.js` (`appVoiceListenStart`), `UserProfileSettings.VoiceFollowUpWithoutWake`.
@@ -1352,4 +1401,4 @@ A cloud answer model **does** send the question plus a few shipped excerpts to t
 
 ---
 
-*Last updated: August 2026 — ARCHITECTURE.md at repo root (not public wwwroot). HA companion page + areas + convenience tools; wake word on Profile/Voice (not HA blob); Voice mode; AI router thinking-off path; UI copy in Help.*
+*Last updated: November 2026 — ARCHITECTURE.md at repo root (not public wwwroot). Agents: one orchestrator runs a skill on another device over encrypted A2A frames (SignalR), worker-owned logs and step feedback. HA companion page + areas + convenience tools; wake word on Profile/Voice (not HA blob); Voice mode; AI router thinking-off path; UI copy in Help.*

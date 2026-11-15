@@ -17,7 +17,7 @@
 <div class="settings-content cf-connectors-page">
     <div class="cf-conn-top">
         <div class="cf-conn-tabs">
-            <HelpGlyph Topic="@(activeTab is "skills" or "workflows" or "fleet" ? "skills" : "tools")" />
+            <HelpGlyph Topic="@(activeTab == "fleet" ? "agents" : activeTab is "skills" or "workflows" ? "skills" : "tools")" />
             <button type="button" class="cf-conn-tab @(activeTab == "tools" ? "cf-conn-tab-active" : "")"
                     @onclick="ShowToolsTab">Tools</button>
             <button type="button" class="cf-conn-tab @(activeTab == "skills" ? "cf-conn-tab-active" : "")"
@@ -75,7 +75,7 @@
     else if (activeTab == "fleet")
     {
         <section class="cf-conn-section">
-            <h2 class="cf-conn-section-title help-heading">Agents <HelpGlyph Topic="skills" /></h2>
+            <h2 class="cf-conn-section-title help-heading">Agents <HelpGlyph Topic="agents" /></h2>
             <p class="text-muted" style="font-size:0.88rem;margin:-0.35rem 0 0.85rem;">
                 One signed-in device runs a skill on another. The worker keeps the log and sends each step back.
             </p>
