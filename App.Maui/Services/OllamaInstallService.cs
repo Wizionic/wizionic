@@ -4,6 +4,7 @@ using System.Text;
 using App.Core.Ollama;
 using App.Core.Setup;
 using App.Core.Storage;
+using App.Core.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace App.Maui.Services;
@@ -25,9 +26,9 @@ public sealed class OllamaInstallService : IOllamaInstallService
     [
         new()
         {
-            Id = "qwen3.5:0.8b",
-            DisplayName = "Qwen3.5 0.8B",
-            Description = "Small model for tool routing.",
+            Id = WizionicRouterModel.OllamaPullId,
+            DisplayName = WizionicRouterModel.DisplayName,
+            Description = WizionicRouterModel.Description,
             DefaultSelected = true
         },
         new()

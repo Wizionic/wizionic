@@ -45,7 +45,7 @@ public sealed class CloudImageService : ICloudImageService
 
     public IReadOnlyList<string> ImageModelNames(string providerId) =>
         _keyStore.GetCloudProvider(providerId)?.Models
-            .Where(m => m.IsImage || m.IsEdit)
+            .Where(m => (m.IsImage || m.IsEdit) && m.IsAdded)
             .Select(m => m.Name)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList()
@@ -53,7 +53,7 @@ public sealed class CloudImageService : ICloudImageService
 
     public IReadOnlyList<string> EditModelNames(string providerId) =>
         _keyStore.GetCloudProvider(providerId)?.Models
-            .Where(m => m.IsEdit)
+            .Where(m => m.IsEdit && m.IsAdded)
             .Select(m => m.Name)
             .ToList()
         ?? (IReadOnlyList<string>)Array.Empty<string>();

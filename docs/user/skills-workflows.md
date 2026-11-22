@@ -25,6 +25,8 @@ Agents lets one signed-in device run a skill on another device. Open [Tools](/to
 
 The **worker** is the device that owns the skill. It runs the skill with its own model, browser, and Home Assistant. The **orchestrator** sends the request and shows the steps that come back. This is not note sync. Chats and notes still move on [Devices and sync](/help/sync).
 
+The worker picks a model it can run locally: the requested model, else its last-selected chat model, else its active profile, else its first available chat model. If the saved model only exists on another device, the run substitutes a local one and says so in the log. Skills sync between devices, so a device can publish a skill it has no workflow for; workflows stay device-local.
+
 1. Sign in on each device with the same account. Each app, and the login server they use (your Home Server, or wizionic.com), needs this version of Wizionic. An older app shows **No skills published**.
 2. On the device that should start runs, check **This device is the orchestrator**. Only one device can hold that. **Another device is the orchestrator** means leave it on the other device, or turn it off there first.
 3. Online devices list the skills they have enabled (name and a short description, not the skill text). Pick a device, a skill, and a message, then **Run skill**. You cannot run a skill on this same device.

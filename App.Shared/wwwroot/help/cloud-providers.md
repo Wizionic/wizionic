@@ -12,11 +12,21 @@ Wizionic is built for local AI. You can still plug in any **OpenAI-compatible** 
 1. Open [Cloud providers](/cloud-providers).
 2. Enter a display name, the API base URL (include `/v1` when the vendor uses it), and your API key.
 3. Optionally pick a template from the list (xAI, OpenAI, Groq, OpenRouter, Gemini, and others) to fill the name and URL. You can still edit them.
-4. Save and **refresh models**. Chat lists that provider’s models.
+4. Save and **refresh models**, then **Add** the models you want (below).
 
 Keys stay in this app’s key store. If you are signed in they are encrypted on the device.
 
 Example for xAI / Grok: base URL `https://api.x.ai/v1`.
+
+## Add models to your lists
+
+Refresh lists every model the vendor exposes — often hundreds. Only models you **Add** appear in Chat, Skills, Workflows, and Settings pickers.
+
+1. Expand a provider with **Models**.
+2. Click **Add** on each model you want; an **Added** badge confirms it. Use the filter box or **Added only** to find rows.
+3. Click the trash can to remove a model from the pickers again.
+
+Refresh keeps your Add choices and capability checkboxes; new vendor models start un-added.
 
 ## What Chat can do
 

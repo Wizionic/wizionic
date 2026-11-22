@@ -184,8 +184,8 @@ public sealed class CloudToolModule : IToolModule
         if (models == null)
             return null;
 
-        return models.FirstOrDefault(m => edit ? m.IsEdit : (m.IsImage || m.IsEdit))?.Name
-               ?? models.FirstOrDefault(m =>
+        return models.FirstOrDefault(m => m.IsAdded && (edit ? m.IsEdit : (m.IsImage || m.IsEdit)))?.Name
+               ?? models.FirstOrDefault(m => m.IsAdded &&
                    m.Name.Contains("imagine", StringComparison.OrdinalIgnoreCase))?.Name;
     }
 

@@ -5,6 +5,12 @@ All notable changes to Wizionic are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.23] — 2026-11-21
+
+### Changed
+
+- Setup wizard Local AI defaults pull the Wizionic fine-tuned router `wizionic/Wizionic3.5-0.8B-router:Q5_K_M` (Ollama: `hf.co/wizionic/Wizionic3.5-0.8B-router:Q5_K_M`) instead of Qwen3.5 0.8B. Lemonade and Ollama model refreshes detect it and, when no routing model is configured, set it as the Hybrid routing model. Existing routing choices are untouched.
+
 ## [0.3.22] — 2026-11-11
 
 ### Added

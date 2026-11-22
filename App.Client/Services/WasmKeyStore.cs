@@ -561,9 +561,9 @@ public class WasmKeyStore : IKeyStore
 
         foreach (var cp in _cloudProviders)
         {
-            var chat = cp.Models.FirstOrDefault(m => m.IsChatEligible);
-            var image = cp.DefaultImageModel ?? cp.Models.FirstOrDefault(m => m.IsImage || m.IsEdit)?.Name
-                        ?? cp.Models.FirstOrDefault(m => m.Name.Contains("imagine", StringComparison.OrdinalIgnoreCase))?.Name;
+            var chat = cp.Models.FirstOrDefault(m => m.IsChatEligible && m.IsAdded);
+            var image = cp.DefaultImageModel ?? cp.Models.FirstOrDefault(m => (m.IsImage || m.IsEdit) && m.IsAdded)?.Name
+                        ?? cp.Models.FirstOrDefault(m => m.IsAdded && m.Name.Contains("imagine", StringComparison.OrdinalIgnoreCase))?.Name;
             _modelProfiles.Add(new ModelProfile
             {
                 Id = "cloud-" + cp.Id,
@@ -658,6 +658,18 @@ public class WasmKeyStore : IKeyStore
         else
             provider.Models.Add(settings.Clone());
 
+        await SaveCloudProvidersAsync(ct);
+    }
+
+    public async Task SetCloudModelAddedAsync(string providerId, string modelName, bool added, CancellationToken ct = default)
+    {
+        var provider = FindCloudProvider(providerId);
+        var model = provider?.Models.FirstOrDefault(m =>
+            string.Equals(m.Name, modelName, StringComparison.OrdinalIgnoreCase));
+        if (model == null || model.IsAdded == added)
+            return;
+
+        model.IsAdded = added;
         await SaveCloudProvidersAsync(ct);
     }
 
@@ -911,11 +923,23 @@ public class WasmKeyStore : IKeyStore
                 ModelSettings = next
             };
             await SaveOllamaConfigAsync(ct);
+            await ApplyOllamaRoutingAfterRefreshAsync(next.Values.ToList(), ct);
             RaiseChanged();
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException($"Failed to refresh Ollama models from {OllamaBaseUrl}: {ex.Message}", ex);
+        }
+    }
+
+    private async Task ApplyOllamaRoutingAfterRefreshAsync(
+        IReadOnlyList<OllamaModelSettings> models, CancellationToken ct)
+    {
+        var routing = OllamaWorkspaceSync.PickRouting(models);
+        if (!string.IsNullOrWhiteSpace(routing) && string.IsNullOrWhiteSpace(_toolRoutingModelId))
+        {
+            var mode = LemonadeWorkspaceSync.ModeAfterAutoRouting(_toolRoutingMode, filledRoutingModel: true);
+            await SetToolRoutingAsync(mode, routing, ct);
         }
     }
 
