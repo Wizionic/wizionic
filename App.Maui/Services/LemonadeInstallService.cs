@@ -5,6 +5,7 @@ using System.Text.Json;
 using App.Core.Lemonade;
 using App.Core.Setup;
 using App.Core.Storage;
+using App.Core.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace App.Maui.Services;
@@ -31,9 +32,9 @@ public sealed class LemonadeInstallService : ILemonadeInstallService
     [
         new()
         {
-            Id = "Qwen3.5-0.8B-GGUF",
-            DisplayName = "Qwen3.5 0.8B",
-            Description = "Small model for tool routing.",
+            Id = WizionicRouterModel.LemonadePullId,
+            DisplayName = WizionicRouterModel.DisplayName,
+            Description = WizionicRouterModel.Description,
             DefaultSelected = true
         },
         new()

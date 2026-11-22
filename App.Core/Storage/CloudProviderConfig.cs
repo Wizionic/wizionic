@@ -18,6 +18,8 @@ public sealed class CloudModelSettings
     public bool IsEmbeddings { get; set; }
     public bool IsReranking { get; set; }
 
+    public bool IsAdded { get; set; }
+
     public bool UserOverrideTools { get; set; }
     public bool UserOverrideVision { get; set; }
     public bool UserOverrideContext { get; set; }
@@ -41,6 +43,7 @@ public sealed class CloudModelSettings
         IsTranscription = IsTranscription,
         IsEmbeddings = IsEmbeddings,
         IsReranking = IsReranking,
+        IsAdded = IsAdded,
         UserOverrideTools = UserOverrideTools,
         UserOverrideVision = UserOverrideVision,
         UserOverrideContext = UserOverrideContext,

@@ -17,6 +17,7 @@ public sealed class SkillRunner : ISkillRunner
     private readonly ISkillStore _skills;
     private readonly IChatCompletionService _chat;
     private readonly IKeyStore _keyStore;
+    private readonly IChatModelCatalog _catalog;
     private readonly IToolProvider _tools;
     private readonly IToolExecutionTrace _trace;
     private readonly ISkillRunLogStore? _runLogs;
@@ -28,6 +29,7 @@ public sealed class SkillRunner : ISkillRunner
         ISkillStore skills,
         IChatCompletionService chat,
         IKeyStore keyStore,
+        IChatModelCatalog catalog,
         IToolProvider tools,
         IToolExecutionTrace trace,
         ISkillRunLogStore? runLogs = null)
@@ -35,6 +37,7 @@ public sealed class SkillRunner : ISkillRunner
         _skills = skills;
         _chat = chat;
         _keyStore = keyStore;
+        _catalog = catalog;
         _tools = tools;
         _trace = trace;
         _runLogs = runLogs;
@@ -73,9 +76,11 @@ public sealed class SkillRunner : ISkillRunner
         if (!validation.IsValid)
             return Fail(string.Join(" ", validation.Errors));
 
-        var modelId = (request.ModelId ?? _keyStore.LastSelectedModel ?? "").Trim();
+        var requested = ModelProfileId.ResolveChatModelId(
+            _keyStore, (request.ModelId ?? _keyStore.LastSelectedModel ?? "").Trim());
+        var modelId = ResolveRunnableModel(requested);
         if (string.IsNullOrEmpty(modelId))
-            return Fail("No chat model selected. Pick a model on the Chat page first.");
+            return Fail("No chat model available on this device. Add one in Local AI or Cloud providers.");
 
         var resolution = SkillToolResolver.Resolve(doc.AllowedTools);
         var active = _tools.GetActiveModules().Select(m => m.ModuleName).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -133,6 +138,9 @@ public sealed class SkillRunner : ISkillRunner
             + (string.IsNullOrWhiteSpace(request.WorkflowId) ? "" : $" · workflow={request.WorkflowId}")
             + (string.IsNullOrWhiteSpace(request.TriggerDetail) ? "" : $" · {request.TriggerDetail}"));
         _trace.Record($"🤖 Model: {modelId}");
+        if (!string.IsNullOrWhiteSpace(requested) &&
+            !string.Equals(requested, modelId, StringComparison.OrdinalIgnoreCase))
+            _trace.Record($"Model '{requested}' is not available on this device; using '{modelId}'.");
         _trace.Record($"🔧 Modules: [{string.Join(", ", modules)}] · MCP={resolution.IncludeMcp}");
         _trace.Record("📜 Loading skill instructions…");
         _trace.Record("▶ Starting model + tools…");
@@ -260,6 +268,27 @@ public sealed class SkillRunner : ISkillRunner
         }
 
         return outcome;
+    }
+
+    private string? ResolveRunnableModel(string? requested)
+    {
+        var catalog = _catalog.GetAvailableModels();
+        bool Usable(string? id) =>
+            !string.IsNullOrWhiteSpace(id) &&
+            catalog.Any(m => string.Equals(m.Id, id, StringComparison.OrdinalIgnoreCase));
+
+        if (Usable(requested))
+            return requested;
+
+        var activeId = _keyStore.ActiveModelProfileId;
+        if (!string.IsNullOrWhiteSpace(activeId))
+        {
+            var profileChat = _keyStore.GetModelProfile(activeId)?.ChatModelId;
+            if (Usable(profileChat))
+                return profileChat;
+        }
+
+        return catalog.FirstOrDefault(m => !m.IsImageGeneration)?.Id;
     }
 
     private void SchedulePersist(SkillRunLog log)

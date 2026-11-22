@@ -134,6 +134,7 @@ public static class CloudModelCatalogResolver
             IsTranscription = discovered.IsTranscription,
             IsEmbeddings = discovered.IsEmbeddings,
             IsReranking = discovered.IsReranking,
+            IsAdded = existing.IsAdded,
             UserOverrideTools = existing.UserOverrideTools,
             UserOverrideVision = existing.UserOverrideVision,
             UserOverrideContext = existing.UserOverrideContext,

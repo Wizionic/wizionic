@@ -32,7 +32,7 @@ public static class LemonadeWorkspaceSync
 
     public static string? PickRouting(IReadOnlyList<LemonadeModelSettings> models)
     {
-        var hit = models.FirstOrDefault(IsQwen35Routing);
+        var hit = models.FirstOrDefault(m => WizionicRouterModel.Matches(m.Name));
         return hit == null ? null : Qualify(hit.Name);
     }
 
@@ -60,17 +60,12 @@ public static class LemonadeWorkspaceSync
             && m.Name.Contains("1.2B", StringComparison.OrdinalIgnoreCase));
         if (lfm != null)
             return lfm.Name;
-        var notRouter = chats.FirstOrDefault(m => !IsQwen35Routing(m));
+        var notRouter = chats.FirstOrDefault(m => !WizionicRouterModel.Matches(m.Name));
         return (notRouter ?? chats[0]).Name;
     }
 
     private static string? Pick(IReadOnlyList<LemonadeModelSettings> models, Func<LemonadeModelSettings, bool> pred) =>
         models.FirstOrDefault(pred)?.Name;
-
-    private static bool IsQwen35Routing(LemonadeModelSettings m) =>
-        m.Name.Contains("Qwen3.5", StringComparison.OrdinalIgnoreCase)
-        && (m.Name.Contains("0.8B", StringComparison.OrdinalIgnoreCase)
-            || m.Name.Contains("0.8b", StringComparison.OrdinalIgnoreCase));
 
     private static string? Qualify(string? name) =>
         string.IsNullOrWhiteSpace(name) ? null : "lemonade/" + name.Trim();

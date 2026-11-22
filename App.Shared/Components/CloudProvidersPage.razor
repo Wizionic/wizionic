@@ -66,7 +66,7 @@
     <h3 style="margin-top: 1.75rem;">Providers</h3>
     @if (!providers.Any())
     {
-        <p style="color: var(--color-text-muted); font-size: 0.9em;">None yet. Add one above, then refresh models so they appear in Chat.</p>
+        <p style="color: var(--color-text-muted); font-size: 0.9em;">None yet. Add one above, refresh models, then Add the models you want in Chat.</p>
     }
     else
     {
@@ -80,6 +80,7 @@
                     </div>
                     <div class="ollama-model-row-meta">
                         <span class="ollama-vision-proxy-badge">@p.Models.Count model@(p.Models.Count == 1 ? "" : "s")</span>
+                        <span class="ollama-vision-proxy-badge">@p.Models.Count(m => m.IsAdded) added</span>
                         @foreach (var badge in ProviderBadges(p))
                         {
                             <span class="ollama-vision-proxy-badge">@badge</span>
@@ -100,17 +101,31 @@
                 @if (expandedId == p.Id)
                 {
                     <div style="padding: 0.75rem 0.85rem 1rem; border: 1px solid var(--color-border, #ddd); border-top: 0; border-radius: 0 0 8px 8px; margin-bottom: 0.5rem;">
+                        <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
+                            <input type="text" class="form-control" style="max-width:260px;" placeholder="Filter models…" @bind="modelFilter" @bind:event="oninput" />
+                            <label style="font-size:0.8em;"><input type="checkbox" @bind="addedOnly" /> Added only</label>
+                        </div>
                         @if (!p.Models.Any())
                         {
                             <p style="font-size: 0.85em; color: var(--cf-text-muted); margin: 0;">No models yet. Click Refresh.</p>
                         }
+                        else if (!FilteredModels(p).Any())
+                        {
+                            <p style="font-size: 0.85em; color: var(--cf-text-muted); margin: 0;">No models match the filter.</p>
+                        }
                         else
                         {
-                            @foreach (var m in p.Models)
+                            @foreach (var m in FilteredModels(p))
                             {
                                 <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; padding: 0.35rem 0; border-bottom: 1px solid var(--color-border, #eee);">
                                     <div style="flex:1; min-width:140px;">
-                                        <div style="font-weight:600; font-size:0.9em;">@(string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label)</div>
+                                        <div style="font-weight:600; font-size:0.9em;">
+                                            @(string.IsNullOrWhiteSpace(m.Label) ? m.Name : m.Label)
+                                            @if (m.IsAdded)
+                                            {
+                                                <span class="ollama-vision-proxy-badge" style="margin-left:0.4rem;">Added</span>
+                                            }
+                                        </div>
                                         @if (!string.Equals(m.Label, m.Name, StringComparison.Ordinal))
                                         {
                                             <div style="font-size:0.75em; color:var(--cf-text-muted);">@m.Name</div>
@@ -122,14 +137,21 @@
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsEdit" @onchange='e => ToggleModelFlag(p.Id, m, "edit", e)' /> Edit</label>
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsTts" @onchange='e => ToggleModelFlag(p.Id, m, "tts", e)' /> TTS</label>
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsTranscription" @onchange='e => ToggleModelFlag(p.Id, m, "stt", e)' /> STT</label>
+                                    @if (m.IsAdded)
+                                    {
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" title="Remove from selection lists" @onclick="() => SetModelAdded(p.Id, m, false)"><i class="bi bi-trash"></i></button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => SetModelAdded(p.Id, m, true)">Add</button>
+                                    }
                                 </div>
                             }
                         }
 
                         <p style="font-size: 0.8em; color: var(--cf-text-muted); margin: 0.75rem 0 0;">
-                            Assign this provider’s models to Chat on
-                            <a href="/settings">Settings → Model profiles</a>
-                            (image, edit, TTS, STT, voice, vision proxy).
+                            Click Add to list a model in Chat and other pickers; the trash can removes it.
+                            Assign roles on <a href="/settings">Settings → Model profiles</a>.
                         </p>
                     </div>
                 }
@@ -177,6 +199,8 @@
     string formApiKey = "";
     string? editingId;
     string? expandedId;
+    string modelFilter = "";
+    bool addedOnly;
     bool busy;
     string? busyAction;
     string? feedback;
@@ -312,7 +336,7 @@
             Reload();
             var p = KeyStore.GetCloudProvider(id);
             var count = p?.Models.Count ?? 0;
-            SetFeedback($"Loaded {count} model{(count == 1 ? "" : "s")} from {p?.DisplayName ?? id}.", error: false);
+            SetFeedback($"Loaded {count} model{(count == 1 ? "" : "s")} from {p?.DisplayName ?? id}. Click Add to use them in Chat.", error: false);
             expandedId = id;
         }
         catch (Exception ex)
@@ -336,6 +360,23 @@
         await AfterSaveAsync();
         Reload();
         SetFeedback("Provider removed.", error: false);
+    }
+
+    IEnumerable<CloudModelSettings> FilteredModels(CloudProviderConfig p)
+    {
+        var q = (modelFilter ?? "").Trim();
+        return p.Models.Where(m =>
+            (!addedOnly || m.IsAdded) &&
+            (q.Length == 0
+                || m.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || (m.Label ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    async Task SetModelAdded(string providerId, CloudModelSettings model, bool added)
+    {
+        await KeyStore.SetCloudModelAddedAsync(providerId, model.Name, added);
+        await AfterSaveAsync();
+        Reload();
     }
 
     async Task ToggleModelFlag(string providerId, CloudModelSettings model, string flag, ChangeEventArgs e)

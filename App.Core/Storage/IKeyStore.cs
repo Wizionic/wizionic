@@ -62,6 +62,7 @@ public interface IKeyStore
     Task RemoveCloudProviderAsync(string id, CancellationToken ct = default);
     Task ReplaceCloudProvidersAsync(IEnumerable<CloudProviderConfig> providers, CancellationToken ct = default);
     Task SaveCloudModelSettingsAsync(string providerId, CloudModelSettings settings, CancellationToken ct = default);
+    Task SetCloudModelAddedAsync(string providerId, string modelName, bool added, CancellationToken ct = default);
     Task SetCloudModalityDefaultsAsync(
         string providerId,
         string? imageModel = null,

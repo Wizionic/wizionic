@@ -183,6 +183,9 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
 
             foreach (var m in provider.Models)
             {
+                if (!m.IsAdded)
+                    continue;
+
                 if (!m.IsChatEligible && !m.IsImage)
                     continue;
 

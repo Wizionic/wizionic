@@ -70,6 +70,8 @@ public sealed class NullKeyStore : IKeyStore
         Task.CompletedTask;
     public Task SaveCloudModelSettingsAsync(string providerId, CloudModelSettings settings, CancellationToken ct = default) =>
         Task.CompletedTask;
+    public Task SetCloudModelAddedAsync(string providerId, string modelName, bool added, CancellationToken ct = default) =>
+        Task.CompletedTask;
     public Task SetCloudModalityDefaultsAsync(
         string providerId,
         string? imageModel = null,
