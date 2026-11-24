@@ -22,6 +22,19 @@ public interface IConversationMediaBuffer
     /// <summary>Newest first, capped — no base64 (for list / disambiguation).</summary>
     IReadOnlyList<BufferedImageSummary> ListRecent(string conversationId, int max = 8);
 
+    /// <summary>Store a generated document (e.g. PDF); returns a short id (e.g. doc_a3f2).</summary>
+    string AddDocument(
+        string conversationId,
+        string base64,
+        string contentType,
+        string? name = null,
+        string? source = null);
+
+    bool TryGetDocument(string conversationId, string documentId, out BufferedDocument? document);
+
+    /// <summary>Newest first, capped — no base64.</summary>
+    IReadOnlyList<BufferedDocumentSummary> ListRecentDocuments(string conversationId, int max = 8);
+
     void ClearConversation(string conversationId);
 }
 
@@ -35,6 +48,22 @@ public sealed record BufferedImage(
 
 public sealed record BufferedImageSummary(
     string GenerationId,
+    string? Name,
+    string ContentType,
+    string? Source,
+    DateTime CreatedUtc,
+    long ApproxBytes);
+
+public sealed record BufferedDocument(
+    string DocumentId,
+    string Base64,
+    string ContentType,
+    string? Name,
+    string? Source,
+    DateTime CreatedUtc);
+
+public sealed record BufferedDocumentSummary(
+    string DocumentId,
     string? Name,
     string ContentType,
     string? Source,

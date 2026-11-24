@@ -502,6 +502,20 @@ public sealed class ChatCompletionService : IChatCompletionService
                         _trace.Record($"🖼️ Attached {turnBuffered.Count} buffered image(s) to chat result.");
                     }
 
+                    // Tool-generated PDFs (generate_pdf) — same buffer pattern, shown as download cards.
+                    var turnDocuments = CollectBufferedDocumentAttachments(
+                        conversationId, sinceUtc: wallStart);
+                    if (turnDocuments.Count > 0)
+                    {
+                        resultAttachments ??= new List<StoreAttachment>();
+                        foreach (var att in turnDocuments)
+                        {
+                            if (!resultAttachments.Any(a => a.DataBase64 == att.DataBase64))
+                                resultAttachments.Add(att);
+                        }
+                        _trace.Record($"📄 Attached {turnDocuments.Count} buffered PDF(s) to chat result.");
+                    }
+
                     // Omni / weak tool models: if the user asked to save to an album and we have an image,
                     // persist without relying on client save_to_gallery (Omni has client tools disabled).
                     var galleryIntent = ContextualRequestRouter.MessageSuggestsGalleryTools(lastUserMessage);
@@ -1849,6 +1863,28 @@ public sealed class ChatCompletionService : IChatCompletionService
                 ContentType: img.ContentType,
                 DataBase64: img.Base64,
                 Size: (long)(img.Base64.Length * 0.75)));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// PDFs produced this turn via generate_pdf (short tool results; bytes live in media buffer).
+    /// </summary>
+    private List<StoreAttachment> CollectBufferedDocumentAttachments(string? conversationId, DateTime sinceUtc)
+    {
+        var convoId = string.IsNullOrWhiteSpace(conversationId) ? "_default" : conversationId;
+        var list = new List<StoreAttachment>();
+        foreach (var summary in _mediaBuffer.ListRecentDocuments(convoId, 8))
+        {
+            if (summary.CreatedUtc < sinceUtc.AddSeconds(-2))
+                continue;
+            if (!_mediaBuffer.TryGetDocument(convoId, summary.DocumentId, out var doc) || doc == null)
+                continue;
+            list.Add(new StoreAttachment(
+                Name: doc.Name ?? "document.pdf",
+                ContentType: doc.ContentType,
+                DataBase64: doc.Base64,
+                Size: (long)(doc.Base64.Length * 0.75)));
         }
         return list;
     }

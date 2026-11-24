@@ -27,6 +27,7 @@
     <script src="_content/App.Shared/js/sidebarInterop.js"></script>
     <script src="_content/App.Shared/js/notesReorderInterop.js"></script>
     <script src="_content/App.Shared/js/galleryInterop.js"></script>
+    <script src="_content/App.Shared/js/zoomInterop.js"></script>
     <script>window.appTheme.applyEarly(); window.appNavLayout && window.appNavLayout.apply('top');</script>
 
     <HeadOutlet />
@@ -568,13 +569,13 @@
         async function getWizionicDb() {
             if (_wizionicDbPromise) return _wizionicDbPromise;
             _wizionicDbPromise = new Promise((resolve, reject) => {
-                // v6: calendarMetas + eventMetas + eventContents (idempotent ensure on upgrade)
-                const req = indexedDB.open("app-conversations", 6);
+                // v7: documentMetas + documentContents (Document Library)
+                const req = indexedDB.open("app-conversations", 7);
                 req.onupgradeneeded = (ev) => {
                     const db = ev.target.result;
                     const metaStores = new Set([
                         "convoMetas", "noteMetas", "albumMetas", "albumImageMetas",
-                        "calendarMetas", "eventMetas"
+                        "calendarMetas", "eventMetas", "documentMetas"
                     ]);
                     const ensureStore = (name) => {
                         if (db.objectStoreNames.contains(name)) return;
@@ -594,6 +595,8 @@
                     ensureStore("calendarMetas");
                     ensureStore("eventMetas");
                     ensureStore("eventContents");
+                    ensureStore("documentMetas");
+                    ensureStore("documentContents");
                 };
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => {
@@ -915,6 +918,119 @@
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
+        };
+
+        // --------------------------------------------------------------------
+        // IndexedDB helpers for the Document Library (documentMetas + documentContents).
+        // Meta is cleartext JSON for fast listing; content is encrypted bytes (bin-v1).
+        // --------------------------------------------------------------------
+        window.idbGetDocumentMetasByNamespace = async (namespace) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("documentMetas", "readonly");
+                const store = tx.objectStore("documentMetas");
+                const idx = store.index("byNamespace");
+                const req = idx.getAll(namespace || "");
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutDocumentMeta = async (meta) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("documentMetas", "readwrite");
+                tx.objectStore("documentMetas").put(meta);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetDocumentContent = async (key) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("documentContents", "readonly");
+                const req = tx.objectStore("documentContents").get(key);
+                req.onsuccess = () => {
+                    const row = req.result;
+                    if (!row) { resolve(null); return; }
+                    resolve({
+                        content: row.content,
+                        format: row.format || (typeof row.content === "string" ? "legacy" : "bin-v1")
+                    });
+                };
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        window.idbPutDocumentContent = async (key, content, format) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("documentContents", "readwrite");
+                tx.objectStore("documentContents").put({
+                    key,
+                    content,
+                    format: format || (typeof content === "string" ? "legacy" : "bin-v1")
+                });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbDeleteDocumentByKey = async (metaKey, contentKey) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(["documentMetas", "documentContents"], "readwrite");
+                tx.objectStore("documentMetas").delete(metaKey);
+                tx.objectStore("documentContents").delete(contentKey);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        window.idbGetAllDocumentMetas = async () => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("documentMetas", "readonly");
+                const req = tx.objectStore("documentMetas").getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        };
+
+        /// Encrypt raw bytes → bin-v1 in IDB (no multi-MB base64 JSON round-trips).
+        window.documentStoreBytes = async (contentKey, encKeyB64, plainBytes) => {
+            const plain = plainBytes instanceof Uint8Array ? plainBytes : new Uint8Array(plainBytes);
+            let toStore = plain;
+            if (encKeyB64)
+                toStore = await window.encryptLocalBytes(encKeyB64, plain);
+            await window.idbPutDocumentContent(contentKey, toStore, "bin-v1");
+        };
+
+        /// Decrypt stored document bytes → base64 (for download / open).
+        window.documentLoadBase64FromIdb = async (contentKey, encKeyB64) => {
+            try {
+                const rec = await window.idbGetDocumentContent(contentKey);
+                if (!rec || rec.content == null) return null;
+                let plainBytes;
+                if (rec.format === "bin-v1" || rec.content instanceof ArrayBuffer || ArrayBuffer.isView(rec.content)) {
+                    const cipher = rec.content instanceof Uint8Array ? rec.content : new Uint8Array(rec.content);
+                    plainBytes = encKeyB64 ? await window.decryptLocalBytes(encKeyB64, cipher) : cipher;
+                } else if (typeof rec.content === "string") {
+                    let json = rec.content;
+                    if (encKeyB64)
+                        json = await window.decryptLocalData(encKeyB64, rec.content);
+                    if (!json || (json[0] !== "{" && json[0] !== "[")) return null;
+                    const obj = JSON.parse(json);
+                    return obj.DataBase64 || obj.dataBase64 || null;
+                } else {
+                    return null;
+                }
+                return uint8ToBase64(plainBytes);
+            } catch (e) {
+                console.warn("documentLoadBase64FromIdb failed", e);
+                return null;
+            }
         };
 
         // IndexedDB helpers for Calendar (calendarMetas + eventMetas + eventContents)

@@ -67,65 +67,78 @@
             {
                 <button type="button" @onclick="ToggleChat" title="Chat"
                         class="topbar-toggle-btn @(IsChatActive ? "active" : "")">
-                    <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
+                    <i class="bi bi-chat-dots" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                 </button>
                 <a href="/tools?tab=skills" title="Skills and Tools"
                    class="topbar-toggle-btn @(IsToolsActive ? "active" : null)">
-                    <i class="bi bi-tools" style="font-size: 24px;"></i>
+                    <i class="bi bi-tools" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                 </a>
                 @if (NavLayout.ShowBrowser)
                 {
                     <button type="button" @onclick="ToggleBrowser" title="Browser"
                             class="topbar-toggle-btn @(BrowserPanel.IsOpen ? "active" : "")">
-                        <i class="bi bi-browser-chrome" style="font-size: 24px;"></i>
+                        <i class="bi bi-browser-chrome" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </button>
                 }
                 @if (NavLayout.ShowNotes)
                 {
                     <button type="button" @onclick="ToggleNotes" title="Notes"
                             class="topbar-toggle-btn @(IsNotesActive ? "active" : "")">
-                        <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+                        <i class="bi bi-journal-text" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </button>
                 }
                 @if (NavLayout.ShowGallery)
                 {
                     <button type="button" @onclick="ToggleGallery" title="Gallery"
                             class="topbar-toggle-btn @(IsGalleryActive ? "active" : "")">
-                        <i class="bi bi-images" style="font-size: 24px;"></i>
+                        <i class="bi bi-images" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </button>
                 }
                 @if (NavLayout.ShowCalendar)
                 {
                     <button type="button" @onclick="ToggleCalendar" title="Calendar"
                             class="topbar-toggle-btn @(IsCalendarActive ? "active" : "")">
-                        <i class="bi bi-calendar3" style="font-size: 24px;"></i>
+                        <i class="bi bi-calendar3" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </button>
+                }
+                @if (NavLayout.ShowDocuments)
+                {
+                    <a href="/documents" title="Documents"
+                       class="topbar-toggle-btn @(IsOnDocumentsPage() ? "active" : "")">
+                        <i class="bi bi-file-earmark-pdf" style="font-size: var(--app-nav-icon-size, 24px);"></i>
+                    </a>
                 }
             }
             else
             {
                 <a href="/chat" title="Chat" class="@(IsOnChatPage() ? "active" : null)">
-                    <i class="bi bi-chat-dots" style="font-size: 24px;"></i>
+                    <i class="bi bi-chat-dots" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                 </a>
                 <a href="/tools?tab=skills" title="Tools, Skills and Workflows" class="@(IsToolsActive ? "active" : null)">
-                    <i class="bi bi-tools" style="font-size: 24px;"></i>
+                    <i class="bi bi-tools" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                 </a>
                 @if (NavLayout.ShowNotes)
                 {
                     <a href="/notes" title="Notes" class="@(IsOnNotesPage() ? "active" : null)">
-                        <i class="bi bi-journal-text" style="font-size: 24px;"></i>
+                        <i class="bi bi-journal-text" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </a>
                 }
                 @if (NavLayout.ShowGallery)
                 {
                     <a href="/gallery" title="Gallery" class="@(IsOnGalleryPage() ? "active" : null)">
-                        <i class="bi bi-images" style="font-size: 24px;"></i>
+                        <i class="bi bi-images" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </a>
                 }
                 @if (NavLayout.ShowCalendar)
                 {
                     <a href="/calendar" title="Calendar" class="@(IsOnCalendarPage() ? "active" : null)">
-                        <i class="bi bi-calendar3" style="font-size: 24px;"></i>
+                        <i class="bi bi-calendar3" style="font-size: var(--app-nav-icon-size, 24px);"></i>
+                    </a>
+                }
+                @if (NavLayout.ShowDocuments)
+                {
+                    <a href="/documents" title="Documents" class="@(IsOnDocumentsPage() ? "active" : null)">
+                        <i class="bi bi-file-earmark-pdf" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </a>
                 }
             }
@@ -294,6 +307,17 @@
                 @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Calendar)">
             Show Calendar icon
         </button>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.ShowDocuments ? "is-selected" : "")"
+                @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Documents)">
+            Show Documents icon
+        </button>
+
+        <div class="app-nav-context-menu-divider"></div>
+        <div class="app-nav-context-menu-section">Zoom</div>
+        <button type="button" class="app-nav-context-menu-item" @onclick="ShowZoomLevelAsync">
+            Show zoom level
+        </button>
     </div>
     <div class="menu-overlay" @onclick="CloseNavContextMenu"></div>
 }
@@ -452,6 +476,13 @@
 
     private void CloseNavContextMenu() => _showNavContextMenu = false;
 
+    private async Task ShowZoomLevelAsync()
+    {
+        CloseNavContextMenu();
+        try { await JS.InvokeVoidAsync("appZoom.show"); }
+        catch { /* JS interop unavailable during static render */ }
+    }
+
     private async Task SetNavLayoutAsync(NavLayoutMode mode)
     {
         CloseNavContextMenu();
@@ -467,6 +498,7 @@
             NavPrimaryIcon.Notes => NavLayout.ShowNotes,
             NavPrimaryIcon.Gallery => NavLayout.ShowGallery,
             NavPrimaryIcon.Calendar => NavLayout.ShowCalendar,
+            NavPrimaryIcon.Documents => NavLayout.ShowDocuments,
             _ => true
         };
 
@@ -579,6 +611,12 @@
     {
         var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
         return path.Equals("/calendar", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsOnDocumentsPage()
+    {
+        var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
+        return path.Equals("/documents", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

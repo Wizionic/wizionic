@@ -20,7 +20,7 @@ public sealed class AiRequestRouter
 
     private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Native", "Cloud", "Lemonade", "Gallery", "Calendar", "Notes", "HomeAssistant", "BrowserAgent"
+        "Native", "Cloud", "Lemonade", "Gallery", "Calendar", "Notes", "Pdf", "HomeAssistant", "BrowserAgent"
     };
 
     private readonly ChatModelCatalogService _catalog;
@@ -270,6 +270,7 @@ public sealed class AiRequestRouter
         "Lemonade: local draw/generate/create images. Gallery: albums/save photos. " +
         "Calendar: schedule/add/list/update/delete calendar events and appointments. " +
         "Notes: create notebooks, add/append note entries, attach chat images to notes. " +
+        "Pdf: create/generate PDF documents from markdown, save PDFs to the device Documents library, list saved documents. " +
         "Native: weather, search, time, math, URLs. " +
         "BrowserAgent: control embedded browser only.";
 

@@ -39,6 +39,7 @@
 @inject ICloudSpeechService CloudSpeech
 @inject INoteStore NoteStore
 @inject IGalleryStore GalleryStore
+@inject IDocumentStore DocumentStore
 @inject IGalleryChatHandoff GalleryChatHandoff
 @inject INotesChatHandoff NotesChatHandoff
 @inject IConversationMediaBuffer MediaBuffer
@@ -256,6 +257,28 @@
                                                         <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
                                                                 title="Save to Gallery" @onclick="() => OpenSaveToGallery(att)" @onclick:stopPropagation>
                                                             <i class="bi bi-images"></i> Save to Gallery
+                                                        </button>
+                                                    </div>
+                                                }
+                                                else if (att.ContentType != null && att.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;">
+                                                        <i class="bi bi-file-earmark-pdf" style="font-size:1.7em; color:#c0392b;" aria-hidden="true"></i>
+                                                        <div style="min-width:0;">
+                                                            <div style="font-size:0.85em; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@att.Name">@att.Name</div>
+                                                            <div style="font-size:0.7em; color:var(--cf-text-muted);">PDF · @ChatAttachmentClassifier.FormatSize(att.Size)</div>
+                                                        </div>
+                                                    </div>
+                                                    <div style="display:flex; gap:4px; padding:4px 6px; border-top:1px solid var(--cf-border); background:var(--cf-bg, #fff); flex-wrap:wrap;">
+                                                        <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
+                                                                title="Download" @onclick="() => DownloadAttachment(att)" @onclick:stopPropagation>
+                                                            <i class="bi bi-download"></i> Download
+                                                        </button>
+                                                        <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
+                                                                title="Save to Documents" disabled="@(savedLibraryAttachments.Contains(LibraryKey(att)))"
+                                                                @onclick="() => SavePdfToLibrary(att)" @onclick:stopPropagation>
+                                                            <i class="bi @(savedLibraryAttachments.Contains(LibraryKey(att)) ? "bi-check2-circle" : "bi-folder-plus")"></i>
+                                                            @(savedLibraryAttachments.Contains(LibraryKey(att)) ? "Saved" : "Save to Documents")
                                                         </button>
                                                     </div>
                                                 }
@@ -1427,6 +1450,8 @@
     // Local history via store (types come from WasmConversationStore)
     List<LocalConvo> localConvos = new();
     string? activeConvoId;
+    /// <summary>PDF attachments saved to the Documents library this page session (key = name|size).</summary>
+    readonly HashSet<string> savedLibraryAttachments = new();
     bool _chatIndexLoading;
     /// <summary>Chat IDs unlocked for this page session only.</summary>
     private readonly HashSet<string> unlockedChatIds = new(StringComparer.OrdinalIgnoreCase);
@@ -3726,6 +3751,35 @@
         imagePreviewBase64 = base64;
         imagePreviewContentType = contentType ?? "image/png";
         imageActionFeedback = null;
+    }
+
+    static string LibraryKey(Attachment att) => att.Name + "|" + att.Size;
+
+    async Task SavePdfToLibrary(Attachment att)
+    {
+        if (savedLibraryAttachments.Contains(LibraryKey(att))) return;
+        try
+        {
+            var raw = Convert.FromBase64String(att.DataBase64);
+            var (ok, msg) = await DocumentSaveHelper.SaveDocumentAsync(
+                DocumentStore, StorageQuota, raw,
+                att.ContentType ?? "application/pdf",
+                att.Name ?? "document.pdf",
+                "chat", activeConvoId);
+            if (ok)
+            {
+                savedLibraryAttachments.Add(LibraryKey(att));
+                SetAttachStatus(msg, isError: false);
+            }
+            else
+            {
+                SetAttachStatus("Save to Documents failed: " + msg, isError: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetAttachStatus("Save to Documents failed: " + ex.Message, isError: true);
+        }
     }
 
     async Task DownloadAttachment(Attachment att)

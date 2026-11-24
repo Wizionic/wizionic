@@ -11,6 +11,8 @@ Open [Tools](/tools). Tabs: **Tools**, **Skills**, **Workflows**, **Agents**.
 
 When listed for a chat, the model may call web search, URL summarize, time, weather, and calculator. Search and summarize run through the Wizionic host so the browser does not hit CORS limits. Those requests include the query or URL you (or the model) sent.
 
+`generate_pdf` creates a PDF from markdown entirely on your device — nothing is uploaded. The result appears under the reply as a downloadable card. See [Chat → PDF documents](/help/chat).
+
 ## MCP servers
 
 Add an MCP server if you want extra tools (GitHub, Notion, and so on). Discovery is cached on the device. Tokens stay in the on-device key store.

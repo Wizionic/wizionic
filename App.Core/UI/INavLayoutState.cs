@@ -12,7 +12,8 @@ public enum NavPrimaryIcon
     Browser,
     Notes,
     Gallery,
-    Calendar
+    Calendar,
+    Documents
 }
 
 public interface INavLayoutState
@@ -23,6 +24,7 @@ public interface INavLayoutState
     bool ShowNotes { get; }
     bool ShowGallery { get; }
     bool ShowCalendar { get; }
+    bool ShowDocuments { get; }
 
     /// <summary>When false, settings-group icons are hidden; account/profile stays visible.</summary>
     bool SecondaryExpanded { get; }
