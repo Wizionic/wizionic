@@ -3820,6 +3820,95 @@ html[data-nav-layout="left"] main {
     height: 100vh !important;
 }
 
+/* Compact left rail: smaller buttons + tighter gaps so all primary icons fit vertically.
+   Icon glyph size comes from --app-nav-icon-size (inline var() on the <i> elements). */
+html[data-nav-layout="left"] {
+    --app-nav-icon-size: 19px;
+}
+
+html[data-nav-layout="left"] .app-nav.top-row {
+    gap: 0.25rem;
+    padding: 0.4rem 0;
+}
+
+html[data-nav-layout="left"] .app-nav-left,
+html[data-nav-layout="left"] .app-nav-right,
+html[data-nav-layout="left"] .app-nav-primary,
+html[data-nav-layout="left"] .app-nav-secondary,
+html[data-nav-layout="left"] .app-nav-account {
+    gap: 0.25rem;
+}
+
+html[data-nav-layout="left"] .app-nav-primary a,
+html[data-nav-layout="left"] .app-nav-secondary a,
+html[data-nav-layout="left"] .app-nav-account > a,
+html[data-nav-layout="left"] .app-nav .topbar-toggle-btn,
+html[data-nav-layout="left"] button.app-nav-account-link {
+    width: 2.1rem;
+    height: 2.1rem;
+}
+
+html[data-nav-layout="left"] .app-nav-secondary a i,
+html[data-nav-layout="left"] .app-nav-secondary a .bi,
+html[data-nav-layout="left"] .app-nav-account a i,
+html[data-nav-layout="left"] .app-nav-account a .bi,
+html[data-nav-layout="left"] button.app-nav-account-link .bi {
+    font-size: 1.15rem;
+}
+
+html[data-nav-layout="left"] .topbar-sidebar-toggle svg {
+    width: 1.1rem;
+    height: 1.1rem;
+}
+
+/* Very short windows: shrink a bit more so the expanded settings cluster still fits. */
+@media (max-height: 700px) {
+    html[data-nav-layout="left"] {
+        --app-nav-icon-size: 17px;
+    }
+    html[data-nav-layout="left"] .app-nav.top-row,
+    html[data-nav-layout="left"] .app-nav-left,
+    html[data-nav-layout="left"] .app-nav-right,
+    html[data-nav-layout="left"] .app-nav-primary,
+    html[data-nav-layout="left"] .app-nav-secondary,
+    html[data-nav-layout="left"] .app-nav-account {
+        gap: 0.2rem;
+    }
+    html[data-nav-layout="left"] .app-nav-primary a,
+    html[data-nav-layout="left"] .app-nav-secondary a,
+    html[data-nav-layout="left"] .app-nav-account > a,
+    html[data-nav-layout="left"] .app-nav .topbar-toggle-btn,
+    html[data-nav-layout="left"] button.app-nav-account-link {
+        width: 1.9rem;
+        height: 1.9rem;
+    }
+}
+
+/* Zoom level badge (Ctrl+/-/0, pinch) — driven by zoomInterop.js */
+.app-zoom-badge {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 12000;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    background: var(--color-bg-surface, #fff);
+    color: var(--color-text, #111);
+    border: 1px solid var(--color-border, #ccc);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    font-size: 0.8rem;
+    font-weight: 600;
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.app-zoom-badge.is-visible {
+    opacity: 1;
+    transform: none;
+}
+
 /* Left side (logo area) */
 body .top-left,
 .top-left {

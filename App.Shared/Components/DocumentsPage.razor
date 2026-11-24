@@ -1,0 +1,139 @@
+@using App.Core.Storage
+
+@inject IDocumentStore DocumentStore
+@inject IJSRuntime JS
+
+<div class="page">
+    <main style="flex:1; overflow:auto; padding:1.25rem 1.5rem;">
+        <div style="max-width:760px; margin:0 auto;">
+            <h4 class="help-heading">Documents <HelpGlyph Topic="documents" /></h4>
+            <p style="font-size:0.85rem; color:var(--cf-text-muted); margin-top:0;">
+                PDFs saved from chat. Encrypted and stored on this device only.
+            </p>
+
+            @if (loading)
+            {
+                <p style="color:var(--cf-text-muted);">Loading…</p>
+            }
+            else if (error != null)
+            {
+                <p style="color:#c0392b;">@error</p>
+            }
+            else if (docs.Count == 0)
+            {
+                <div style="text-align:center; padding:3rem 1rem; color:var(--cf-text-muted);">
+                    <i class="bi bi-file-earmark-pdf" style="font-size:2.5rem; opacity:0.5;"></i>
+                    <p style="margin-top:0.75rem;">No saved documents yet.</p>
+                    <p style="font-size:0.85rem;">Generate a PDF in chat and click <strong>Save to Documents</strong>, or ask the model to save it for you.</p>
+                </div>
+            }
+            else
+            {
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    @foreach (var d in docs)
+                    {
+                        var doc = d;
+                        <div style="display:flex; align-items:center; gap:12px; border:1px solid var(--cf-border); border-radius:8px; padding:10px 12px; background:var(--cf-bg-subtle);">
+                            <i class="bi bi-file-earmark-pdf" style="font-size:1.6em; color:#c0392b;" aria-hidden="true"></i>
+                            <div style="flex:1; min-width:0;">
+                                <div style="font-weight:600; font-size:0.9em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@doc.Name">@doc.Name</div>
+                                <div style="font-size:0.75em; color:var(--cf-text-muted);">
+                                    @ChatAttachmentClassifier.FormatSize(doc.Size) · @doc.CreatedUtc.ToLocalTime().ToString("MMM d, yyyy HH:mm")
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-link-style" style="font-size:0.8em; padding:2px 6px;"
+                                    disabled="@(busyId == doc.Id)" @onclick="() => Download(doc)">
+                                <i class="bi bi-download"></i> Download
+                            </button>
+                            <button type="button" class="btn btn-link-style" style="font-size:0.8em; padding:2px 6px; color:#c0392b;"
+                                    disabled="@(busyId == doc.Id)" @onclick="() => Delete(doc)">
+                                <i class="bi bi-trash"></i> Delete
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (status != null)
+            {
+                <p style="font-size:0.8rem; color:var(--cf-text-muted); margin-top:0.75rem;">@status</p>
+            }
+        </div>
+    </main>
+</div>
+
+@code {
+    List<LibraryDocument> docs = new();
+    bool loading = true;
+    string? error;
+    string? status;
+    string? busyId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            docs = await DocumentStore.LoadIndexAsync();
+        }
+        catch (Exception ex)
+        {
+            error = "Could not load documents: " + ex.Message;
+        }
+        loading = false;
+    }
+
+    async Task Download(LibraryDocument doc)
+    {
+        busyId = doc.Id;
+        status = null;
+        try
+        {
+            var bytes = await DocumentStore.LoadBytesAsync(doc.Id);
+            if (bytes == null || bytes.Length == 0)
+            {
+                status = "File data is missing.";
+                return;
+            }
+            var ok = await JS.InvokeAsync<bool>("downloadBase64File", Convert.ToBase64String(bytes), doc.Name, doc.ContentType);
+            status = ok ? "Download started." : "Download failed.";
+        }
+        catch (Exception ex)
+        {
+            status = "Download failed: " + ex.Message;
+        }
+        finally
+        {
+            busyId = null;
+        }
+    }
+
+    async Task Delete(LibraryDocument doc)
+    {
+        bool sure;
+        try
+        {
+            sure = await JS.InvokeAsync<bool>("confirm", $"Delete \"{doc.Name}\" from Documents? The copy in chat is not affected.");
+        }
+        catch
+        {
+            sure = true; // dialogs unavailable (some WebViews) — proceed
+        }
+        if (!sure) return;
+
+        busyId = doc.Id;
+        try
+        {
+            await DocumentStore.DeleteAsync(doc.Id);
+            docs.RemoveAll(d => d.Id == doc.Id);
+            status = $"Deleted \"{doc.Name}\".";
+        }
+        catch (Exception ex)
+        {
+            status = "Delete failed: " + ex.Message;
+        }
+        finally
+        {
+            busyId = null;
+        }
+    }
+}

@@ -182,6 +182,25 @@ public sealed partial class SqliteHistoryDatabase
                 storage_key TEXT PRIMARY KEY NOT NULL,
                 content TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS document_meta (
+                storage_key TEXT PRIMARY KEY NOT NULL,
+                id TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                name TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                last_updated TEXT NOT NULL,
+                source TEXT,
+                conversation_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_document_meta_ns ON document_meta(namespace);
+            CREATE INDEX IF NOT EXISTS idx_document_meta_id ON document_meta(namespace, id);
+
+            CREATE TABLE IF NOT EXISTS document_content (
+                storage_key TEXT PRIMARY KEY NOT NULL,
+                content TEXT
+            );
             """;
         await cmd.ExecuteNonQueryAsync(ct);
 

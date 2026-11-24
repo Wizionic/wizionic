@@ -27,7 +27,9 @@ Other devices must use port **5150** (not 5050) and the **IP** if the `.local` n
 
 ## Appearance {#appearance}
 
-Theme follows a palette or the OS. On desktop you can put the main icons on the **top** or as a **left** rail.
+Theme follows a palette or the OS. On desktop you can put the main icons on the **top** or as a **left** rail. Right-click the nav bar to show or hide individual icons, including **Documents**.
+
+**Ctrl +** / **Ctrl −** zoom the whole app; a small badge shows the current zoom percent. **Ctrl 0** resets to 100% and re-calibrates the badge. You can also check the level anytime via right-click → **Show zoom level**.
 
 ## Desktop {#desktop}
 

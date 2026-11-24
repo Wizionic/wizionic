@@ -23,6 +23,7 @@ window.appNavLayout = window.appNavLayout || {
             showNotes: true,
             showGallery: true,
             showCalendar: true,
+            showDocuments: true,
             // Settings cluster collapsed until the user expands it.
             secondaryExpanded: false
         };
@@ -60,6 +61,7 @@ window.appNavLayout = window.appNavLayout || {
             showNotes: raw.showNotes !== false,
             showGallery: raw.showGallery !== false,
             showCalendar: raw.showCalendar !== false,
+            showDocuments: raw.showDocuments !== false,
             // Default closed: only true when explicitly saved as true.
             secondaryExpanded: raw.secondaryExpanded === true
         };

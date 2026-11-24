@@ -292,6 +292,8 @@ public static class MauiProgram
 		services.AddScoped<INoteStore>(sp => sp.GetRequiredService<SqliteNoteStore>());
 		services.AddScoped<SqliteGalleryStore>();
 		services.AddScoped<IGalleryStore>(sp => sp.GetRequiredService<SqliteGalleryStore>());
+		services.AddScoped<SqliteDocumentStore>();
+		services.AddScoped<App.Core.Storage.IDocumentStore>(sp => sp.GetRequiredService<SqliteDocumentStore>());
 		services.AddScoped<SqliteCalendarStore>();
 		services.AddScoped<ICalendarStore>(sp => sp.GetRequiredService<SqliteCalendarStore>());
 		services.AddScoped<ICalendarIcsFetcher, App.Shared.Services.CalendarIcsFetcher>();
@@ -411,6 +413,7 @@ public static class MauiProgram
 		services.AddSingleton<App.Shared.Services.Tools.GalleryToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.CalendarToolModule>();
 		services.AddSingleton<App.Shared.Services.Tools.NotesToolModule>();
+		services.AddSingleton<App.Shared.Services.Tools.PdfToolModule>();
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<NativeToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<HomeAssistantToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<BrowserAgentToolModule>());
@@ -419,6 +422,7 @@ public static class MauiProgram
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.GalleryToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.CalendarToolModule>());
 		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.NotesToolModule>());
+		services.AddSingleton<IToolModule>(sp => sp.GetRequiredService<App.Shared.Services.Tools.PdfToolModule>());
 		services.AddSingleton<IToolProvider, CompositeToolProvider>();
 		services.AddSingleton<ChatModelCatalogService>();
 		services.AddSingleton<IChatModelCatalog>(sp => sp.GetRequiredService<ChatModelCatalogService>());

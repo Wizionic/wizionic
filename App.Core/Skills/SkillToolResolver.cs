@@ -25,6 +25,10 @@ public static class SkillToolResolver
         ["lemonade_edit_image"] = "Lemonade",
         ["lemonade_text_to_speech"] = "Lemonade",
         ["native"] = "Native",
+        ["pdf"] = "Pdf",
+        ["generate_pdf"] = "Pdf",
+        ["save_pdf_to_library"] = "Pdf",
+        ["list_library_documents"] = "Pdf",
         ["homeassistant"] = "HomeAssistant",
         ["home-assistant"] = "HomeAssistant",
         ["ha"] = "HomeAssistant",
@@ -76,7 +80,7 @@ public static class SkillToolResolver
     /// </summary>
     public static readonly string[] DefaultModules =
     [
-        "Native", "Gallery", "Notes", "Calendar", "Cloud", "Lemonade", "HomeAssistant", "BrowserAgent"
+        "Native", "Gallery", "Notes", "Calendar", "Cloud", "Lemonade", "Pdf", "HomeAssistant", "BrowserAgent"
     ];
 
     public static Resolution Resolve(string? allowedTools)
@@ -114,7 +118,7 @@ public static class SkillToolResolver
             }
 
             // Pascal/camel module names as-is
-            if (token is "Gallery" or "Notes" or "Calendar" or "Cloud" or "Lemonade" or "Native"
+            if (token is "Gallery" or "Notes" or "Calendar" or "Cloud" or "Lemonade" or "Native" or "Pdf"
                 or "HomeAssistant" or "BrowserAgent")
             {
                 modules.Add(token);
@@ -160,6 +164,10 @@ public static class SkillToolResolver
         ("Native", "Native (search, weather, time)", "Native"),
         ("search_web", "search_web", "Native"),
         ("get_current_weather", "get_current_weather", "Native"),
+        ("Pdf", "Pdf (generate PDF documents)", "Pdf"),
+        ("generate_pdf", "generate_pdf", "Pdf"),
+        ("save_pdf_to_library", "save_pdf_to_library", "Pdf"),
+        ("list_library_documents", "list_library_documents", "Pdf"),
         ("HomeAssistant", "Home Assistant (all)", "Home Assistant"),
         ("ListEntities", "ListEntities", "Home Assistant"),
         ("ControlLight", "ControlLight", "Home Assistant"),

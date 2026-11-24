@@ -86,6 +86,8 @@ public sealed class ContextualRequestRouter : IRequestRouter
                     modules.Add("Calendar");
                 if (MessageSuggestsNotesTools(message) && Has("Notes"))
                     modules.Add("Notes");
+                if (MessageSuggestsPdfTools(message) && Has("Pdf"))
+                    modules.Add("Pdf");
                 if (MessageSuggestsImageTools(message) && AddImageModule(modules, Has))
                 {
                     if (Has("Gallery")) modules.Add("Gallery");
@@ -124,6 +126,8 @@ public sealed class ContextualRequestRouter : IRequestRouter
                 modules.Add("Gallery");
             if (MessageSuggestsNotesTools(message) && Has("Notes"))
                 modules.Add("Notes");
+            if (MessageSuggestsPdfTools(message) && Has("Pdf"))
+                modules.Add("Pdf");
             if (MessageSuggestsImageTools(message) && AddImageModule(modules, Has))
             {
                 if (Has("Gallery")) modules.Add("Gallery");
@@ -140,6 +144,18 @@ public sealed class ContextualRequestRouter : IRequestRouter
         var imageIntent = MessageSuggestsImageTools(message);
         var galleryIntent = MessageSuggestsGalleryTools(message);
         var notesIntent = MessageSuggestsNotesTools(message);
+        var pdfIntent = MessageSuggestsPdfTools(message);
+
+        if (pdfIntent && Has("Pdf"))
+        {
+            var modules = new List<string> { "Pdf" };
+            // "export this note as PDF" — attach Notes so the model can read the note first
+            if (notesIntent && Has("Notes")) modules.Add("Notes");
+            // "draw X and put it in a PDF" — image tools + gallery alongside Pdf
+            if (imageIntent && AddImageModule(modules, Has) && Has("Gallery"))
+                modules.Add("Gallery");
+            return RequestRoute.WithModules(modules, "pdf intent", source: "Rules");
+        }
 
         if (imageIntent)
         {
@@ -402,6 +418,20 @@ public sealed class ContextualRequestRouter : IRequestRouter
         || mLower.Contains("generate some ") || mLower.Contains("can you generate")
         || mLower.Contains("draw a ") || mLower.Contains("draw an ") || mLower.Contains("draw me ")
         || mLower.Contains("paint a ") || mLower.Contains("paint an ") || mLower.Contains("paint me ");
+
+    /// <summary>
+    /// User wants a PDF document created/exported ("make a PDF", "export as pdf", ".pdf").
+    /// </summary>
+    public static bool MessageSuggestsPdfTools(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+        return m.Contains("pdf") || m.Contains(".pdf")
+               || m.Contains("document library") || m.Contains("documents library")
+               || m.Contains("save to documents") || m.Contains("saved documents");
+    }
 
     public static bool MessageSuggestsGalleryTools(string message)
     {

@@ -26,13 +26,17 @@ If a model cannot see images, a **vision proxy** (one per scope) can describe at
 
 ## What the model can do
 
-If tools appear for this chat, the model may search the web, read a URL, use notes/calendar/gallery, Lemonade image/speech, or connectors you enabled. It should only call tools that are listed. See [Tools](/help/tools) and [Settings → tool routing](/help/tool-routing).
+If tools appear for this chat, the model may search the web, read a URL, use notes/calendar/gallery, create PDFs, Lemonade image/speech, or connectors you enabled. It should only call tools that are listed. See [Tools](/help/tools) and [Settings → tool routing](/help/tool-routing).
 
 **Tools (N):** in the reasoning collapse is the *available* set for that turn, not what ran. `lemonade_generate_image` listed there does not mean Lemonade drew the picture.
 
 If you selected a **cloud chat** model (e.g. Grok 4.6) and asked it to draw something, the turn should list `generate_image` (not `lemonade_generate_image`) and a line like `🎨 generate_image(xAI · grok-imagine-image)`.
 
 A **direct** image (palette, or Send with an image model selected) never goes through that tool loop. The collapse then shows a single provenance line, for example `🎨 Image generate · xAI · grok-imagine-image`. Gallery `save_to_gallery` after that is a later chat turn.
+
+## PDF documents
+
+Ask for a PDF — "make a PDF report about…", "turn this into a PDF", "export this note as PDF" — and a tool-capable model calls `generate_pdf`. The PDF is rendered **on your device** and appears under the reply as a card with a **Download** button. Click **Save to Documents** to keep it in the device-local [Documents](/documents) library (or ask the model to save it). Headings, lists, bold/italic, code blocks, quotes, and links are supported; tables and images are not rendered yet. The file is stored encrypted with the conversation like any attachment.
 
 ## Attachments
 

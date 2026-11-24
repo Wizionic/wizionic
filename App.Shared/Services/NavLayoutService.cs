@@ -10,6 +10,7 @@ public sealed class NavLayoutService : INavLayoutState
     private bool _showNotes = true;
     private bool _showGallery = true;
     private bool _showCalendar = true;
+    private bool _showDocuments = true;
     private bool _secondaryExpanded = false;
     private bool _initialized;
 
@@ -26,6 +27,7 @@ public sealed class NavLayoutService : INavLayoutState
     public bool ShowNotes => _showNotes;
     public bool ShowGallery => _showGallery;
     public bool ShowCalendar => _showCalendar;
+    public bool ShowDocuments => _showDocuments;
     public bool SecondaryExpanded => _secondaryExpanded;
 
     private NavLayoutMode DefaultMode =>
@@ -64,6 +66,7 @@ public sealed class NavLayoutService : INavLayoutState
             NavPrimaryIcon.Notes => Set(ref _showNotes, visible),
             NavPrimaryIcon.Gallery => Set(ref _showGallery, visible),
             NavPrimaryIcon.Calendar => Set(ref _showCalendar, visible),
+            NavPrimaryIcon.Documents => Set(ref _showDocuments, visible),
             _ => false
         };
 
@@ -104,7 +107,7 @@ public sealed class NavLayoutService : INavLayoutState
         catch
         {
             _mode = DefaultMode;
-            _showBrowser = _showNotes = _showGallery = _showCalendar = true;
+            _showBrowser = _showNotes = _showGallery = _showCalendar = _showDocuments = true;
             _secondaryExpanded = false;
         }
     }
@@ -114,7 +117,7 @@ public sealed class NavLayoutService : INavLayoutState
         if (prefs is null)
         {
             _mode = defaultMode;
-            _showBrowser = _showNotes = _showGallery = _showCalendar = true;
+            _showBrowser = _showNotes = _showGallery = _showCalendar = _showDocuments = true;
             _secondaryExpanded = false;
             return;
         }
@@ -124,6 +127,7 @@ public sealed class NavLayoutService : INavLayoutState
         _showNotes = prefs.ShowNotes;
         _showGallery = prefs.ShowGallery;
         _showCalendar = prefs.ShowCalendar;
+        _showDocuments = prefs.ShowDocuments;
         _secondaryExpanded = prefs.SecondaryExpanded;
     }
 
@@ -136,6 +140,7 @@ public sealed class NavLayoutService : INavLayoutState
             ShowNotes = _showNotes,
             ShowGallery = _showGallery,
             ShowCalendar = _showCalendar,
+            ShowDocuments = _showDocuments,
             SecondaryExpanded = _secondaryExpanded
         };
         await NavLayoutInterop.SavePrefsAsync(js, dto, ct);
@@ -149,6 +154,6 @@ public sealed class NavLayoutService : INavLayoutState
         return true;
     }
 
-    private (NavLayoutMode, bool, bool, bool, bool, bool) Snapshot() =>
-        (_mode, _showBrowser, _showNotes, _showGallery, _showCalendar, _secondaryExpanded);
+    private (NavLayoutMode, bool, bool, bool, bool, bool, bool) Snapshot() =>
+        (_mode, _showBrowser, _showNotes, _showGallery, _showCalendar, _showDocuments, _secondaryExpanded);
 }
