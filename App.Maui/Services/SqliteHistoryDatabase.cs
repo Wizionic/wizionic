@@ -517,12 +517,61 @@ public sealed partial class SqliteHistoryDatabase
         return rows.FirstOrDefault();
     }
 
-    public async Task UpsertNoteMetaAsync(NoteMetaRow row, CancellationToken ct = default)
+    public async Task<App.Core.Storage.NoteSnapshot> ReadNotebookAsync(string key, CancellationToken ct)
     {
         await EnsureInitializedAsync(ct);
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(ct);
-        var cmd = conn.CreateCommand();
+        using var tx = conn.BeginTransaction(deferred: true);
+        return await ReadNotebookAsync(conn, tx, key, ct);
+    }
+
+    private static async Task<App.Core.Storage.NoteSnapshot> ReadNotebookAsync(SqliteConnection conn, SqliteTransaction tx, string key, CancellationToken ct)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.Parameters.AddWithValue("$key", key);
+        cmd.CommandText = "SELECT storage_key,id,namespace,title,last_updated,sync_enabled,content_fingerprint,deleted_at,is_password_protected,sort_order,protection_changed_ticks,title_changed_ticks FROM note_meta WHERE storage_key=$key";
+        var m = (await ReadNoteMetasAsync(cmd, ct)).SingleOrDefault();
+        cmd.CommandText = "SELECT content FROM note_content WHERE storage_key=$key";
+        return new(m == null ? null : SqliteNoteStore.Header(m), await cmd.ExecuteScalarAsync(ct) as string);
+    }
+
+    public async Task DeleteDraftRowAsync(string key, CancellationToken ct)
+    {
+        await EnsureInitializedAsync(ct);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "DELETE FROM note_content WHERE storage_key=$key; DELETE FROM note_meta WHERE storage_key=$key";
+        cmd.Parameters.AddWithValue("$key", key);
+        await cmd.ExecuteNonQueryAsync(ct);
+        tx.Commit();
+    }
+
+    public async Task SetNotebookOrderAsync(string key, int order, CancellationToken ct)
+    {
+        await EnsureInitializedAsync(ct);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE note_meta SET sort_order=$order WHERE storage_key=$key AND sort_order<>$order";
+        cmd.Parameters.AddWithValue("$key", key);
+        cmd.Parameters.AddWithValue("$order", order);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<bool> ReplaceNotebookAsync(App.Core.Storage.NoteSnapshot expected, App.Core.Storage.NoteHeader m, string? content, CancellationToken ct)
+    {
+        await EnsureInitializedAsync(ct);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        using var tx = conn.BeginTransaction();
+        if (await ReadNotebookAsync(conn, tx, m.Key, ct) != expected) return false;
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO note_meta (
                 storage_key, id, namespace, title, last_updated, sync_enabled,
@@ -542,8 +591,15 @@ public sealed partial class SqliteHistoryDatabase
                 protection_changed_ticks = excluded.protection_changed_ticks,
                 title_changed_ticks = excluded.title_changed_ticks;
             """;
-        BindNoteMeta(cmd, row);
+        BindNoteMeta(cmd, new(m.Key, m.Id, m.Namespace, m.Title, m.LastUpdated, m.SyncEnabled, m.ContentFingerprint,
+            m.DeletedAt, m.IsPasswordProtected == true, m.SortOrder ?? 0, m.ProtectionClock(), m.TitleClock()));
         await cmd.ExecuteNonQueryAsync(ct);
+        cmd.CommandText = content == null ? "DELETE FROM note_content WHERE storage_key=$key" :
+            "INSERT INTO note_content(storage_key,content) VALUES($key,$body) ON CONFLICT(storage_key) DO UPDATE SET content=excluded.content";
+        if (content != null) cmd.Parameters.AddWithValue("$body", content);
+        await cmd.ExecuteNonQueryAsync(ct);
+        tx.Commit();
+        return true;
     }
 
     public async Task<string?> GetNoteContentAsync(string storageKey, CancellationToken ct = default)

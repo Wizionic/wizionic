@@ -6,21 +6,14 @@ public interface INoteStore
     Task<List<SyncManifestEntry>> LoadManifestEntriesAsync(bool backfillMissingFingerprints = false, CancellationToken ct = default);
 
     Task<List<ChatMessage>> LoadNoteAsync(string id, CancellationToken ct = default);
-    Task SaveNoteAsync(string id, List<ChatMessage> entries, CancellationToken ct = default);
+    Task<NoteCommit> CommitAsync(string id, NoteMutation mutation, CancellationToken ct = default);
+    Task<NoteSyncPayload?> ReadPayloadAsync(string id, CancellationToken ct = default);
+    Task<List<NotebookDraft>> LoadDraftsAsync(string id, CancellationToken ct = default);
+    Task WriteDraftAsync(string id, NotebookDraft draft, CancellationToken ct = default);
+    Task ClearDraftAsync(string id, string session, CancellationToken ct = default);
     Task<DateTime> DeleteNoteAsync(string id, CancellationToken ct = default);
 
     Task<string?> GetMetaTitleAsync(string id, CancellationToken ct = default);
-    /// <param name="titleChangedTicks">
-    /// When set (local rename or remote LWW apply), persists that clock with the title.
-    /// Null keeps the existing rename clock (content saves must pass null).
-    /// </param>
-    Task UpdateIndexAfterSaveAsync(
-        string id,
-        string title,
-        List<ChatMessage>? entriesForFingerprint = null,
-        long? titleChangedTicks = null,
-        bool bumpLastUpdated = true,
-        CancellationToken ct = default);
 
     /// <summary>
     /// Marks a notebook as password-protected (or clears protection).
@@ -35,6 +28,5 @@ public interface INoteStore
     /// </summary>
     Task ReorderNotesAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default);
 
-    Task<bool> ShouldAcceptIncomingContentAsync(string id, List<ChatMessage> entries, CancellationToken ct = default);
     Task<bool> TryApplyRemoteDeleteAsync(string id, long deletedAtTicks, CancellationToken ct = default);
 }

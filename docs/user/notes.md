@@ -17,6 +17,8 @@ Notebooks and entries live on this device. Bodies are encrypted; titles may be c
 - A pause of about three seconds starts a new paragraph. You can also press Enter while recording to move the cursor.
 - Search at the top of the notebook list. **Ask my notes** uses your current Chat model when one is selected.
 - The last notebook you opened is remembered on this device.
+- After a pause in typing, the editor saves an encrypted draft on this device. If editing was interrupted, reopen the notebook and choose **Recover unsaved edit**. Use the check mark or **Ctrl+S** to commit your edit before closing the app.
+- If two devices change the same entry independently, Notes can keep a **Recovered copy from a conflicting edit** alongside the chosen version. Compare the two before removing a copy.
 - Note paper and default text follow the app theme. Colors you apply in the editor stay as you set them.
 - Drag to reorder when the UI allows it.
 - Sign in if you want the same notebooks on another device via [sync](/help/sync).

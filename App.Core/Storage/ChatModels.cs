@@ -18,7 +18,8 @@ public record LocalNote(
     /// <summary>UTC ticks of last intentional lock/unlock (0 = unknown / legacy).</summary>
     long ProtectionChangedTicks = 0,
     /// <summary>UTC ticks of last intentional rename (0 = unknown / legacy).</summary>
-    long TitleChangedTicks = 0);
+    long TitleChangedTicks = 0,
+    string? Fingerprint = null);
 
 public record LocalAlbum(
     string Id,
@@ -115,4 +116,7 @@ public record ChatMessage(
     /// <summary>Compact generation metrics (TTFT, total time, tokens) for the UI footer.</summary>
     string? StatsLine = null,
     /// <summary>Local audio clip refs (bytes live in <see cref="INoteAudioStore"/>, not this payload).</summary>
-    List<NoteAudioRef>? AudioClips = null);
+    List<NoteAudioRef>? AudioClips = null,
+    List<string>? NoteAncestors = null,
+    int? NotePosition = null,
+    long? NotePositionClock = null);

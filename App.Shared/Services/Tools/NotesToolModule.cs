@@ -278,8 +278,7 @@ public sealed class NotesToolModule : IToolModule
                 entries.Add(MakeTextEntry(initial_text.Trim()));
             }
 
-            await work.Store.SaveNoteAsync(id, entries);
-            await work.Store.UpdateIndexAfterSaveAsync(id, t, entries, DateTime.UtcNow.Ticks);
+            await work.Store.CommitAsync(id, new(t, entries, DateTime.UtcNow.Ticks));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(id, t);
 
             _trace.Record($"   ✅ notebook_id={id}");
@@ -328,8 +327,6 @@ public sealed class NotesToolModule : IToolModule
 
                 notebookId = Guid.NewGuid().ToString("N");
                 title = notebook_name.Trim();
-                await work.Store.SaveNoteAsync(notebookId, new List<ChatMessage>());
-                await work.Store.UpdateIndexAfterSaveAsync(notebookId, title, titleChangedTicks: DateTime.UtcNow.Ticks);
             }
             else
             {
@@ -349,10 +346,7 @@ public sealed class NotesToolModule : IToolModule
             }
 
             var entry = MakeTextEntry(text ?? "", attachments);
-            var entries = await work.Store.LoadNoteAsync(notebookId);
-            entries.Add(entry);
-            await work.Store.SaveNoteAsync(notebookId, entries);
-            await work.Store.UpdateIndexAfterSaveAsync(notebookId, title, entries);
+            await work.Store.CommitAsync(notebookId, new(title, [entry]));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(notebookId, title);
 
             var imgNote = usedGen is null ? "" : $" image generation_id={usedGen}";
@@ -445,8 +439,7 @@ public sealed class NotesToolModule : IToolModule
                 content: content,
                 contentFormat: format);
 
-            await work.Store.SaveNoteAsync(note.Id, entries);
-            await work.Store.UpdateIndexAfterSaveAsync(note.Id, note.Title, entries);
+            await work.Store.CommitAsync(note.Id, new(note.Title, [NoteSyncMerger.Edited(existing, entries[idx])]));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(note.Id, note.Title);
 
             var imgNote = usedGen is null ? "" : $" Attached image generation_id={usedGen}.";
@@ -505,8 +498,7 @@ public sealed class NotesToolModule : IToolModule
                 content: html,
                 contentFormat: NoteContentFormatter.FormatHtml);
 
-            await work.Store.SaveNoteAsync(note.Id, entries);
-            await work.Store.UpdateIndexAfterSaveAsync(note.Id, note.Title, entries);
+            await work.Store.CommitAsync(note.Id, new(note.Title, [NoteSyncMerger.Edited(existing, entries[idx])]));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(note.Id, note.Title);
 
             _trace.Record($"   ✅ replaced entry_id={entry_id}");

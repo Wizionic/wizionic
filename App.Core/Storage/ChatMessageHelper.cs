@@ -175,14 +175,14 @@ public static class ChatMessageHelper
             return false;
         }
 
-        if (rTicks > lTicks)
+        if (rTicks > lTicks || (rTicks == lTicks && !localMissing && string.CompareOrdinal(incoming, local) > 0))
         {
             applyTitle = incoming;
             applyTicks = rTicks;
             return true;
         }
 
-        if (rTicks > 0)
+        if (rTicks > 0 || (rTicks == lTicks && !localMissing))
             return false;
 
         // Legacy remote (no clock): keep a local name that was intentionally renamed.

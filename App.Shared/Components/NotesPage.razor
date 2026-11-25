@@ -146,14 +146,24 @@
             else
             {
                 <div class="chat-container" @ref="chatContainer">
+                    @if (!string.IsNullOrEmpty(_saveError)) { <div role="alert">@_saveError</div> }
+                    @foreach (var draft in _recoveredDrafts)
+                    {
+                        <button type="button" @onclick="() => RecoverDraftAsync(draft)">Recover unsaved edit</button>
+                    }
                     @for (var i = 0; i < currentNoteMessages.Count; i++)
                     {
                         var msg = currentNoteMessages[i];
                         var capturedIndex = i;
+                        var session = editSessionKey;
                         var isEditing = editingMessageIndex == capturedIndex;
 
                         @if (msg.DeletedAt is null)
                         {
+                            @if (msg.ItemId?.Contains("-recovered-", StringComparison.Ordinal) == true)
+                            {
+                                <small>Recovered copy from a conflicting edit</small>
+                            }
                             <div class="message-row" style="margin-bottom: 32px; display: flex; justify-content:  flex-start;">
                                     <div class="note-entry-wrap @(isEditing ? "note-editing" : "")" @onclick:stopPropagation="true">
                                     <div class="note-response-actions" @onclick:stopPropagation="true">
@@ -238,7 +248,7 @@
                                             <QuillEditor @ref="quillEditor"
                                                          @key="@($"note-edit-{activeNoteId}-{capturedIndex}-{editSessionKey}")"
                                                          InitialHtml="@editingInitialHtml"
-                                                         HtmlChanged="OnEditHtmlChanged">
+                                                         HtmlChanged="html => OnEditHtmlChanged(session, html)">
                                                 <ToolbarContent>
                                                     <select class="ql-header">
                                                         <option selected=""></option>
@@ -492,6 +502,13 @@
     private List<LocalNote> notes = new();
     private string? activeNoteId;
     private List<ChatMessage> currentNoteMessages = new();
+    private List<ChatMessage> _loadedEntries = [];
+    private List<NotebookDraft> _recoveredDrafts = [];
+    private readonly SemaphoreSlim _draftGate = new(1);
+    private string _draftSession = "";
+    private int _draftGeneration, _loadGeneration;
+    private string? _saveError, _displayedFingerprint;
+    private void Display(List<ChatMessage> entries) { _loadedEntries = entries.ToList(); currentNoteMessages = entries.ToList(); }
     private string? openMenuId;
     private string? openExportAllMenuId;
     private string activePopupStyle = "";
@@ -540,7 +557,7 @@
     private string deleteConfirmTitle = "";
     private string deleteConfirmMessage = "";
     private string? pendingDeleteNoteId;
-    private int? pendingDeleteEntryIndex;
+    private string? pendingDeleteEntryId, pendingDeleteNotebook;
     private string? pendingDeleteAudioClipId;
     private int? pendingDeleteAudioEntryIndex;
 
@@ -548,7 +565,7 @@
     private string entryPopupStyle = "";
     private bool openMoveNotebookDialog;
     private string moveSourceNoteId = "";
-    private int moveSourceEntryIndex = -1;
+    private ChatMessage? moveSourceItem;
     private List<LocalNote> moveTargetNotebooks = new();
 
     /// <summary>
@@ -611,7 +628,7 @@
         _sidebarStateChangedHandler = () => InvokeAsync(StateHasChanged);
         SidebarState.OnChanged += _sidebarStateChangedHandler;
 
-        _notesSyncChangedHandler = () => _ = RefreshNotesFromSyncAsync();
+        _notesSyncChangedHandler = () => _ = InvokeAsync(RefreshNotesFromSyncAsync);
         SyncBridge.OnNotesChanged += _notesSyncChangedHandler;
 
         // Autosave when navigating away. Use LocationChanged only — do not catch
@@ -633,99 +650,20 @@
 
     private async Task RefreshNotesFromSyncAsync()
     {
-        notes = await NoteStore.LoadIndexAsync();
-
-        if (string.IsNullOrEmpty(activeNoteId) || !notes.Any(n => n.Id == activeNoteId) || IsActiveNoteLocked)
+        var id = activeNoteId;
+        var generation = _loadGeneration;
+        var index = await NoteStore.LoadIndexAsync();
+        if (generation != _loadGeneration || id != activeNoteId) return;
+        notes = index;
+        var meta = notes.FirstOrDefault(n => n.Id == id);
+        // Do not remount a live editor. Its base revision stays attached to its draft;
+        // committing it will merge with the latest durable state.
+        if (id != null && editingMessageIndex == null && meta?.Fingerprint != _displayedFingerprint && !IsActiveNoteLocked)
         {
-            await InvokeAsync(StateHasChanged);
-            return;
+            if (meta == null) { Display([]); _displayedFingerprint = null; }
+            else await LoadNote(id);
         }
-
-        var fromStore = await NoteStore.LoadNoteAsync(activeNoteId);
-
-        // Open editor can be ahead of the store. Fold a *dirty* draft into memory, then
-        // per-entry merge so remote sync never silently drops unsaved typing. Click-to-edit
-        // without a real HTML change must not stamp ModifiedAt or it wins LWW over real edits.
-        var hasOpenEdit = editingMessageIndex is int openIdx
-            && openIdx >= 0
-            && openIdx < currentNoteMessages.Count;
-
-        if (hasOpenEdit)
-        {
-            var idx = editingMessageIndex!.Value;
-            var editingItemId = currentNoteMessages[idx].ItemId;
-
-            var draft = await ReadNoteDraftAsync(idx);
-            var html = draft.Readable ? draft.Html : null;
-            var draftDirty = draft.Changed;
-
-            if (draftDirty)
-            {
-                var persistHtml = IsBlankQuillHtml(html) ? "" : html!;
-                currentNoteMessages[idx] = ChatMessageHelper.TouchModified(
-                    currentNoteMessages[idx],
-                    content: persistHtml,
-                    contentFormat: NoteContentFormatter.FormatHtml);
-                _activeEditDraftHtml = persistHtml;
-            }
-
-            if (!draftDirty)
-            {
-                currentNoteMessages = fromStore;
-            }
-            else
-            {
-                var merge = NoteSyncMerger.Merge(currentNoteMessages, fromStore);
-                currentNoteMessages = merge.Entries;
-
-                // Persist only when the dirty draft still has content the store lacks.
-                if (merge.DiffersFromRemote)
-                {
-                    try
-                    {
-                        var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
-                        var title = note?.Title ?? "Untitled";
-                        await NoteStore.SaveNoteAsync(activeNoteId, currentNoteMessages);
-                        await NoteStore.UpdateIndexAfterSaveAsync(activeNoteId, title, currentNoteMessages);
-                        notes = await NoteStore.LoadIndexAsync();
-                        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[Notes] Failed to persist merged note after sync: {ex.Message}");
-                    }
-                }
-            }
-
-            if (!string.IsNullOrEmpty(editingItemId))
-            {
-                var newIdx = currentNoteMessages.FindIndex(m =>
-                    string.Equals(m.ItemId, editingItemId, StringComparison.OrdinalIgnoreCase)
-                    && m.DeletedAt is null);
-
-                if (newIdx >= 0)
-                {
-                    editingMessageIndex = newIdx;
-                    var msg = currentNoteMessages[newIdx];
-                    editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
-                    _editBaselineHtml = editingInitialHtml;
-                    _activeEditDraftHtml = editingInitialHtml;
-                    _editBaselineCaptured = false;
-                    _editDirty = draftDirty;
-                    editSessionKey++; // remount Quill on merged HTML
-                }
-                else
-                {
-                    CancelEdit();
-                }
-            }
-        }
-        else
-        {
-            currentNoteMessages = fromStore;
-        }
-
-        await InvokeAsync(StateHasChanged);
+        StateHasChanged();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -814,11 +752,22 @@
     private async Task CancelEditAsync()
     {
         await StopNotesMicAsync(cancelOnly: true);
+        if (activeNoteId is {} id && _hasCheckpoint) await ClearSessionDraftAsync(id, _draftSession);
         CancelEdit();
+        if (activeNoteId is {} selected) await LoadNote(selected);
     }
 
-    private void OnEditHtmlChanged(string html)
+    private bool _hasCheckpoint;
+    private async Task ClearSessionDraftAsync(string id, string session)
     {
+        await _draftGate.WaitAsync();
+        try { await NoteStore.ClearDraftAsync(id, session); }
+        finally { _draftGate.Release(); }
+    }
+
+    private void OnEditHtmlChanged(int session, string html)
+    {
+        if (session != editSessionKey || editingMessageIndex is not int idx || activeNoteId is not {} id) return;
         // First callback is Quill's canonical form after mount — not a user edit.
         // Do not write editingInitialHtml here: it is rendered as MarkupString inside
         // the editor host, and changing it makes Blazor patch DOM that Quill owns
@@ -834,6 +783,31 @@
 
         _activeEditDraftHtml = html;
         _editDirty = !NoteHtmlEquals(html, _editBaselineHtml);
+        _ = CheckpointDraftAsync(id, new(_draftSession, _loadedEntries.FirstOrDefault(m => m.ItemId == currentNoteMessages[idx].ItemId) ?? currentNoteMessages[idx], html), ++_draftGeneration, _editDirty);
+    }
+
+    private async Task CheckpointDraftAsync(string id, NotebookDraft draft, int generation, bool dirty)
+    {
+        await Task.Delay(350);
+        await _draftGate.WaitAsync();
+        try
+        {
+            if (generation != _draftGeneration || draft.Session != _draftSession || editingMessageIndex == null) return;
+            if (dirty) { _hasCheckpoint = true; await NoteStore.WriteDraftAsync(id, draft); }
+            else if (_hasCheckpoint) { await NoteStore.ClearDraftAsync(id, draft.Session); _hasCheckpoint = false; }
+        }
+        catch { _saveError = "Could not save a local draft. Keep this editor open and try Save."; await InvokeAsync(StateHasChanged); }
+        finally { _draftGate.Release(); }
+    }
+
+    private async Task RecoverDraftAsync(NotebookDraft draft)
+    {
+        if (activeNoteId is not {} id || IsActiveNoteLocked) return;
+        var edit = ChatMessageHelper.TouchModified(draft.Original, draft.Html, NoteContentFormatter.FormatHtml);
+        var commit = await NoteStore.CommitAsync(id, new(Entries: [NoteSyncMerger.Edited(draft.Original, edit)]));
+        if (commit.Changed) SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(id, commit.Payload!.Title);
+        await NoteStore.ClearDraftAsync(id, draft.Session);
+        if (id == activeNoteId && editingMessageIndex == null) await LoadNote(id);
     }
 
     /// <summary>
@@ -846,7 +820,9 @@
         if (editingMessageIndex is not int index || index < 0 || index >= currentNoteMessages.Count)
             return false;
 
+        var session = editSessionKey;
         var draft = await ReadNoteDraftAsync(index);
+        if (session != editSessionKey || editingMessageIndex != index) return null;
         if (!draft.Readable)
             return null;
         if (!draft.Changed)
@@ -885,8 +861,6 @@
         // Before the mount snapshot lands, Quill's canonical HTML can differ
         // from the stored note without a user edit. Do not treat that as a change.
         var changed = _editBaselineCaptured && !NoteHtmlEquals(html, _editBaselineHtml);
-        if (changed && NoteHtmlEquals(html, currentNoteMessages[index].Content))
-            changed = false;
 
         return new NoteDraftRead(true, changed, html);
     }
@@ -898,7 +872,28 @@
         await TryApplyDirtyDraftAsync();
     }
 
-    private async Task CommitActiveEditAsync(bool persistToStore = false)
+    private readonly SemaphoreSlim _commitGate = new(1);
+    private async Task<bool> CommitActiveEditAsync(bool persistToStore = false)
+    {
+        var session = editSessionKey;
+        await _commitGate.WaitAsync();
+        try
+        {
+            if (session != editSessionKey) return editingMessageIndex == null;
+            await FlushEditAsync(persistToStore);
+            _saveError = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notes] Save failed: {ex.GetType().Name}");
+            _saveError = "Your edit could not be saved. Keep this notebook open and try Save again.";
+            return false;
+        }
+        finally { _commitGate.Release(); }
+    }
+
+    private async Task FlushEditAsync(bool persistToStore)
     {
         if (isNotesMicRecording)
             await StopNotesMicAsync(cancelOnly: false);
@@ -906,14 +901,19 @@
         if (editingMessageIndex is null)
             return;
 
+        var id = activeNoteId!;
+        var session = editSessionKey;
         var changed = await TryApplyDirtyDraftAsync();
-        if (changed is null)
-            return;
-
+        if (session != editSessionKey) return;
+        if (changed is null) throw new InvalidOperationException("The note editor is not ready to save.");
+        var revision = _draftGeneration;
+        if (persistToStore && changed == true) await SaveCurrent();
+        if (session != editSessionKey) return;
+        if (revision != _draftGeneration) { await FlushEditAsync(persistToStore); return; }
+        if (_hasCheckpoint) await ClearSessionDraftAsync(id, _draftSession);
+        if (revision != _draftGeneration) { await FlushEditAsync(persistToStore); return; }
         CancelEdit();
-
-        if (persistToStore && changed == true)
-            await SaveCurrent();
+        if (id == activeNoteId && !IsActiveNoteLocked) await LoadNote(id);
     }
 
     [JSInvokable]
@@ -931,10 +931,10 @@
         if (index < 0 || index >= currentNoteMessages.Count)
             return;
 
-        if (await TryApplyDirtyDraftAsync() == true)
-            await SaveCurrent();
-
-        var msg = currentNoteMessages[index];
+        var entryId = currentNoteMessages[index].ItemId;
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
+        var msg = currentNoteMessages.FirstOrDefault(m => m.ItemId == entryId);
+        if (msg == null) return;
         var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
         NotesChatHandoff.SetEditWithAiRequest(new NotesChatHandoffPayload(
             NotebookId: activeNoteId,
@@ -964,10 +964,14 @@
             return;
 
         CloseEntryMenu();
-        await CommitActiveEditAsync(persistToStore: true);
-
+        var itemId = currentNoteMessages[index].ItemId;
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
+        index = currentNoteMessages.FindIndex(m => m.ItemId == itemId && m.DeletedAt == null);
+        if (index < 0) return;
         var msg = currentNoteMessages[index];
         editingMessageIndex = index;
+        _draftSession = Guid.NewGuid().ToString("N");
+        _hasCheckpoint = false;
         editingInitialHtml = NoteContentFormatter.ToEditorHtml(msg.Content, msg.ContentFormat);
         _editBaselineHtml = editingInitialHtml;
         _activeEditDraftHtml = editingInitialHtml;
@@ -990,7 +994,8 @@
             return;
 
         pendingDeleteNoteId = null;
-        pendingDeleteEntryIndex = index;
+        pendingDeleteEntryId = currentNoteMessages[index].ItemId;
+        pendingDeleteNotebook = activeNoteId;
         pendingDeleteAudioClipId = null;
         pendingDeleteAudioEntryIndex = null;
         deleteConfirmTitle = "Delete note entry?";
@@ -1005,7 +1010,7 @@
 
         CloseMenu();
         pendingDeleteNoteId = noteId;
-        pendingDeleteEntryIndex = null;
+        pendingDeleteEntryId = null;
         pendingDeleteAudioClipId = null;
         pendingDeleteAudioEntryIndex = null;
         var note = notes.FirstOrDefault(n => n.Id == noteId);
@@ -1018,7 +1023,7 @@
     {
         showDeleteConfirm = false;
         pendingDeleteNoteId = null;
-        pendingDeleteEntryIndex = null;
+        pendingDeleteEntryId = null;
         pendingDeleteAudioClipId = null;
         pendingDeleteAudioEntryIndex = null;
     }
@@ -1029,8 +1034,8 @@
             await DeleteAudioClipAsync(audioIdx, pendingDeleteAudioClipId);
         else if (!string.IsNullOrEmpty(pendingDeleteNoteId))
             await DeleteNote(pendingDeleteNoteId);
-        else if (pendingDeleteEntryIndex is int index)
-            await DeleteNoteEntry(index);
+        else if (pendingDeleteEntryId is {} itemId && activeNoteId == pendingDeleteNotebook)
+            await DeleteNoteEntry(currentNoteMessages.FindIndex(m => m.ItemId == itemId));
 
         CancelPendingDelete();
     }
@@ -1039,11 +1044,14 @@
     {
         if (index <= 0 || index >= currentNoteMessages.Count) return;
 
-        await CommitActiveEditAsync(persistToStore: true);
-
+        var entryId = currentNoteMessages[index].ItemId;
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
+        index = currentNoteMessages.FindIndex(m => m.ItemId == entryId);
+        if (index <= 0) return;
         var item = currentNoteMessages[index];
         currentNoteMessages.RemoveAt(index);
         currentNoteMessages.Insert(index - 1, item);
+        StampEntryOrder();
         
         await SaveCurrent();
         StateHasChanged();
@@ -1053,14 +1061,24 @@
     {
         if (index < 0 || index >= currentNoteMessages.Count - 1) return;
 
-        await CommitActiveEditAsync(persistToStore: true);
-
+        var entryId = currentNoteMessages[index].ItemId;
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
+        index = currentNoteMessages.FindIndex(m => m.ItemId == entryId);
+        if (index < 0 || index + 1 >= currentNoteMessages.Count) return;
         var item = currentNoteMessages[index];
         currentNoteMessages.RemoveAt(index);
         currentNoteMessages.Insert(index + 1, item);
+        StampEntryOrder();
 
         await SaveCurrent();
         StateHasChanged();
+    }
+
+    private void StampEntryOrder()
+    {
+        var clock = DateTime.UtcNow.Ticks;
+        for (int i = 0; i < currentNoteMessages.Count; i++)
+            currentNoteMessages[i] = currentNoteMessages[i] with { NotePosition = i, NotePositionClock = clock };
     }
 
     private void ToggleEntryMenu(int index)
@@ -1105,7 +1123,7 @@
     {
         CloseEntryMenu();
         moveSourceNoteId = activeNoteId ?? "";
-        moveSourceEntryIndex = entryIndex;
+        moveSourceItem = currentNoteMessages[entryIndex];
         moveTargetNotebooks = notes.Where(n => n.Id != moveSourceNoteId).ToList();
         openMoveNotebookDialog = true;
         StateHasChanged();
@@ -1115,7 +1133,7 @@
     {
         openMoveNotebookDialog = false;
         moveSourceNoteId = "";
-        moveSourceEntryIndex = -1;
+        moveSourceItem = null;
         moveTargetNotebooks.Clear();
         StateHasChanged();
     }
@@ -1133,30 +1151,17 @@
             return;
         }
 
-        await CommitActiveEditAsync(persistToStore: true);
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
 
-        var sourceEntries = await NoteStore.LoadNoteAsync(moveSourceNoteId);
-        if (moveSourceEntryIndex < 0 || moveSourceEntryIndex >= sourceEntries.Count) return;
-
-        var msg = sourceEntries[moveSourceEntryIndex] with
-        {
-            ItemId = Guid.NewGuid().ToString("N"),
-            ModifiedAt = DateTime.UtcNow
-        };
-
-        // Remove from source
-        sourceEntries.RemoveAt(moveSourceEntryIndex);
-        await NoteStore.SaveNoteAsync(moveSourceNoteId, sourceEntries);
-
-        // Add to target
-        var targetEntries = await NoteStore.LoadNoteAsync(targetNoteId);
-        targetEntries.Add(msg);
-        await NoteStore.SaveNoteAsync(targetNoteId, targetEntries);
-
-        // Update indexes for both
+        var sourceId = moveSourceNoteId;
+        var msg = (await NoteStore.LoadNoteAsync(sourceId)).FirstOrDefault(m => m.ItemId == moveSourceItem?.ItemId && m.DeletedAt == null);
+        if (msg == null || target == null) return;
+        // Destination first: interruption can leave two copies, never zero. Stable ID makes retry safe.
+        await NoteStore.CommitAsync(targetNoteId, new(target.Title, [msg with { ItemId = $"move-{sourceId}-{msg.ItemId}" }]));
+        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(targetNoteId, target.Title);
+        var removed = await NoteStore.CommitAsync(sourceId, new(Entries: [NoteSyncMerger.Edited(msg, ChatMessageHelper.SoftDelete(msg))]));
+        if (removed.Changed) SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(sourceId, removed.Payload!.Title);
         notes = await NoteStore.LoadIndexAsync();
-        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(moveSourceNoteId, notes.FirstOrDefault(n => n.Id == moveSourceNoteId)?.Title ?? "");
-        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(targetNoteId, notes.FirstOrDefault(n => n.Id == targetNoteId)?.Title ?? "");
 
         // Reload current view
         await LoadNote(activeNoteId!);
@@ -1168,12 +1173,13 @@
         if (index < 0 || index >= currentNoteMessages.Count)
             return;
 
-        if (editingMessageIndex == index)
-            CancelEdit();
-        else
-            await CommitActiveEditAsync(persistToStore: true);
-
+        var entryId = currentNoteMessages[index].ItemId;
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
+        index = currentNoteMessages.FindIndex(m => m.ItemId == entryId && m.DeletedAt == null);
+        if (index < 0) return;
         var clips = currentNoteMessages[index].AudioClips;
+        currentNoteMessages[index] = ChatMessageHelper.SoftDelete(currentNoteMessages[index]);
+        await SaveCurrent();
         if (clips is { Count: > 0 })
         {
             foreach (var clip in clips)
@@ -1181,14 +1187,12 @@
             try { await Quota.CompactAsync(); } catch { }
         }
 
-        currentNoteMessages[index] = ChatMessageHelper.SoftDelete(currentNoteMessages[index]);
-        await SaveCurrent();
         StateHasChanged();
     }
 
     private async Task OpenCreateNoteDialog()
     {
-        await CommitActiveEditAsync(persistToStore: true);
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
         CloseMenu();
         nameDialogMode = NoteNameDialogMode.Create;
         nameDialogNoteId = null;
@@ -1201,7 +1205,7 @@
         if (string.IsNullOrWhiteSpace(nameDialogTitle))
             return;
 
-        await CommitActiveEditAsync(persistToStore: true);
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
         var title = nameDialogTitle.Trim();
         var id = Guid.NewGuid().ToString();
         var now = DateTime.UtcNow;
@@ -1216,9 +1220,9 @@
         activeNoteId = id;
         currentNoteMessages = new List<ChatMessage> { firstEntry };
         await PersistLastNotebookIdAsync(id);
-        await NoteStore.SaveNoteAsync(id, currentNoteMessages);
-        await NoteStore.UpdateIndexAfterSaveAsync(
-            id, title, currentNoteMessages, titleChangedTicks: DateTime.UtcNow.Ticks);
+        var created = await NoteStore.CommitAsync(id, new(title, currentNoteMessages, DateTime.UtcNow.Ticks));
+        Display(created.Payload!.Entries);
+        _recoveredDrafts = [];
         notes = await NoteStore.LoadIndexAsync();
         SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(id, title);
 
@@ -1326,7 +1330,7 @@
             if (!string.IsNullOrEmpty(activeNoteId))
                 unlockedNoteIds.Remove(activeNoteId);
 
-            await CommitActiveEditAsync(persistToStore: true);
+            if (!await CommitActiveEditAsync(persistToStore: true)) return;
             await LoadNote(id);
         }
         await SidebarState.CollapseIfMobileAsync(JS);
@@ -1343,18 +1347,27 @@
 
     private async Task LoadNote(string id)
     {
+        var generation = ++_loadGeneration;
+        if (activeNoteId != id) { Display([]); _recoveredDrafts = []; _displayedFingerprint = null; }
         activeNoteId = id;
         await PersistLastNotebookIdAsync(id);
+        if (generation != _loadGeneration || id != activeNoteId) return;
         var note = notes.FirstOrDefault(n => n.Id == id);
         if (note?.IsPasswordProtected == true && !unlockedNoteIds.Contains(id))
         {
-            currentNoteMessages = new();
+            Display([]);
+            _recoveredDrafts = [];
             OpenUnlockDialog(id, thenLoad: true);
             StateHasChanged();
             return;
         }
 
-        currentNoteMessages = await NoteStore.LoadNoteAsync(id);
+        var entries = await NoteStore.LoadNoteAsync(id);
+        var drafts = await NoteStore.LoadDraftsAsync(id);
+        if (generation != _loadGeneration || id != activeNoteId || editingMessageIndex != null) return;
+        Display(entries);
+        _recoveredDrafts = drafts;
+        _displayedFingerprint = note?.Fingerprint;
         await RefreshLocalAudioAsync();
         StateHasChanged();
     }
@@ -1427,7 +1440,7 @@
                 if (shouldLoad)
                 {
                     activeNoteId = noteId;
-                    currentNoteMessages = await NoteStore.LoadNoteAsync(noteId);
+                    await LoadNote(noteId);
                 }
             }
 
@@ -1478,19 +1491,27 @@
 
     private async Task SaveCurrent()
     {
-        if (string.IsNullOrEmpty(activeNoteId)) return;
-        var note = notes.FirstOrDefault(n => n.Id == activeNoteId);
-        var title = note?.Title ?? "Untitled";
-        await NoteStore.SaveNoteAsync(activeNoteId, currentNoteMessages);
-        await NoteStore.UpdateIndexAfterSaveAsync(activeNoteId, title, currentNoteMessages);
+        if (activeNoteId is not {} id) return;
+        var title = notes.FirstOrDefault(n => n.Id == id)?.Title ?? "Untitled";
+        var originals = _loadedEntries.ToDictionary(m => m.ItemId!);
+        var edits = currentNoteMessages.Where(m => !originals.TryGetValue(m.ItemId!, out var old) || m != old)
+            .Select(m => originals.TryGetValue(m.ItemId!, out var old) ? NoteSyncMerger.Edited(old, m) : m).ToList();
+        if (edits.Count == 0) return;
+        var commit = await NoteStore.CommitAsync(id, new(title, edits));
+        if (commit.Changed) SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(id, title);
+        if (id != activeNoteId) return;
+        if (editingMessageIndex == null) Display(commit.Payload!.Entries);
+        else _loadedEntries = currentNoteMessages.ToList();
+        _displayedFingerprint = commit.Fingerprint;
         notes = await NoteStore.LoadIndexAsync();
-        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(activeNoteId, title);
     }
 
     private async Task DeleteNote(string id)
     {
+        var deletedAt = await NoteStore.DeleteNoteAsync(id);
         if (id == activeNoteId)
         {
+            CancelEdit();
             foreach (var msg in currentNoteMessages)
             {
                 if (msg.AudioClips is not { Count: > 0 }) continue;
@@ -1499,7 +1520,6 @@
             }
         }
 
-        var deletedAt = await NoteStore.DeleteNoteAsync(id);
         try { await Quota.CompactAsync(); } catch { }
         notes = await NoteStore.LoadIndexAsync();
         SyncBridge.ScheduleAutoSyncNoteDeleteAfterLocalDelete(id, deletedAt);
@@ -1532,7 +1552,7 @@
     private async Task AddNoteEntry(string noteId)
     {
         CloseMenu();
-        await CommitActiveEditAsync(persistToStore: true);
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
 
         if (activeNoteId != noteId)
             await LoadNote(noteId);
@@ -1553,7 +1573,7 @@
 
         currentNoteMessages.Add(newEntry);
         await SaveCurrent();
-        await StartEdit(currentNoteMessages.Count - 1);
+        await StartEdit(currentNoteMessages.FindIndex(m => m.ItemId == newEntry.ItemId));
         StateHasChanged();
     }
 
@@ -1587,10 +1607,9 @@
             return;
 
         var title = nameDialogTitle.Trim();
-        await NoteStore.UpdateIndexAfterSaveAsync(
-            nameDialogNoteId, title, titleChangedTicks: DateTime.UtcNow.Ticks);
+        var result = await NoteStore.CommitAsync(nameDialogNoteId, new(title, TitleTicks: DateTime.UtcNow.Ticks));
         notes = await NoteStore.LoadIndexAsync();
-        SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(nameDialogNoteId, title, forceAckClear: true);
+        if (result.Changed) SyncBridge.ScheduleAutoSyncNoteAfterLocalSave(nameDialogNoteId, title);
         CancelNameDialog();
         StateHasChanged();
     }
@@ -2179,7 +2198,7 @@
     private void PromptDeleteAudio(int entryIndex, string clipId)
     {
         pendingDeleteNoteId = null;
-        pendingDeleteEntryIndex = null;
+        pendingDeleteEntryId = null;
         pendingDeleteAudioEntryIndex = entryIndex;
         pendingDeleteAudioClipId = clipId;
         deleteConfirmTitle = "Delete recording?";
@@ -2285,7 +2304,7 @@
     {
         if (string.IsNullOrEmpty(hit.NotebookId))
             return;
-        await CommitActiveEditAsync(persistToStore: true);
+        if (!await CommitActiveEditAsync(persistToStore: true)) return;
         await LoadNote(hit.NotebookId);
         if (!string.IsNullOrEmpty(hit.EntryId))
         {
