@@ -1,203 +1,85 @@
+using System.Text.Json;
+
 namespace App.Core.Storage;
 
-/// <summary>
-/// Merges two versions of a notebook (list of note entries) instead of whole-note overwrite.
-/// Entries are matched by <see cref="ChatMessage.ItemId"/>; each id keeps the version with the
-/// newer effective timestamp (ModifiedAt / DeletedAt / Timestamp). Local list order is preserved;
-/// remote-only entries are appended in remote order.
-/// </summary>
 public static class NoteSyncMerger
 {
-    public sealed record MergeResult(
-        List<ChatMessage> Entries,
-        bool DiffersFromLocal,
-        bool DiffersFromRemote,
-        int RemoteOnlyCount,
-        int LocalOnlyCount,
-        int ResolvedConflicts);
-
-    /// <summary>
-    /// Union of local and remote entries by ItemId with last-write-wins on each entry.
-    /// </summary>
-    public static MergeResult Merge(
-        IReadOnlyList<ChatMessage>? localEntries,
-        IReadOnlyList<ChatMessage>? remoteEntries)
+    // Stable on old notebooks too: inspecting the same legacy body on two devices must
+    // not manufacture two different entry IDs, timestamps, or manifest fingerprints.
+    public static List<ChatMessage> Normalize(IEnumerable<ChatMessage> entries)
     {
-        var local = ChatMessageHelper.NormalizeAll(localEntries ?? Array.Empty<ChatMessage>());
-        var remote = ChatMessageHelper.NormalizeAll(remoteEntries ?? Array.Empty<ChatMessage>());
-
-        if (local.Count == 0)
-        {
-            return new MergeResult(
-                remote,
-                DiffersFromLocal: remote.Count > 0,
-                DiffersFromRemote: false,
-                RemoteOnlyCount: remote.Count,
-                LocalOnlyCount: 0,
-                ResolvedConflicts: 0);
-        }
-
-        if (remote.Count == 0)
-        {
-            return new MergeResult(
-                local,
-                DiffersFromLocal: false,
-                DiffersFromRemote: local.Count > 0,
-                RemoteOnlyCount: 0,
-                LocalOnlyCount: local.Count,
-                ResolvedConflicts: 0);
-        }
-
-        var localById = IndexByItemId(local);
-        var remoteById = IndexByItemId(remote);
-
-        var chosen = new Dictionary<string, ChatMessage>(StringComparer.OrdinalIgnoreCase);
-        var remoteOnly = 0;
-        var localOnly = 0;
-        var resolvedConflicts = 0;
-
-        foreach (var id in localById.Keys.Union(remoteById.Keys, StringComparer.OrdinalIgnoreCase))
-        {
-            localById.TryGetValue(id, out var l);
-            remoteById.TryGetValue(id, out var r);
-
-            if (l is null)
-            {
-                chosen[id] = r!;
-                remoteOnly++;
-                continue;
-            }
-
-            if (r is null)
-            {
-                chosen[id] = l;
-                localOnly++;
-                continue;
-            }
-
-            if (EntryContentEquals(l, r))
-            {
-                // Prefer the side with the newer clock so metadata stays consistent.
-                chosen[id] = EffectiveTicks(r) > EffectiveTicks(l) ? r : l;
-                continue;
-            }
-
-            resolvedConflicts++;
-            chosen[id] = PickNewer(l, r);
-        }
-
-        var result = new List<ChatMessage>(chosen.Count);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // Preserve local notebook order for entries that exist locally.
-        foreach (var entry in local)
+        return entries.Select((entry, i) =>
         {
-            var id = entry.ItemId!;
-            if (!chosen.TryGetValue(id, out var picked))
-                continue;
-            if (!seen.Add(id))
-                continue;
-            result.Add(picked);
-        }
+            var id = entry.ItemId;
+            if (string.IsNullOrEmpty(id) || !seen.Add(id))
+            {
+                id = "legacy-" + SyncFingerprint.Compute($"{i}:{JsonSerializer.Serialize(entry, SyncJson.Options)}");
+                seen.Add(id);
+            }
+            return entry with { ItemId = id, Timestamp = entry.Timestamp ?? entry.ModifiedAt ?? DateTime.UnixEpoch };
+        }).ToList();
+    }
 
-        // Append remote-only entries in the order the peer had them.
-        foreach (var entry in remote)
+    private static string Version(ChatMessage m) => SyncFingerprint.Compute(JsonSerializer.Serialize(
+        m with { NoteAncestors = null, NotePosition = null, NotePositionClock = null }, SyncJson.Options));
+
+    public static ChatMessage Edited(ChatMessage original, ChatMessage edit) => edit with
+    {
+        NoteAncestors = Version(original) == Version(edit) ? original.NoteAncestors : Ancestors(original.NoteAncestors, [Version(original)])
+    };
+
+    private static List<string>? Ancestors(IEnumerable<string>? a, IEnumerable<string>? b)
+    {
+        var ids = (a ?? []).Union(b ?? [], StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return ids.Count == 0 ? null : ids;
+    }
+
+    public static List<ChatMessage> MergeEntries(IReadOnlyList<ChatMessage> local, IReadOnlyList<ChatMessage> remote, bool partial = false)
+    {
+        var rows = new Dictionary<string, ChatMessage>(StringComparer.OrdinalIgnoreCase);
+        var positions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var recovered = new List<ChatMessage>();
+        void Add(ChatMessage m, int index)
         {
-            var id = entry.ItemId!;
-            if (!seen.Add(id))
-                continue;
-            if (!chosen.TryGetValue(id, out var picked))
-                continue;
-            result.Add(picked);
+            var id = m.ItemId!;
+            positions[id] = Math.Min(positions.GetValueOrDefault(id, int.MaxValue), index);
+            if (!rows.TryGetValue(id, out var l)) { rows[id] = m; return; }
+            if (l == m) return;
+            var lv = Version(l);
+            var rv = Version(m);
+            var localDescends = l.NoteAncestors?.Contains(rv) == true;
+            var remoteDescends = m.NoteAncestors?.Contains(lv) == true;
+            var tickOrder = EffectiveTime(l).CompareTo(EffectiveTime(m));
+            var winner = localDescends != remoteDescends ? (localDescends ? l : m)
+                : tickOrder != 0 ? (tickOrder > 0 ? l : m) : string.CompareOrdinal(lv, rv) >= 0 ? l : m;
+            var loser = ReferenceEquals(winner, l) ? m : l;
+            var losingVersion = ReferenceEquals(winner, l) ? rv : lv;
+            var ancestry = Ancestors(l.NoteAncestors, m.NoteAncestors);
+            if (lv != rv && !localDescends && !remoteDescends)
+            {
+                // Clocks order the display; they cannot prove that the winner ever saw the loser.
+                // Retain differing live content with a stable ID so retries don't make copies.
+                if (loser.DeletedAt == null && (winner.DeletedAt != null || !SameBody(winner, loser)))
+                    recovered.Add(loser with { ItemId = $"{id}-recovered-{losingVersion}", NoteAncestors = null });
+                ancestry = Ancestors(ancestry, [losingVersion]);
+            }
+            var position = (l.NotePositionClock ?? 0, l.NotePosition ?? index).CompareTo(
+                (m.NotePositionClock ?? 0, m.NotePosition ?? index)) >= 0 ? l : m;
+            rows[id] = winner with { NoteAncestors = ancestry, NotePosition = position.NotePosition, NotePositionClock = position.NotePositionClock };
         }
-
-        var differsFromLocal = !EntryListsEquivalent(local, result);
-        var differsFromRemote = !EntryListsEquivalent(remote, result);
-
-        return new MergeResult(
-            result,
-            differsFromLocal,
-            differsFromRemote,
-            remoteOnly,
-            localOnly,
-            resolvedConflicts);
+        for (int i = 0; i < local.Count; i++) Add(local[i], i);
+        for (int i = 0; i < remote.Count; i++) Add(remote[i], partial ? positions.GetValueOrDefault(remote[i].ItemId!, local.Count + i) : i);
+        foreach (var m in recovered) if (!rows.ContainsKey(m.ItemId!)) rows[m.ItemId!] = m;
+        return rows.Values.OrderBy(m => m.NotePosition ?? positions.GetValueOrDefault(m.ItemId!, int.MaxValue))
+            .ThenBy(m => m.ItemId, StringComparer.Ordinal).ToList();
     }
 
-    /// <summary>
-    /// Same as <see cref="Merge"/> but returns only the entry list.
-    /// </summary>
-    public static List<ChatMessage> MergeEntries(
-        IReadOnlyList<ChatMessage>? localEntries,
-        IReadOnlyList<ChatMessage>? remoteEntries) =>
-        Merge(localEntries, remoteEntries).Entries;
-
-    private static Dictionary<string, ChatMessage> IndexByItemId(List<ChatMessage> entries)
+    private static bool SameBody(ChatMessage a, ChatMessage b) => JsonSerializer.Serialize(a with
     {
-        var map = new Dictionary<string, ChatMessage>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in entries)
-        {
-            if (string.IsNullOrWhiteSpace(entry.ItemId))
-                continue;
-            // Last occurrence wins if a list somehow has duplicate ids.
-            map[entry.ItemId] = entry;
-        }
+        ModifiedAt = b.ModifiedAt, NoteAncestors = b.NoteAncestors, NotePosition = b.NotePosition,
+        NotePositionClock = b.NotePositionClock
+    }, SyncJson.Options) == JsonSerializer.Serialize(b, SyncJson.Options);
 
-        return map;
-    }
-
-    private static ChatMessage PickNewer(ChatMessage a, ChatMessage b)
-    {
-        var ta = EffectiveTicks(a);
-        var tb = EffectiveTicks(b);
-        if (tb > ta)
-            return b;
-        if (ta > tb)
-            return a;
-
-        // Clock tie: prefer delete over live so deletes converge; then stable content order.
-        if (a.DeletedAt.HasValue != b.DeletedAt.HasValue)
-            return a.DeletedAt.HasValue ? a : b;
-
-        var cmp = string.CompareOrdinal(a.Content ?? "", b.Content ?? "");
-        return cmp >= 0 ? a : b;
-    }
-
-    private static long EffectiveTicks(ChatMessage msg)
-    {
-        long max = 0;
-        if (msg.ModifiedAt.HasValue)
-            max = Math.Max(max, msg.ModifiedAt.Value.Ticks);
-        if (msg.DeletedAt.HasValue)
-            max = Math.Max(max, msg.DeletedAt.Value.Ticks);
-        if (msg.Timestamp.HasValue)
-            max = Math.Max(max, msg.Timestamp.Value.Ticks);
-        return max;
-    }
-
-    private static bool EntryContentEquals(ChatMessage a, ChatMessage b)
-    {
-        if (a.DeletedAt.HasValue != b.DeletedAt.HasValue)
-            return false;
-        if (!string.Equals(a.Content ?? "", b.Content ?? "", StringComparison.Ordinal))
-            return false;
-        if (!string.Equals(a.ContentFormat ?? "", b.ContentFormat ?? "", StringComparison.OrdinalIgnoreCase))
-            return false;
-        return true;
-    }
-
-    private static bool EntryListsEquivalent(List<ChatMessage> a, List<ChatMessage> b)
-    {
-        if (a.Count != b.Count)
-            return false;
-
-        for (var i = 0; i < a.Count; i++)
-        {
-            if (!string.Equals(a[i].ItemId, b[i].ItemId, StringComparison.OrdinalIgnoreCase))
-                return false;
-            if (!EntryContentEquals(a[i], b[i]))
-                return false;
-        }
-
-        return true;
-    }
+    public static DateTime EffectiveTime(ChatMessage m) => new[] { m.Timestamp, m.ModifiedAt, m.DeletedAt }.Max() ?? DateTime.UnixEpoch;
 }

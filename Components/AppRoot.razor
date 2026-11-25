@@ -719,6 +719,39 @@
             });
         };
 
+        // Both reads, and the compare-and-swap on both objects, use a single IDB transaction.
+        window.idbNotebookTransaction = async (key, mode, operation) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(["noteMetas", "noteContents"], mode);
+                const metas = tx.objectStore("noteMetas"), bodies = tx.objectStore("noteContents");
+                const header = metas.get(key), body = bodies.get(key);
+                let result;
+                body.onsuccess = () => { result = operation(header.result ?? null, body.result?.content ?? null, metas, bodies); };
+                tx.oncomplete = () => resolve(result);
+                tx.onabort = tx.onerror = () => reject(tx.error || new Error("Notebook transaction aborted"));
+            });
+        };
+        window.idbReadNotebook = key => idbNotebookTransaction(key, "readonly", (meta, content) => ({meta, content}));
+        window.idbReplaceNotebook = (expected, meta, content) => idbNotebookTransaction(meta.key, "readwrite", (current, body, metas, bodies) => {
+            // Older records can omit optional fields; compare them using their legacy defaults.
+            const defaults = {isPasswordProtected:false, sortOrder:0, protectionChangedTicks:0, titleChangedTicks:0};
+            if (!!current !== !!expected.meta || body !== expected.content || (current &&
+                Object.keys(expected.meta).some(k => (current[k] ?? defaults[k] ?? null) !== (expected.meta[k] ?? defaults[k] ?? null)))) return false;
+            metas.put(meta);
+            if (content === null) bodies.delete(meta.key); else bodies.put({key: meta.key, content});
+            return true;
+        });
+        window.idbSetNotebookOrder = async (key, order) => {
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction("noteMetas", "readwrite"), metas = tx.objectStore("noteMetas"), req = metas.get(key);
+                req.onsuccess = () => { if (req.result && req.result.sortOrder !== order) metas.put({...req.result, sortOrder: order}); };
+                tx.oncomplete = resolve;
+                tx.onabort = tx.onerror = () => reject(tx.error);
+            });
+        };
+
         window.idbPutNoteMeta = async (meta) => {
             const db = await getWizionicDb();
             return new Promise((resolve, reject) => {

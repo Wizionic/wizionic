@@ -2,6 +2,7 @@
 @using ChatMessage = App.Core.Storage.ChatMessage
 @inject IJSRuntime JS
 @inject INoteStore NoteStore
+@inject App.Core.Storage.INotesSyncBridge NoteSync
 
 @if (IsOpen)
 {
@@ -180,11 +181,10 @@
     {
         if (SourceMessage == null || string.IsNullOrEmpty(_targetNoteId)) return;
 
-        var messages = await NoteStore.LoadNoteAsync(_targetNoteId);
-        messages.Add(SourceMessage);
-        await NoteStore.SaveNoteAsync(_targetNoteId, messages);
         var note = _notes.FirstOrDefault(n => n.Id == _targetNoteId);
-        await NoteStore.UpdateIndexAfterSaveAsync(_targetNoteId, note?.Title ?? _targetNoteName);
+        var title = note?.Title ?? _targetNoteName;
+        await NoteStore.CommitAsync(_targetNoteId, new(title, [SourceMessage with { ItemId = Guid.NewGuid().ToString("N") }]));
+        NoteSync.ScheduleAutoSyncNoteAfterLocalSave(_targetNoteId, title);
 
         await CloseDialog();
     }
@@ -195,9 +195,8 @@
 
         var id = Guid.NewGuid().ToString();
         var title = _newNoteName.Trim();
-        var messages = new List<ChatMessage> { SourceMessage };
-        await NoteStore.SaveNoteAsync(id, messages);
-        await NoteStore.UpdateIndexAfterSaveAsync(id, title, titleChangedTicks: DateTime.UtcNow.Ticks);
+        await NoteStore.CommitAsync(id, new(title, [SourceMessage with { ItemId = Guid.NewGuid().ToString("N") }], DateTime.UtcNow.Ticks));
+        NoteSync.ScheduleAutoSyncNoteAfterLocalSave(id, title);
 
         await CloseDialog();
     }

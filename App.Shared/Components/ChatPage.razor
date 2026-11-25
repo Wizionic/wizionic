@@ -4644,11 +4644,10 @@
     async Task NoteConfirmAdd()
     {
         if (_noteSourceMessage == null || string.IsNullOrEmpty(_noteTargetId)) return;
-        var entries = await NoteStore.LoadNoteAsync(_noteTargetId);
-        entries.Add(_noteSourceMessage);
-        await NoteStore.SaveNoteAsync(_noteTargetId, entries);
         var note = _noteDialogNotes.FirstOrDefault(n => n.Id == _noteTargetId);
-        await NoteStore.UpdateIndexAfterSaveAsync(_noteTargetId, note?.Title ?? _noteTargetName);
+        var title = note?.Title ?? _noteTargetName;
+        await NoteStore.CommitAsync(_noteTargetId, new(title, [_noteSourceMessage with { ItemId = Guid.NewGuid().ToString("N") }]));
+        SyncService.ScheduleAutoSyncNoteAfterLocalSave(_noteTargetId, title);
         CloseNewNote();
     }
 
@@ -4657,8 +4656,8 @@
         if (_noteSourceMessage == null || string.IsNullOrWhiteSpace(_newNoteName)) return;
         var id = Guid.NewGuid().ToString();
         var title = _newNoteName.Trim();
-        await NoteStore.SaveNoteAsync(id, new List<ChatMessage> { _noteSourceMessage });
-        await NoteStore.UpdateIndexAfterSaveAsync(id, title, titleChangedTicks: DateTime.UtcNow.Ticks);
+        await NoteStore.CommitAsync(id, new(title, [_noteSourceMessage with { ItemId = Guid.NewGuid().ToString("N") }], DateTime.UtcNow.Ticks));
+        SyncService.ScheduleAutoSyncNoteAfterLocalSave(id, title);
         CloseNewNote();
     }
 

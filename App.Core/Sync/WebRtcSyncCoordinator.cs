@@ -267,7 +267,8 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         List<SyncManifestEntry>? Albums = null,
         List<SyncManifestEntry>? AlbumImages = null,
         List<SyncManifestEntry>? Calendars = null,
-        List<SyncManifestEntry>? CalendarEvents = null);
+        List<SyncManifestEntry>? CalendarEvents = null,
+        bool IncludeNotes = false);
 
     private record SyncManifestResponse(
         List<string> NeededConvos,
@@ -383,21 +384,16 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             return;
         }
 
-        var index = await _noteStore.LoadIndexAsync();
-        var meta = index.FirstOrDefault(n => string.Equals(n.Id, noteId, StringComparison.OrdinalIgnoreCase));
-        var candidate = ChatMessageHelper.IsPlaceholderNoteTitle(title, noteId) ? meta?.Title : title;
-        var resolvedTitle = ChatMessageHelper.ResolveOutgoingNoteTitle(candidate ?? meta?.Title, noteId);
-        var isProtected = meta?.IsPasswordProtected == true;
-        var proticks = meta?.ProtectionChangedTicks ?? 0;
-        var titleTicks = meta?.TitleChangedTicks ?? 0;
-        var dataJson = NoteSyncPayload.Serialize(noteId, resolvedTitle, entries, isProtected, proticks, titleTicks);
+        var payload = await _noteStore.ReadPayloadAsync(noteId);
+        if (payload == null) return;
+        var dataJson = JsonSerializer.Serialize(payload, SyncJson.Options);
         var item = new SyncQueueItem
         {
             Kind = SyncItemKind.Note,
             ItemId = noteId,
-            NoteTitle = resolvedTitle,
+            NoteTitle = payload.Title,
             DataJson = dataJson,
-            ContentFingerprint = SyncFingerprint.ForNote(noteId, resolvedTitle, entries, isProtected, proticks, titleTicks)
+            ContentFingerprint = SyncFingerprint.Compute(dataJson)
         };
         await EnqueueSyncAsync(targetDeviceId, item);
     }
@@ -778,7 +774,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             SyncDebugLog.Info($"BuildLocalManifest calendars={calendars.Count} calendarEvents={calendarEvents.Count} (workflow excluded)");
         }
 
-        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps, albums, albumImages, calendars, calendarEvents);
+        return new SyncManifestOffer(convos, notes, bookmarks, folders, apps, albums, albumImages, calendars, calendarEvents, includeNotes);
     }
 
     private static bool ManifestEntryNeedsSync(
@@ -826,7 +822,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private static string GetAckItemKey(SyncItemKind kind, string itemId) => kind switch
     {
         SyncItemKind.Conversation => $"c:{itemId}",
-        SyncItemKind.Note => $"n:{itemId}",
+        SyncItemKind.Note => $"note-v2:{itemId}",
         SyncItemKind.Album => $"g:{itemId}",
         SyncItemKind.AlbumImage => $"gi:{itemId}",
         SyncItemKind.Calendar => $"cal:{itemId}",
@@ -1241,19 +1237,13 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
         }
 
-        var noteIndex = await _noteStore.LoadIndexAsync();
-        var noteManifest = await _noteStore.LoadManifestEntriesAsync();
         foreach (var noteId in response.NeededNotes.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var noteMeta = noteIndex.FirstOrDefault(n => string.Equals(n.Id, noteId, StringComparison.OrdinalIgnoreCase));
-            var manifestTitle = noteManifest.FirstOrDefault(n => string.Equals(n.Id, noteId, StringComparison.OrdinalIgnoreCase))?.Title;
-            var title = ChatMessageHelper.ResolveOutgoingNoteTitle(noteMeta?.Title ?? manifestTitle, noteId);
-            var isProtected = noteMeta?.IsPasswordProtected == true;
-            var proticks = noteMeta?.ProtectionChangedTicks ?? 0;
-            var titleTicks = noteMeta?.TitleChangedTicks ?? 0;
-            var entries = await _noteStore.LoadNoteAsync(noteId);
-            var dataJson = NoteSyncPayload.Serialize(noteId, title, entries, isProtected, proticks, titleTicks);
-            var fingerprint = SyncFingerprint.ForNote(noteId, title, entries, isProtected, proticks, titleTicks);
+            var payload = await _noteStore.ReadPayloadAsync(noteId);
+            if (payload == null) continue;
+            var title = payload.Title;
+            var dataJson = JsonSerializer.Serialize(payload, SyncJson.Options);
+            var fingerprint = SyncFingerprint.Compute(dataJson);
 
             var item = new SyncQueueItem
             {
@@ -1751,7 +1741,6 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             var entry = manifest.FirstOrDefault(n => n.Id == noteId);
             var fingerprint = entry?.ContentFingerprint;
 
-            var entries = await _noteStore.LoadNoteAsync(noteId);
             var targets = GetOnlineSyncTargetIdsInternal().ToList();
             var enqueued = false;
             foreach (var targetId in targets)
@@ -1762,7 +1751,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                     continue;
                 }
 
-                await EnqueueNoteSyncAsync(targetId, noteId, title ?? "", entries);
+                await EnqueueNoteSyncAsync(targetId, noteId, title ?? "", []);
                 enqueued = true;
             }
 
@@ -2334,8 +2323,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 {
                     foreach (var (noteId, title) in pendingNotes)
                     {
-                        var entries = await _noteStore.LoadNoteAsync(noteId);
-                        await EnqueueNoteSyncAsync(deviceId, noteId, title, entries);
+                        await EnqueueNoteSyncAsync(deviceId, noteId, title, []);
                         ForgetPendingNotePush(noteId);
                     }
                     SyncDebugLog.Info($"Pushed {pendingNotes.Count} pending note(s) to {deviceId} on peer-online");
@@ -2363,18 +2351,18 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 var queueBusy = _activeSyncByPeer.ContainsKey(deviceId)
                     || (_syncQueues.TryGetValue(deviceId, out var pendingQ) && pendingQ.Count > 0);
 
-                if (queueBusy)
+                if (queueBusy && !AutoSyncNotes)
                 {
                     SyncDebugLog.Info($"Skipping auto-sync manifest for {deviceId} (queue busy)");
                 }
-                else if (!hasPending && pendingNotes.Count == 0 && pendingConvos.Count == 0)
+                else if (!AutoSyncNotes && !hasPending && pendingNotes.Count == 0 && pendingConvos.Count == 0)
                 {
                     SyncDebugLog.Info($"Skipping data auto-sync for {deviceId} (all items already acknowledged)");
                 }
                 else
                 {
                     var lastVerified = await GetLastManifestVerifiedUtcAsync(deviceId);
-                    if (lastVerified.HasValue && DateTime.UtcNow - lastVerified.Value < ManifestRecheckCooldown)
+                    if (!AutoSyncNotes && !hasPending && lastVerified.HasValue && DateTime.UtcNow - lastVerified.Value < ManifestRecheckCooldown)
                     {
                         var minutesAgo = (int)(DateTime.UtcNow - lastVerified.Value).TotalMinutes;
                         SyncDebugLog.Info($"Skipping auto-sync for {deviceId} " +
@@ -2995,7 +2983,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 if (contentJson == null)
                     return;
 
-                await HandleIncomingSyncPayload(msg.convoId, contentJson, peerId);
+                if (!await HandleIncomingSyncPayload(msg.convoId, contentJson, peerId)) return;
 
                 var ack = new DataChannelMessage("sync-ack", msg.convoId);
                 await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
@@ -3020,18 +3008,19 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 if (contentJson == null)
                     return;
 
-                await HandleIncomingNoteSyncPayload(contentJson, peerId);
-
                 var payload = NoteSyncPayload.Deserialize(contentJson);
-                if (payload?.NoteId != null)
+                if (payload?.Entries != null && !string.IsNullOrEmpty(payload.NoteId))
                 {
-                    var ack = new DataChannelMessage("note-sync-ack", noteId: payload.NoteId);
+                    var result = await ApplyIncomingNoteAsync(payload, contentJson, peerId);
+                    var sent = SyncFingerprint.Compute(contentJson);
+                    var ack = new DataChannelMessage("note-sync-ack", noteId: payload.NoteId, requestRevision: sent, storedRevision: result.Fingerprint);
                     await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                    if (result.Fingerprint != sent) await SendNoteResultAsync(peerId, payload.NoteId, result);
                 }
             }
             else if (msg.type == "note-sync-ack" && msg.noteId != null)
             {
-                await HandleNoteSyncAckAsync(msg.noteId, peerId);
+                await HandleNoteAckAsync(msg, peerId, false);
             }
             else if ((msg.type == "album-sync-data" || msg.type == "album-sync-chunk")
                      && (msg.content != null || msg.itemId != null))
@@ -3189,17 +3178,20 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             }
             else if (msg.type == "note-delete" && msg.content != null)
             {
-                await HandleIncomingNoteDeleteAsync(msg.content, peerId);
                 var deletePayload = DeleteSyncPayload.Deserialize(msg.content);
                 if (deletePayload != null)
                 {
-                    var ack = new DataChannelMessage("note-delete-ack", noteId: deletePayload.Id);
+                    var result = await _noteStore.CommitAsync(deletePayload.Id, new(Remote: true, DeleteTicks: deletePayload.DeletedAtTicks));
+                    if (result.Changed) Raise(OnNotesChanged);
+                    var sent = DeleteSyncPayload.AckValue(deletePayload.DeletedAtTicks);
+                    var ack = new DataChannelMessage("note-delete-ack", noteId: deletePayload.Id, requestRevision: sent, storedRevision: result.Fingerprint);
                     await _webrtc.SendDataAsync(peerId, SerializeDataChannelMessage(ack));
+                    if (result.Fingerprint != sent) await SendNoteResultAsync(peerId, deletePayload.Id, result);
                 }
             }
             else if (msg.type == "note-delete-ack" && msg.noteId != null)
             {
-                await HandleNoteDeleteAckAsync(msg.noteId, peerId);
+                await HandleNoteAckAsync(msg, peerId, true);
             }
             else if (msg.type == "album-delete" && msg.content != null)
             {
@@ -3320,7 +3312,9 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             return;
 
         var localConvos = await _conversationStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true);
-        var localNotes = await _noteStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true);
+        var localNotes = offer.IncludeNotes || offer.Notes.Count > 0 ? await _noteStore.LoadManifestEntriesAsync(backfillMissingFingerprints: true) : [];
+        var reverseNotes = new List<SyncManifestEntry>();
+        var localNotesById = localNotes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         var remoteBookmarks = offer.Bookmarks ?? [];
         var remoteFolders = offer.BookmarkFolders ?? [];
         var remoteApps = offer.SidebarApps ?? [];
@@ -3363,24 +3357,20 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         var appliedNoteDeletes = 0;
         foreach (var remote in offer.Notes)
         {
-            var local = localNotes.FirstOrDefault(n => string.Equals(n.Id, remote.Id, StringComparison.Ordinal));
+            var local = localNotesById.GetValueOrDefault(remote.Id);
 
             if (remote.IsDeleted)
             {
-                if (await _noteStore.TryApplyRemoteDeleteAsync(remote.Id, remote.DeletedAtTicks!.Value))
-                    appliedNoteDeletes++;
-                upToDateNotes++;
+                var result = await _noteStore.CommitAsync(remote.Id, new(Remote: true, DeleteTicks: remote.DeletedAtTicks));
+                if (result.Changed) appliedNoteDeletes++;
+                if (result.Payload != null && local != null) reverseNotes.Add(local);
+                else if (!result.Changed && local?.IsDeleted == true && local.DeletedAtTicks > remote.DeletedAtTicks)
+                    senderShouldDeleteNotes.Add(new(local.Id, local.DeletedAtTicks.Value));
+                else upToDateNotes++;
                 continue;
             }
 
-            if (local != null && LocalDeleteShouldWinOverRemote(remote, local))
-            {
-                senderShouldDeleteNotes.Add(new DeleteSyncPayload(remote.Id, local.DeletedAtTicks!.Value));
-                upToDateNotes++;
-                continue;
-            }
-
-            if (ManifestEntryNeedsSync(remote, local))
+            if (local == null || local.IsDeleted || string.IsNullOrEmpty(remote.ContentFingerprint) || remote.ContentFingerprint != local.ContentFingerprint)
             {
                 LogManifestNeeded("note", remote, local);
                 neededNotes.Add(remote.Id);
@@ -3389,6 +3379,11 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 upToDateNotes++;
         }
 
+        if (offer.IncludeNotes && SyncTargetDeviceIds.Contains(peerId, StringComparer.OrdinalIgnoreCase) && AutoSyncNotes)
+        {
+            var offered = offer.Notes.Select(n => n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            reverseNotes.AddRange(localNotes.Where(n => !offered.Contains(n.Id)));
+        }
         var neededAlbums = new List<string>();
         var senderShouldDeleteAlbums = new List<DeleteSyncPayload>();
         var upToDateAlbums = 0;
@@ -3677,6 +3672,11 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         await _webrtc.SendDataAsync(
             peerId,
             SerializeDataChannelMessage(new DataChannelMessage("sync-manifest-response", content: responseJson)));
+        foreach (var note in reverseNotes)
+        {
+            if (note.DeletedAtTicks is long ticks) await EnqueueNoteDeleteAsync(peerId, note.Id, new DateTime(ticks, DateTimeKind.Utc));
+            else await EnqueueNoteSyncAsync(peerId, note.Id, note.Title, []);
+        }
 
         SyncDebugLog.Info($"Manifest offer from {peerId}: " +
             $"{upToDateConvos}/{offer.Convos.Count} convos, {upToDateNotes}/{offer.Notes.Count} notes, " +
@@ -3804,7 +3804,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             return;
         }
 
-        if (item.IsManifestExchange
+        if (item.IsManifestExchange || item.Kind == SyncItemKind.Note
             || !string.Equals(item.ItemId, itemId, StringComparison.OrdinalIgnoreCase))
         {
             SyncDebugLog.Info($"Ignoring {type} for {itemId} (active is {DescribeQueueItem(item)})");
@@ -3837,85 +3837,31 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private Task HandleNoteDeleteAckAsync(string noteId, string peerId) =>
         TryAdvanceOnMatchingAckAsync("note-delete-ack", noteId, peerId);
 
-    private async Task HandleIncomingNoteSyncPayload(string json, string fromDeviceId)
+    private async Task<NoteCommit> ApplyIncomingNoteAsync(NoteSyncPayload payload, string json, string peer)
     {
-        try
+        var result = await _noteStore.CommitAsync(payload.NoteId, new(payload.Title, payload.Entries,
+            payload.TitleChangedTicks, payload.IsPasswordProtected, payload.ProtectionChangedTicks, Remote: true));
+        if (result.Changed)
         {
-            var payload = NoteSyncPayload.Deserialize(json);
-            if (payload == null || string.IsNullOrEmpty(payload.NoteId))
-                return;
-
-            var remoteEntries = ChatMessageHelper.NormalizeAll(payload.Entries);
-            if (!await _noteStore.ShouldAcceptIncomingContentAsync(payload.NoteId, remoteEntries))
-            {
-                SyncDebugLog.Info($"Ignoring stale note sync for {payload.NoteId} (local delete is newer)");
-                return;
-            }
-
-            var localEntries = await _noteStore.LoadNoteAsync(payload.NoteId);
-            var merge = NoteSyncMerger.Merge(localEntries, remoteEntries);
-
-            var index = await _noteStore.LoadIndexAsync();
-            var localMeta = index.FirstOrDefault(n =>
-                string.Equals(n.Id, payload.NoteId, StringComparison.OrdinalIgnoreCase));
-            var localTitle = localMeta?.Title ?? await _noteStore.GetMetaTitleAsync(payload.NoteId);
-            var titleChanged = ChatMessageHelper.TryResolveIncomingNoteTitle(
-                payload.Title,
-                payload.TitleChangedTicks,
-                localTitle,
-                localMeta?.TitleChangedTicks ?? 0,
-                payload.NoteId,
-                out var title,
-                out var titleTicks);
-
-            // Persist when the merge changed local content (or note was empty and remote arrived).
-            if (merge.DiffersFromLocal || localEntries.Count == 0)
-            {
-                await _noteStore.SaveNoteAsync(payload.NoteId, merge.Entries);
-                await _noteStore.UpdateIndexAfterSaveAsync(
-                    payload.NoteId, title, merge.Entries, titleChanged ? titleTicks : null);
-            }
-            else if (titleChanged)
-            {
-                await _noteStore.UpdateIndexAfterSaveAsync(
-                    payload.NoteId, title, merge.Entries, titleTicks);
-            }
-            else
-            {
-                // Identical body: still rewrite the stored fingerprint so a serializer
-                // change cannot keep the note "needed" on every manifest.
-                await _noteStore.UpdateIndexAfterSaveAsync(
-                    payload.NoteId, title, merge.Entries, bumpLastUpdated: false);
-            }
-
-            // Versioned protection merge: never demote a local lock from stale remote false.
-            await ApplyIncomingNoteProtectionAsync(payload);
-
-            Raise(OnNoteSyncPayloadReceived, payload.NoteId, json, fromDeviceId);
+            Raise(OnNoteSyncPayloadReceived, payload.NoteId, json, peer);
             Raise(OnNotesChanged);
-
-            // If we kept local-only entries (or LWW chose local versions), push the merged
-            // notebook back so the peer converges instead of staying on a partial overwrite.
-            if (merge.DiffersFromRemote)
-            {
-                SyncDebugLog.Info(
-                    $"Note {payload.NoteId} merge kept local-only or newer local entries " +
-                    $"(localOnly={merge.LocalOnlyCount}, remoteOnly={merge.RemoteOnlyCount}, " +
-                    $"conflicts={merge.ResolvedConflicts}); scheduling push-back");
-                ScheduleAutoSyncNoteAfterLocalSave(payload.NoteId, title);
-            }
-
-            SyncDebugLog.Info(
-                $"Merged incoming note sync for {payload.NoteId} from {fromDeviceId} " +
-                $"(remote={remoteEntries.Count}, local={localEntries.Count}, merged={merge.Entries.Count}, " +
-                $"localOnly={merge.LocalOnlyCount}, remoteOnly={merge.RemoteOnlyCount}, " +
-                $"entryConflicts={merge.ResolvedConflicts}, protected={payload.IsPasswordProtected?.ToString() ?? "omit"}, " +
-                $"proticks={payload.ProtectionChangedTicks?.ToString() ?? "omit"})");
         }
-        catch (Exception ex)
-        {
-            SyncDebugLog.Info($"Failed to persist incoming note sync payload: {ex.Message}");
-        }
+        return result;
+    }
+
+    private Task SendNoteResultAsync(string peer, string id, NoteCommit result) => result.Payload is {} p
+        ? EnqueueNoteSyncAsync(peer, id, p.Title, p.Entries)
+        : EnqueueNoteDeleteAsync(peer, id, new DateTime(long.Parse(result.Fingerprint["deleted:".Length..]), DateTimeKind.Utc));
+
+    private async Task HandleNoteAckAsync(DataChannelMessage ack, string peer, bool delete)
+    {
+        if (!_activeSyncByPeer.TryGetValue(peer, out var item) || item.Kind != SyncItemKind.Note || item.IsDelete != delete || item.ItemId != ack.noteId) return;
+        if (ack.requestRevision != null && ack.requestRevision != item.ContentFingerprint) return;
+        // A legacy receipt can release the transport, but cannot certify a revision.
+        if (ack.requestRevision == item.ContentFingerprint && ack.storedRevision == item.ContentFingerprint)
+            await RecordSuccessfulSyncAsync(peer, item);
+        await AdvanceSyncQueueAsync(peer);
+        if (!delete) Raise(OnNoteSyncAckReceived, item.ItemId, peer);
     }
 
     private async Task HandleAlbumSyncAckAsync(string albumId, string peerId)
@@ -4318,7 +4264,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         }
     }
 
-    private async Task HandleIncomingSyncPayload(string convoId, string json, string fromDeviceId)
+    private async Task<bool> HandleIncomingSyncPayload(string convoId, string json, string fromDeviceId)
     {
         try
         {
@@ -4330,7 +4276,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             if (payload == null)
             {
                 SyncDebugLog.Info($"Ignoring invalid convo sync payload for {convoId}");
-                return;
+                return false;
             }
 
             convoId = payload.ConvoId;
@@ -4341,9 +4287,22 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             if (!await _conversationStore.ShouldAcceptIncomingContentAsync(convoId, msgs))
             {
                 SyncDebugLog.Info($"Ignoring stale convo sync for {convoId} (local delete is newer)");
-                return;
+                return false;
             }
 
+            // A delayed conversation snapshot must not erase messages absent from that snapshot.
+            // Streaming updates use the same ID repeatedly; keep the newer version of that ID.
+            var local = await _conversationStore.LoadConversationAsync(convoId);
+            var byId = msgs.Select((m, i) => (m, i)).ToLookup(x => x.m.ItemId, StringComparer.OrdinalIgnoreCase);
+            var keptLocal = false;
+            foreach (var message in local)
+            {
+                var matches = byId[message.ItemId];
+                if (!matches.Any()) { msgs.Add(message); keptLocal = true; }
+                else if (NoteSyncMerger.EffectiveTime(message) > NoteSyncMerger.EffectiveTime(matches.Last().m))
+                { msgs[matches.Last().i] = message; keptLocal = true; }
+            }
+            if (keptLocal) msgs = msgs.OrderBy(m => m.Timestamp).ToList();
             await _conversationStore.SaveConversationAsync(convoId, msgs);
 
             if (incomingTitleIsCustom)
@@ -4368,14 +4327,18 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             Raise(OnSyncPayloadReceived, convoId, json, fromDeviceId);
             Raise(OnConversationsChanged);
 
+            if (keptLocal) ScheduleAutoSyncConvoAfterLocalSave(convoId, incomingTitle);
+
             SyncDebugLog.Info($"Auto-saved incoming sync for convo {convoId} from {fromDeviceId} " +
                 $"({msgs.Count} messages, title=\"{incomingTitle ?? ""}\", custom={incomingTitleIsCustom}, " +
                 $"protected={payload.IsPasswordProtected?.ToString() ?? "omit"}, " +
                 $"proticks={payload.ProtectionChangedTicks?.ToString() ?? "omit"})");
+            return true;
         }
         catch (Exception ex)
         {
             SyncDebugLog.Info($"Failed to persist incoming sync payload: {ex.Message}");
+            return false;
         }
     }
 
@@ -4477,7 +4440,9 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         int? chunkIndex = null,
         int? chunkCount = null,
         string? chunkData = null,
-        string? itemId = null);
+        string? itemId = null,
+        string? requestRevision = null,
+        string? storedRevision = null);
 
     public async ValueTask DisposeAsync()
     {
