@@ -73,7 +73,17 @@
     @if(tab=="Chat"){<div class="chat-toolbar"><label class="draft-mode">Draft <select aria-label="Draft format" value="@draftFormat" @onchange='e=>{draftFormat=e.Value?.ToString()??"";if(draftFormat.Length>0)ClosePreview();}'><option value="">Off</option><option value="pdf">PDF</option><option value="md">Markdown</option><option value="txt">TXT</option><option value="html">HTML</option></select></label><span class="toolbar-spacer"></span><button class="icon" title="Add existing chat" aria-label="Add existing chat" @onclick="ToggleChatPicker"><i class="bi bi-chat-left-dots"></i></button><button class="icon" title="New chat" aria-label="New chat" @onclick="NewChat">＋</button></div>
     @if(showChatPicker){<div class="note-picker chat-picker">@foreach(var ac in availableChats){<button class="chat-row" @onclick="()=>AddExistingChat(ac.Id)">@ac.Title</button>}@if(availableChats.Count==0){<small>No other chats to add.</small>}</div>}}
     <div class="conversation" hidden="@(tab!="Chat")">
-    @if(chat!=null){<ChatPage @key="chat" @ref="chatView" ProjectId="@project" ProjectChatId="@chat" DraftFormat="@draftFormat" OnDraft="Draft" OnPreview="PreviewAttachment" OnProjectSaved="RefreshChats" OnOutput="Output" OnSource="Source" />}
+    @if(chat!=null){
+        <ErrorBoundary @key="chat">
+            <ChildContent>
+                <ChatPage @key="chat" @ref="chatView" ProjectId="@project" ProjectChatId="@chat" DraftFormat="@draftFormat" OnDraft="Draft" OnPreview="PreviewAttachment" OnProjectSaved="RefreshChats" OnOutput="Output" OnSource="Source" />
+            </ChildContent>
+            <ErrorContent Context="ex">
+                <p role="alert">Could not open this project chat: @ex.Message</p>
+                <button type="button" @onclick="() => Select(null)">Back to projects</button>
+            </ErrorContent>
+        </ErrorBoundary>
+    }
     </div>
     @if(tab=="Files"){
        <section class="controls">
@@ -112,7 +122,8 @@
   </div>
  </main>
 </div>
-<dialog @ref="dialog" class="project-dialog" aria-label="Project details" @oncancel="CancelDialog" @oncancel:preventDefault>
+@* WebKit rejects the attribute @oncancel:preventDefault writes (Invalid qualified name). *@
+<dialog @ref="dialog" class="project-dialog" aria-label="Project details">
     <form @onsubmit="SubmitDetails" @onsubmit:preventDefault>
         <button type="button" class="icon dialog-close" aria-label="Close" title="Close" disabled="@submitting" @onclick="CancelDialog">✕</button>
         <i class="bi bi-folder dialog-folder" aria-hidden="true"></i>
@@ -178,7 +189,22 @@
     string Status(ProjectFile f){var parts=rows.Count(r=>r.Id.StartsWith(f.Id+":")&&!ProjectStore.IsCache(r.Id)&&!ProjectStore.Deleted(r));return parts==0?"Waiting for device":parts<f.Parts?$"Transferring · {parts}/{f.Parts} parts":searchStatus.GetValueOrDefault(f.Id,"Available · Indexing…");}
     async Task Index(ProjectFile f){try{var index=await Retrieval.IndexAsync(f,lifetime.Token);searchStatus[f.Id]=index?.Passages.Count>0?"Searchable":f.Mime=="application/pdf"?"Preview only · No searchable text":"Preview only";}catch(OperationCanceledException){}catch(Exception ex){searchStatus[f.Id]="Index unavailable: "+ex.Message;}finally{indexing.Remove(f.Id);if(!lifetime.IsCancellationRequested)await InvokeAsync(StateHasChanged);}}
     async Task RefreshChats(){var id=project;if(id==null){chats=[];return;}var all=await Conversations.LoadIndexAsync();var linked=await Store.LinkedChatIdsAsync(id);if(id!=project)return;chats=all.Where(c=>c.Id.StartsWith(ProjectStore.ChatPrefix(id))||linked.Contains(c.Id)).OrderByDescending(c=>c.LastUpdated).ToList();}
-    async Task Select(string? id){project=id;chat=null;files=[];noteLinks=[];info=null;ClosePreview();tab="Chat";status=null;rename=null;draftFormat="";showNotePicker=false;showChatPicker=false;await RefreshChats(); if(id!=null && project==id){var current=await Store.ReadAsync<ProjectInfo>(id);if(project!=id)return;info=current;projectName=info?.Name??"";instructions=info?.Instructions??"";OpenChat(chats.FirstOrDefault()?.Id??ProjectStore.ChatPrefix(id)+Guid.NewGuid().ToString("N"));}await Refresh();}
+    async Task Select(string? id)
+    {
+        project=id;chat=null;files=[];noteLinks=[];info=null;ClosePreview();tab="Chat";status=null;rename=null;draftFormat="";showNotePicker=false;showChatPicker=false;
+        await RefreshChats();
+        if(id!=null && project==id)
+        {
+            var current=await Store.ReadAsync<ProjectInfo>(id);
+            if(project!=id)return;
+            if(current==null){project=null;status="That project record is missing. It may still be syncing.";await Refresh();return;}
+            info=current;projectName=info.Name??"";instructions=info.Instructions??"";
+            var chatId=chats.FirstOrDefault()?.Id;
+            if(string.IsNullOrEmpty(chatId)) chatId=ProjectStore.ChatPrefix(id)+Guid.NewGuid().ToString("N");
+            OpenChat(chatId);
+        }
+        await Refresh();
+    }
     void OpenChat(string id){chat=id;tab="Chat";draftFormat="";draft=null;}
     void NewChat(){if(project==null)return;var id=ProjectStore.ChatPrefix(project)+Guid.NewGuid().ToString("N");if(!chats.Any(c=>c.Id==id))chats.Insert(0,new LocalConvo(id,"New chat",DateTime.UtcNow));showChatPicker=false;OpenChat(id);}
     async Task NewChatIn(string id){if(project!=id)await Select(id);NewChat();}
