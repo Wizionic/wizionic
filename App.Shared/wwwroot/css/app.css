@@ -4171,7 +4171,7 @@ body .chat-wrapper,
 /* Browser panel: side-by-side layout (overrides column !important above) */
 .chat-pdf-pane { flex: 0 0 min(46vw,760px); height:100%; overflow:auto; }
 @media(max-width:780px){.chat-pdf-pane{position:absolute;inset:0;z-index:5;background:var(--color-bg)}}
-.projects .conversation .page,.projects .conversation main {height:100% !important;max-height:100%;min-height:0;}
+.projects-page .conversation .page,.projects-page .conversation main {height:100% !important;max-height:100%;min-height:0;}
 body .chat-wrapper.browser-panel-open,
 .chat-wrapper.browser-panel-open {
     flex-direction: row !important;

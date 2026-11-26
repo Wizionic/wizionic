@@ -39,7 +39,8 @@ button,.upload{cursor:pointer}
 .preview pre{white-space:pre-wrap;padding:1rem}
 .workspace footer{font-size:.85em;justify-content:space-between}
 .conversation ::deep .page,.conversation ::deep .chat-wrapper{height:100%;max-height:100%}
-.conversation ::deep main{min-width:0}
+.conversation ::deep main{min-width:0;height:100%;min-height:0;flex:1}
+.conversation ::deep .chat-wrapper,.conversation ::deep .chat-column{min-height:0}
 @media(max-width:780px){.projects-page{flex-direction:column}.projects-page .sidebar{width:100%;max-height:25%;border-right:0;border-bottom:1px solid var(--cf-border)}.preview{position:absolute;inset:0;max-width:none;width:100%;background:var(--cf-bg,#fff);z-index:5;resize:none}}
 .icon{display:inline-grid;place-items:center;min-width:2.1rem;min-height:2.1rem;border:0;background:transparent;border-radius:.4rem;color:inherit}
 .icon:hover,.icon:focus-visible,.file-picker:focus-within{background:var(--cf-bg-subtle,#eee)}
