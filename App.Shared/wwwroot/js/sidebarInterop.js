@@ -110,9 +110,19 @@ window.appSidebar = (function () {
                 document.body.classList.remove('sidebar-resizing');
                 try { resizerEl.releasePointerCapture(e.pointerId); } catch (_) { }
                 writeWidth(readWidth());
+                document.documentElement.style.cursor = '';
+                document.body.style.cursor = '';
             };
             resizerEl.addEventListener('pointerup', endDrag);
             resizerEl.addEventListener('pointercancel', endDrag);
+
+            // WebView shells sometimes ignore `cursor` on the thin strip; force it.
+            const setCursor = (on) => {
+                document.documentElement.style.cursor = on ? 'col-resize' : '';
+                document.body.style.cursor = on ? 'col-resize' : '';
+            };
+            resizerEl.addEventListener('pointerenter', () => setCursor(true));
+            resizerEl.addEventListener('pointerleave', () => { if (!dragging) setCursor(false); });
 
             resizerEl.addEventListener('dblclick', () => {
                 applyWidth(DEFAULT_WIDTH);

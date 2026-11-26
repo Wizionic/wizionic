@@ -123,6 +123,8 @@ window.appNavLayout = window.appNavLayout || {
     _hideTimer: null,
     _autoHideChromeBound: false,
     _navHandle: null,
+    _activateHideTimer: null,
+    _ignoreFocusPin: false,
 
     applyAutoHide: function (on) {
         const root = document.documentElement;
@@ -146,9 +148,27 @@ window.appNavLayout = window.appNavLayout || {
 
     hideNav: function () {
         this._autoHidePinned = false;
+        this._ignoreFocusPin = true;
         if (this._revealTimer) { clearTimeout(this._revealTimer); this._revealTimer = null; }
         if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+        if (this._activateHideTimer) { clearTimeout(this._activateHideTimer); this._activateHideTimer = null; }
         document.documentElement.removeAttribute('data-nav-revealed');
+        // Ignore the focus event that follows a click on a nav button — otherwise
+        // focusin would immediately re-pin the bar we just hid.
+        const self = this;
+        setTimeout(() => { self._ignoreFocusPin = false; }, 120);
+    },
+
+    // Hide after activating a nav destination (link or panel button). Popup
+    // triggers (account menu, settings chevron) keep the bar visible.
+    scheduleHideAfterActivation: function () {
+        if (!this._activateHideTimer) {
+            const self = this;
+            this._activateHideTimer = setTimeout(() => {
+                self._activateHideTimer = null;
+                self.hideNav();
+            }, 60);
+        }
     },
 
     navEl: function () {
@@ -215,9 +235,10 @@ window.appNavLayout = window.appNavLayout || {
             self._hideTimer = setTimeout(() => self.hideNav(), 250);
         });
 
-        // Keyboard access: focusing any nav control reveals it.
+        // Keyboard access: focusing any nav control reveals it (unless we just
+        // hid the bar after activating a nav button).
         document.addEventListener('focusin', (e) => {
-            if (!autoHideOn()) return;
+            if (!autoHideOn() || self._ignoreFocusPin) return;
             const nav = self.navEl();
             if (nav && nav.contains(e.target)) self.revealNav(true);
         });
@@ -240,14 +261,19 @@ window.appNavLayout = window.appNavLayout || {
             if (e.key === 'Escape') self.hideNav();
         });
 
-        // Navigating away collapses the nav again.
+        // Navigating / switching panels collapses the nav again — for links AND
+        // buttons (MAUI uses buttons for Chat/Notes/etc.). Popup triggers stay open.
         document.addEventListener('click', (e) => {
             if (!autoHideOn()) return;
             const nav = self.navEl();
             const t = e.target;
-            if (nav && t && t.closest && nav.contains(t) && t.closest('a'))
-                setTimeout(() => self.hideNav(), 60);
-        });
+            if (!nav || !t || !t.closest || !nav.contains(t)) return;
+            const control = t.closest('a, button');
+            if (!control) return;
+            if (control.matches('[data-wasm-account-menu], [data-wasm-secondary-toggle], .app-nav-account-menu-btn, .app-nav-secondary-toggle'))
+                return;
+            self.scheduleHideAfterActivation();
+        }, true);
 
         this._autoHideChromeBound = true;
     },
