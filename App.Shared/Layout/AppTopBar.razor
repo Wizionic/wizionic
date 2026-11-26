@@ -103,9 +103,9 @@
                 }
                 @if (NavLayout.ShowDocuments)
                 {
-                    <a href="/documents" title="Documents"
+                    <a href="/projects" title="Projects"
                        class="topbar-toggle-btn @(IsOnDocumentsPage() ? "active" : "")">
-                        <i class="bi bi-file-earmark-pdf" style="font-size: var(--app-nav-icon-size, 24px);"></i>
+                        <i class="bi bi-folder2-open" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </a>
                 }
             }
@@ -137,8 +137,8 @@
                 }
                 @if (NavLayout.ShowDocuments)
                 {
-                    <a href="/documents" title="Documents" class="@(IsOnDocumentsPage() ? "active" : null)">
-                        <i class="bi bi-file-earmark-pdf" style="font-size: var(--app-nav-icon-size, 24px);"></i>
+                    <a href="/projects" title="Projects" class="@(IsOnDocumentsPage() ? "active" : null)">
+                        <i class="bi bi-folder2-open" style="font-size: var(--app-nav-icon-size, 24px);"></i>
                     </a>
                 }
             }
@@ -310,7 +310,7 @@
         <button type="button"
                 class="app-nav-context-menu-item @(NavLayout.ShowDocuments ? "is-selected" : "")"
                 @onclick="() => TogglePrimaryIconAsync(NavPrimaryIcon.Documents)">
-            Show Documents icon
+            Show Projects icon
         </button>
 
         <div class="app-nav-context-menu-divider"></div>
@@ -379,7 +379,7 @@
         }
     }
     private bool ShowSidebarToggle =>
-        IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage()
+        IsOnNotesPage() || IsOnGalleryPage() || IsOnCalendarPage() || IsOnDocumentsPage()
         || (IsOnChatPage() && (AppEnvironment.IsMaui ? ChatPanel.IsOpen : true));
 
     protected override void OnInitialized()
@@ -616,7 +616,7 @@
     private bool IsOnDocumentsPage()
     {
         var path = Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.TrimEnd('/');
-        return path.Equals("/documents", StringComparison.OrdinalIgnoreCase);
+        return path.Equals("/projects", StringComparison.OrdinalIgnoreCase) || path.Equals("/documents", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

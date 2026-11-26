@@ -36,13 +36,16 @@ public sealed class WasmDocumentStore : IDocumentStore
     private static string MetaKey(string ns, string id) => ns + "d-wizionic-doc-" + id;
     private static string ContentKey(string ns, string id) => ns + "d-wizionic-doc-c-" + id;
 
-    public async Task<List<LibraryDocument>> LoadIndexAsync(CancellationToken ct = default)
+    public Task<List<LibraryDocument>> LoadIndexAsync(CancellationToken ct = default) => ReadIndex(false, ct);
+    public Task<List<LibraryDocument>> LoadProjectIndexAsync(CancellationToken ct = default) => ReadIndex(true, ct);
+    private async Task<List<LibraryDocument>> ReadIndex(bool project, CancellationToken ct)
     {
         var ns = GetPrefix();
         var metas = await _js.InvokeAsync<List<StoredDocumentMeta>>("idbGetDocumentMetasByNamespace", ns);
         var list = new List<LibraryDocument>();
         foreach (var m in metas)
         {
+            if (m.Id.StartsWith("proj:", StringComparison.Ordinal) != project) continue;
             if (!DateTime.TryParse(m.LastUpdated, out var last))
                 last = DateTime.UtcNow;
             list.Add(new LibraryDocument(
@@ -62,6 +65,7 @@ public sealed class WasmDocumentStore : IDocumentStore
         if (string.IsNullOrWhiteSpace(documentId)) return null;
         var ns = GetPrefix();
         var keyB64 = await _auth.GetOrCreateHistoryEncryptionKeyAsync();
+        if (documentId.StartsWith("proj:", StringComparison.Ordinal) && string.IsNullOrEmpty(keyB64)) throw new InvalidOperationException("Project encryption key unavailable.");
         var b64 = await _js.InvokeAsync<string?>("documentLoadBase64FromIdb", ContentKey(ns, documentId), keyB64);
         if (string.IsNullOrWhiteSpace(b64))
             return null;
@@ -81,7 +85,9 @@ public sealed class WasmDocumentStore : IDocumentStore
         byte[] bytes,
         string? source = null,
         string? conversationId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) => await PutAsync(Guid.NewGuid().ToString("N")[..12], name, contentType, bytes, source, conversationId, ct);
+
+    public async Task<LibraryDocument> PutAsync(string id, string name, string contentType, byte[] bytes, string? source, string? conversationId, CancellationToken ct = default)
     {
         if (bytes == null || bytes.Length == 0)
             throw new ArgumentException("Document bytes are required.", nameof(bytes));
@@ -89,11 +95,8 @@ public sealed class WasmDocumentStore : IDocumentStore
             name = "document";
 
         var ns = GetPrefix();
-        var id = Guid.NewGuid().ToString("N")[..12];
         var keyB64 = await _auth.GetOrCreateHistoryEncryptionKeyAsync();
-
-        // Encrypt + store raw bytes entirely in JS (no multi-MB base64 round-trip).
-        await _js.InvokeVoidAsync("documentStoreBytes", ContentKey(ns, id), keyB64, bytes);
+        if (!_auth.IsAuthenticated || ns != GetPrefix() || string.IsNullOrEmpty(keyB64)) throw new InvalidOperationException("Unlock your workspace before saving files.");
 
         var now = DateTime.UtcNow;
         var meta = new StoredDocumentMeta(
@@ -106,7 +109,7 @@ public sealed class WasmDocumentStore : IDocumentStore
             now.ToString("o"),
             source,
             conversationId);
-        await _js.InvokeVoidAsync("idbPutDocumentMeta", meta);
+        await _js.InvokeVoidAsync("documentPut", ct, meta, ContentKey(ns, id), keyB64, bytes);
 
         return new LibraryDocument(id, name, contentType, bytes.Length, now, source, conversationId);
     }

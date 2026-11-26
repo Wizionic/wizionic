@@ -608,6 +608,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
         return Coordinator.SyncAllInstalledAppsToDevicesAsync(targetDeviceIds);
     }
 
+    public event Action? OnProjectsChanged;
+    public void ScheduleProjectSync() { EnsureCoordinatorWired(); Coordinator.ScheduleProjectSync(); RaiseOnUi(OnProjectsChanged); }
     public void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null)
     {
         EnsureCoordinatorWired();
@@ -908,7 +910,8 @@ public sealed class MauiSyncService : ISyncService, IWebRtcTransportCallbacks
             settingsStore: _settingsSync,
             galleryStore: sp.GetRequiredService<IGalleryStore>(),
             storageQuota: sp.GetService<IStorageQuotaService>(),
-            calendarStore: sp.GetRequiredService<ICalendarStore>());
+            calendarStore: sp.GetRequiredService<ICalendarStore>(), projects: sp.GetRequiredService<ProjectStore>());
+        _coordinator.OnProjectsChanged += () => RaiseOnUi(OnProjectsChanged);
 
         _coordinator.OnConversationsChanged += () => RaiseOnUi(OnConversationsChanged);
         _coordinator.OnNotesChanged += () => RaiseOnUi(OnNotesChanged);

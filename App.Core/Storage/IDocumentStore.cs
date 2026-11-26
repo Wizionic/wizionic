@@ -19,6 +19,9 @@ public record LibraryDocument(
 /// </summary>
 public interface IDocumentStore
 {
+    // Project records share the encrypted binary backend and quota, but never appear in the legacy library.
+    Task<List<LibraryDocument>> LoadProjectIndexAsync(CancellationToken ct = default);
+    Task<LibraryDocument> PutAsync(string id, string name, string contentType, byte[] bytes, string? source, string? conversationId, CancellationToken ct = default);
     /// <summary>Meta-only listing, newest first.</summary>
     Task<List<LibraryDocument>> LoadIndexAsync(CancellationToken ct = default);
 

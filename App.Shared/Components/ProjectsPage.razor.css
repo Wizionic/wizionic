@@ -1,0 +1,74 @@
+/* Projects uses the shared .page / .sidebar / .conversation-item classes (app.css).
+   These overrides keep the flex geometry while inheriting the shared collapse + hover. */
+.projects-page{display:flex;flex-direction:row;flex:1;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--cf-bg,#fff);color:var(--cf-text,inherit)}
+.projects-page .sidebar{position:static;width:clamp(165px,18vw,280px);min-width:165px;height:auto;top:auto;left:auto;z-index:auto;flex-shrink:0;overflow-y:auto;background:var(--cf-bg,#fff);border-right:1px solid var(--cf-border);padding:.4rem 0}
+.projects-page main{margin-left:0;height:auto;flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--cf-bg,#fff)}
+.projects-body{display:flex;flex:1;min-height:0;overflow:hidden;position:relative}
+.projects-sidebar .title{display:flex;align-items:center;gap:.4rem}
+.projects-sidebar .chat-sub .title{font-size:.9em}
+.projects-sidebar .unfiled{display:flex;align-items:center;gap:.4rem;width:100%;text-align:left}
+/* Consistent left alignment + single rounded highlight (no shifting left border).
+   !important needed: the shared sidebar rules in app.css are !important. */
+.projects-sidebar .cf-item{padding:6px 20px !important}
+.projects-sidebar .cf-link{justify-content:flex-start;gap:.5rem}
+.projects-sidebar .cf-link h4{margin:0;flex:1;text-align:left}
+.projects-sidebar .conversation-item{margin:0 8px !important;padding:0 !important;border-left:0 !important;border-radius:8px !important}
+.projects-sidebar .conversation-item.active{border-left:0 !important;background:var(--color-sidebar-active) !important}
+.projects-sidebar .row-top{padding:6px 12px;margin-bottom:0}
+.projects-sidebar .chat-sub .row-top{padding-left:34px}
+.projects-sidebar .chat-sub .title{padding-inline-start:0}
+.workspace{display:flex;flex:1;min-width:0;min-height:0;flex-direction:column;overflow:hidden}
+.workspace header,.preview header,nav,form,article,footer{display:flex;align-items:center;gap:.45rem}
+.workspace header,nav,.controls,footer,.preview header{padding:.6rem .9rem}
+h4{margin:.4rem 0;flex:1}
+.row-button,.chat-row{display:block;text-align:left;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.controls{overflow:auto}
+.conversation{flex:1;min-height:0;overflow:hidden;position:relative}
+.conversation[hidden]{display:none}
+nav{flex-wrap:wrap;border-bottom:1px solid var(--cf-border)}
+button,select,input,textarea,.upload{font:inherit;color:inherit;background:var(--cf-bg,#fff);border:1px solid var(--cf-border);border-radius:.4rem;padding:.35rem .55rem}
+button,.upload{cursor:pointer}
+.row-button,.chat-row,.filename{border:0}
+.filename{text-align:left;overflow-wrap:anywhere;flex:1}
+.controls article{flex-wrap:wrap;border-bottom:1px solid var(--cf-border);padding:.6rem 0}
+.controls textarea{display:block;width:100%;min-height:9rem}
+.upload{display:inline-block}
+.upload input{max-width:15rem}
+.preview{width:38%;min-width:220px;max-width:65%;resize:horizontal;direction:rtl;overflow:auto}
+.preview>*,.preview ::deep aside{direction:ltr}
+.preview pre{white-space:pre-wrap;padding:1rem}
+.workspace footer{font-size:.85em;justify-content:space-between}
+.conversation ::deep .page,.conversation ::deep .chat-wrapper{height:100%;max-height:100%}
+.conversation ::deep main{min-width:0}
+@media(max-width:780px){.projects-page{flex-direction:column}.projects-page .sidebar{width:100%;max-height:25%;border-right:0;border-bottom:1px solid var(--cf-border)}.preview{position:absolute;inset:0;max-width:none;width:100%;background:var(--cf-bg,#fff);z-index:5;resize:none}}
+.icon{display:inline-grid;place-items:center;min-width:2.1rem;min-height:2.1rem;border:0;background:transparent;border-radius:.4rem;color:inherit}
+.icon:hover,.icon:focus-visible,.file-picker:focus-within{background:var(--cf-bg-subtle,#eee)}
+.project-title{flex:1;min-width:0}
+.project-title h4 button{border:0;background:transparent;font:inherit;padding:0;text-align:start}
+.project-title small{color:var(--cf-text-muted);overflow-wrap:anywhere}
+.instructions{text-align:end}
+.instructions textarea{margin-bottom:.35rem;resize:vertical}
+.instructions button:disabled{opacity:.4}
+.file-picker{position:relative;overflow:hidden;cursor:pointer}
+.file-picker ::deep input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.file-picker:focus-within{outline:2px solid currentColor}
+.file-actions{display:flex;gap:.3rem;align-items:center;justify-content:flex-end;margin-bottom:.4rem}
+.note-picker{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;padding:.5rem;border:1px solid var(--cf-border);border-radius:.5rem;margin-bottom:.5rem}
+.note-picker select{max-width:14rem}
+.chat-toolbar{display:flex;align-items:center;gap:.4rem;padding:.25rem .9rem}
+.toolbar-spacer{flex:1}
+.draft-mode{display:inline-flex;align-items:center;gap:.4rem;font-size:.85em}
+.draft-mode select{padding:.2rem .4rem}
+.chat-picker{flex-direction:column;align-items:stretch;max-height:12rem;overflow:auto;margin:0 .9rem .5rem}
+.chat-picker .chat-row{border:0;text-align:left;padding:.2rem .4rem}
+.project-dialog{position:fixed;inset:0;margin:auto;padding:1.35rem;width:min(26rem,calc(100vw - 2rem));max-height:90vh;overflow:auto;color:var(--cf-text,inherit);background:var(--cf-bg,#fff);border:1px solid var(--cf-border);border-radius:1rem;box-shadow:0 1rem 4rem #0003}
+.project-dialog::backdrop{background:#0006}
+.project-dialog form{display:grid;gap:.85rem}
+.dialog-close{position:absolute;right:.45rem;top:.45rem}
+.dialog-folder{justify-self:center;font-size:1.65rem;padding:.6rem 1rem;border-radius:.8rem;background:var(--cf-bg-subtle,#eee)}
+.project-dialog input:not([type=file]){font-size:1.2rem;text-align:center;border:0}
+.project-dialog textarea{min-height:6rem;resize:vertical}
+.dialog-files{display:grid;place-items:center;min-height:4rem;border:1px dashed var(--cf-border);border-radius:.65rem}
+.submit-project{background:var(--color-text,#222);color:var(--color-bg,#fff);border:0;padding:.6rem}
+.submit-project:disabled{opacity:.5}
+.project-dialog small{overflow-wrap:anywhere}

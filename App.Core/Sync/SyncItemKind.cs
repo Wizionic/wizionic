@@ -17,5 +17,6 @@ public enum SyncItemKind
     /// <summary>Calendar meta (name, color, visibility).</summary>
     Calendar = 8,
     /// <summary>Single calendar event create/update/delete.</summary>
-    CalendarEvent = 9
+    CalendarEvent = 9,
+    Project = 10
 }

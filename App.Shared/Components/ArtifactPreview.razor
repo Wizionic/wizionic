@@ -1,0 +1,49 @@
+@using App.Core.Storage
+@using App.Shared.Services
+@using Markdig
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+<aside class="artifact-preview" aria-label="File preview">
+    <header><strong>@Name</strong>
+        @if (OpenHref != null) { <a href="@OpenHref" title="Open in Notes" aria-label="Open in Notes"><i class="bi bi-box-arrow-up-right"></i></a> }
+        <button @onclick="Export" title="Download" aria-label="Download"><i class="bi bi-download"></i></button> <button @onclick="OnClose" title="Close preview" aria-label="Close preview">✕</button></header>
+    @if (Mime == "application/pdf")
+    {
+        @if (count > 0) {<div class="viewer-tools"><button aria-label="Previous page" disabled="@(page <= 1)" @onclick="() => Turn(-1)">‹</button> @(page) / @count <button aria-label="Next page" disabled="@(page >= count)" @onclick="() => Turn(1)">›</button>
+        <button aria-label="Zoom out" @onclick="() => Zoom(-.25)">−</button><button aria-label="Zoom in" @onclick="() => Zoom(.25)">+</button></div>}
+        else if(error==null){<small role="status">Loading PDF…</small>}
+        <section><canvas @ref="canvas"></canvas></section>
+    }
+    else if (Mime is "image/png" or "image/jpeg" or "image/webp" or "image/gif") { <section><img src="@image" alt="@Name" /></section> }
+    else if (previewHtml != null) { <section class="doc-frame"><iframe sandbox="" srcdoc="@previewHtml" title="@Name"></iframe></section> }
+    else { <section><pre>@text</pre></section> }
+    @if (error != null) { <p role="status">@error</p> }
+</aside>
+@code {
+    [Parameter, EditorRequired] public byte[] Bytes { get; set; } = [];
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public string Mime { get; set; } = "";
+    [Parameter] public int StartPage { get; set; } = 1;
+    [Parameter] public string? OpenHref { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    IJSObjectReference? module; ElementReference canvas; int page=1,count; double zoom=1; string? image,text,error,previewHtml;
+    protected override void OnInitialized() {
+        if (Mime.StartsWith("image/")) image=$"data:{Mime};base64,{Convert.ToBase64String(Bytes)}";
+        else if (Mime == "application/pdf") { }
+        else if (Mime == "text/html") previewHtml = ProjectRetrieval.SafePreviewHtml(System.Text.Encoding.UTF8.GetString(Bytes));
+        else if (Mime == "text/markdown") previewHtml = ProjectRetrieval.SafePreviewHtml(Markdown.ToHtml(System.Text.Encoding.UTF8.GetString(Bytes), new MarkdownPipelineBuilder().UseAdvancedExtensions().Build()));
+        else if (Mime == ProjectRetrieval.DocxMime) { try { previewHtml = ProjectRetrieval.SafePreviewHtml(DocxReader.Read(Bytes).Html); } catch (Exception ex) { error = "Could not read Word document: " + ex.Message; } }
+        else text=Mime.StartsWith("text/") ? System.Text.Encoding.UTF8.GetString(Bytes,0,Math.Min(Bytes.Length,200000)) : "Preview unavailable for this file type.";
+    }
+    protected override async Task OnAfterRenderAsync(bool first) {
+        if(!first || Mime!="application/pdf") return;
+        try { module=await JS.InvokeAsync<IJSObjectReference>("import","./_content/App.Shared/projects.js"); count=await module.InvokeAsync<int>("display",canvas,Bytes); page=Math.Clamp(StartPage,1,count); await Draw(); }
+        catch(Exception ex){ error="Could not open PDF: "+ex.Message; }
+        StateHasChanged();
+    }
+    async Task Draw(){ if(module!=null) await module.InvokeVoidAsync("draw",canvas,page,zoom); }
+    async Task Turn(int delta){page=Math.Clamp(page+delta,1,count); await Draw();}
+    async Task Zoom(double delta){zoom=Math.Clamp(zoom+delta,.5,3); await Draw();}
+    async Task Export()=>await JS.InvokeVoidAsync("downloadBase64File",Convert.ToBase64String(Bytes),Name,Mime);
+    public async ValueTask DisposeAsync(){ if(module!=null) try { await module.InvokeVoidAsync("close",canvas); await module.DisposeAsync(); } catch(JSException){} }
+}

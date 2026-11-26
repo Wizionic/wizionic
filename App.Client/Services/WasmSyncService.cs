@@ -152,6 +152,7 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
         INoteStore noteStore,
         IGalleryStore galleryStore,
         ICalendarStore calendarStore,
+        ProjectStore projects,
         ChatModelCatalogService modelCatalog,
         IKeyStore keyStore,
         ChatCompletionService chatCompletion,
@@ -186,7 +187,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             settingsStore: _settingsSync,
             galleryStore: _galleryStore,
             storageQuota: null,
-            calendarStore: calendarStore);
+            calendarStore: calendarStore, projects: projects);
+        _coordinator.OnProjectsChanged += () => OnProjectsChanged?.Invoke();
 
         _coordinator.OnConversationsChanged += () => OnConversationsChanged?.Invoke();
         _coordinator.OnNotesChanged += () => OnNotesChanged?.Invoke();
@@ -1077,6 +1079,8 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
     public Task<int> SyncAllInstalledAppsToDevicesAsync(IEnumerable<string> targetDeviceIds) =>
         Task.FromResult(0);
 
+    public event Action? OnProjectsChanged;
+    public void ScheduleProjectSync() { EnsureCoordinatorWired(); _coordinator.ScheduleProjectSync(); OnProjectsChanged?.Invoke(); }
     public void ScheduleAutoSyncConvoAfterLocalSave(string convoId, string? title = null)
     {
         EnsureCoordinatorWired();

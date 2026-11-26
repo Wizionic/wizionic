@@ -98,10 +98,12 @@ internal static class MauiAppData
 		try
 		{
 			var targetDb = Path.Combine(targetDir, DbFileName);
-			var targetLen = System.IO.File.Exists(targetDb) ? new FileInfo(targetDb).Length : 0L;
+			// Database size is not a measure of freshness. Never replace a populated live database.
+			if (System.IO.File.Exists(targetDb) && new FileInfo(targetDb).Length > 0)
+				return;
 
 			string? bestDir = null;
-			var bestLen = targetLen;
+			long bestLen = 0;
 			foreach (var dir in UnpackagedLegacyDirectories())
 			{
 				if (string.IsNullOrWhiteSpace(dir) || !System.IO.Directory.Exists(dir))
