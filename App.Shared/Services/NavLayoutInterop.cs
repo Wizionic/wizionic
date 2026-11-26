@@ -20,8 +20,8 @@ internal static class NavLayoutInterop
     public static ValueTask SavePrefsAsync(IJSRuntime js, NavLayoutPrefsDto prefs, CancellationToken ct = default) =>
         js.InvokeVoidAsync($"{JsPrefix}savePrefs", ct, prefs);
 
-    public static ValueTask ApplyAsync(IJSRuntime js, NavLayoutMode mode, CancellationToken ct = default) =>
-        js.InvokeVoidAsync($"{JsPrefix}apply", ct, ToStorageMode(mode));
+    public static ValueTask ApplyAsync(IJSRuntime js, NavLayoutMode mode, bool autoHide, CancellationToken ct = default) =>
+        js.InvokeVoidAsync($"{JsPrefix}apply", ct, ToStorageMode(mode), autoHide);
 
     public static string ToStorageMode(NavLayoutMode mode) =>
         mode == NavLayoutMode.Left ? "left" : "top";
@@ -60,5 +60,8 @@ internal static class NavLayoutInterop
 
         [System.Text.Json.Serialization.JsonPropertyName("secondaryExpanded")]
         public bool SecondaryExpanded { get; set; } = false;
+
+        [System.Text.Json.Serialization.JsonPropertyName("autoHide")]
+        public bool AutoHide { get; set; } = false;
     }
 }

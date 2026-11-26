@@ -24,7 +24,7 @@
 
 <WasmSidebarSync />
 
-<div class="page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+<div class="page workspace-page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
     <div class="sidebar">
         <nav class="cf-nav cf-column">
             <div class="cf-item notes-search-wrap">
@@ -85,16 +85,14 @@
                     }
                 }
             </div>
-            <div class="cf-item">
-                <span class="cf-link small">
-                   <h4 class="help-heading">Notebooks <HelpGlyph Topic="notes" /></h4>
-                    <div class="menu" @onclick:stopPropagation>
-                        <button id="notebooks-menu-btn" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleExportAllMenu()" title="Notebook options">⋮</button>
-                    </div>
-                    <button class="menu-button" @onclick="OpenCreateNoteDialog" title="New notebook">
-                        <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
-                    </button>
-                </span>
+            <div class="workspace-sidebar-heading">
+                <h4 class="help-heading">Notebooks <HelpGlyph Topic="notes" /></h4>
+                <div class="menu contextual-actions @(openExportAllMenuId != null ? "actions-open" : null)" @onclick:stopPropagation>
+                    <button type="button" id="notebooks-menu-btn" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleExportAllMenu()" title="Notebook options" aria-label="Notebook options" aria-expanded="@(openExportAllMenuId != null ? "true" : "false")">⋮</button>
+                </div>
+                <button type="button" class="menu-button workspace-sidebar-add" @onclick="OpenCreateNoteDialog" title="New notebook" aria-label="New notebook">
+                    <i class="bi bi-plus-circle" aria-hidden="true"></i>
+                </button>
             </div>
 
             @foreach (var n in notes.OrderBy(x => x.SortOrder).ThenByDescending(x => x.LastUpdated))
@@ -112,11 +110,10 @@
                             }
                             @n.Title
                         </div>
-                        <div class="menu" @onclick:stopPropagation @onpointerdown:stopPropagation>
-                            <button id="menu-btn-@n.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(n.Id)">⋮</button>
+                        <div class="menu row-actions contextual-actions @(openMenuId == n.Id ? "actions-open" : null)" @onclick:stopPropagation @onpointerdown:stopPropagation>
+                            <button type="button" id="menu-btn-@n.Id" class="menu-button" aria-label="Options for @n.Title" aria-expanded="@(openMenuId == n.Id ? "true" : "false")" @onclick:stopPropagation @onclick="() => ToggleMenu(n.Id)">⋮</button>
                         </div>
                     </div>
-                    <div class="date">@n.LastUpdated.ToLocalTime().ToString("MMM d")</div>
                 </div>
             }
             @if (!notes.Any())
@@ -166,7 +163,7 @@
                             }
                             <div class="message-row" style="margin-bottom: 32px; display: flex; justify-content:  flex-start;">
                                     <div class="note-entry-wrap @(isEditing ? "note-editing" : "")" @onclick:stopPropagation="true">
-                                    <div class="note-response-actions" @onclick:stopPropagation="true">
+                                     <div class="note-response-actions contextual-actions @(isEditing || openEntryMenuIndex == capturedIndex ? "actions-open" : null)" @onclick:stopPropagation="true">
                                         @if (isEditing)
                                         {
                                             <button type="button" class="menu-button note-action-btn" @onclick="() => SaveEdit(capturedIndex)" title="Save">
@@ -240,7 +237,7 @@
                                             </div>
                                         }
                                     </div>
-                                    <div class="message-bot @(isEditing ? "note-editing" : "")"
+                                     <div class="note-entry-surface @(isEditing ? "note-editing" : "")"
                                          @onclick="() => OnNoteBodyClick(capturedIndex)"
                                          @onclick:stopPropagation="true">
                                         @if (isEditing)

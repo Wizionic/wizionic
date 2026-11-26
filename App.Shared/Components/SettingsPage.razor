@@ -91,6 +91,19 @@
                 </select>
             </div>
         }
+
+        <div class="theme-setting-row">
+            <div class="theme-setting-info">
+                <p class="theme-setting-label">Auto-hide navigation</p>
+                <p class="theme-setting-desc">
+                    Hide the nav bar until you hover or tap the screen edge. Also on the nav bar's right-click menu.
+                </p>
+            </div>
+            <label class="ollama-toggle">
+                <input type="checkbox" checked="@NavLayout.AutoHide" @onchange="OnNavAutoHideChanged" />
+                <span class="ollama-toggle-slider"></span>
+            </label>
+        </div>
     </div>
 
     <!-- Voice / wake word (used with or without Home Assistant) -->
@@ -965,8 +978,7 @@
         Theme.OnChanged += OnThemeChangedFromService;
         Auth.OnChanged += OnAuthOrServerChanged;
         ServerEndpoint.OnChanged += OnAuthOrServerChanged;
-        if (AppEnvironment.IsMaui)
-            NavLayout.OnChanged += OnNavLayoutChangedFromService;
+        NavLayout.OnChanged += OnNavLayoutChangedFromService;
         if (DesktopShell.IsSupported)
         {
             DesktopShell.OnChanged += OnDesktopShellChanged;
@@ -1532,8 +1544,7 @@
 
         await UiStorageNamespace.ApplyAsync(JS, Auth);
         await Theme.SyncFromStorageAndApplyAsync(JS);
-        if (AppEnvironment.IsMaui)
-            await NavLayout.SyncFromStorageAndApplyAsync(JS);
+        await NavLayout.SyncFromStorageAndApplyAsync(JS);
     }
 
     private void OnThemeChangedFromService() => InvokeAsync(StateHasChanged);
@@ -1560,14 +1571,20 @@
         await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Appearance);
     }
 
+    private async Task OnNavAutoHideChanged(ChangeEventArgs e)
+    {
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await NavLayout.SetAutoHideAsync(e.Value is bool b && b, JS);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Appearance);
+    }
+
     public void Dispose()
     {
         ChatHttpInspector.Changed -= OnChatHttpInspectorLogChanged;
         Theme.OnChanged -= OnThemeChangedFromService;
         Auth.OnChanged -= OnAuthOrServerChanged;
         ServerEndpoint.OnChanged -= OnAuthOrServerChanged;
-        if (AppEnvironment.IsMaui)
-            NavLayout.OnChanged -= OnNavLayoutChangedFromService;
+        NavLayout.OnChanged -= OnNavLayoutChangedFromService;
         if (DesktopShell.IsSupported)
             DesktopShell.OnChanged -= OnDesktopShellChanged;
     }

@@ -111,6 +111,8 @@ a:hover {
     --app-nav-width: 0px;
     --app-nav-height: var(--app-nav-size);
     --app-nav-offset-x: 0px;
+    --sidebar-width: 250px;
+    --scrollbar-thumb: var(--color-border-strong);
 
     /* Component Tokens — Sidebar */
     --sidebar-bg: var(--light-blue-2);
@@ -269,7 +271,7 @@ a:hover {
 
 /* Success boxes keep dedicated fg (do not inherit theme text — mint + light text is unreadable) */
 [data-theme="dracula"] .cf-success-box,
-[data-theme="app-dark"] .cf-success-box,
+:is([data-theme="app-dark"], [data-theme="slate"]) .cf-success-box,
 [data-theme="dark-blue"] .cf-success-box,
 [data-theme="nord"] .cf-success-box {
     background: var(--color-success-bg);
@@ -278,7 +280,7 @@ a:hover {
 }
 
 [data-theme="dracula"] .cf-sync-info-card,
-[data-theme="app-dark"] .cf-sync-info-card,
+:is([data-theme="app-dark"], [data-theme="slate"]) .cf-sync-info-card,
 [data-theme="dark-blue"] .cf-sync-info-card,
 [data-theme="nord"] .cf-sync-info-card,
 [data-theme="solarized-light"] .cf-sync-info-card {
@@ -522,6 +524,46 @@ button.btn-outline-secondary:hover:not(:disabled) {
 
 /* Sidebar legacy styles (kept for safety) */
 .chat-sidebar, .chat-sidebar-section-title, .chat-sidebar-new, .chat-sidebar-item { /* unused but harmless */ }
+
+/* ====================== SCROLLBARS ======================
+   Thin, trackless scrollbars everywhere. The thumb stays invisible at rest and
+   appears when hovering the scrollable area or while actively scrolling
+   (scrollbarInterop.js marks active scrollers so touch users see it too). */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+*:hover,
+*[data-scrolling] {
+    scrollbar-color: var(--scrollbar-thumb, var(--color-border-strong)) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+}
+
+:hover::-webkit-scrollbar-thumb,
+[data-scrolling]::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, var(--color-border-strong));
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+    background: var(--color-text-muted);
+}
 
 /* ====================== CHAT STRUCTURE ====================== */
 .chat-wrapper {
@@ -2221,16 +2263,9 @@ button.btn-outline-secondary:hover:not(:disabled) {
 
 .message-bot-menu {
     position: absolute;
-    top: 4px;
-    right: 4px;
-    opacity: 0.5;
-    transition: opacity 0.15s ease;
+    top: 6px;
+    inset-inline-end: 10px;
     z-index: 2;
-}
-
-.message-bot:hover .message-bot-menu,
-.message-bot-menu:focus-within {
-    opacity: 1;
 }
 
 .bot-message-menu-popup {
@@ -2354,7 +2389,8 @@ button.btn-outline-secondary:hover:not(:disabled) {
 .chat-markdown table, .chat-markdown { overflow-x: auto; }
 .chat-markdown th, .chat-markdown td { white-space: nowrap; padding: 6px 10px; border: 1px solid var(--color-border-strong); }
 .chat-markdown table::-webkit-scrollbar { height: 8px; }
-.chat-markdown table::-webkit-scrollbar-thumb { background: var(--grey-400); border-radius: 4px; }
+.chat-markdown table:hover::-webkit-scrollbar-thumb,
+.chat-markdown table[data-scrolling]::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb, var(--color-border-strong)); }
 
 .typing { font-style: italic; color: var(--color-text-muted); margin-left: 0.5rem; }
 
@@ -2448,21 +2484,17 @@ button.btn-outline-secondary:hover:not(:disabled) {
     max-height: 140px;
     overflow-y: auto;
     line-height: 1.4;
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-border-strong) transparent;
     text-align: left;
 }
 
-/* Subtle scrollbar for when it does appear after 3 lines */
+/* Slimmer thumb for the composer; same hover/scroll reveal as global scrollbars. */
 .message-input::-webkit-scrollbar {
     width: 5px;
 }
-.message-input::-webkit-scrollbar-thumb {
-    background: var(--color-border-strong);
+.message-input:hover::-webkit-scrollbar-thumb,
+.message-input[data-scrolling]::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, var(--color-border-strong));
     border-radius: 3px;
-}
-.message-input::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
 }
 
 .message-input:focus { outline: none; }
@@ -2734,17 +2766,44 @@ button.btn-outline-secondary:hover:not(:disabled) {
     flex-shrink: 0;
 }
 
-/* Hover/focus-revealed row actions (shared by Chat, Notes, Projects sidebars). */
+/* Contextual actions keep their space and remain keyboard- and touch-accessible. */
 .conversation-item .row-actions {
     display: flex;
     gap: 2px;
     flex-shrink: 0;
-    opacity: 0;
-    transition: opacity .12s ease;
 }
-.conversation-item:hover .row-actions,
-.conversation-item:focus-within .row-actions {
-    opacity: 1;
+
+@media (hover: hover) and (pointer: fine) {
+    .contextual-actions {
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    :is(.workspace-sidebar-heading, .conversation-item, .message-me, .message-bot, .note-entry-wrap):is(:hover, :focus-within) .contextual-actions,
+    .contextual-actions.actions-open {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .contextual-actions {
+        transition: opacity .12s ease;
+    }
+}
+
+/* Touch screens (incl. hybrids that report a fine primary pointer): always show
+   the dots and give them a comfortable tap target. */
+@media (any-pointer: coarse) {
+    .contextual-actions {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .contextual-actions .menu-button {
+        min-width: 40px;
+        min-height: 40px;
+    }
 }
 
 /* Make chat take full width of the right pane in WASM layout (no auto margin) */
@@ -3546,8 +3605,8 @@ html[data-nav-layout="left"] .app-nav-primary .topbar-toggle-btn {
 }
 
 .sidebar {
-    width: 250px;
-    min-width: 220px;
+    width: var(--sidebar-width, 250px);
+    min-width: 180px;
     flex-shrink: 0;
     background: var(--color-sidebar-bg);
     border-right: 1px solid var(--color-sidebar-border);
@@ -3563,7 +3622,7 @@ html[data-nav-layout="left"] .app-nav-primary .topbar-toggle-btn {
 main {
     flex: 1;
     margin-top: 0;
-    margin-left: 250px;
+    margin-left: var(--sidebar-width, 250px);
     min-width: 0;
     background: var(--color-bg);
     overflow: hidden;
@@ -3852,6 +3911,120 @@ html[data-nav-layout="left"] .app-nav-account {
     gap: 0.25rem;
 }
 
+/* ====================== AUTO-HIDE NAVIGATION ======================
+   Content reclaims the nav space; the nav slides back as an overlay on edge
+   hover, keyboard focus, or the touch handle (chrome created by navLayoutInterop.js). */
+html[data-nav-autohide="1"] {
+    --app-nav-height: 0px;
+}
+
+html[data-nav-autohide="1"][data-nav-layout="left"] {
+    --app-nav-width: 0px;
+    --app-nav-offset-x: 0px;
+}
+
+html[data-nav-autohide="1"] .app-nav.top-row {
+    z-index: 1500 !important;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+html[data-nav-autohide="1"][data-nav-layout="top"] .app-nav.top-row,
+html[data-nav-autohide="1"]:not([data-nav-layout="left"]) .app-nav.top-row {
+    transform: translateY(-100%);
+}
+
+html[data-nav-autohide="1"][data-nav-layout="left"] .app-nav.top-row {
+    transform: translateX(-100%);
+}
+
+html[data-nav-autohide="1"][data-nav-revealed="1"] .app-nav.top-row {
+    transform: none;
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html[data-nav-autohide="1"] .app-nav.top-row {
+        transition: none;
+    }
+}
+
+/* Invisible edge strip that reveals the nav on hover. */
+.app-nav-hotzone {
+    position: fixed;
+    z-index: 1499;
+    display: none;
+}
+
+html[data-nav-autohide="1"] .app-nav-hotzone {
+    display: block;
+}
+
+html[data-nav-layout="top"] .app-nav-hotzone,
+html:not([data-nav-layout="left"]) .app-nav-hotzone {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+}
+
+html[data-nav-layout="left"] .app-nav-hotzone {
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 8px;
+}
+
+/* Touch affordance: small pill at the screen edge toggles the nav. */
+.app-nav-handle {
+    position: fixed;
+    z-index: 1501;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-bg-surface);
+    color: var(--color-text-muted);
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0.65;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.app-nav-handle:hover,
+.app-nav-handle:focus-visible {
+    opacity: 1;
+}
+
+html[data-nav-layout="top"] .app-nav-handle,
+html:not([data-nav-layout="left"]) .app-nav-handle {
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 16px;
+}
+
+html[data-nav-layout="left"] .app-nav-handle {
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 44px;
+}
+
+@media (any-pointer: coarse) {
+    html[data-nav-autohide="1"] .app-nav-handle {
+        display: flex;
+    }
+
+    html[data-nav-revealed="1"] .app-nav-handle {
+        display: none;
+    }
+}
+
 html[data-nav-layout="left"] .app-nav-primary a,
 html[data-nav-layout="left"] .app-nav-secondary a,
 html[data-nav-layout="left"] .app-nav-account > a,
@@ -3979,16 +4152,12 @@ body .top-left,
     background: rgba(189, 147, 249, 0.15) !important;
 }
 
-/* --- app-dark topbar icon hover (neutral grey/white) --- */
-[data-theme="app-dark"] .top-row-right a:hover,
-[data-theme="app-dark"] .top-row > div:last-child a:hover {
+/* --- Neutral topbar icon hover for Dark and Slate --- */
+:is([data-theme="app-dark"], [data-theme="slate"]) :is(.top-row-right, .top-row > div:last-child) a:hover {
     background: rgba(255, 255, 255, 0.10) !important;
 }
 
-[data-theme="app-dark"] .top-left a:hover,
-[data-theme="app-dark"] .app-nav-primary a:hover,
-[data-theme="app-dark"] .app-nav-secondary a:hover,
-[data-theme="app-dark"] .app-nav-account a:hover {
+:is([data-theme="app-dark"], [data-theme="slate"]) :is(.top-left, .app-nav-primary, .app-nav-secondary, .app-nav-account) a:hover {
     background: rgba(255, 255, 255, 0.08) !important;
 }
 
@@ -4094,10 +4263,10 @@ body .topbar-toggle-btn.active,
 /* Sidebar for WASM chat page */
 body .sidebar,
 .sidebar {
-    width: 250px !important;
-    min-width: 220px !important;
-    background: var(--color-sidebar-bg) !important;
-    border-right: 1px solid var(--color-sidebar-border) !important;
+    width: var(--sidebar-width, 250px) !important;
+    min-width: 180px !important;
+    background: var(--workspace-canvas, var(--color-sidebar-bg)) !important;
+    border-right: 1px solid var(--workspace-sidebar-divider, var(--color-sidebar-border)) !important;
     color: var(--color-text) !important;
     position: fixed !important;
     top: var(--app-nav-height) !important;
@@ -4111,8 +4280,8 @@ body .sidebar,
 /* Main content area pushed by sidebar */
 body main,
 main {
-    margin-left: 250px !important;
-    background: var(--color-bg) !important;
+    margin-left: var(--sidebar-width, 250px) !important;
+    background: var(--workspace-canvas, var(--color-bg)) !important;
     color: var(--color-text) !important;
     min-width: 0 !important;
 }
@@ -4155,6 +4324,54 @@ body .page.sidebar-collapsed main,
     }
 }
 
+/* Drag strip on the sidebar/content boundary (created by sidebarInterop.js).
+   Invisible at rest; a subtle accent line appears on hover / while dragging. */
+.sidebar-resizer {
+    position: fixed;
+    top: var(--app-nav-height);
+    left: calc(var(--app-nav-offset-x, 0px) + var(--sidebar-width, 250px) - 3px);
+    width: 7px;
+    height: calc(100vh - var(--app-nav-height));
+    z-index: 940;
+    cursor: col-resize;
+    touch-action: none;
+    display: none;
+}
+
+body:has(.page:not(.sidebar-collapsed):not(.chat-panel-closed) .sidebar) .sidebar-resizer {
+    display: block;
+}
+
+.sidebar-resizer::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 3px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background-color 0.15s ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer.is-active::after,
+.sidebar-resizer:focus-visible::after {
+    background: var(--color-accent, var(--primary-blue));
+    opacity: 0.55;
+}
+
+body.sidebar-resizing {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+@media (max-width: 640.98px) {
+    .sidebar-resizer {
+        display: none !important;
+    }
+}
+
 /* Chat area */
 body .chat-wrapper,
 .chat-wrapper {
@@ -4165,7 +4382,7 @@ body .chat-wrapper,
     height: 100% !important;
     z-index: 1 !important;
     position: relative !important;
-    background: var(--color-chat-bg) !important;
+    background: var(--workspace-canvas, var(--color-chat-bg)) !important;
 }
 
 /* Browser panel: side-by-side layout (overrides column !important above) */
@@ -4296,7 +4513,7 @@ body .chat-container,
     flex: 1 !important;
     overflow-y: auto !important;
     padding: 1.5rem 1rem 195px !important;
-    background: var(--color-chat-bg) !important;
+    background: var(--workspace-canvas, var(--color-chat-bg)) !important;
     max-width: 1080px !important;
     margin: 0 auto !important;
     width: 100% !important;
@@ -4306,7 +4523,7 @@ body .chat-container,
 /* Input bar at bottom */
 body .input-area,
 .input-area {
-    background: var(--color-chat-bg) !important;
+    background: var(--workspace-canvas, var(--color-chat-bg)) !important;
     border-top: none !important;
     box-shadow: none !important;
     padding: 10px 24px 14px !important;
@@ -4323,7 +4540,7 @@ body .input-container,
     gap: 6px !important;
     background: var(--color-bg-surface) !important;
     border: 1px solid var(--color-border) !important;
-    border-radius: 18px !important;
+    border-radius: var(--chat-surface-radius, 18px) !important;
     padding: 8px 12px 10px !important;
     width: 100% !important;
     margin: 0 !important;
@@ -4425,6 +4642,86 @@ body .conversation-item.active,
     border-left: 3px solid var(--primary-blue) !important;
 }
 
+/* Shared Chat, Notes and Projects sidebar rhythm. */
+.workspace-page > .sidebar {
+    --workspace-sidebar-inset: 14px;
+    --workspace-row-icon-width: 1.15em;
+    --workspace-row-icon-gap: .45em;
+}
+
+.workspace-sidebar-heading {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    padding: .55rem var(--workspace-sidebar-inset);
+}
+
+.workspace-sidebar-heading h4 {
+    flex: 1;
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.workspace-sidebar-heading .workspace-sidebar-add {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    min-width: 2rem;
+    min-height: 2rem;
+    font-size: 1.5rem;
+    line-height: 1;
+}
+
+.workspace-page > .sidebar .conversation-item {
+    margin: 1px 6px !important;
+    padding: 0 calc(var(--workspace-sidebar-inset) - 6px) !important;
+    border-left: 0 !important;
+    border-radius: 8px !important;
+}
+
+.workspace-page > .sidebar .row-top {
+    min-height: 2.25rem;
+    margin: 0;
+    gap: .25rem;
+}
+
+.workspace-page > .sidebar .title {
+    min-width: 0;
+    margin: 0;
+}
+
+.workspace-page > .sidebar .row-actions .menu-button {
+    min-width: 1.75rem;
+    min-height: 2rem;
+}
+
+.workspace-row-label {
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+    gap: var(--workspace-row-icon-gap);
+    padding: 0;
+    background: transparent;
+    border: 0;
+    text-align: start;
+    cursor: pointer;
+}
+
+.workspace-row-icon {
+    flex: 0 0 var(--workspace-row-icon-width);
+}
+
+.workspace-row-label > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.workspace-child-row .workspace-row-label {
+    padding-inline-start: calc(var(--workspace-row-icon-width) + var(--workspace-row-icon-gap));
+}
+
 /* Message bubbles already have some, but reinforce for WASM (and ensure base rules from earlier in file also apply now that CSS is balanced) */
 body .message-row,
 .message-row {
@@ -4434,11 +4731,12 @@ body .message-row,
 
 body .message-me,
 .message-me {
+    position: relative;
     margin-left: auto !important;
-    background: var(--bubble-blue) !important;
-    color: var(--text-dark) !important;
+    background: var(--chat-user-surface, var(--color-bubble-user)) !important;
+    color: var(--color-text) !important;
     padding: 0.6rem 1rem !important;
-    border-radius: 12px !important;
+    border-radius: var(--chat-surface-radius, 12px) !important;
     max-width: 70% !important;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
     display: block !important; /* ensure it acts as a block container for its timestamp etc */
@@ -4447,13 +4745,26 @@ body .message-me,
 body .message-bot,
 .message-bot {
     margin-right: auto !important;
-    background: var(--bubble-ai-bg, #ffffff) !important;
-    color: var(--text-dark) !important;
+    background: var(--chat-reply-surface, var(--color-bubble-ai)) !important;
+    color: var(--color-text) !important;
     padding: 0.6rem 1rem !important;
-    border-radius: 12px !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    border: 0;
+    border-radius: var(--chat-surface-radius, 12px) !important;
+    box-shadow: none;
     max-width: 100% !important;
     width: fit-content !important;
+}
+
+.chat-page {
+    --chat-surface-radius: 24px;
+}
+
+.chat-page :is(.message-me, .message-bot):has(> .message-bot-menu) {
+    padding-inline-end: 2.15rem !important;
+}
+
+.chat-page .input-container:focus-within {
+    border-color: var(--color-accent) !important;
 }
 
 /* Narrow phones: slightly tighter toolbar (stacked layout is already the default everywhere) */
@@ -4625,9 +4936,19 @@ body .message-bot,
     margin-bottom: 10px;
 }
 
-.note-entry-wrap .message-bot {
-    width: 100% !important;
-    max-width: 100% !important;
+.note-entry-surface {
+    width: 100%;
+    min-width: 0;
+    background: var(--note-paper);
+    border: 1px solid var(--note-border);
+    border-radius: 12px;
+    padding: 1px; /* Keep the content inset stable when the editing border thickens. */
+    cursor: text;
+}
+
+.note-entry-surface:is(.note-editing, :focus-within) {
+    border: 2px solid var(--color-accent);
+    padding: 0;
 }
 
 .note-response-actions {
@@ -4639,16 +4960,8 @@ body .message-bot,
     padding: 4px 10px;
     border-radius: 8px;
     z-index: 2;
-    opacity: 0.5;
-    transition: opacity 0.15s ease;
     border: 1px solid var(--color-border, rgba(0, 0, 0, 0.08));
     background: var(--color-bg-surface, var(--note-paper, #fff));
-}
-
-.note-entry-wrap:hover .note-response-actions,
-.note-entry-wrap.note-editing .note-response-actions,
-.note-response-actions:focus-within {
-    opacity: 1;
 }
 
 .note-entry-wrap.note-editing .note-response-actions {
@@ -4659,10 +4972,6 @@ body .message-bot,
 
 .note-action-btn {
     padding: 2px 6px;
-}
-
-.message-bot:not(.note-editing) {
-    cursor: text;
 }
 
 .notes-fab {
@@ -4786,14 +5095,27 @@ body .message-bot,
     position: absolute;
     top: 6px;
     right: 6px;
-    opacity: 0;
-    transition: opacity 0.15s ease;
     z-index: 2;
 }
 
-.gallery-tile:hover .gallery-tile-menu,
-.gallery-tile:focus-within .gallery-tile-menu {
-    opacity: 1;
+/* Same hover-reveal / touch-always-visible pattern as .contextual-actions. */
+@media (hover: hover) and (pointer: fine) {
+    .gallery-tile-menu {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+
+    .gallery-tile:hover .gallery-tile-menu,
+    .gallery-tile:focus-within .gallery-tile-menu {
+        opacity: 1;
+    }
+}
+
+@media (any-pointer: coarse) {
+    .gallery-tile-menu .menu-button {
+        width: 40px;
+        height: 40px;
+    }
 }
 
 .gallery-tile-menu .menu-button {
@@ -4913,24 +5235,15 @@ body .message-bot,
     outline: 1px solid var(--color-accent-dark, var(--primary-dark));
 }
 
-.message-bot.note-editing {
-    width: 100% !important;
-    max-width: 100% !important;
-    overflow: visible;
-    outline: 2px solid var(--color-accent, var(--primary-blue));
-    outline-offset: 2px;
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent, #3b82f6) 28%, transparent);
-}
-
-.message-bot.note-editing .quill-editor-host {
+.note-entry-surface.note-editing .quill-editor-host {
     overflow: visible;
 }
 
-.message-bot.note-editing #editor-resizer {
+.note-entry-surface.note-editing #editor-resizer {
     z-index: 5;
 }
 
-.message-bot.note-editing .quill-editor-host .ql-toolbar.ql-snow {
+.note-entry-surface.note-editing .quill-editor-host .ql-toolbar.ql-snow {
     position: sticky;
     top: 0;
     z-index: 5;
@@ -5139,7 +5452,8 @@ body .message-bot,
 html[data-theme="app-dark"],
 html[data-theme="dark-blue"],
 html[data-theme="dracula"],
-html[data-theme="nord"] {
+html[data-theme="nord"],
+html[data-theme="slate"] {
     --note-ink: var(--color-text);
     --note-paper: var(--color-bg-surface);
     --note-paper-muted: var(--color-bg-muted);
@@ -5150,7 +5464,7 @@ html[data-theme="nord"] {
 
 .note-document-surface,
 .note-quill-display,
-.message-bot .chat-markdown.note-entry-body,
+.note-entry-surface,
 .quill-editor-host {
     color-scheme: var(--note-color-scheme, light);
 }
@@ -5276,22 +5590,33 @@ html[data-theme="nord"] {
 }
 
 /* Plain-text / markdown note entries — same isolated paper */
-.message-bot .chat-markdown.note-entry-body {
-    background: var(--note-paper, #ffffff);
+.note-entry-surface .chat-markdown.note-entry-body {
     color: var(--note-ink, #1f2a37);
-    border-radius: 8px;
     padding: 0.65rem 0.85rem;
-    border: 1px solid var(--note-border, #d0d7de);
 }
 
-.message-bot .chat-markdown.note-entry-body,
-.message-bot .chat-markdown.note-entry-body * {
+/* The Notes page owns the outer edge; standalone Quill surfaces keep theirs. */
+.note-entry-surface :is(.note-quill-display.ql-snow, .chat-markdown.note-entry-body, .ql-container.ql-snow, .ql-toolbar.ql-snow) {
+    border: 0;
+}
+
+.note-entry-surface :is(.note-quill-display, .chat-markdown.note-entry-body, .ql-container.ql-snow, .ql-editor) {
+    background: transparent;
+}
+
+.note-entry-surface .ql-toolbar.ql-snow {
+    border-bottom: 1px solid var(--note-border);
+    border-radius: 10px 10px 0 0;
+}
+
+.note-entry-surface .chat-markdown.note-entry-body,
+.note-entry-surface .chat-markdown.note-entry-body * {
     color: inherit;
 }
 
 .note-quill-display .ql-editor a,
 .quill-editor-host .ql-editor a,
-.message-bot .chat-markdown.note-entry-body a {
+.note-entry-surface .chat-markdown.note-entry-body a {
     color: var(--color-accent, #0969da);
 }
 
@@ -5410,6 +5735,18 @@ html[data-theme="nord"] {
     /* inherits :root (modern Grok-style light) — nothing to override */
 }
 
+:root:is(:not([data-theme]), [data-theme="app-light"]) .workspace-page {
+    --workspace-canvas: #fbfaf9;
+    --workspace-sidebar-divider: transparent;
+    --chat-user-surface: #ebe9e6;
+    --chat-reply-surface: #f4f3f1;
+}
+
+:root:is([data-theme="app-dark"], [data-theme="slate"]) .workspace-page {
+    --workspace-canvas: var(--color-chat-bg);
+    --workspace-sidebar-divider: transparent;
+}
+
 /* --- Bluish Light (legacy blue-tinted light) --- */
 [data-theme="light-blue"] {
     --primary-blue: #3BA7FF;
@@ -5486,8 +5823,8 @@ html[data-theme="nord"] {
     --cf-table-th-bg:  #f8f9fa;
 }
 
-/* --- Dark (modern AI — near-black / grey / white, ChatGPT-style) --- */
-[data-theme="app-dark"] {
+/* --- Dark base (Slate overrides the palette below) --- */
+:is([data-theme="app-dark"], [data-theme="slate"]) {
     --grey-50:             #0a0a0a;
     --grey-100:            #141414;
     --grey-200:            #2a2a2a;
@@ -5555,15 +5892,64 @@ html[data-theme="nord"] {
     --success:             #052e16;
 
     /* Component cf-* tokens for this theme */
-    --cf-text-muted:   #9b9b9b;
+    --cf-text-muted:   var(--color-text-muted);
     --cf-error-fg:     #f87171;
-    --cf-border:       #2a2a2a;
+    --cf-border:       var(--color-border);
     --cf-bg-surface:   var(--color-bg-surface);
     --cf-bg-subtle:    var(--color-bg-subtle);
     --cf-bg-muted:     var(--color-bg-muted);
-    --cf-info-box-bg:  #1a1a1a;
+    --cf-info-box-bg:  var(--color-bg-subtle);
     --cf-success-fg:   #4ade80;
-    --cf-table-th-bg:  #1a1a1a;
+    --cf-table-th-bg:  var(--color-bg-subtle);
+}
+
+/* --- Slate: blue-gray canvas and charcoal conversation surfaces --- */
+[data-theme="slate"] {
+    --grey-50:      #30384c;
+    --grey-100:     #232833;
+    --grey-200:     #454e62;
+    --grey-300:     #5d6880;
+    --light-blue-1: #343d51;
+    --light-blue-2: #2b3242;
+    --light-blue-3: var(--grey-50);
+    --text-dark:    #f2f4f7;
+    --primary-blue:  #a8bfee;
+    --primary-dark:  #c4d5f8;
+    --primary-light: #e2ebff;
+    --bubble-blue:   #272e3d;
+    --bubble-ai-bg:  #1f232b;
+
+    --color-bg:            var(--grey-50);
+    --color-bg-surface:    var(--grey-100);
+    --color-bg-subtle:     var(--light-blue-1);
+    --color-bg-muted:      var(--light-blue-2);
+    --color-border:        var(--grey-200);
+    --color-border-strong: var(--grey-300);
+    --color-text:          var(--text-dark);
+    --color-text-muted:    #b5bfd1;
+    --color-text-inverse:  #1f232b;
+
+    --color-sidebar-bg:     var(--color-bg);
+    --color-sidebar-hover:  #3b4459;
+    --color-sidebar-active: #46526a;
+    --color-sidebar-border: var(--color-border);
+    --color-chat-bg:        var(--color-bg);
+    --color-bubble-user:    var(--bubble-blue);
+    --color-bubble-ai:      var(--bubble-ai-bg);
+    --color-topbar-bg:      var(--color-bg-subtle);
+
+    --color-accent:        var(--primary-blue);
+    --color-accent-dark:   var(--primary-dark);
+    --btn-primary-bg:      var(--color-accent);
+    --btn-primary-text:    var(--color-text-inverse);
+    --btn-primary-hover:   var(--color-accent-dark);
+    --topbar-toggle-border:        var(--color-border-strong);
+    --topbar-toggle-border-hover:  var(--color-accent);
+    --topbar-toggle-border-active: var(--color-accent-dark);
+    --topbar-toggle-color:         var(--color-text);
+    --color-info-bg:               var(--color-bg-subtle);
+    --color-info-border:           var(--color-border-strong);
+    --color-info-fg:               var(--color-text);
 }
 
 /* --- Dark Blue (legacy blue-tinted dark) --- */
@@ -7474,14 +7860,14 @@ button.app-nav-account-link .bi {
 [data-theme="light-blue"] .sync-page-muted-text,
 [data-theme="solarized-light"] .sync-page-muted-text { color:#888; }
 
-[data-theme="app-dark"] .sync-page-muted-text,
+:is([data-theme="app-dark"], [data-theme="slate"]) .sync-page-muted-text,
 [data-theme="dark-blue"]     .sync-page-muted-text,
 [data-theme="dracula"]       .sync-page-muted-text,
 [data-theme="nord"]          .sync-page-muted-text   { color:var(--cf-text-muted); }
 
 .sync-loading-pad  { padding:0.75rem 0; }
 .sync-loading-pad  { color:#666; }
-[data-theme="app-dark"] .sync-loading-pad,
+:is([data-theme="app-dark"], [data-theme="slate"]) .sync-loading-pad,
 [data-theme="dark-blue"]     .sync-loading-pad,
 [data-theme="dracula"]       .sync-loading-pad,
 [data-theme="nord"]          .sync-loading-pad,
@@ -7496,7 +7882,7 @@ button.app-nav-account-link .bi {
 .sync-item-title { font-weight:500; }
 .sync-item-date  { font-size:0.75em; }
 .sync-page-muted-text + .sync-item-date,
-[data-theme="app-dark"] .sync-item-date,
+:is([data-theme="app-dark"], [data-theme="slate"]) .sync-item-date,
 [data-theme="dark-blue"]     .sync-item-date,
 [data-theme="dracula"]       .sync-item-date,
 [data-theme="nord"]          .sync-item-date,
@@ -7516,7 +7902,7 @@ button.app-nav-account-link .bi {
 .sync-auto-sync-label { font-size:0.85em; color:var(--color-text-muted); display:flex; align-items:center; gap: 0.35rem; cursor: pointer; }
 
 /* === SyncPresencePage status dot color overrides for dark themes === */
-[data-theme="app-dark"] .cf-status-online,
+:is([data-theme="app-dark"], [data-theme="slate"]) .cf-status-online,
 [data-theme="dark-blue"]     .cf-status-online,
 [data-theme="dracula"]       .cf-status-online,
 [data-theme="nord"]          .cf-status-online { 
@@ -8716,37 +9102,37 @@ body.note-list-reordering {
     box-shadow: 0 0 0 2px var(--color-bg, #fff), 0 0 0 4px currentColor;
 }
 
-html[data-theme="app-dark"] .cal-create-btn,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-create-btn,
 html[data-theme="dark-blue"] .cal-create-btn,
 html[data-theme="dracula"] .cal-create-btn,
 html[data-theme="nord"] .cal-create-btn,
-html[data-theme="app-dark"] .cal-modal,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-modal,
 html[data-theme="dark-blue"] .cal-modal,
 html[data-theme="dracula"] .cal-modal,
 html[data-theme="nord"] .cal-modal,
-html[data-theme="app-dark"] .cal-dropdown,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-dropdown,
 html[data-theme="dark-blue"] .cal-dropdown,
 html[data-theme="dracula"] .cal-dropdown,
 html[data-theme="nord"] .cal-dropdown {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
 }
 
-html[data-theme="app-dark"] .cal-event-chip.timed-dot:hover,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-event-chip.timed-dot:hover,
 html[data-theme="dark-blue"] .cal-event-chip.timed-dot:hover,
 html[data-theme="dracula"] .cal-event-chip.timed-dot:hover,
 html[data-theme="nord"] .cal-event-chip.timed-dot:hover {
     background: rgba(255, 255, 255, 0.12) !important;
 }
 
-html[data-theme="app-dark"] .cal-month-cell.today .cal-month-daynum,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-month-cell.today .cal-month-daynum,
 html[data-theme="dark-blue"] .cal-month-cell.today .cal-month-daynum,
 html[data-theme="dracula"] .cal-month-cell.today .cal-month-daynum,
 html[data-theme="nord"] .cal-month-cell.today .cal-month-daynum,
-html[data-theme="app-dark"] .cal-mini-day.today,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-mini-day.today,
 html[data-theme="dark-blue"] .cal-mini-day.today,
 html[data-theme="dracula"] .cal-mini-day.today,
 html[data-theme="nord"] .cal-mini-day.today,
-html[data-theme="app-dark"] .cal-week-dayhead.today .cal-week-date,
+html:is([data-theme="app-dark"], [data-theme="slate"]) .cal-week-dayhead.today .cal-week-date,
 html[data-theme="dark-blue"] .cal-week-dayhead.today .cal-week-date,
 html[data-theme="dracula"] .cal-week-dayhead.today .cal-week-date,
 html[data-theme="nord"] .cal-week-dayhead.today .cal-week-date {

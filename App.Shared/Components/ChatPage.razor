@@ -51,18 +51,16 @@
 
 <WasmSidebarSync />
 
-<div class="page @(ProjectId != null || SidebarState.IsCollapsed || (AppEnvironment.IsMaui && !ChatPanel.IsOpen) ? "sidebar-collapsed" : "") @(ProjectId == null && AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" style="@(ProjectId!=null ? "height:100%;min-height:0" : null)">
+<div class="page workspace-page chat-page @(ProjectId != null || SidebarState.IsCollapsed || (AppEnvironment.IsMaui && !ChatPanel.IsOpen) ? "sidebar-collapsed" : "") @(ProjectId == null && AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" style="@(ProjectId!=null ? "height:100%;min-height:0" : null)">
     <!-- Sidebar -->
     @if(ProjectId == null){<div class="sidebar">
         <nav class="cf-nav cf-column">
             <!-- AI Chats header -->
-            <div class="cf-item">
-                <span class="cf-link small">
-                   <h4>AI Chats</h4>
-                    <button class="menu-button" @onclick="NewConversation" title="New chat">
-                        <i class="cf-icon bi bi-plus-circle" style="font-size: 30px;"></i>
-                    </button>
-                </span>
+            <div class="workspace-sidebar-heading">
+                <h4>AI Chats</h4>
+                <button type="button" class="menu-button workspace-sidebar-add" @onclick="NewConversation" title="New chat" aria-label="New chat">
+                    <i class="bi bi-plus-circle" aria-hidden="true"></i>
+                </button>
             </div>
 
             <!-- Local convos list (stable SortOrder; pointer drag-reorder like Notes) -->
@@ -85,11 +83,10 @@
                             }
                             @c.Title
                         </div>
-                        <div class="menu" @onclick:stopPropagation @onpointerdown:stopPropagation>
-                            <button id="menu-btn-@c.Id" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleMenu(c.Id)">⋮</button>
+                        <div class="menu row-actions contextual-actions @(openMenuId == c.Id ? "actions-open" : null)" @onclick:stopPropagation @onpointerdown:stopPropagation>
+                            <button type="button" id="menu-btn-@c.Id" class="menu-button" aria-label="Options for @c.Title" aria-expanded="@(openMenuId == c.Id ? "true" : "false")" @onclick:stopPropagation @onclick="() => ToggleMenu(c.Id)">⋮</button>
                         </div>
                     </div>
-                    <div class="date">@c.LastUpdated.ToLocalTime().ToString("MMM d")</div>
                 </div>
             }
             @if (!_chatIndexLoading && !localConvos.Any())
@@ -152,7 +149,7 @@
                         else if ((msg.User == currentUser) || msg.Role == "user")
                         {
                             <div class="message-me">
-                                <div class="message-bot-menu" @onclick:stopPropagation>
+                                <div class="message-bot-menu contextual-actions @(openMenuId == $"{UserMenuPrefix}{capturedIndex}" ? "actions-open" : null)" @onclick:stopPropagation>
                                     <button id="user-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleUserMenu(capturedIndex)" title="Message options">⋮</button>
                                 </div>
                                 @((MarkupString)FormatMessage(msg.Content ?? ""))
@@ -199,7 +196,7 @@
                         else
                         {
                             <div class="message-bot">
-                                <div class="message-bot-menu" @onclick:stopPropagation>
+                                <div class="message-bot-menu contextual-actions @(openMenuId == $"{BotMenuPrefix}{capturedIndex}" ? "actions-open" : null)" @onclick:stopPropagation>
                                     <button id="bot-menu-btn-@capturedIndex" class="menu-button" @onclick:stopPropagation @onclick="() => ToggleBotMenu(capturedIndex)" title="Message options">⋮</button>
                                 </div>
                                 @{

@@ -12,17 +12,56 @@
 @inject ISidebarState SidebarState
 @inject IJSRuntime JS
 
-<div class="page projects-page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+<div class="page workspace-page projects-page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
  <WasmSidebarSync />
- <aside class="sidebar projects-sidebar">
-   <nav class="cf-nav cf-column">
-     <div class="cf-item"><span class="cf-link small"><h4>Projects <HelpGlyph Topic="documents" /></h4><button class="menu-button" title="New project" aria-label="New project" @onclick="OpenCreate">＋</button></span></div>
-     @foreach(var p in rows.Where(r=>ProjectStore.IsProject(r.Id) && !ProjectStore.Deleted(r))){<div class="conversation-item @(project==p.Id && tab!="Chat" ?"active":null)">
-        <div class="row-top"><div class="title" @onclick="()=>Select(p.Id)"><i class="bi @(project==p.Id?"bi-folder2-open":"bi-folder2")"></i> @p.Name</div>
-        <div class="menu row-actions"><button class="menu-button" title="New chat" aria-label="New chat in @p.Name" @onclick="()=>NewChatIn(p.Id)">＋</button><button class="menu-button" title="Delete project" aria-label="Delete @p.Name" @onclick="()=>RemoveProject(p)"><i class="bi bi-trash"></i></button></div></div>
+ <aside class="sidebar">
+    <nav class="cf-nav cf-column" aria-label="Projects">
+      <div class="workspace-sidebar-heading">
+        <h4 class="help-heading">Projects <HelpGlyph Topic="documents" /></h4>
+        <button type="button" class="menu-button workspace-sidebar-add" title="New project" aria-label="New project" @onclick="OpenCreate">
+          <i class="bi bi-plus-circle" aria-hidden="true"></i>
+        </button>
+      </div>
+      @foreach (var p in rows.Where(r => ProjectStore.IsProject(r.Id) && !ProjectStore.Deleted(r)))
+      {
+        <div class="conversation-item @(project == p.Id && tab != "Chat" ? "active" : null)">
+          <div class="row-top">
+            <button type="button" class="title workspace-row-label" @onclick="() => Select(p.Id)">
+              <i class="workspace-row-icon bi @(project == p.Id ? "bi-folder2-open" : "bi-folder2")" aria-hidden="true"></i>
+              <span>@p.Name</span>
+            </button>
+            <div class="menu row-actions contextual-actions">
+              <button type="button" class="menu-button" title="New chat" aria-label="New chat in @p.Name" @onclick="() => NewChatIn(p.Id)"><i class="bi bi-plus-lg" aria-hidden="true"></i></button>
+              <button type="button" class="menu-button" title="Delete project" aria-label="Delete @p.Name" @onclick="() => RemoveProject(p)"><i class="bi bi-trash" aria-hidden="true"></i></button>
+            </div>
+          </div>
         </div>
-        @if(project==p.Id){@foreach(var c in chats){<div class="conversation-item chat-sub @(chat==c.Id && tab=="Chat" ?"active":null)"><div class="row-top"><div class="title" @onclick="()=>OpenChat(c.Id)">@c.Title</div>@if(!ProjectStore.IsChat(c.Id)){<div class="menu row-actions"><button class="menu-button" title="Remove from project" aria-label="Remove @c.Title from project" @onclick="()=>UnlinkChat(c.Id)"><i class="bi bi-x-lg"></i></button></div>}</div></div>}}}
-     <div class="cf-item"><button class="row-button unfiled" @onclick="()=>Select(null)"><i class="bi bi-inbox"></i> Unfiled documents</button></div>
+        @if (project == p.Id)
+        {
+          @foreach (var c in chats)
+          {
+            <div class="conversation-item workspace-child-row @(chat == c.Id && tab == "Chat" ? "active" : null)">
+              <div class="row-top">
+                <button type="button" class="title workspace-row-label" @onclick="() => OpenChat(c.Id)"><span>@c.Title</span></button>
+                @if (!ProjectStore.IsChat(c.Id))
+                {
+                  <div class="menu row-actions contextual-actions">
+                    <button type="button" class="menu-button" title="Remove from project" aria-label="Remove @c.Title from project" @onclick="() => UnlinkChat(c.Id)"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        }
+      }
+      <div class="conversation-item @(project == null ? "active" : null)">
+        <div class="row-top">
+          <button type="button" class="title workspace-row-label" @onclick="() => Select(null)">
+            <i class="workspace-row-icon bi bi-inbox" aria-hidden="true"></i>
+            <span>Unfiled documents</span>
+          </button>
+        </div>
+      </div>
    </nav>
  </aside>
  <main>

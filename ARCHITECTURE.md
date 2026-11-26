@@ -948,13 +948,18 @@ Color themes are shared across WASM and MAUI via `ThemeService` + `ThemeBootstra
 
 | Piece | Location | Role |
 |-------|----------|------|
-| `ThemeService` | `App.Shared/Services/ThemeService.cs` | Catalog: system, light, dark, bella-purple, catppuccin-latte, dracula, github-light, nord, solarized-light |
+| `ThemeService` | `App.Shared/Services/ThemeService.cs` | Theme catalog, including Light, Dark, and Slate |
 | `ThemeInterop` | `ThemeInterop.cs` → `themeInterop.js` | `localStorage` persistence, `data-theme` on `<html>`, OS scheme listener |
 | Settings UI | `SettingsPage.razor` | Theme dropdown |
 
 **MAUI-only:** Settings also exposes **navigation bar position** (`INavLayoutState` / `NavLayoutService`) — top bar vs left vertical icon rail.
 
+**Auto-hide nav** (all shells): `autoHide` nav pref (right-click the nav bar, or Settings → Appearance). `navLayoutInterop.js` slides the bar off-screen, reclaims its space via `--app-nav-height`/`--app-nav-width`, and reveals it as an overlay on edge hover, keyboard focus, or a touch handle pill.
+
+**Sidebar chrome** (all shells): `sidebarInterop.js` owns a drag-resizable sidebar width (`--sidebar-width`, persisted per user, 180–420px, double-click resets) and `scrollbarInterop.js` marks active scrollers so the thin trackless scrollbars reveal on hover or during touch scrolls.
+
 CSS variables live in `App.Shared/wwwroot/css/app.css` (theme blocks keyed by `data-theme`).
+Chat, Notes, and Projects share sidebar styles and opt into a continuous workspace canvas in Light, Dark, and Slate.
 
 ---
 

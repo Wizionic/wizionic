@@ -11,6 +11,7 @@
 @using App.Shared.Services
 
 <div class="top-row app-nav px-4 @(NavLayout.Mode == NavLayoutMode.Left ? "app-nav--left" : "app-nav--top")"
+     data-wasm-nav-contextmenu="@(AppEnvironment.IsMaui ? null : "true")"
      @oncontextmenu="OnNavContextMenu"
      @oncontextmenu:preventDefault>
     <div class="app-nav-left">
@@ -284,6 +285,11 @@
                 @onclick="() => SetNavLayoutAsync(NavLayoutMode.Left)">
             Left navigation bar
         </button>
+        <button type="button"
+                class="app-nav-context-menu-item @(NavLayout.AutoHide ? "is-selected" : "")"
+                @onclick="ToggleAutoHideAsync">
+            Auto-hide navigation bar
+        </button>
 
         <div class="app-nav-context-menu-divider"></div>
         <div class="app-nav-context-menu-section">Show app icons</div>
@@ -488,6 +494,13 @@
         CloseNavContextMenu();
         await UiStorageNamespace.ApplyAsync(JS, Auth);
         await NavLayout.SetModeAsync(mode, JS);
+    }
+
+    private async Task ToggleAutoHideAsync()
+    {
+        CloseNavContextMenu();
+        await UiStorageNamespace.ApplyAsync(JS, Auth);
+        await NavLayout.SetAutoHideAsync(!NavLayout.AutoHide, JS);
     }
 
     private async Task TogglePrimaryIconAsync(NavPrimaryIcon icon)

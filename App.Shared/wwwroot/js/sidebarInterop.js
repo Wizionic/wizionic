@@ -4,6 +4,10 @@
 // Storage key is namespaced per user: {prefix}app-sidebar-collapsed (see setStoragePrefix).
 window.appSidebar = (function () {
     const BASE_STORAGE_KEY = 'app-sidebar-collapsed';
+    const WIDTH_STORAGE_KEY = 'app-sidebar-width';
+    const DEFAULT_WIDTH = 250;
+    const MIN_WIDTH = 180;
+    const MAX_WIDTH = 420;
     const LOG_PREFIX = '[appSidebar]';
     const DEBUG = false;
 
@@ -11,9 +15,15 @@ window.appSidebar = (function () {
     let activeListener = null;
     let collapsedCache = null;
     let clickDelegationBound = false;
+    let widthCache = null;
+    let resizerEl = null;
 
     function storageKey() {
         return (storagePrefix || '') + BASE_STORAGE_KEY;
+    }
+
+    function widthStorageKey() {
+        return (storagePrefix || '') + WIDTH_STORAGE_KEY;
     }
 
     function setStoragePrefix(prefix) {
@@ -23,6 +33,121 @@ window.appSidebar = (function () {
         storagePrefix = next;
         // Force re-read from the new namespace on next getCollapsed.
         collapsedCache = null;
+        widthCache = null;
+        applyWidth(readWidth());
+    }
+
+    // --- Resizable sidebar width (persisted per user; applied via --sidebar-width) ---
+    function clampWidth(w) {
+        return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(w)));
+    }
+
+    function readWidth() {
+        if (widthCache !== null) return widthCache;
+        try {
+            const raw = localStorage.getItem(widthStorageKey());
+            const parsed = parseInt(raw, 10);
+            if (!isNaN(parsed)) {
+                widthCache = clampWidth(parsed);
+                return widthCache;
+            }
+        } catch (_) { /* private browsing */ }
+        return DEFAULT_WIDTH;
+    }
+
+    function writeWidth(w) {
+        widthCache = clampWidth(w);
+        try {
+            localStorage.setItem(widthStorageKey(), String(widthCache));
+        } catch (_) { /* private browsing */ }
+    }
+
+    function applyWidth(w) {
+        document.documentElement.style.setProperty('--sidebar-width', clampWidth(w) + 'px');
+    }
+
+    function ensureResizer() {
+        if (!document.body) return;
+        if (resizerEl && resizerEl.isConnected) return;
+
+        if (!resizerEl) {
+            resizerEl = document.createElement('div');
+            resizerEl.className = 'sidebar-resizer';
+            resizerEl.setAttribute('role', 'separator');
+            resizerEl.setAttribute('aria-orientation', 'vertical');
+            resizerEl.setAttribute('aria-label', 'Resize sidebar');
+            resizerEl.setAttribute('aria-valuemin', String(MIN_WIDTH));
+            resizerEl.setAttribute('aria-valuemax', String(MAX_WIDTH));
+            resizerEl.tabIndex = 0;
+
+            let dragging = false;
+            let startX = 0;
+            let startWidth = DEFAULT_WIDTH;
+
+            resizerEl.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 && e.pointerType === 'mouse') return;
+                e.preventDefault();
+                dragging = true;
+                startX = e.clientX;
+                startWidth = readWidth();
+                resizerEl.classList.add('is-active');
+                document.body.classList.add('sidebar-resizing');
+                try { resizerEl.setPointerCapture(e.pointerId); } catch (_) { }
+            });
+
+            resizerEl.addEventListener('pointermove', (e) => {
+                if (!dragging) return;
+                const w = clampWidth(startWidth + (e.clientX - startX));
+                widthCache = w;
+                applyWidth(w);
+                resizerEl.setAttribute('aria-valuenow', String(w));
+            });
+
+            const endDrag = (e) => {
+                if (!dragging) return;
+                dragging = false;
+                resizerEl.classList.remove('is-active');
+                document.body.classList.remove('sidebar-resizing');
+                try { resizerEl.releasePointerCapture(e.pointerId); } catch (_) { }
+                writeWidth(readWidth());
+            };
+            resizerEl.addEventListener('pointerup', endDrag);
+            resizerEl.addEventListener('pointercancel', endDrag);
+
+            resizerEl.addEventListener('dblclick', () => {
+                applyWidth(DEFAULT_WIDTH);
+                writeWidth(DEFAULT_WIDTH);
+            });
+
+            resizerEl.addEventListener('keydown', (e) => {
+                let w = readWidth();
+                if (e.key === 'ArrowLeft') w -= 16;
+                else if (e.key === 'ArrowRight') w += 16;
+                else if (e.key === 'Home') w = MIN_WIDTH;
+                else if (e.key === 'End') w = MAX_WIDTH;
+                else return;
+                e.preventDefault();
+                applyWidth(w);
+                writeWidth(w);
+                resizerEl.setAttribute('aria-valuenow', String(readWidth()));
+            });
+        }
+
+        document.body.appendChild(resizerEl);
+        resizerEl.setAttribute('aria-valuenow', String(readWidth()));
+    }
+
+    function initWidthUi() {
+        applyWidth(readWidth());
+        ensureResizer();
+        // Blazor enhanced navigation / body swaps may drop the strip — re-append if lost.
+        if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
+            window.Blazor.addEventListener('enhancedload', () => { applyWidth(readWidth()); ensureResizer(); });
+        }
+        const observer = new MutationObserver(() => {
+            if (resizerEl && !resizerEl.isConnected) ensureResizer();
+        });
+        observer.observe(document.body, { childList: true });
     }
 
     function log(step, detail) {
@@ -224,9 +349,19 @@ window.appSidebar = (function () {
         unregisterListener: unregisterListener,
         initForViewport: initForViewport,
         ensureClickDelegation: ensureClickDelegation,
-        applyToggleButtonUi: applyToggleButtonUi
+        applyToggleButtonUi: applyToggleButtonUi,
+        getWidth: readWidth,
+        setWidth: function (w) { applyWidth(w); writeWidth(w); },
+        ensureResizer: ensureResizer,
+        initWidthUi: initWidthUi
     };
 })();
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { window.appSidebar.initWidthUi(); }, { once: true });
+} else {
+    window.appSidebar.initWidthUi();
+}
 
 window.toggleWasmSidebar = function (collapsed) {
     window.appSidebar.setCollapsed(collapsed, { source: 'toggleWasmSidebar' });
