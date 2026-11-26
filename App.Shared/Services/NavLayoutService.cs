@@ -12,6 +12,7 @@ public sealed class NavLayoutService : INavLayoutState
     private bool _showCalendar = true;
     private bool _showDocuments = true;
     private bool _secondaryExpanded = false;
+    private bool _autoHide = false;
     private bool _initialized;
 
     public NavLayoutService()
@@ -29,6 +30,7 @@ public sealed class NavLayoutService : INavLayoutState
     public bool ShowCalendar => _showCalendar;
     public bool ShowDocuments => _showDocuments;
     public bool SecondaryExpanded => _secondaryExpanded;
+    public bool AutoHide => _autoHide;
 
     private NavLayoutMode DefaultMode =>
         AppEnvironment.IsMaui ? NavLayoutMode.Left : NavLayoutMode.Top;
@@ -37,13 +39,13 @@ public sealed class NavLayoutService : INavLayoutState
     {
         if (_initialized)
         {
-            await NavLayoutInterop.ApplyAsync(js, _mode, ct);
+            await NavLayoutInterop.ApplyAsync(js, _mode, _autoHide, ct);
             return;
         }
 
         await LoadFromStorageAsync(js, ct);
         _initialized = true;
-        await NavLayoutInterop.ApplyAsync(js, _mode, ct);
+        await NavLayoutInterop.ApplyAsync(js, _mode, _autoHide, ct);
         OnChanged?.Invoke();
     }
 
@@ -54,7 +56,18 @@ public sealed class NavLayoutService : INavLayoutState
 
         _mode = mode;
         await PersistAsync(js, ct);
-        await NavLayoutInterop.ApplyAsync(js, _mode, ct);
+        await NavLayoutInterop.ApplyAsync(js, _mode, _autoHide, ct);
+        OnChanged?.Invoke();
+    }
+
+    public async Task SetAutoHideAsync(bool autoHide, IJSRuntime js, CancellationToken ct = default)
+    {
+        if (_autoHide == autoHide && _initialized)
+            return;
+
+        _autoHide = autoHide;
+        await PersistAsync(js, ct);
+        await NavLayoutInterop.ApplyAsync(js, _mode, _autoHide, ct);
         OnChanged?.Invoke();
     }
 
@@ -92,7 +105,7 @@ public sealed class NavLayoutService : INavLayoutState
         var before = Snapshot();
         await LoadFromStorageAsync(js, ct);
         _initialized = true;
-        await NavLayoutInterop.ApplyAsync(js, _mode, ct);
+        await NavLayoutInterop.ApplyAsync(js, _mode, _autoHide, ct);
         if (before != Snapshot())
             OnChanged?.Invoke();
     }
@@ -109,6 +122,7 @@ public sealed class NavLayoutService : INavLayoutState
             _mode = DefaultMode;
             _showBrowser = _showNotes = _showGallery = _showCalendar = _showDocuments = true;
             _secondaryExpanded = false;
+            _autoHide = false;
         }
     }
 
@@ -119,6 +133,7 @@ public sealed class NavLayoutService : INavLayoutState
             _mode = defaultMode;
             _showBrowser = _showNotes = _showGallery = _showCalendar = _showDocuments = true;
             _secondaryExpanded = false;
+            _autoHide = false;
             return;
         }
 
@@ -129,6 +144,7 @@ public sealed class NavLayoutService : INavLayoutState
         _showCalendar = prefs.ShowCalendar;
         _showDocuments = prefs.ShowDocuments;
         _secondaryExpanded = prefs.SecondaryExpanded;
+        _autoHide = prefs.AutoHide;
     }
 
     private async Task PersistAsync(IJSRuntime js, CancellationToken ct)
@@ -141,7 +157,8 @@ public sealed class NavLayoutService : INavLayoutState
             ShowGallery = _showGallery,
             ShowCalendar = _showCalendar,
             ShowDocuments = _showDocuments,
-            SecondaryExpanded = _secondaryExpanded
+            SecondaryExpanded = _secondaryExpanded,
+            AutoHide = _autoHide
         };
         await NavLayoutInterop.SavePrefsAsync(js, dto, ct);
     }
@@ -154,6 +171,6 @@ public sealed class NavLayoutService : INavLayoutState
         return true;
     }
 
-    private (NavLayoutMode, bool, bool, bool, bool, bool, bool) Snapshot() =>
-        (_mode, _showBrowser, _showNotes, _showGallery, _showCalendar, _showDocuments, _secondaryExpanded);
+    private (NavLayoutMode, bool, bool, bool, bool, bool, bool, bool) Snapshot() =>
+        (_mode, _showBrowser, _showNotes, _showGallery, _showCalendar, _showDocuments, _secondaryExpanded, _autoHide);
 }

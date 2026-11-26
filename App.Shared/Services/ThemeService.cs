@@ -12,6 +12,7 @@ public sealed class ThemeService
         new("app-light",        "Light"),
         new("light-blue",       "Bluish Light"),
         new("app-dark",         "Dark"),
+        new("slate",            "Slate"),
         new("dark-blue",        "Dark Blue"),
         new("bella-purple",     "Bella Purple"),
         new("catppuccin-latte", "Catppuccin Latte"),

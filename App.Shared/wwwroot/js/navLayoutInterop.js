@@ -25,7 +25,9 @@ window.appNavLayout = window.appNavLayout || {
             showCalendar: true,
             showDocuments: true,
             // Settings cluster collapsed until the user expands it.
-            secondaryExpanded: false
+            secondaryExpanded: false,
+            // Nav bar hides until edge hover / focus / touch handle.
+            autoHide: false
         };
     },
 
@@ -63,7 +65,8 @@ window.appNavLayout = window.appNavLayout || {
             showCalendar: raw.showCalendar !== false,
             showDocuments: raw.showDocuments !== false,
             // Default closed: only true when explicitly saved as true.
-            secondaryExpanded: raw.secondaryExpanded === true
+            secondaryExpanded: raw.secondaryExpanded === true,
+            autoHide: raw.autoHide === true
         };
     },
 
@@ -107,10 +110,216 @@ window.appNavLayout = window.appNavLayout || {
         this.savePrefs(prefs);
     },
 
-    apply: function (mode) {
+    apply: function (mode, autoHide) {
         const root = document.documentElement;
         const normalized = this.normalizeMode(mode != null ? mode : this.getMode());
         root.dataset.navLayout = normalized;
+        this.applyAutoHide(autoHide != null ? autoHide : this.getPrefs().autoHide);
+    },
+
+    // --- Auto-hide navigation (top bar or left rail) ---
+    _autoHidePinned: false,
+    _revealTimer: null,
+    _hideTimer: null,
+    _autoHideChromeBound: false,
+    _navHandle: null,
+
+    applyAutoHide: function (on) {
+        const root = document.documentElement;
+        const enabled = on === true;
+        if (enabled) {
+            root.setAttribute('data-nav-autohide', '1');
+            this.ensureAutoHideChrome();
+        } else {
+            root.removeAttribute('data-nav-autohide');
+            this.hideNav();
+        }
+        if (this._navHandle)
+            this._navHandle.textContent = root.dataset.navLayout === 'left' ? '›' : '⌄';
+    },
+
+    revealNav: function (pinned) {
+        this._autoHidePinned = pinned === true;
+        if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+        document.documentElement.setAttribute('data-nav-revealed', '1');
+    },
+
+    hideNav: function () {
+        this._autoHidePinned = false;
+        if (this._revealTimer) { clearTimeout(this._revealTimer); this._revealTimer = null; }
+        if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+        document.documentElement.removeAttribute('data-nav-revealed');
+    },
+
+    navEl: function () {
+        return document.querySelector('.app-nav.top-row');
+    },
+
+    ensureAutoHideChrome: function () {
+        if (this._autoHideChromeBound) return;
+        if (!document.body) return;
+        const self = this;
+
+        const hotzone = document.createElement('div');
+        hotzone.className = 'app-nav-hotzone';
+        hotzone.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(hotzone);
+
+        const handle = document.createElement('button');
+        handle.type = 'button';
+        handle.className = 'app-nav-handle';
+        handle.title = 'Show navigation';
+        handle.setAttribute('aria-label', 'Show navigation');
+        handle.textContent = '⌄';
+        document.body.appendChild(handle);
+        this._navHandle = handle;
+
+        const autoHideOn = () => document.documentElement.getAttribute('data-nav-autohide') === '1';
+
+        hotzone.addEventListener('pointerenter', () => {
+            if (!autoHideOn()) return;
+            if (self._revealTimer) clearTimeout(self._revealTimer);
+            self._revealTimer = setTimeout(() => self.revealNav(false), 150);
+        });
+        hotzone.addEventListener('pointerleave', () => {
+            if (self._revealTimer) { clearTimeout(self._revealTimer); self._revealTimer = null; }
+        });
+
+        handle.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (document.documentElement.getAttribute('data-nav-revealed') === '1')
+                self.hideNav();
+            else
+                self.revealNav(true);
+        });
+
+        // Keep the nav open while the pointer is inside it; hide shortly after it leaves.
+        document.addEventListener('pointerover', (e) => {
+            if (!autoHideOn()) return;
+            const nav = self.navEl();
+            const t = e.target;
+            if (!nav || !t || !t.closest) return;
+            if (nav.contains(t) || hotzone.contains(t)) {
+                if (self._hideTimer) { clearTimeout(self._hideTimer); self._hideTimer = null; }
+            }
+        });
+        document.addEventListener('pointerout', (e) => {
+            if (!autoHideOn() || self._autoHidePinned) return;
+            const nav = self.navEl();
+            const t = e.target;
+            if (!nav || !t || !t.closest || !nav.contains(t)) return;
+            const to = e.relatedTarget;
+            if (to && (nav.contains(to) || hotzone.contains(to))) return;
+            if (self._hideTimer) clearTimeout(self._hideTimer);
+            self._hideTimer = setTimeout(() => self.hideNav(), 250);
+        });
+
+        // Keyboard access: focusing any nav control reveals it.
+        document.addEventListener('focusin', (e) => {
+            if (!autoHideOn()) return;
+            const nav = self.navEl();
+            if (nav && nav.contains(e.target)) self.revealNav(true);
+        });
+        document.addEventListener('focusout', (e) => {
+            if (!autoHideOn() || !self._autoHidePinned) return;
+            const nav = self.navEl();
+            const to = e.relatedTarget;
+            if (nav && (!to || !nav.contains(to))) self.hideNav();
+        });
+
+        // Touch: tap outside closes a pinned nav. Escape always closes.
+        document.addEventListener('pointerdown', (e) => {
+            if (!autoHideOn() || !self._autoHidePinned) return;
+            const nav = self.navEl();
+            const t = e.target;
+            if (nav && t && !nav.contains(t) && t !== handle && !handle.contains(t))
+                self.hideNav();
+        }, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') self.hideNav();
+        });
+
+        // Navigating away collapses the nav again.
+        document.addEventListener('click', (e) => {
+            if (!autoHideOn()) return;
+            const nav = self.navEl();
+            const t = e.target;
+            if (nav && t && t.closest && nav.contains(t) && t.closest('a'))
+                setTimeout(() => self.hideNav(), 60);
+        });
+
+        this._autoHideChromeBound = true;
+    },
+
+    // --- WASM right-click menu on the nav bar (MAUI uses the Blazor context menu) ---
+    _navContextMenuBound: false,
+    _navContextMenuEl: null,
+
+    closeNavContextMenu: function () {
+        if (this._navContextMenuEl) {
+            this._navContextMenuEl.remove();
+            this._navContextMenuEl = null;
+        }
+    },
+
+    ensureNavContextMenuDelegation: function () {
+        if (this._navContextMenuBound) return;
+        const self = this;
+
+        document.addEventListener('contextmenu', (e) => {
+            const t = e.target;
+            const bar = t && t.closest ? t.closest('[data-wasm-nav-contextmenu]') : null;
+            if (!bar) return;
+            e.preventDefault();
+            self.closeNavContextMenu();
+
+            const prefs = self.getPrefs();
+            const menu = document.createElement('div');
+            menu.className = 'app-nav-context-menu';
+            menu.style.position = 'fixed';
+            menu.style.zIndex = '10001';
+
+            const section = document.createElement('div');
+            section.className = 'app-nav-context-menu-section';
+            section.textContent = 'Navigation';
+            menu.appendChild(section);
+
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'app-nav-context-menu-item' + (prefs.autoHide ? ' is-selected' : '');
+            item.textContent = 'Auto-hide navigation bar';
+            item.addEventListener('click', () => {
+                const next = !self.getPrefs().autoHide;
+                const p = self.getPrefs();
+                p.autoHide = next;
+                self.savePrefs(p);
+                self.applyAutoHide(next);
+                self.closeNavContextMenu();
+            });
+            menu.appendChild(item);
+
+            document.body.appendChild(menu);
+            const rect = menu.getBoundingClientRect();
+            let x = e.clientX, y = e.clientY;
+            if (x + rect.width > window.innerWidth - 8) x = window.innerWidth - rect.width - 8;
+            if (y + rect.height > window.innerHeight - 8) y = window.innerHeight - rect.height - 8;
+            menu.style.left = Math.max(8, x) + 'px';
+            menu.style.top = Math.max(8, y) + 'px';
+            self._navContextMenuEl = menu;
+        });
+
+        document.addEventListener('click', (e) => {
+            if (self._navContextMenuEl && !self._navContextMenuEl.contains(e.target))
+                self.closeNavContextMenu();
+        }, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') self.closeNavContextMenu();
+        });
+        window.addEventListener('resize', () => self.closeNavContextMenu());
+        window.addEventListener('scroll', () => self.closeNavContextMenu(), true);
+
+        this._navContextMenuBound = true;
     },
 
     // --- Secondary settings cluster (WASM: AppTopBar is static, so @onclick never runs) ---
@@ -224,9 +433,13 @@ window.appNavLayout = window.appNavLayout || {
             this.apply(this.getMode());
             this.ensureSecondaryClickDelegation();
             this.ensureAccountMenuDelegation();
+            this.ensureNavContextMenuDelegation();
             // Defer one frame so static AppTopBar markup is present.
             const applyUi = () => {
-                try { this.applySecondaryUi(this.getPrefs().secondaryExpanded); } catch (e) { }
+                try {
+                    this.applySecondaryUi(this.getPrefs().secondaryExpanded);
+                    this.applyAutoHide(this.getPrefs().autoHide);
+                } catch (e) { }
             };
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', applyUi, { once: true });
@@ -244,6 +457,12 @@ window.appNavLayout = window.appNavLayout || {
 try {
     window.appNavLayout.ensureSecondaryClickDelegation();
     window.appNavLayout.ensureAccountMenuDelegation();
+    window.appNavLayout.ensureNavContextMenuDelegation();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => window.appNavLayout.applyAutoHide(window.appNavLayout.getPrefs().autoHide), { once: true });
+    } else {
+        window.appNavLayout.applyAutoHide(window.appNavLayout.getPrefs().autoHide);
+    }
 } catch (e) { }
 
 window.appHelp = window.appHelp || {};
