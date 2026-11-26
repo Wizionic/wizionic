@@ -65,6 +65,37 @@ public static class Program
 		return _application.RunWithSynchronizationContext(args);
 	}
 
+	/// <summary>
+	/// Blazor circuit failures call console.error inside the WebView. GirCore does not
+	/// print that, so the only visible symptom is the Reload bar. Forward it to stdout.
+	/// </summary>
+	private static void AttachCircuitLog(BlazorWebView webView)
+	{
+		try
+		{
+			var manager = webView.GetUserContentManager();
+			manager.RegisterScriptMessageHandler("wizionicLog", worldName: null);
+			manager.OnScriptMessageReceived += (_, e) =>
+			{
+				try
+				{
+					var body = e.Value?.ToString();
+					if (!string.IsNullOrWhiteSpace(body))
+						Console.Error.WriteLine("[Blazor] " + body);
+				}
+				catch (Exception ex)
+				{
+					Console.Error.WriteLine("[Blazor] log handler failed: " + ex.Message);
+				}
+			};
+			LifetimeRoots.Add(manager);
+		}
+		catch (Exception ex)
+		{
+			Console.Error.WriteLine("[Blazor] could not attach circuit log: " + ex.Message);
+		}
+	}
+
 	private static void OnActivate(Gio.Application sender, EventArgs args)
 	{
 		var app = (Adw.Application)sender;
@@ -96,6 +127,7 @@ public static class Program
 #if DEBUG
 		_webView.GetSettings().EnableDeveloperExtras = true;
 #endif
+		AttachCircuitLog(_webView);
 		Pin(_webView, ref _webViewPin);
 		LifetimeRoots.Add(_webView);
 

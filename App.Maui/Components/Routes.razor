@@ -3,6 +3,8 @@
         NotFoundPage="typeof(Pages.NotFound)">
     <Found Context="routeData">
         <RouteView RouteData="routeData" DefaultLayout="typeof(App.Shared.Layout.AppLayout)" />
-        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+        @* Projects and other workspace pages have no h1. Focusing a missing selector
+           throws in the WebView and shows only the Reload bar. *@
+        <FocusOnNavigate RouteData="routeData" Selector="h1, h4" />
     </Found>
 </Router>

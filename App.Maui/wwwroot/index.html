@@ -44,6 +44,31 @@
     <script src="_content/App.Shared/js/chatInterop.js"></script>
     <script src="_content/App.Shared/js/browserInterop.js"></script>
     <script src="_content/App.Shared/js/urlEmbedInterop.js"></script>
+    <script>
+        // GirCore does not forward WebView console output. Circuit failures only
+        // show the Reload bar unless we print them ourselves.
+        window.addEventListener("error", function (e) {
+            console.error("WINDOW_ERROR " + (e.message || "") + " " + (e.filename || "") + ":" + (e.lineno || ""));
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+            var r = e.reason;
+            console.error("UNHANDLED_REJECTION " + (r && (r.stack || r.message) ? (r.stack || r.message) : r));
+        });
+        (function hookConsole() {
+            var orig = console.error.bind(console);
+            console.error = function () {
+                try {
+                    var text = Array.prototype.map.call(arguments, function (a) {
+                        return a && a.stack ? a.stack : String(a);
+                    }).join(" ");
+                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.wizionicLog) {
+                        window.webkit.messageHandlers.wizionicLog.postMessage(text);
+                    }
+                } catch (ex) { }
+                return orig.apply(console, arguments);
+            };
+        })();
+    </script>
     <script src="_framework/blazor.webview.js" ></script>
     <script>window.appTheme && window.appTheme.initPersistentHooks();</script>
     <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>

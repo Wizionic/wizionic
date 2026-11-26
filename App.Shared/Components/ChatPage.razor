@@ -1562,7 +1562,18 @@
             return;
         }
 
-        await InitializeChatDataAsync();
+        try
+        {
+            await InitializeChatDataAsync();
+        }
+        catch (Exception ex) when (ProjectId != null)
+        {
+            // A project chat is embedded in ProjectsPage. An unhandled init failure
+            // disposes the whole circuit and leaves only the Reload bar.
+            Console.WriteLine($"[Chat] project chat init failed: {ex}");
+            contextStatusMessage = "Could not open this project chat: " + ex.Message;
+            contextStatusIsError = true;
+        }
     }
 
     private void RegisterEventHandlers()
@@ -2928,7 +2939,19 @@
             return;
         }
 
-        messages = await ConversationStore.LoadConversationAsync(id);
+        try
+        {
+            messages = await ConversationStore.LoadConversationAsync(id);
+        }
+        catch (Exception ex) when (ProjectId != null)
+        {
+            Console.WriteLine($"[Chat] project conversation load failed: {ex}");
+            messages = new();
+            contextStatusMessage = "Could not load this project chat: " + ex.Message;
+            contextStatusIsError = true;
+            StateHasChanged();
+            return;
+        }
         RefreshContextEstimate(preferServerUsage: false);
         RequestScrollToBottom();
         StateHasChanged();
