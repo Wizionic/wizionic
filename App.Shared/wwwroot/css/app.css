@@ -2734,6 +2734,19 @@ button.btn-outline-secondary:hover:not(:disabled) {
     flex-shrink: 0;
 }
 
+/* Hover/focus-revealed row actions (shared by Chat, Notes, Projects sidebars). */
+.conversation-item .row-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity .12s ease;
+}
+.conversation-item:hover .row-actions,
+.conversation-item:focus-within .row-actions {
+    opacity: 1;
+}
+
 /* Make chat take full width of the right pane in WASM layout (no auto margin) */
 .page .chat-container,
 .wasm-page .chat-container {
@@ -4156,6 +4169,9 @@ body .chat-wrapper,
 }
 
 /* Browser panel: side-by-side layout (overrides column !important above) */
+.chat-pdf-pane { flex: 0 0 min(46vw,760px); height:100%; overflow:auto; }
+@media(max-width:780px){.chat-pdf-pane{position:absolute;inset:0;z-index:5;background:var(--color-bg)}}
+.projects .conversation .page,.projects .conversation main {height:100% !important;max-height:100%;min-height:0;}
 body .chat-wrapper.browser-panel-open,
 .chat-wrapper.browser-panel-open {
     flex-direction: row !important;

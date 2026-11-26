@@ -184,7 +184,9 @@ public sealed class AiRequestRouter
     }
 
     /// <summary>
-    /// Keep the AI classification. If rules saw a wake word / open browser, still attach those modules.
+    /// Keep the AI classification, but never drop a clear rule-detected tool intent
+    /// (Notes, Pdf, Calendar, Gallery, Native, wake-word HA / open browser). The small
+    /// router sometimes labels a multi-intent message as PureChat; the rules signal rescues it.
     /// </summary>
     private static RequestRoute MergeHardConstraints(
         RequestRoute ai,
@@ -193,9 +195,6 @@ public sealed class AiRequestRouter
         string sourceLabel,
         string message)
     {
-        if (rules.TargetModule is not ("HomeAssistant" or "BrowserAgent"))
-            return ai;
-
         var modules = new List<string>(ai.Modules);
         foreach (var m in rules.Modules)
         {
@@ -210,9 +209,16 @@ public sealed class AiRequestRouter
             && !modules.Contains(target, StringComparer.OrdinalIgnoreCase))
             modules.Insert(0, target);
 
+        if (modules.Count == 0)
+            return ai; // both PureChat
+
+        var reason = ai.Reason ?? rules.Reason ?? "AI classification";
+        if (ai.Modules.Count == 0 && rules.Modules.Count > 0)
+            reason = (string.IsNullOrWhiteSpace(reason) ? "" : reason + " · ") + "kept rules tool intent";
+
         return RequestRoute.WithModules(
-            modules.Count > 0 ? modules : rules.Modules,
-            ai.Reason ?? rules.Reason ?? "AI classification",
+            modules,
+            reason,
             targetModule: target,
             includeMcp: ai.IncludeMcp
                 || rules.IncludeMcp

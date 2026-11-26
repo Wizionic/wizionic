@@ -1,0 +1,237 @@
+@using App.Core.Workflows
+@implements IAsyncDisposable
+@inject ProjectStore Store
+@inject ProjectRetrieval Retrieval
+@inject IDocumentStore Library
+@inject IConversationStore Conversations
+@inject IWorkflowStore Workflows
+@inject IWorkflowOrchestrator Orchestrator
+@inject ISyncService Sync
+@inject IAuthService Auth
+@inject INoteStore Notes
+@inject ISidebarState SidebarState
+@inject IJSRuntime JS
+
+<div class="page projects-page @(SidebarState.IsCollapsed ? "sidebar-collapsed" : "")">
+ <WasmSidebarSync />
+ <aside class="sidebar projects-sidebar">
+   <nav class="cf-nav cf-column">
+     <div class="cf-item"><span class="cf-link small"><h4>Projects <HelpGlyph Topic="documents" /></h4><button class="menu-button" title="New project" aria-label="New project" @onclick="OpenCreate">＋</button></span></div>
+     @foreach(var p in rows.Where(r=>ProjectStore.IsProject(r.Id) && !ProjectStore.Deleted(r))){<div class="conversation-item @(project==p.Id && tab!="Chat" ?"active":null)">
+        <div class="row-top"><div class="title" @onclick="()=>Select(p.Id)"><i class="bi @(project==p.Id?"bi-folder2-open":"bi-folder2")"></i> @p.Name</div>
+        <div class="menu row-actions"><button class="menu-button" title="New chat" aria-label="New chat in @p.Name" @onclick="()=>NewChatIn(p.Id)">＋</button><button class="menu-button" title="Delete project" aria-label="Delete @p.Name" @onclick="()=>RemoveProject(p)"><i class="bi bi-trash"></i></button></div></div>
+        </div>
+        @if(project==p.Id){@foreach(var c in chats){<div class="conversation-item chat-sub @(chat==c.Id && tab=="Chat" ?"active":null)"><div class="row-top"><div class="title" @onclick="()=>OpenChat(c.Id)">@c.Title</div>@if(!ProjectStore.IsChat(c.Id)){<div class="menu row-actions"><button class="menu-button" title="Remove from project" aria-label="Remove @c.Title from project" @onclick="()=>UnlinkChat(c.Id)"><i class="bi bi-x-lg"></i></button></div>}</div></div>}}}
+     <div class="cf-item"><button class="row-button unfiled" @onclick="()=>Select(null)"><i class="bi bi-inbox"></i> Unfiled documents</button></div>
+   </nav>
+ </aside>
+ <main>
+  <div class="projects-body">
+  <div class="workspace">
+ @if(project!=null && info!=null){
+    <header><div class="project-title"><h4><button title="Edit project details" @onclick="OpenEdit">@info.Name</button></h4>@if(!string.IsNullOrWhiteSpace(info.Description)){<small>@info.Description</small>}</div></header>
+    <nav>@foreach(var t in tabs){<button class="@(tab==t?"selected":null)" @onclick="()=>tab=t">@t</button>}</nav>
+    @if(tab=="Chat"){<div class="chat-toolbar"><label class="draft-mode">Draft <select aria-label="Draft format" value="@draftFormat" @onchange='e=>{draftFormat=e.Value?.ToString()??"";if(draftFormat.Length>0)ClosePreview();}'><option value="">Off</option><option value="pdf">PDF</option><option value="md">Markdown</option><option value="txt">TXT</option><option value="html">HTML</option></select></label><span class="toolbar-spacer"></span><button class="icon" title="Add existing chat" aria-label="Add existing chat" @onclick="ToggleChatPicker"><i class="bi bi-chat-left-dots"></i></button><button class="icon" title="New chat" aria-label="New chat" @onclick="NewChat">＋</button></div>
+    @if(showChatPicker){<div class="note-picker chat-picker">@foreach(var ac in availableChats){<button class="chat-row" @onclick="()=>AddExistingChat(ac.Id)">@ac.Title</button>}@if(availableChats.Count==0){<small>No other chats to add.</small>}</div>}}
+    <div class="conversation" hidden="@(tab!="Chat")">
+    @if(chat!=null){<ChatPage @key="chat" @ref="chatView" ProjectId="@project" ProjectChatId="@chat" DraftFormat="@draftFormat" OnDraft="Draft" OnPreview="PreviewAttachment" OnProjectSaved="RefreshChats" OnOutput="Output" OnSource="Source" />}
+    </div>
+    @if(tab=="Files"){
+       <section class="controls">
+       <div class="file-actions"><label class="file-picker icon" title="Upload files">＋<InputFile multiple accept="@FileTypes" aria-label="Upload files" OnChange="Upload" /></label>
+       <button class="icon" title="Link a note" aria-label="Link a note" @onclick='()=>{showNotePicker=!showNotePicker;notePickNote="";notePickEntry="";}'><i class="bi bi-journal-plus"></i></button></div>
+       @if(showNotePicker){<div class="note-picker">
+           <select aria-label="Notebook" value="@notePickNote" @onchange="SelectNotePick"><option value="">Choose notebook…</option>@foreach(var n in noteIndex){<option value="@n.Id">@n.Title</option>}</select>
+           <select aria-label="Entry" value="@notePickEntry" @onchange='e=>notePickEntry=e.Value?.ToString()??""'><option value="">Whole notebook</option>@foreach(var en in noteEntries){<option value="@en.ItemId">@NoteEntryLabel(en)</option>}</select>
+           <button class="icon" title="Link" aria-label="Link note" disabled="@(notePickNote.Length==0)" @onclick="LinkNote"><i class="bi bi-check2"></i></button>
+       </div>}
+       @foreach(var f in files){<article><button class="filename" @onclick="()=>View(f)">@f.Name</button><small>@ChatAttachmentClassifier.FormatSize(f.Size) · @Status(f)</small>
+       @if(rename==f.Id){<input aria-label="New filename" maxlength="240" @bind="renameText"/><button class="icon" title="Save filename" aria-label="Save filename" @onclick="()=>Rename(f)"><i class="bi bi-check2"></i></button>}
+       else {<button class="icon" title="Rename file" aria-label="Rename @f.Name" @onclick="()=>{rename=f.Id;renameText=f.Name;}"><i class="bi bi-pencil"></i></button>}
+       @if(f.Mime.StartsWith("image/")){<button class="icon" title="Attach to chat" aria-label="Attach to chat" @onclick="()=>Attach(f)"><i class="bi bi-paperclip"></i></button>}
+       <button class="icon" title="Delete file" aria-label="Delete @f.Name" @onclick="()=>Delete(f)"><i class="bi bi-trash"></i></button></article>}
+       @foreach(var nl in noteLinks){<article><button class="filename" @onclick="()=>ViewNote(nl.Link)"><i class="bi bi-journal-text"></i> @nl.Link.Title</button><small>@NoteStatus(nl.Link)</small>
+       <button class="icon" title="Unlink note" aria-label="Unlink @nl.Link.Title" @onclick="()=>UnlinkNote(nl.Row)"><i class="bi bi-trash"></i></button></article>}
+       @if(files.Count==0 && noteLinks.Count==0){<p>No files in this project yet.</p>}
+       </section>}
+    @if(tab=="Instructions"){<section class="controls instructions"><textarea aria-label="Project instructions" maxlength="8000" @bind="instructions" @bind:event="oninput"></textarea><button class="icon" disabled="@(instructions==info.Instructions)" title="Save instructions" aria-label="Save instructions" @onclick="SaveInstructions"><i class="bi bi-floppy"></i></button></section>}
+    @if(tab=="Workflows"){<section class="controls"><label>Link a workflow from this device <select @bind="workflow"><option value="">Choose workflow</option>@foreach(var w in Workflows.List()){<option value="@w.Id">@w.Name</option>}</select></label> <button disabled="@(workflow.Length==0)" @onclick="Link">Link</button>
+    @foreach(var w in rows.Where(r=>r.Id.StartsWith(project+":w:") && !ProjectStore.Deleted(r))){<article><strong>@w.Name</strong><button disabled="@running" @onclick="()=>RunWorkflow(w)">Run now</button><button @onclick="()=>ViewWorkflow(w)">View definition</button><button @onclick="()=>Unlink(w)">Unlink</button></article>}
+    <a href="/tools?tab=workflows">Manage device workflows</a></section>}
+ }else{
+    <header><h4>Unfiled documents</h4></header><section class="controls">
+    @if(unfiled.Count==0){<p>Create a project to start a chat or add files.</p>}
+    @foreach(var d in unfiled){<article><button class="filename" @onclick="()=>ViewLegacy(d)">@d.Name</button><select aria-label="Move to project" value="" @onchange="e=>Move(d,e.Value?.ToString())"><option value="">Move to project…</option>@foreach(var p in rows.Where(r=>ProjectStore.IsProject(r.Id)&&!ProjectStore.Deleted(r))){<option value="@p.Id">@p.Name</option>}</select><button @onclick="()=>RemoveLegacy(d)">Delete</button></article>}
+    </section>
+ }
+ @if(!string.IsNullOrEmpty(status)){<footer role="status">@status <button @onclick="()=>status=null" aria-label="Dismiss">✕</button></footer>}
+ </div>
+ @if(preview!=null || draft!=null){<div class="preview">
+   @if(preview!=null){<ArtifactPreview @key="preview" Bytes="preview.Bytes" Name="@preview.Name" Mime="@preview.Mime" StartPage="preview.Page" OpenHref="@preview.OpenHref" OnClose="ClosePreview"/>}
+   else{<header><strong>Document draft</strong><button @onclick="ClosePreview">Close</button></header><pre>@draft</pre>}
+ </div>}
+  </div>
+ </main>
+</div>
+<dialog @ref="dialog" class="project-dialog" aria-label="Project details" @oncancel="CancelDialog" @oncancel:preventDefault>
+    <form @onsubmit="SubmitDetails" @onsubmit:preventDefault>
+        <button type="button" class="icon dialog-close" aria-label="Close" title="Close" disabled="@submitting" @onclick="CancelDialog">✕</button>
+        <i class="bi bi-folder dialog-folder" aria-hidden="true"></i>
+        <input autofocus required maxlength="120" aria-label="Project name" placeholder="Untitled project" @bind="newName" @bind:event="oninput" />
+        <textarea maxlength="2000" aria-label="Project description" placeholder="What's this project about?" @bind="description"></textarea>
+        @if(editId==null){<label class="file-picker dialog-files">＋ Add files<InputFile @key="pickerKey" multiple accept="@FileTypes" aria-label="Add project files" disabled="@submitting" OnChange="PickFiles" /></label>
+        @foreach(var file in pending){<small>@file.Name</small>}}
+        @if(dialogError!=null){<small role="alert">@dialogError</small>}
+        <button class="submit-project" disabled="@(submitting || string.IsNullOrWhiteSpace(newName))">@(editId==null?"Create":"Save")</button>
+    </form>
+</dialog>
+
+@code {
+    record Preview(string Name,string Mime,byte[] Bytes,int Page=1,string? Id=null,string? OpenHref=null);
+    readonly string[] tabs=["Chat","Files","Instructions","Workflows"];
+    List<LibraryDocument> rows=[],unfiled=[]; List<ProjectFile> files=[]; List<LocalConvo> chats=[];
+    ProjectInfo? info; string? project,chat,status,draft,rename; string tab="Chat",newName="",projectName="",instructions="",renameText="",workflow="";
+    Preview? preview; ChatPage? chatView;
+    string draftFormat="";
+    List<LocalNote> noteIndex=[]; List<ChatMessage> noteEntries=[];
+    List<(LibraryDocument Row, ProjectNoteLink Link)> noteLinks=[];
+    bool showNotePicker; string notePickNote="",notePickEntry="";
+    bool showChatPicker; List<LocalConvo> availableChats=[];
+    readonly CancellationTokenSource lifetime=new(); readonly HashSet<string> indexing=[];readonly Dictionary<string,string> searchStatus=[];
+    string? loadedWorkspace;
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.LoadAsync();
+        Auth.OnChanged+=WorkspaceChanged;
+        Sync.OnProjectsChanged+=Changed;
+        Sync.OnConversationsChanged+=ChatsChanged;
+        SidebarState.OnChanged+=SidebarChanged;
+        await LoadWorkspace();
+    }
+    void SidebarChanged()=>_=InvokeAsync(StateHasChanged);
+    void WorkspaceChanged()=>_=InvokeAsync(async()=>{await LoadWorkspace();StateHasChanged();});
+    async Task LoadWorkspace()
+    {
+        var owner=Auth.IsAuthenticated ? StorageNamespace.GetPrefix(Auth) : null;
+        if(owner==loadedWorkspace)return;
+        loadedWorkspace=owner;
+        rows=[];unfiled=[];files=[];chats=[];project=null;chat=null;info=null;searchStatus.Clear();ClosePreview();
+        if(owner==null)return;
+        try
+        {
+            await Workflows.LoadAsync();
+            await Refresh();
+            if(owner==loadedWorkspace)await Select(rows.FirstOrDefault(d=>ProjectStore.IsProject(d.Id)&&!ProjectStore.Deleted(d))?.Id);
+        }
+        catch(Exception ex){if(owner==loadedWorkspace){loadedWorkspace=null;status="Could not load projects: "+ex.Message;}}
+    }
+    void Changed()=>_=InvokeAsync(async()=>{await Refresh();if(project is {} id){var current=await Store.ReadAsync<ProjectInfo>(id);if(project!=id)return;if(current==null)await Select(null);else{if(instructions==info?.Instructions)instructions=current.Instructions;if(projectName==info?.Name)projectName=current.Name;info=current;}}StateHasChanged();});
+    void ChatsChanged()=>_=InvokeAsync(async()=>{await RefreshChats();StateHasChanged();});
+    async Task Guard(Func<Task> action){try{await action();}catch(Exception ex){status=ex.Message;}}
+    async Task Refresh(){var owner=loadedWorkspace;if(owner==null)return;var storedRows=await Store.IndexAsync();var storedUnfiled=await Library.LoadIndexAsync();if(owner!=loadedWorkspace)return;rows=storedRows;unfiled=storedUnfiled;var id=project;if(id==null)return;
+        var next=new List<ProjectFile>();foreach(var d in rows.Where(r=>r.Id.StartsWith(id+":f:") && r.Id.Count(c=>c==':')==3 && !ProjectStore.Deleted(r))){if(await Store.ReadAsync<ProjectFile>(d.Id) is {} f && f.Id==d.Id)next.Add(f);} if(id!=project)return;files=next;
+        var links=new List<(LibraryDocument,ProjectNoteLink)>();foreach(var d in rows.Where(r=>r.Id.StartsWith(id+":n:") && !ProjectStore.Deleted(r))){if(await Store.ReadAsync<ProjectNoteLink>(d.Id) is {} l)links.Add((d,l));} if(id!=project)return;noteLinks=links;
+        try{noteIndex=await Notes.LoadIndexAsync();}catch{noteIndex=[];}
+        if(preview?.Id is {} shown && !files.Any(f=>f.Id==shown) && !noteLinks.Any(n=>n.Row.Id==shown))ClosePreview();
+        foreach(var f in files)if(Complete(f) && !searchStatus.ContainsKey(f.Id) && indexing.Add(f.Id))_=Index(f);
+    }
+    bool Complete(ProjectFile f)=>rows.Count(d=>d.Id.StartsWith(f.Id+":") && !ProjectStore.IsCache(d.Id) && !ProjectStore.Deleted(d))==f.Parts;
+    string Status(ProjectFile f){var parts=rows.Count(r=>r.Id.StartsWith(f.Id+":")&&!ProjectStore.IsCache(r.Id)&&!ProjectStore.Deleted(r));return parts==0?"Waiting for device":parts<f.Parts?$"Transferring · {parts}/{f.Parts} parts":searchStatus.GetValueOrDefault(f.Id,"Available · Indexing…");}
+    async Task Index(ProjectFile f){try{var index=await Retrieval.IndexAsync(f,lifetime.Token);searchStatus[f.Id]=index?.Passages.Count>0?"Searchable":f.Mime=="application/pdf"?"Preview only · No searchable text":"Preview only";}catch(OperationCanceledException){}catch(Exception ex){searchStatus[f.Id]="Index unavailable: "+ex.Message;}finally{indexing.Remove(f.Id);if(!lifetime.IsCancellationRequested)await InvokeAsync(StateHasChanged);}}
+    async Task RefreshChats(){var id=project;if(id==null){chats=[];return;}var all=await Conversations.LoadIndexAsync();var linked=await Store.LinkedChatIdsAsync(id);if(id!=project)return;chats=all.Where(c=>c.Id.StartsWith(ProjectStore.ChatPrefix(id))||linked.Contains(c.Id)).OrderByDescending(c=>c.LastUpdated).ToList();}
+    async Task Select(string? id){project=id;chat=null;files=[];noteLinks=[];info=null;ClosePreview();tab="Chat";status=null;rename=null;draftFormat="";showNotePicker=false;showChatPicker=false;await RefreshChats(); if(id!=null && project==id){var current=await Store.ReadAsync<ProjectInfo>(id);if(project!=id)return;info=current;projectName=info?.Name??"";instructions=info?.Instructions??"";OpenChat(chats.FirstOrDefault()?.Id??ProjectStore.ChatPrefix(id)+Guid.NewGuid().ToString("N"));}await Refresh();}
+    void OpenChat(string id){chat=id;tab="Chat";draftFormat="";draft=null;}
+    void NewChat(){if(project==null)return;var id=ProjectStore.ChatPrefix(project)+Guid.NewGuid().ToString("N");if(!chats.Any(c=>c.Id==id))chats.Insert(0,new LocalConvo(id,"New chat",DateTime.UtcNow));showChatPicker=false;OpenChat(id);}
+    async Task NewChatIn(string id){if(project!=id)await Select(id);NewChat();}
+    async Task ToggleChatPicker(){showChatPicker=!showChatPicker;if(!showChatPicker)return;var all=await Conversations.LoadIndexAsync();var linked=await Store.AllLinkedChatIdsAsync();availableChats=all.Where(c=>!ProjectStore.IsChat(c.Id)&&!linked.Contains(c.Id)).OrderByDescending(c=>c.LastUpdated).Take(30).ToList();}
+    Task AddExistingChat(string chatId)=>Guard(async()=>{if(project==null)return;if((await Store.LinkedChatIdsAsync(project)).Contains(chatId)){status="That chat is already in this project.";return;}var linkId=project+":c:"+Guid.NewGuid().ToString("N");await Store.SaveAsync(linkId,"Linked chat",new ProjectChatLink(chatId));Sync.ScheduleProjectSync();showChatPicker=false;await RefreshChats();OpenChat(chatId);});
+    Task UnlinkChat(string chatId)=>Guard(async()=>{if(project==null)return;foreach(var row in (await Store.IndexAsync()).Where(r=>r.Id.StartsWith(project+":c:")&&!ProjectStore.Deleted(r))){var l=await Store.ReadAsync<ProjectChatLink>(row.Id);if(l?.ChatId==chatId){await Store.DeleteAsync(row.Id);break;}}Sync.ScheduleProjectSync();await RefreshChats();if(chat==chatId)NewChat();});
+    const string FileTypes=".pdf,.txt,.md,.html,.htm,.docx,.png,.jpg,.jpeg,.webp,.gif";
+    ElementReference dialog;
+    IJSObjectReference? dialogModule;
+    string description=""; string? editId,dialogError;
+    int pickerKey; bool submitting;
+    IReadOnlyList<IBrowserFile> pending=[];
+    Task OpenCreate()=>OpenDetails(null);
+    Task OpenEdit()=>OpenDetails(project);
+    async Task OpenDetails(string? id)
+    {
+        editId=id;newName=id==null?"":info?.Name??"";description=id==null?"":info?.Description??"";
+        pending=[];pickerKey++;dialogError=null;
+        dialogModule??=await JS.InvokeAsync<IJSObjectReference>("import","./_content/App.Shared/projectDialog.js");
+        await dialogModule.InvokeVoidAsync("show",dialog);
+    }
+    async Task CancelDialog(){if(!submitting && dialogModule!=null){await dialogModule.InvokeVoidAsync("close",dialog);pending=[];}}
+    void PickFiles(InputFileChangeEventArgs e)
+    {
+        pending=[];dialogError=null;
+        try{var selected=e.GetMultipleFiles(20);foreach(var f in selected){_=Mime(f.Name);if(f.Size is 0 or >ProjectStore.MaxSize)throw new IOException("Choose nonempty files up to 32 MB each.");}pending=selected;}
+        catch(Exception ex){dialogError=ex.Message;pickerKey++;}
+    }
+    async Task SubmitDetails()
+    {
+        if(submitting || string.IsNullOrWhiteSpace(newName))return;
+        submitting=true;dialogError=null;
+        try{
+            var id=editId??ProjectStore.NewId();
+            var record=editId==null?new ProjectInfo(newName.Trim(),"",description.Trim()):(await Store.ReadAsync<ProjectInfo>(id)??throw new IOException("Project was removed.")) with{Name=newName.Trim(),Description=description.Trim()};
+            await Store.SaveAsync(id,record.Name,record);
+            var failed=new List<string>();
+            foreach(var file in pending){try{await AddFile(id,file);}catch(Exception ex){failed.Add($"{file.Name}: {ex.Message}");}}
+            Sync.ScheduleProjectSync();await dialogModule!.InvokeVoidAsync("close",dialog);
+            if(editId==null){await Select(id);if(pending.Count>0)tab="Files";}else{info=record;await Refresh();}
+            pending=[];if(failed.Count>0)status="Could not add "+string.Join("; ",failed);
+        }catch(Exception ex){dialogError=ex.Message;}finally{submitting=false;}
+    }
+    Task SaveInstructions()=>Guard(async()=>{if(project==null||info==null)return;var updated=info with{Instructions=instructions};await Store.SaveAsync(project,info.Name,updated);info=updated;Sync.ScheduleProjectSync();});
+    Task RemoveProject(LibraryDocument row)=>Guard(async()=>{
+        var id=row.Id;if(!await JS.InvokeAsync<bool>("confirm",$"Delete {row.Name}, its files and its chats on all synced devices?"))return;
+        foreach(var c in (await Conversations.LoadIndexAsync()).Where(c=>c.Id.StartsWith(ProjectStore.ChatPrefix(id)))){
+            var when=await Conversations.DeleteConversationAsync(c.Id);Sync.ScheduleAutoSyncConvoDeleteAfterLocalDelete(c.Id,when);
+        }
+        foreach(var row in (await Store.IndexAsync()).Where(r=>r.Id.StartsWith(id+":")&&!ProjectStore.Deleted(r))){if(ProjectStore.IsCache(row.Id))await Library.DeleteAsync(row.Id);else await Store.DeleteAsync(row.Id);}
+        await Store.DeleteAsync(id);Sync.ScheduleProjectSync();if(project==id)await Select(null);else await Refresh();
+    });
+    static string Mime(string name)=>Path.GetExtension(name).ToLowerInvariant() switch{".pdf"=>"application/pdf",".txt"=>"text/plain",".md"=>"text/markdown",".html" or ".htm"=>"text/html",".docx"=>ProjectRetrieval.DocxMime,".png"=>"image/png",".jpg" or ".jpeg"=>"image/jpeg",".gif"=>"image/gif",".webp"=>"image/webp",_=>throw new IOException("Unsupported file type.")};
+    async Task<Preview> AddFile(string id,IBrowserFile b){var mime=Mime(b.Name);using var s=b.OpenReadStream(ProjectStore.MaxSize);using var mem=new MemoryStream();await s.CopyToAsync(mem);var bytes=mem.ToArray();var f=await Store.AddFileAsync(id,b.Name,mime,bytes);return new(f.Name,mime,bytes,Id:f.Id);}
+    Task Upload(InputFileChangeEventArgs e)=>Guard(async()=>{var id=project!;foreach(var b in e.GetMultipleFiles(20)){var selected=await AddFile(id,b);Sync.ScheduleProjectSync();if(project==id)preview=selected;await Refresh();}});
+    Task Rename(ProjectFile f)=>Guard(async()=>{if(string.IsNullOrWhiteSpace(renameText))return;await Store.SaveAsync(f.Id,renameText.Trim(),f with{Name=renameText.Trim()});rename=null;Sync.ScheduleProjectSync();await Refresh();});
+    Task Delete(ProjectFile f)=>Guard(async()=>{if(!await JS.InvokeAsync<bool>("confirm",$"Delete {f.Name} from this project and its synced devices?"))return;await Store.RemoveFileAsync(f);Sync.ScheduleProjectSync();await Refresh();});
+    int viewRequest;
+    Task View(ProjectFile f,int page=1)=>Guard(async()=>{var request=++viewRequest;var id=project;var bytes=await Store.BytesAsync(f);if(request!=viewRequest||id!=project)return;if(bytes==null){status="Waiting for file parts from a synced device.";return;}preview=new(f.Name,f.Mime,bytes,page,f.Id);draft=null;});
+    async Task Source(ProjectSource s){
+        if(s.FileId.Contains(":n:")){var nl=noteLinks.FirstOrDefault(n=>n.Row.Id==s.FileId);if(nl.Link!=null){await ViewNote(nl.Link);return;}status="This note link was removed or has not synced yet.";return;}
+        var f=files.FirstOrDefault(f=>f.Id==s.FileId);if(f!=null)await View(f,s.Page);else status="This source was removed or has not synced yet.";
+    }
+    async Task SelectNotePick(ChangeEventArgs e){notePickNote=e.Value?.ToString()??"";notePickEntry="";noteEntries=[];if(notePickNote.Length>0){try{noteEntries=(await Notes.LoadNoteAsync(notePickNote)).Where(ChatMessageHelper.IsVisible).ToList();}catch{noteEntries=[];}}}
+    static string NoteEntryLabel(ChatMessage en){var t=System.Text.RegularExpressions.Regex.Replace(en.Content??"","<[^>]+>"," ");t=System.Net.WebUtility.HtmlDecode(t).Trim();if(t.Length>48)t=t[..48]+"…";return t.Length>0?t:"(entry)";}
+    string NoteStatus(ProjectNoteLink l)=>noteIndex.Any(n=>n.Id==l.NoteId)?"Linked note":"Waiting for note sync";
+    Task LinkNote()=>Guard(async()=>{if(project==null||notePickNote.Length==0)return;var note=noteIndex.FirstOrDefault(n=>n.Id==notePickNote);var title=note?.Title??"Note";var entryId=notePickEntry.Length>0?notePickEntry:null;
+        if(noteLinks.Any(n=>n.Link.NoteId==notePickNote && n.Link.EntryId==entryId)){status="That note is already linked.";return;}
+        var linkId=project+":n:"+Guid.NewGuid().ToString("N");await Store.SaveAsync(linkId,title,new ProjectNoteLink(notePickNote,entryId,title));Sync.ScheduleProjectSync();showNotePicker=false;notePickNote="";notePickEntry="";await Refresh();});
+    Task UnlinkNote(LibraryDocument row)=>Guard(async()=>{await Store.DeleteAsync(row.Id);Sync.ScheduleProjectSync();if(preview?.Id==row.Id)ClosePreview();await Refresh();});
+    Task ViewNote(ProjectNoteLink link)=>Guard(async()=>{
+        var note=noteIndex.FirstOrDefault(n=>n.Id==link.NoteId);
+        if(note==null){status="Waiting for note sync from another device.";return;}
+        if(note.IsPasswordProtected){status="Unlock this notebook in Notes to preview it here.";return;}
+        List<ChatMessage> entries;try{entries=await Notes.LoadNoteAsync(link.NoteId);}catch(Exception ex){status="Could not open note: "+ex.Message;return;}
+        var selected=link.EntryId!=null?entries.Where(e=>e.ItemId==link.EntryId).ToList():entries;
+        var sb=new System.Text.StringBuilder();foreach(var en in selected.Where(ChatMessageHelper.IsVisible))sb.Append(NoteContentFormatter.ToDisplayHtml(en.Content??"",en.ContentFormat));
+        var html=System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        preview=new Preview(link.Title,"text/html",html,Id:noteLinks.FirstOrDefault(n=>n.Link.NoteId==link.NoteId&&n.Link.EntryId==link.EntryId).Row?.Id,OpenHref:"/notes");draft=null;
+    });
+    Task Attach(ProjectFile f)=>Guard(async()=>{if(await Store.BytesAsync(f) is {} data){tab="Chat";chatView?.AttachProjectImage(new(f.Name,f.Mime,Convert.ToBase64String(data),data.Length));}});
+    void ClosePreview(){viewRequest++;preview=null;draft=null;}
+    void Draft(string s){if(preview==null)draft=s;}
+    void PreviewAttachment(Attachment a){preview=new(a.Name,a.ContentType,Convert.FromBase64String(a.DataBase64));draft=null;}
+    async Task Output(ProjectFile f){await Refresh();if(preview==null)await View(f);else status=$"{f.Name} is ready in Files.";draftFormat="";draft=null;}
+    Task ViewLegacy(LibraryDocument d)=>Guard(async()=>{if(await Library.LoadBytesAsync(d.Id) is {} b)preview=new(d.Name,d.ContentType,b);});
+    Task RemoveLegacy(LibraryDocument d)=>Guard(async()=>{if(await JS.InvokeAsync<bool>("confirm",$"Delete {d.Name}?")){await Library.DeleteAsync(d.Id);ClosePreview();await Refresh();}});
+    Task Move(LibraryDocument d,string? id)=>Guard(async()=>{if(id==null||!rows.Any(r=>r.Id==id&&ProjectStore.IsProject(id)))return;var b=await Library.LoadBytesAsync(d.Id)??throw new IOException("Missing file bytes.");await Store.AddFileAsync(id,d.Name,d.ContentType,b,d.ConversationId,key:d.Id.PadLeft(32,'0'));await Library.DeleteAsync(d.Id);Sync.ScheduleProjectSync();await Select(id);tab="Files";});
+    bool running;
+    Task RunWorkflow(LibraryDocument row)=>Guard(async()=>{running=true;try{var result=await Orchestrator.RunProjectAsync(row.Id,lifetime.Token);status=result.Success?"Workflow output saved to Files.":result.Error;await RefreshChats();await Refresh();}finally{running=false;}});
+    Task Link()=>Guard(async()=>{if(project==null||Workflows.Get(workflow) is not {} w)return;await Sync.InitializeAsync();if(Sync.MyDeviceId==null)throw new InvalidOperationException("Set up this sync device before linking a workflow.");foreach(var row in rows.Where(r=>r.Id.Contains(":w:")&&!ProjectStore.Deleted(r))){var link=await Store.ReadAsync<ProjectWorkflow>(row.Id);if(link?.Id==w.Id&&link.DeviceId==Sync.MyDeviceId)throw new InvalidOperationException("This device workflow already belongs to a project.");}await Store.SaveAsync(project+":w:"+Guid.NewGuid().ToString("N"),w.Name,new ProjectWorkflow(w.Id,w.Name,w.Yaml,Sync.MyDeviceId));Sync.ScheduleProjectSync();await Refresh();});
+    Task ViewWorkflow(LibraryDocument d)=>Guard(async()=>{if(await Store.ReadAsync<ProjectWorkflow>(d.Id) is {} w)preview=new(w.Name,"text/plain",System.Text.Encoding.UTF8.GetBytes(w.Yaml));});
+    Task Unlink(LibraryDocument d)=>Guard(async()=>{await Store.DeleteAsync(d.Id);Sync.ScheduleProjectSync();await Refresh();});
+    public async ValueTask DisposeAsync(){lifetime.Cancel();Auth.OnChanged-=WorkspaceChanged;Sync.OnProjectsChanged-=Changed;Sync.OnConversationsChanged-=ChatsChanged;SidebarState.OnChanged-=SidebarChanged;if(dialogModule!=null)await dialogModule.DisposeAsync();}
+}

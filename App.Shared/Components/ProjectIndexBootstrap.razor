@@ -1,0 +1,61 @@
+@implements IDisposable
+@inject IServiceProvider Services
+@inject IAuthService Auth
+@inject ISyncService Sync
+
+@code {
+    // Work on the interactive client: PDF extraction needs its WebView/worker.
+    // Coalesce part arrivals; a partially transferred file must not be marked as indexed.
+    CancellationTokenSource stop = new();
+    bool running, dirty;
+    ProjectStore? store;
+    ProjectRetrieval? retrieval;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender) return;
+        store = Services.GetService(typeof(ProjectStore)) as ProjectStore;
+        retrieval = Services.GetService(typeof(ProjectRetrieval)) as ProjectRetrieval;
+        if (store == null || retrieval == null) return;
+        Sync.OnProjectsChanged += Schedule;
+        Auth.OnChanged += Schedule;
+        Schedule();
+    }
+
+    void Schedule() => _ = InvokeAsync(async () =>
+    {
+        dirty = true;
+        if (running || stop.IsCancellationRequested) return;
+        running = true;
+        try
+        {
+            while (dirty && Auth.IsAuthenticated)
+            {
+                await Task.Delay(350, stop.Token);
+                dirty = false;
+                var rows = await store!.IndexAsync();
+                var ids = rows.Where(r => !ProjectStore.Deleted(r)).Select(r => r.Id).ToHashSet();
+                foreach (var id in ids.Where(k => k.Contains(":f:") && k.Count(c => c == ':') == 3 && !ids.Contains(k + ":index")))
+                {
+                    stop.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var f = await store.ReadAsync<ProjectFile>(id);
+                        if (f?.Id == id && f.Parts is > 0 and <= 128 && Enumerable.Range(0, f.Parts).All(i => ids.Contains(id + ":" + i)))
+                            await retrieval!.IndexAsync(f, stop.Token);
+                    }
+                    catch (Exception) when (!stop.IsCancellationRequested) { /* Per-file status is available in Files. */ }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        finally { running = false; }
+    });
+
+    public void Dispose()
+    {
+        stop.Cancel();
+        Sync.OnProjectsChanged -= Schedule;
+        Auth.OnChanged -= Schedule;
+    }
+}

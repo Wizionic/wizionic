@@ -119,4 +119,8 @@ public record ChatMessage(
     List<NoteAudioRef>? AudioClips = null,
     List<string>? NoteAncestors = null,
     int? NotePosition = null,
-    long? NotePositionClock = null);
+    long? NotePositionClock = null,
+    List<ProjectSource>? ProjectSources = null,
+    List<ProjectSource>? ProjectOutputs = null);
+
+public record ProjectSource(string FileId, string Name, int Page);

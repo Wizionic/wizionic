@@ -54,7 +54,7 @@ public sealed class PdfToolModule : IToolModule
                     "lists, code blocks, quotes, links). Tables and images are not rendered. " +
                     "To export a note, first read it with the Notes tools, then pass its content here. " +
                     "Returns a short pdf_id only — the PDF is shown to the user automatically as a " +
-                    "downloadable card. If they want it kept in their Documents library, call " +
+                    "preview card. In a project, the file is saved automatically. Outside projects, to keep it call " +
                     "save_pdf_to_library with that pdf_id. Never re-output the document content or base64 in your reply."
             }),
         AIFunctionFactory.Create(SavePdfToLibraryAsync,
@@ -107,8 +107,8 @@ public sealed class PdfToolModule : IToolModule
             _trace.Record($"   ✅ {name} → pdf_id={docId}, {result.PageCount} page(s), {sizeKb:0.#} KB");
             return Task.FromResult(
                 $"OK: PDF created. pdf_id={docId}, file \"{name}\", {result.PageCount} page(s), {sizeKb:0.#} KB. " +
-                "The PDF is displayed to the user as a downloadable card (do not re-output its content or base64). " +
-                $"If they asked to keep it, call save_pdf_to_library(pdf_id={docId}).");
+                "The PDF can be previewed inline (do not re-output its content or base64). " +
+                (ProjectStore.IsChat(convoId) ? "It will be filed with this project." : $"If they asked to keep it, call save_pdf_to_library(pdf_id={docId})."));
         }
         catch (Exception ex)
         {
@@ -127,6 +127,7 @@ public sealed class PdfToolModule : IToolModule
         _trace.Record($"📚 save_pdf_to_library(pdf={pdf_id ?? "latest"})");
 
         var convoId = _convoCtx.ConversationId ?? "_default";
+        if(ProjectStore.IsChat(convoId))return "Project chat files its generated PDFs automatically when the reply finishes.";
         BufferedDocument? doc = null;
         if (!string.IsNullOrWhiteSpace(pdf_id)
             && _media.TryGetDocument(convoId, pdf_id, out var byId) && byId != null)

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using App.Core.Sync;
 using App.Core.Workflows;
+using App.Core.Storage;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace App.Shared.Services.Workflows;
 
@@ -14,14 +16,16 @@ public sealed class PreferencesWorkflowStore : IWorkflowStore
     };
 
     private readonly ISyncPreferencesStore _prefs;
+    private readonly IServiceProvider _services;
     private readonly List<WorkflowRecord> _items = new();
     private readonly object _lock = new();
 
     public event Action? Changed;
 
-    public PreferencesWorkflowStore(ISyncPreferencesStore prefs)
+    public PreferencesWorkflowStore(ISyncPreferencesStore prefs, IServiceProvider services)
     {
         _prefs = prefs ?? throw new ArgumentNullException(nameof(prefs));
+        _services = services;
     }
 
     public async Task LoadAsync(CancellationToken ct = default)
@@ -77,7 +81,25 @@ public sealed class PreferencesWorkflowStore : IWorkflowStore
             _items.Add(record);
         }
         await PersistAsync(ct);
+        await RefreshLinkedDefinitionAsync(record);
         Changed?.Invoke();
+    }
+
+    private async Task RefreshLinkedDefinitionAsync(WorkflowRecord record)
+    {
+        using var scope = OperatingSystem.IsBrowser() ? null : _services.CreateScope();
+        var services = scope?.ServiceProvider ?? _services;
+        var store = services.GetRequiredService<ProjectStore>();
+        var links = (await store.IndexAsync()).Where(r => r.Id.Contains(":w:") && !ProjectStore.Deleted(r)).ToList();
+        if (links.Count == 0) return;
+        var sync = services.GetRequiredService<ISyncService>();
+        foreach (var row in links)
+        {
+            var link = await store.ReadAsync<ProjectWorkflow>(row.Id);
+            if (link?.Id != record.Id || sync.MyDeviceId == null || link.DeviceId != sync.MyDeviceId || (link.Name == record.Name && link.Yaml == record.Yaml)) continue;
+            await store.SaveAsync(row.Id, record.Name, link with { Name = record.Name, Yaml = record.Yaml });
+            sync.ScheduleProjectSync();
+        }
     }
 
     public async Task DeleteAsync(string idOrName, CancellationToken ct = default)

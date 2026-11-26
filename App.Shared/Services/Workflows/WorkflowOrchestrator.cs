@@ -1,6 +1,8 @@
 using App.Core.Skills;
 using App.Core.Storage;
 using App.Core.Workflows;
+using App.Core.Sync;
+using Microsoft.Extensions.DependencyInjection;
 // CalendarIcs used only if we want RRULE on projected events — currently instances are materialised.
 
 namespace App.Shared.Services.Workflows;
@@ -15,17 +17,20 @@ public sealed class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly ISkillRunner _skillRunner;
     private readonly IKeyStore _keys;
     private readonly ICalendarStore? _calendar;
+    private readonly IServiceProvider _services;
 
     public WorkflowOrchestrator(
         IWorkflowStore workflows,
         ISkillRunner skillRunner,
         IKeyStore keys,
+        IServiceProvider services,
         ICalendarStore? calendar = null)
     {
         _workflows = workflows;
         _skillRunner = skillRunner;
         _keys = keys;
         _calendar = calendar;
+        _services = services;
     }
 
     public async Task<WorkflowRunResult> RunAsync(string workflowId, CancellationToken ct = default)
@@ -37,6 +42,36 @@ public sealed class WorkflowOrchestrator : IWorkflowOrchestrator
         if (!rec.Enabled)
             return Fail($"Workflow '{rec.Name}' is disabled.");
 
+        using var scope=OperatingSystem.IsBrowser() ? null : _services.CreateScope();
+        var services=scope?.ServiceProvider??_services;
+        var projects=services.GetRequiredService<ProjectStore>();
+        var sync=services.GetRequiredService<ISyncService>();
+        ProjectWorkflow? link=null;string? project=null;
+        if(sync.MyDeviceId!=null)foreach(var row in (await projects.IndexAsync()).Where(r=>r.Id.Contains(":w:")&&!ProjectStore.Deleted(r)))
+        {
+            link=await projects.ReadAsync<ProjectWorkflow>(row.Id);
+            if(link?.Id!=rec.Id || link.DeviceId!=sync.MyDeviceId)continue;
+            project=row.Id.Split(":w:")[0];
+            break;
+        }
+        var result=await ExecuteAsync(rec,project,services,ct);
+        rec.LastRunAtUtc = DateTimeOffset.UtcNow;
+        rec.LastRunStatus = result.Success ? "ok" : ("error: " + (result.Error ?? "failed"));
+        await _workflows.UpsertAsync(rec, ct);
+        return result;
+    }
+
+    public async Task<WorkflowRunResult> RunProjectAsync(string linkId, CancellationToken ct=default)
+    {
+        using var scope=OperatingSystem.IsBrowser() ? null : _services.CreateScope();
+        var services=scope?.ServiceProvider??_services;
+        var link=await services.GetRequiredService<ProjectStore>().ReadAsync<ProjectWorkflow>(linkId);
+        if(link==null)return Fail("Workflow link was removed.");
+        return await ExecuteAsync(new WorkflowRecord{Id=link.Id,Name=link.Name,Yaml=link.Yaml},linkId.Split(":w:")[0],services,ct);
+    }
+
+    private async Task<WorkflowRunResult> ExecuteAsync(WorkflowRecord rec,string? project,IServiceProvider services,CancellationToken ct)
+    {
         WorkflowDocument doc;
         try { doc = WorkflowMarkdown.Parse(rec.Yaml); }
         catch (Exception ex) { return Fail("Invalid workflow YAML: " + ex.Message); }
@@ -48,11 +83,14 @@ public sealed class WorkflowOrchestrator : IWorkflowOrchestrator
         if (string.IsNullOrWhiteSpace(model))
             return Fail("No model available. Set preferred_model on the workflow or select a chat model.");
 
+        var prompt = doc.ExecuteSkill.UserMessage;
+        var convo = project==null?null:ProjectStore.ChatPrefix(project)+Guid.NewGuid().ToString("N");
+        if(project!=null){var context=await services.GetRequiredService<ProjectRetrieval>().FindAsync(project,prompt??doc.Name,ct);prompt=context.Context+"\n"+(prompt??$"Run {doc.Name}.");}
         var skillResult = await _skillRunner.RunAsync(new SkillRunRequest
         {
             SkillId = doc.ExecuteSkill.Id,
             ModelId = model,
-            UserMessageOverride = doc.ExecuteSkill.UserMessage,
+            UserMessageOverride = prompt, ConversationId=convo,
             Parameters = doc.ExecuteSkill.Parameters,
             Source = SkillRunSource.Workflow,
             WorkflowId = doc.Id,
@@ -61,9 +99,14 @@ public sealed class WorkflowOrchestrator : IWorkflowOrchestrator
                 + (string.IsNullOrWhiteSpace(doc.Trigger.Expression) ? "" : $" {doc.Trigger.Expression}")
         }, ct);
 
-        rec.LastRunAtUtc = DateTimeOffset.UtcNow;
-        rec.LastRunStatus = skillResult.Success ? "ok" : ("error: " + (skillResult.Error ?? "failed"));
-        await _workflows.UpsertAsync(rec, ct);
+        if(project!=null && convo!=null && skillResult.Success){
+            var store=services.GetRequiredService<ProjectStore>();var chats=services.GetRequiredService<IConversationStore>();var sync=services.GetRequiredService<ISyncService>();
+            var msgId=Guid.NewGuid().ToString("N");List<ProjectSource> outputs=[];
+            foreach(var a in skillResult.Attachments??[]){var f=await store.AddFileAsync(project,a.Name,a.ContentType,Convert.FromBase64String(a.DataBase64),convo,msgId);outputs.Add(new(f.Id,f.Name,1));}
+            if(outputs.Count==0 && !string.IsNullOrWhiteSpace(skillResult.Text)){var f=await store.AddFileAsync(project,rec.Name+".md","text/markdown",System.Text.Encoding.UTF8.GetBytes(skillResult.Text),convo,msgId);outputs.Add(new(f.Id,f.Name,1));}
+            List<ChatMessage> transcript=[new(Role:"user",Content:rec.Name,ItemId:Guid.NewGuid().ToString("N"),Timestamp:DateTime.UtcNow),new(Role:"assistant",Content:skillResult.Text??"Workflow completed.",ItemId:msgId,Timestamp:DateTime.UtcNow,ProjectOutputs:outputs)];
+            await chats.SaveConversationAsync(convo,transcript,ct);await chats.UpdateIndexAfterSaveAsync(convo,transcript,await chats.LoadIndexAsync(ct),ct);sync.ScheduleAutoSyncConvoAfterLocalSave(convo);sync.ScheduleProjectSync();
+        }
 
         return new WorkflowRunResult
         {

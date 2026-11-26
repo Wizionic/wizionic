@@ -37,6 +37,7 @@ public sealed class SkillRunRequest
 
 public sealed class SkillRunResult
 {
+    public IReadOnlyList<App.Core.Storage.Attachment>? Attachments {get;set;}
     public bool Success { get; set; }
     public string? Text { get; set; }
     public string? ToolTrace { get; set; }

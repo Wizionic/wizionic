@@ -1032,12 +1032,17 @@
         };
 
         /// Encrypt raw bytes → bin-v1 in IDB (no multi-MB base64 JSON round-trips).
-        window.documentStoreBytes = async (contentKey, encKeyB64, plainBytes) => {
+        window.documentPut = async (meta, contentKey, encKeyB64, plainBytes) => {
             const plain = plainBytes instanceof Uint8Array ? plainBytes : new Uint8Array(plainBytes);
-            let toStore = plain;
-            if (encKeyB64)
-                toStore = await window.encryptLocalBytes(encKeyB64, plain);
-            await window.idbPutDocumentContent(contentKey, toStore, "bin-v1");
+            const content = await window.encryptLocalBytes(encKeyB64, plain);
+            const db = await getWizionicDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(["documentMetas", "documentContents"], "readwrite");
+                tx.objectStore("documentMetas").put(meta);
+                tx.objectStore("documentContents").put({ key: contentKey, content, format: "bin-v1" });
+                tx.oncomplete = () => resolve();
+                tx.onabort = () => reject(tx.error);
+            });
         };
 
         /// Decrypt stored document bytes → base64 (for download / open).

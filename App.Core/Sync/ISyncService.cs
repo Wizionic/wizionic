@@ -44,6 +44,8 @@ public interface ISyncService : INotesSyncBridge, IGallerySyncBridge, ICalendarS
     IReadOnlyCollection<string> SyncTargetDeviceIds { get; }
 
     event Action? OnChanged;
+    event Action? OnProjectsChanged { add {} remove {} }
+    void ScheduleProjectSync() {}
     event Action? OnConversationsChanged;
     event Action<string, string, string>? OnSyncPayloadReceived;
     event Action<string, string>? OnSyncAckReceived;

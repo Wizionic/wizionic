@@ -280,6 +280,7 @@ public sealed class NotesToolModule : IToolModule
 
             await work.Store.CommitAsync(id, new(t, entries, DateTime.UtcNow.Ticks));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(id, t);
+            await LinkProjectNoteAsync(id, entries.FirstOrDefault()?.ItemId, t);
 
             _trace.Record($"   ✅ notebook_id={id}");
             return entries.Count == 0
@@ -348,6 +349,7 @@ public sealed class NotesToolModule : IToolModule
             var entry = MakeTextEntry(text ?? "", attachments);
             await work.Store.CommitAsync(notebookId, new(title, [entry]));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(notebookId, title);
+            await LinkProjectNoteAsync(notebookId, entry.ItemId, title);
 
             var imgNote = usedGen is null ? "" : $" image generation_id={usedGen}";
             _trace.Record($"   ✅ entry_id={entry.ItemId} notebook_id={notebookId}");
@@ -441,6 +443,7 @@ public sealed class NotesToolModule : IToolModule
 
             await work.Store.CommitAsync(note.Id, new(note.Title, [NoteSyncMerger.Edited(existing, entries[idx])]));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(note.Id, note.Title);
+            await LinkProjectNoteAsync(note.Id, entry_id, note.Title);
 
             var imgNote = usedGen is null ? "" : $" Attached image generation_id={usedGen}.";
             _trace.Record($"   ✅ appended entry_id={entry_id}");
@@ -500,6 +503,7 @@ public sealed class NotesToolModule : IToolModule
 
             await work.Store.CommitAsync(note.Id, new(note.Title, [NoteSyncMerger.Edited(existing, entries[idx])]));
             work.Sync?.ScheduleAutoSyncNoteAfterLocalSave(note.Id, note.Title);
+            await LinkProjectNoteAsync(note.Id, entry_id, note.Title);
 
             _trace.Record($"   ✅ replaced entry_id={entry_id}");
             return $"Replaced entry_id={entry_id} in notebook \"{note.Title}\" (notebook_id={note.Id}).";
@@ -512,6 +516,31 @@ public sealed class NotesToolModule : IToolModule
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
+
+    /// <summary>When saving from a project chat, also file a live note link into that project.</summary>
+    private async Task LinkProjectNoteAsync(string noteId, string? entryId, string title)
+    {
+        var convo = _convoCtx.ConversationId;
+        var project = convo is null ? null : ProjectStore.ProjectFromChat(convo);
+        if (project is null) return;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var store = scope.ServiceProvider.GetRequiredService<ProjectStore>();
+            var sync = scope.ServiceProvider.GetService<App.Core.Sync.ISyncService>();
+            // Reuse an existing link for this note in the project instead of duplicating.
+            string? linkId = null;
+            foreach (var row in (await store.IndexAsync()).Where(r => r.Id.StartsWith(project + ":n:") && !ProjectStore.Deleted(r)))
+            {
+                var l = await store.ReadAsync<ProjectNoteLink>(row.Id);
+                if (l?.NoteId == noteId) { linkId = row.Id; break; }
+            }
+            linkId ??= project + ":n:" + Guid.NewGuid().ToString("N");
+            await store.SaveAsync(linkId, title, new ProjectNoteLink(noteId, entryId, title, convo));
+            sync?.ScheduleProjectSync();
+        }
+        catch { /* linking is best-effort; the note itself is already saved */ }
+    }
 
     private bool TryResolveImage(
         string? generationId,

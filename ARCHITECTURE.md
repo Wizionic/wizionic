@@ -1160,6 +1160,16 @@ When adding or changing a page:
 - Edit **both** `docs/user/` and `wwwroot/help/` (or copy the folder).
 - Do not re-paste the help article into the Razor page. If the UI feels wordy, move the text to Help.
 
+## Projects
+
+`/projects` and the legacy `/documents` route host `ProjectsPage`. A project embeds the same `ChatPage` as ordinary chat. Project chat IDs encode membership (`project-chat:{projectGuid}:{chatGuid}`); source and output links in chat messages identify stable project files. Unfiled legacy documents stay in their existing store until moved.
+
+`ProjectStore` uses the authenticated IndexedDB/SQLite document backend. Project headers, workflow definitions, file headers and 256 KiB binary parts have independently versioned `proj:` keys. Display names, sizes and revisions are metadata; bodies, files and derived indexes are encrypted. Removing an item replaces its value with a tombstone. Changing a filename updates the header, not the binary parts.
+
+Project records use the WebRTC queue, peer acknowledgements and retry path alongside chat-history sync. The queue loads one binary part when it is ready to send. A receiving client persists each part before acknowledging it. Workflow definitions travel with the project; receiving a definition never installs a schedule. Successful linked workflow runs write a project transcript and output files.
+
+PDF.js 5.4.624 and its workers, fonts and character maps live in `App.Shared/wwwroot/vendor/pdfjs/` (upstream license included). `projects.js` renders pages and extracts text locally. `ProjectRetrieval` builds an encrypted, device-only passage index, using keyword retrieval and optional local embeddings. Only the selected project's retrieved excerpts and file inventory accompany a model request. Search indexes never enter the sync queue.
+
 ## In-app Help and optional RAG
 
 Help is **browse-first**. Articles ship inside the app (no model required to read them). Optional **Ask** retrieves a few chunks from those articles and answers with a user-chosen chat model. Chat history, notes, and `ARCHITECTURE.md` are never indexed.

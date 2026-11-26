@@ -212,6 +212,7 @@ public sealed class SkillRunner : ISkillRunner
             {
                 Success = log.Success,
                 Text = result.Text,
+                Attachments = result.Attachments?.ToList(),
                 ToolTrace = string.Join("\n", log.LogLines),
                 Error = result.Error,
                 ConversationId = request.ConversationId,

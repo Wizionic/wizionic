@@ -76,6 +76,7 @@ public interface IWorkflowOrchestrator
 {
     /// <summary>Run a workflow now (manual or due schedule).</summary>
     Task<WorkflowRunResult> RunAsync(string workflowId, CancellationToken ct = default);
+    Task<WorkflowRunResult> RunProjectAsync(string linkId, CancellationToken ct = default) => Task.FromResult(new WorkflowRunResult{Error="Project workflows require the client."});
 
     /// <summary>Project enabled cron workflows onto the Workflows calendar (next N days).</summary>
     Task ProjectCalendarsAsync(CancellationToken ct = default);

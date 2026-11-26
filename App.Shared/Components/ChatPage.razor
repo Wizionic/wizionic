@@ -51,9 +51,9 @@
 
 <WasmSidebarSync />
 
-<div class="page @((SidebarState.IsCollapsed || (AppEnvironment.IsMaui && !ChatPanel.IsOpen)) ? "sidebar-collapsed" : "") @(AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")">
+<div class="page @(ProjectId != null || SidebarState.IsCollapsed || (AppEnvironment.IsMaui && !ChatPanel.IsOpen) ? "sidebar-collapsed" : "") @(ProjectId == null && AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" style="@(ProjectId!=null ? "height:100%;min-height:0" : null)">
     <!-- Sidebar -->
-    <div class="sidebar">
+    @if(ProjectId == null){<div class="sidebar">
         <nav class="cf-nav cf-column">
             <!-- AI Chats header -->
             <div class="cf-item">
@@ -97,11 +97,11 @@
                 <div class="cf-item" style="font-size:0.75em; color:var(--cf-text-muted); padding-left:12px;">No local conversations yet.</div>
             }
         </nav>
-    </div>
+    </div>}
 
     <!-- Main content -->
     <main>
-        <div id="chat-split-wrapper" class="chat-wrapper @(BrowserPanel.IsOpen ? "browser-panel-open" : "") @(AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" @ref="_splitWrapper">
+        <div id="chat-split-wrapper" class="chat-wrapper @(ProjectId==null && (BrowserPanel.IsOpen || inlinePdf!=null) ? "browser-panel-open" : "") @(ProjectId==null && AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" @ref="_splitWrapper">
             <div class="chat-column" style="@ChatColumnStyle">
             @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
@@ -232,6 +232,8 @@
                                 <div class="chat-markdown">
                                     @((MarkupString)FormatMessage(msg.Content ?? ""))
                                 </div>
+                                @if(ProjectId != null && msg.ProjectSources != null){ foreach(var src in msg.ProjectSources){<button class="btn btn-link-style" @onclick="()=>OnSource.InvokeAsync(src)">@src.Name · p. @src.Page</button>} }
+                                @if(ProjectId != null && msg.ProjectOutputs != null){foreach(var file in msg.ProjectOutputs){<button class="chat-doc-chip" @onclick="()=>OnSource.InvokeAsync(file)"><i class="bi @(file.FileId.Contains(":n:")?"bi-journal-text":"bi-file-earmark")"></i> @file.Name · @(file.FileId.Contains(":n:")?"Open":"Preview")</button>}}
                                 @if (msg.Attachments != null && msg.Attachments.Any())
                                 {
                                     <div class="message-attachments" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -262,20 +264,20 @@
                                                 }
                                                 else if (att.ContentType != null && att.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
                                                 {
-                                                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;">
+                                                    <button type="button" class="btn btn-link-style" style="display:flex; align-items:center; gap:10px; padding:8px 10px;" @onclick="()=>PreviewPdf(att)">
                                                         <i class="bi bi-file-earmark-pdf" style="font-size:1.7em; color:#c0392b;" aria-hidden="true"></i>
                                                         <div style="min-width:0;">
                                                             <div style="font-size:0.85em; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@att.Name">@att.Name</div>
                                                             <div style="font-size:0.7em; color:var(--cf-text-muted);">PDF · @ChatAttachmentClassifier.FormatSize(att.Size)</div>
                                                         </div>
-                                                    </div>
+                                                    </button>
                                                     <div style="display:flex; gap:4px; padding:4px 6px; border-top:1px solid var(--cf-border); background:var(--cf-bg, #fff); flex-wrap:wrap;">
                                                         <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
                                                                 title="Download" @onclick="() => DownloadAttachment(att)" @onclick:stopPropagation>
                                                             <i class="bi bi-download"></i> Download
                                                         </button>
                                                         <button type="button" class="btn btn-link-style" style="font-size:0.75em; padding:2px 6px;"
-                                                                title="Save to Documents" disabled="@(savedLibraryAttachments.Contains(LibraryKey(att)))"
+                                                                 hidden="@(ProjectId!=null)" title="Save to Documents" disabled="@(savedLibraryAttachments.Contains(LibraryKey(att)))"
                                                                 @onclick="() => SavePdfToLibrary(att)" @onclick:stopPropagation>
                                                             <i class="bi @(savedLibraryAttachments.Contains(LibraryKey(att)) ? "bi-check2-circle" : "bi-folder-plus")"></i>
                                                             @(savedLibraryAttachments.Contains(LibraryKey(att)) ? "Saved" : "Save to Documents")
@@ -672,7 +674,8 @@
 
             </div>
 
-            @if (BrowserPanel.IsOpen && AppEnvironment.IsMaui)
+            @if (inlinePdf != null){<div class="chat-pdf-pane"><ArtifactPreview @key="inlinePdf" Bytes="inlinePdf" Name="@inlinePdfName" Mime="application/pdf" OnClose="()=>inlinePdf=null" /></div>}
+            else if (ProjectId==null && BrowserPanel.IsOpen && AppEnvironment.IsMaui)
             {
                 <EmbeddedBrowser />
             }
@@ -1516,7 +1519,7 @@
     private string ChatPlaceholder =>
         IsImageGenerationModel
             ? "Describe the image to generate…"
-            : BrowserPanel.IsOpen
+            : ProjectId!=null ? "Ask about this project…" : BrowserPanel.IsOpen
                 ? "Ask about this page, or say 'navigate to...'"
                 : messages.Any(NotesChatContext.Is)
                     ? "Ask AI to edit this note…"
@@ -1526,7 +1529,7 @@
     {
         get
         {
-            if (!ChatPanel.IsOpen || !BrowserPanel.IsOpen)
+            if (ProjectId!=null || !ChatPanel.IsOpen || !BrowserPanel.IsOpen)
                 return "";
 
             var width = BrowserPanel.ChatPaneWidthPx;
@@ -1556,7 +1559,7 @@
         dotNetRef ??= DotNetObjectReference.Create<object>(this);
         RegisterEventHandlers();
 
-        if (BrowserPanel.IsOpen && AppEnvironment.IsMaui)
+        if (ProjectId==null && BrowserPanel.IsOpen && AppEnvironment.IsMaui)
         {
             _ = InitializeChatDataAsync();
             return;
@@ -1580,6 +1583,7 @@
         ToolTrace.Changed += _toolTraceChangedHandler;
 
         SyncService.OnConversationsChanged += OnConversationsChangedFromSync;
+        SyncService.OnProjectsChanged += OnProjectsChangedReconcile;
 
         _syncChangedHandler = () => InvokeAsync(async () =>
         {
@@ -1627,8 +1631,14 @@
         ReloadModelListFromCatalog(preferRemote: false);
         EnsureValidModelSelection();
 
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
         _chatIndexLoading = false;
+        if (ProjectId != null && ProjectChatId != null)
+        {
+            await LoadConversation(ProjectChatId);
+            _ = CompleteChatInitInBackgroundAsync();
+            return;
+        }
         var lastId = await ConversationStore.GetLastConvoIdAsync();
         await InvokeAsync(StateHasChanged);
 
@@ -2264,6 +2274,9 @@
             return;
 
         var next = ToolActivityLabel.ForInFlightTool(ToolTrace.GetSteps()) ?? ThinkingLabel;
+        if (ProjectId != null && isSending && ToolTrace.GetCurrentTrace().LastOrDefault()?.Contains("PDF draft: gathering information", StringComparison.Ordinal) == true)
+            _ = OnDraft.InvokeAsync("Gathering information…");
+        if(ProjectId!=null && isSending && ToolTrace.GetCurrentTrace().LastOrDefault()?.Contains("generate_pdf(")==true) _=OnDraft.InvokeAsync("Rendering PDF…");
         if (next == typingLabel)
             return;
 
@@ -2286,6 +2299,7 @@
             ChatPanel.OnChanged -= _chatPanelChangedHandler;
 
         SyncService.OnConversationsChanged -= OnConversationsChangedFromSync;
+        SyncService.OnProjectsChanged -= OnProjectsChangedReconcile;
 
         if (_syncChangedHandler != null)
             SyncService.OnChanged -= _syncChangedHandler;
@@ -2721,7 +2735,7 @@
         ordered.Insert(to, item);
 
         await ConversationStore.ReorderConversationsAsync(ordered.Select(c => c.Id).ToList());
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -2734,7 +2748,8 @@
     {
         // A sync arrived (via WebRTC, while on this page or in background).
         // Reload the conversation list so the sidebar automatically reflects the new/updated chat.
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
+        if(ProjectId!=null && !isSending && activeConvoId!=null && !IsActiveChatLocked) messages=await ConversationStore.LoadConversationAsync(activeConvoId);
         await InvokeAsync(StateHasChanged);
     }
 
@@ -2839,7 +2854,7 @@
     {
         if (ChatAttachmentClassifier.Classify(att) == ChatAttachmentKind.Pdf)
         {
-            SetAttachStatus("PDF preview is not available here. Send the message and a vision-capable model can read it.", isError: false);
+            _ = PreviewPdf(att);
             return;
         }
 
@@ -2902,7 +2917,7 @@
     async Task LoadConversation(string id)
     {
         activeConvoId = id;
-        await ConversationStore.SetLastConvoIdAsync(id);
+        if(ProjectId==null) await ConversationStore.SetLastConvoIdAsync(id);
         pendingFiles.Clear();
         contextStatusMessage = null;
 
@@ -2920,6 +2935,7 @@
         RefreshContextEstimate(preferServerUsage: false);
         RequestScrollToBottom();
         StateHasChanged();
+        if (ProjectId != null) await ReconcileProjectNoteLinks();
     }
 
     void RequestScrollToBottom() => _pendingScroll = true;
@@ -3137,7 +3153,8 @@
 
         try
         {
-            accumulated = await CallProvider(async partial =>
+            var drafting = !string.IsNullOrEmpty(DraftFormat) && ProjectId != null;
+            accumulated = await CallProvider(drafting, async partial =>
             {
                 // Throttle Blazor re-renders while tokens arrive (local Ollama/Lemonade stream).
                 var nowUtc = DateTime.UtcNow;
@@ -3147,6 +3164,7 @@
                     return;
 
                 lastUiUpdate = nowUtc;
+                if(drafting)await OnDraft.InvokeAsync(partial);
                 if (isTyping)
                     isTyping = false; // first token: drop "thinking…"
 
@@ -3159,6 +3177,17 @@
             var currentModel = messages[botIndex].ModelUsed;
             var resultAtts = _pendingResultAttachments;
             _pendingResultAttachments = null;
+            if (drafting && !sendCt.IsCancellationRequested && !string.IsNullOrWhiteSpace(accumulated) && !accumulated.StartsWith("Error calling provider") && accumulated is not ("No response." or "(Generation stopped.)"))
+            {
+                try
+                {
+                    var title=accumulated.Split('\n')[0].Trim('#',' ','\r');
+                    if(title.Length>120)title=title[..120];
+                    (resultAtts??=[]).Add(ExportDraft(accumulated, DraftFormat, title));
+                    accumulated="Created the project report.";
+                }
+                catch(Exception ex){SetAttachStatus("Document export failed; the draft is preserved in chat. "+ex.Message,true);}
+            }
             var statsLine = _pendingStatsLine;
             _pendingStatsLine = null;
             var inspectorTurnId = _pendingInspectorTurnId;
@@ -3175,7 +3204,7 @@
                 ModelUsed = currentModel,
                 ToolTrace = _pendingToolTrace,
                 Attachments = resultAtts is { Count: > 0 } ? resultAtts : touched.Attachments,
-                StatsLine = statsLine
+                StatsLine = statsLine, ProjectSources = pendingSources
             };
             _pendingToolTrace = ""; // consumed
             if (!string.IsNullOrWhiteSpace(inspectorTurnId) && !string.IsNullOrWhiteSpace(messages[botIndex].ItemId))
@@ -3188,6 +3217,7 @@
             StateHasChanged();
 
             // Save to local
+            messages[botIndex] = await SaveProjectOutputs(messages[botIndex]);
             await SaveCurrentConvo();
 
             // Omni may already return speech as an audio attachment — prefer that over auto-TTS.
@@ -3515,18 +3545,19 @@
             : extracted.CleanText;
     }
 
-    async Task<string> CallProvider(Func<string, Task>? onPartialText = null, CancellationToken ct = default)
+    async Task<string> CallProvider(bool drafting, Func<string, Task>? onPartialText = null, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(EffectiveChatModelId))
-            return "No model selected.";
+            return "Error calling provider: No model selected.";
 
         try
         {
             if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
                 await SyncService.EnsureAiProxyConnectionAsync();
-                var (text, toolTrace) = await SyncService.SendChatRequestAsync(EffectiveChatModelId, messages);
+                var (text, toolTrace) = await SyncService.SendChatRequestAsync(EffectiveChatModelId, await ProjectRequest(drafting, ct), ct);
                 _pendingToolTrace = toolTrace;
+                if (drafting && (text.StartsWith("Remote AI error:") || text.StartsWith("Remote AI request failed:") || text.StartsWith("Not connected to AI server device."))) return "Error calling provider: " + text;
                 // WebRTC AI relay is non-streaming today; deliver full text once.
                 var extracted = ApplyOmniMediaExtraction(text);
                 if (onPartialText != null && !string.IsNullOrEmpty(extracted))
@@ -3536,7 +3567,7 @@
 
             var result = await ChatCompletionService.CompleteAsync(
                 EffectiveChatModelId,
-                messages,
+                await ProjectRequest(drafting, ct),
                 currentUser,
                 activeConvoId,
                 ct: ct,
@@ -3612,7 +3643,7 @@
             return;
 
         await ConversationStore.SetPasswordProtectedAsync(chatId, true);
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
         if (activeConvoId == chatId)
             unlockedChatIds.Add(chatId);
         SyncService.ScheduleAutoSyncConvoAfterLocalSave(
@@ -3689,7 +3720,7 @@
             if (remove)
             {
                 await ConversationStore.SetPasswordProtectedAsync(chatId, false);
-                localConvos = await ConversationStore.LoadIndexAsync();
+                localConvos = await ScopedChatIndex();
                 unlockedChatIds.Remove(chatId);
                 SyncService.ScheduleAutoSyncConvoAfterLocalSave(
                     chatId,
@@ -4333,6 +4364,7 @@
             ModifiedAt: now));
 
         RequestScrollToBottom();
+        messages[^1] = await SaveProjectOutputs(messages[^1]);
         await SaveCurrentConvo();
     }
 
@@ -4350,8 +4382,9 @@
             return;
         await ConversationStore.SaveConversationAsync(activeConvoId, messages);
         await ConversationStore.UpdateIndexAfterSaveAsync(activeConvoId, messages, localConvos);
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
         SyncService.ScheduleAutoSyncConvoAfterLocalSave(activeConvoId);
+        if(ProjectId!=null) await OnProjectSaved.InvokeAsync();
     }
 
     void OpenRenameConvoDialog(string? convoId)
@@ -4378,7 +4411,7 @@
 
         var title = renameConvoTitle.Trim();
         await ConversationStore.SetConversationTitleAsync(renameConvoId, title);
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
         SyncService.ScheduleAutoSyncConvoAfterLocalSave(renameConvoId, title);
         CancelRenameConvo();
         StateHasChanged();
@@ -4438,7 +4471,7 @@
     async Task DeleteConvo(string id)
     {
         var deletedAt = await ConversationStore.DeleteConversationAsync(id);
-        localConvos = await ConversationStore.LoadIndexAsync();
+        localConvos = await ScopedChatIndex();
         SyncService.ScheduleAutoSyncConvoDeleteAfterLocalDelete(id, deletedAt);
 
         if (activeConvoId == id)
@@ -4646,8 +4679,10 @@
         if (_noteSourceMessage == null || string.IsNullOrEmpty(_noteTargetId)) return;
         var note = _noteDialogNotes.FirstOrDefault(n => n.Id == _noteTargetId);
         var title = note?.Title ?? _noteTargetName;
-        await NoteStore.CommitAsync(_noteTargetId, new(title, [_noteSourceMessage with { ItemId = Guid.NewGuid().ToString("N") }]));
+        var entryId = Guid.NewGuid().ToString("N");
+        await NoteStore.CommitAsync(_noteTargetId, new(title, [_noteSourceMessage with { ItemId = entryId }]));
         SyncService.ScheduleAutoSyncNoteAfterLocalSave(_noteTargetId, title);
+        await LinkProjectNote(_noteTargetId, entryId, title);
         CloseNewNote();
     }
 
@@ -4656,8 +4691,10 @@
         if (_noteSourceMessage == null || string.IsNullOrWhiteSpace(_newNoteName)) return;
         var id = Guid.NewGuid().ToString();
         var title = _newNoteName.Trim();
-        await NoteStore.CommitAsync(id, new(title, [_noteSourceMessage with { ItemId = Guid.NewGuid().ToString("N") }], DateTime.UtcNow.Ticks));
+        var entryId = Guid.NewGuid().ToString("N");
+        await NoteStore.CommitAsync(id, new(title, [_noteSourceMessage with { ItemId = entryId }], DateTime.UtcNow.Ticks));
         SyncService.ScheduleAutoSyncNoteAfterLocalSave(id, title);
+        await LinkProjectNote(id, entryId, title);
         CloseNewNote();
     }
 

@@ -38,13 +38,14 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         ISettingsSyncStore? settingsStore = null,
         IGalleryStore? galleryStore = null,
         IStorageQuotaService? storageQuota = null,
-        ICalendarStore? calendarStore = null)
+        ICalendarStore? calendarStore = null, ProjectStore? projects = null)
     {
         _webrtc = webrtc;
         _conversationStore = conversationStore;
         _noteStore = noteStore;
         _galleryStore = galleryStore;
         _calendarStore = calendarStore;
+        _projects = projects;
         _storageQuota = storageQuota;
         _prefs = prefs;
         _sendSignalingAsync = sendSignalingAsync;
@@ -584,7 +585,10 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             return 0;
 
         foreach (var targetId in targets)
+        {
             await EnqueueManifestExchangeAsync(targetId, includeConvos, includeNotes, includeBookmarks, includeSidebarApps, includeAlbums, includeCalendars);
+            if (includeConvos) await QueueProjectsAsync(targetId);
+        }
 
         return targets.Count;
     }
@@ -822,6 +826,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private static string GetAckItemKey(SyncItemKind kind, string itemId) => kind switch
     {
         SyncItemKind.Conversation => $"c:{itemId}",
+        SyncItemKind.Project => $"project:{itemId}",
         SyncItemKind.Note => $"note-v2:{itemId}",
         SyncItemKind.Album => $"g:{itemId}",
         SyncItemKind.AlbumImage => $"gi:{itemId}",
@@ -881,6 +886,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
     private static string DataTypeFor(SyncItemKind kind) => kind switch
     {
         SyncItemKind.Conversation => "sync-data",
+        SyncItemKind.Project => "project-sync-data",
         SyncItemKind.Note => "note-sync-data",
         SyncItemKind.Album => "album-sync-data",
         SyncItemKind.AlbumImage => "album-image-sync-data",
@@ -1610,6 +1616,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             return a.IsManifestExchange && b.IsManifestExchange;
 
         return a.Kind == b.Kind
+               && (a.Kind != SyncItemKind.Project || a.ContentFingerprint == b.ContentFingerprint)
                && a.IsDelete == b.IsDelete
                && string.Equals(a.ItemId, b.ItemId, StringComparison.Ordinal);
     }
@@ -2385,6 +2392,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
 
             if (anySettingsAuto)
                 await MaybeAutoSyncSettingsForPeerAsync(deviceId);
+            if (AutoSyncChatHistory) await QueueProjectsAsync(deviceId);
         }
         catch (Exception ex)
         {
@@ -2520,6 +2528,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
         var chunkType = kind switch
         {
             SyncItemKind.Conversation => "sync-chunk",
+            SyncItemKind.Project => "project-sync-chunk",
             SyncItemKind.Note => "note-sync-chunk",
             SyncItemKind.Album => "album-sync-chunk",
             SyncItemKind.AlbumImage => "album-image-sync-chunk",
@@ -2554,7 +2563,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 chunkIndex: i,
                 chunkCount: chunkCount,
                 chunkData: slice,
-                itemId: kind is SyncItemKind.Album or SyncItemKind.AlbumImage or SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp or SyncItemKind.Settings
+                itemId: kind is SyncItemKind.Project or SyncItemKind.Album or SyncItemKind.AlbumImage or SyncItemKind.Bookmark or SyncItemKind.BookmarkFolder or SyncItemKind.SidebarApp or SyncItemKind.Settings
                     ? itemId
                     : null);
 
@@ -2618,7 +2627,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             _chunkAssemblies[key] = assembly;
         }
 
-        if (assembly.ChunkCount != chunkCount.Value)
+        if (assembly.ChunkCount != chunkCount.Value || chunkIndex.Value >= chunkCount.Value)
             return false;
 
         if (assembly.Parts[chunkIndex.Value] is null)
@@ -2913,11 +2922,18 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
                 return;
             }
 
-            var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(item.DataJson);
+            var json = item.DataJson;
+            if (item.Kind == SyncItemKind.Project && _projects != null)
+            {
+                var block = await _projects.ExportAsync(JsonSerializer.Deserialize<LibraryDocument>(json)!);
+                if (block == null) { await AdvanceSyncQueueAsync(peerId); return; }
+                json = JsonSerializer.Serialize(block);
+            }
+            var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(json);
             SyncDebugLog.Info($"Preparing {KindLabel(item.Kind)} sync payload " +
                 $"for {DescribeItemId(item)} ({payloadBytes} bytes)");
 
-            var payloadSent = await SendSyncPayloadAsync(peerId, item.Kind, item.ItemId, item.DataJson);
+            var payloadSent = await SendSyncPayloadAsync(peerId, item.Kind, item.ItemId, json);
             if (!payloadSent)
             {
                 SyncDebugLog.Info($"webrtcSendData failed (channel not ready) for {peerId}");
@@ -2970,6 +2986,7 @@ public sealed partial class WebRtcSyncCoordinator : IWebRtcTransportCallbacks, I
             if (msg.type is "settings-sync-data" or "settings-sync-chunk" or "settings-sync-ack")
                 SyncDebugLog.Info($"Incoming {msg.type} from {peerId} item={msg.itemId ?? "(none)"}");
 
+            if (await HandleProjectMessageAsync(peerId, msg)) return;
             if ((msg.type == "sync-data" || msg.type == "sync-chunk")
                 && msg.convoId != null)
             {

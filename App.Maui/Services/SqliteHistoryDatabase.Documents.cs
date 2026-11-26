@@ -72,13 +72,17 @@ public sealed partial class SqliteHistoryDatabase
             reader.IsDBNull(8) ? null : reader.GetString(8));
     }
 
-    public async Task UpsertDocumentMetaAsync(DocumentMetaRow row, CancellationToken ct = default)
+    public async Task PutDocumentAsync(DocumentMetaRow row, string contentKey, string content, CancellationToken ct = default)
     {
         await EnsureInitializedAsync(ct);
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(ct);
-        var cmd = conn.CreateCommand();
+        using var transaction = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = """
+            INSERT INTO document_content (storage_key, content) VALUES ($contentKey, $content)
+            ON CONFLICT(storage_key) DO UPDATE SET content = excluded.content;
             INSERT INTO document_meta (
                 storage_key, id, namespace, name, content_type, size, last_updated, source, conversation_id)
             VALUES ($key, $id, $ns, $name, $ct, $size, $last, $source, $convo)
@@ -92,6 +96,8 @@ public sealed partial class SqliteHistoryDatabase
                 source = excluded.source,
                 conversation_id = excluded.conversation_id;
             """;
+        cmd.Parameters.AddWithValue("$contentKey", contentKey);
+        cmd.Parameters.AddWithValue("$content", content);
         cmd.Parameters.AddWithValue("$key", row.StorageKey);
         cmd.Parameters.AddWithValue("$id", row.Id);
         cmd.Parameters.AddWithValue("$ns", row.Namespace);
@@ -102,6 +108,7 @@ public sealed partial class SqliteHistoryDatabase
         cmd.Parameters.AddWithValue("$source", row.Source ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue("$convo", row.ConversationId ?? (object)DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     public async Task DeleteDocumentMetaAsync(string storageKey, CancellationToken ct = default)
@@ -124,21 +131,6 @@ public sealed partial class SqliteHistoryDatabase
         cmd.CommandText = "SELECT content FROM document_content WHERE storage_key = $key";
         cmd.Parameters.AddWithValue("$key", storageKey);
         return await cmd.ExecuteScalarAsync(ct) as string;
-    }
-
-    public async Task SetDocumentContentAsync(string storageKey, string? content, CancellationToken ct = default)
-    {
-        await EnsureInitializedAsync(ct);
-        await using var conn = new SqliteConnection(_connectionString);
-        await conn.OpenAsync(ct);
-        var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO document_content (storage_key, content) VALUES ($key, $content)
-            ON CONFLICT(storage_key) DO UPDATE SET content = excluded.content;
-            """;
-        cmd.Parameters.AddWithValue("$key", storageKey);
-        cmd.Parameters.AddWithValue("$content", content ?? (object)DBNull.Value);
-        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task DeleteDocumentContentAsync(string storageKey, CancellationToken ct = default)
