@@ -99,7 +99,7 @@
     <!-- Main content -->
     <main>
         <div id="chat-split-wrapper" class="chat-wrapper @(ProjectId==null && (BrowserPanel.IsOpen || inlinePdf!=null) ? "browser-panel-open" : "") @(ProjectId==null && AppEnvironment.IsMaui && !ChatPanel.IsOpen ? "chat-panel-closed" : "")" @ref="_splitWrapper">
-            <div class="chat-column" style="@ChatColumnStyle">
+            <div class="chat-column @(IsChatEmpty ? "chat-empty" : "")" style="@ChatColumnStyle">
             @if (!string.IsNullOrEmpty(SyncService.AiServerDeviceId))
             {
                 <div style="padding: 0.35rem 1rem; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; font-size: 0.85em; color: #166534;">
@@ -348,6 +348,15 @@
                 }
             </div>
 
+            <!-- Empty chat: centered hero above the composer. -->
+            @if (IsChatEmpty)
+            {
+                <div class="chat-empty-hero">
+                    <img src="/images/icon512.png" alt="Wizionic" />
+                    <h2>Where should we start?</h2>
+                </div>
+            }
+
             <!-- === COMPACT SEAMLESS INPUT BAR === -->
             @if (!IsActiveChatLocked)
             {
@@ -410,7 +419,7 @@
                                   id="chat-message-input"
                                   placeholder="@ChatPlaceholder"
                                   class="message-input"
-                                  rows="3"
+                                  rows="1"
                                   @oninput="OnChatComposerInput"
                                   @onkeydown="OnChatComposerKeyDown"></textarea>
 
@@ -1521,6 +1530,11 @@
                 : messages.Any(NotesChatContext.Is)
                     ? "Ask AI to edit this note…"
                     : "How can I help you?";
+
+    // Empty chat uses a centered composer with a greeting; after the first message
+    // it docks to the bottom. Locked chats never show the greeting.
+    private bool IsChatEmpty =>
+        !IsActiveChatLocked && !isTyping && !messages.Any(m => m.DeletedAt is null);
 
     private string ChatColumnStyle
     {
@@ -3010,6 +3024,7 @@
         string text;
         try { text = await JS.InvokeAsync<string>("getChatTextareaValue", messageTextarea); }
         catch { text = e.Value?.ToString() ?? ""; }
+        try { await JS.InvokeVoidAsync("autosizeChatTextarea", messageTextarea); } catch { }
         UpdateSlashSuggestions(text ?? "");
     }
 

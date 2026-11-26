@@ -60,6 +60,18 @@ window.setChatTextareaValue = function (el, value) {
 window.resetChatTextarea = function (el) {
     if (!el) return;
     el.value = '';
+    if (window.autosizeChatTextarea) window.autosizeChatTextarea(el);
+};
+
+// Grow the composer from one line up to its CSS max-height, then scroll internally.
+window.autosizeChatTextarea = function (el) {
+    if (!el) return;
+    try {
+        const max = parseFloat(getComputedStyle(el).maxHeight) || 200;
+        el.style.height = 'auto';
+        el.style.height = Math.min(el.scrollHeight, max) + 'px';
+        el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
+    } catch (_) { /* ignore */ }
 };
 
 window.setupChatEnterToSend = function (textareaEl) {
