@@ -63,7 +63,7 @@ Short facts sent with every chat. They are not uploaded to wizionic.com as a mem
 
 ## Reply length {#reply-length}
 
-How many new tokens a chat reply may generate. Default is **16,384**. This is an app stop, not the model’s context window (that is still set per Ollama/Lemonade model). Thinking models share this budget between hidden reasoning and the visible answer.
+How many new tokens a chat reply may generate. Default is **16,384**. This is an app stop, not the model's context window (that is still set per Ollama/Lemonade model). If a model advertises a lower output ceiling (models.dev or the vendor), Wizionic uses the lower value. Thinking models share this budget between hidden reasoning and the visible answer.
 
 ## Tool routing {#tool-routing}
 

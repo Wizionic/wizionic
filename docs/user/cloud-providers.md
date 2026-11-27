@@ -10,13 +10,23 @@ Wizionic is built for local AI. You can still plug in any **OpenAI-compatible** 
 ## Add a provider
 
 1. Open [Cloud providers](/cloud-providers).
-2. Enter a display name, the API base URL (include `/v1` when the vendor uses it), and your API key.
-3. Optionally pick a template from the list (xAI, OpenAI, Groq, OpenRouter, Gemini, and others) to fill the name and URL. You can still edit them.
-4. Save and **refresh models**, then **Add** the models you want (below).
+2. Optionally search the **Template** list. Templates come from [models.dev](https://models.dev) and fill the display name, base URL, and provider id. You can still edit them.
+3. Enter the API key (and change the URL if your endpoint differs).
+4. Save and **Refresh models**, then **Add** the models you want (below).
 
-Keys stay in this app’s key store. If you are signed in they are encrypted on the device.
+Keys stay in this app’s local key store and are never sent to models.dev.
 
 Example for xAI / Grok: base URL `https://api.x.ai/v1`.
+
+## Models.dev metadata
+
+[models.dev](https://models.dev) is an open catalog of model names, context windows, output limits, modalities, and pricing. Wizionic uses it to fill gaps the vendor API does not report.
+
+- **Refresh models** uses the vendor’s model list first. models.dev fills context, output limits, tools/vision, and image/speech flags when they are missing.
+- **Sync metadata** re-applies models.dev values to models you already refreshed. Your **Add** choices and capability overrides still win.
+- Each matched model shows a small **models.dev** badge and its context/output size.
+- Providers that are not listed on models.dev (for example CometAPI) still get model-name matching, including common reseller aliases and snapshot/date suffixes. The provider row says **name-matched N** or **not in models.dev**; unmatched rows keep `CTX 0`, which you can edit.
+- The catalog is fetched through the Wizionic host when available (otherwise directly from models.dev), cached for a day, and reuses cached data when offline. Only public metadata is requested — no API key, prompt, or chat content is sent.
 
 ## Add models to your lists
 
@@ -38,7 +48,7 @@ After a refresh, capabilities follow the selected model and what that provider e
 
 ### What the checkboxes mean
 
-**Refresh models** guesses flags from the vendor catalog. They are “what this row *is*”, not a list of features you must turn on by hand.
+**Refresh models** guesses flags from the vendor catalog and models.dev. They are “what this row *is*”, not a list of features you must turn on by hand.
 
 - **Tools / Vision** — chat models. Leave them on for Grok chat (`grok-4.6`, `latest`, …) unless a model cannot do that job.
 - **Image / Edit** — only on image generators (`grok-imagine-image`). Do not check these on a chat model.

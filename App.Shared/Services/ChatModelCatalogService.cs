@@ -128,7 +128,10 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
                 SupportsTools: settings.SupportsTools,
                 SupportsVision: settings.SupportsVision,
                 ContextSize: settings.ContextSize,
-                IsOllamaBackend: true));
+                IsOllamaBackend: true,
+                MaxOutputTokens: settings.MaxOutputTokens,
+                SupportsReasoning: settings.SupportsReasoning,
+                KnowledgeCutoff: settings.KnowledgeCutoff));
         }
 
         foreach (var settings in _keyStore.LemonadeModelSettingsList)
@@ -173,7 +176,10 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
                 SupportsVision: settings.SupportsVision,
                 ContextSize: settings.ContextSize,
                 IsOmniCollection: settings.IsOmniCollection,
-                IsLemonadeBackend: true));
+                IsLemonadeBackend: true,
+                MaxOutputTokens: settings.MaxOutputTokens,
+                SupportsReasoning: settings.SupportsReasoning,
+                KnowledgeCutoff: settings.KnowledgeCutoff));
         }
 
         foreach (var provider in _keyStore.CloudProviders)
@@ -220,7 +226,12 @@ public sealed class ChatModelCatalogService : IChatModelCatalog
                     provider.DisplayName,
                     SupportsTools: m.SupportsTools,
                     SupportsVision: m.SupportsVision,
-                    ContextSize: m.ContextSize));
+                    ContextSize: m.ContextSize,
+                    MaxOutputTokens: m.MaxOutputTokens,
+                    SupportsReasoning: m.SupportsReasoning,
+                    KnowledgeCutoff: m.KnowledgeCutoff,
+                    CostInputPer1M: m.CostInputPer1M,
+                    CostOutputPer1M: m.CostOutputPer1M));
             }
         }
 

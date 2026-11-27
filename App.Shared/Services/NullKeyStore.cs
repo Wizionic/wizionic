@@ -80,7 +80,7 @@ public sealed class NullKeyStore : IKeyStore
         string? sttModel = null,
         string? voice = null,
         CancellationToken ct = default) => Task.CompletedTask;
-    public Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default) =>
+    public Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default, bool syncMetadata = false) =>
         Task.CompletedTask;
 
     public string OllamaBaseUrl => "http://localhost:11434";

@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using App.Core.ModelsDev;
 using App.Core.Storage;
 
 namespace App.Core.Lemonade;
@@ -106,10 +107,32 @@ public static class LemonadeModelCatalogResolver
         if (payload?.Data == null)
             return Array.Empty<LemonadeModelSettings>();
 
-        return payload.Data
+        var models = payload.Data
             .Where(m => !string.IsNullOrWhiteSpace(m.Id))
             .Select(m => FromApiModel(m))
             .ToList();
+
+        // models.dev is optional enrichment; Lemonade's labels/context remain authoritative.
+        try
+        {
+            var index = await ModelsDevCatalogClient.TryGetModelsIndexAsync(
+                http, TimeSpan.FromSeconds(3), ct);
+            if (index != null)
+            {
+                foreach (var model in models)
+                {
+                    var meta = ModelsDevMatcher.ResolveCanonical(index, model.Name);
+                    if (meta != null)
+                        ModelsDevEnricher.ApplyLemonade(model, meta, overwrite: false);
+                }
+            }
+        }
+        catch
+        {
+            // Catalog unavailable: keep Lemonade-reported metadata.
+        }
+
+        return models;
     }
 
     public static LemonadeModelSettings FromApiModel(LemonadeApiModel model)
@@ -218,6 +241,11 @@ public static class LemonadeModelCatalogResolver
             IsVisionProxy = existing.IsVisionProxy &&
                             (existing.UserOverrideVision ? existing.SupportsVision : discovered.SupportsVision),
             ContextSize = existing.UserOverrideContext ? existing.ContextSize : discovered.ContextSize,
+            ModelsDevId = discovered.ModelsDevId ?? existing.ModelsDevId,
+            MaxOutputTokens = discovered.MaxOutputTokens > 0 ? discovered.MaxOutputTokens : existing.MaxOutputTokens,
+            SupportsReasoning = discovered.SupportsReasoning || existing.SupportsReasoning,
+            KnowledgeCutoff = discovered.KnowledgeCutoff ?? existing.KnowledgeCutoff,
+            ReleaseDate = discovered.ReleaseDate ?? existing.ReleaseDate,
             IsImage = discovered.IsImage,
             IsEdit = discovered.IsEdit,
             IsTts = discovered.IsTts,

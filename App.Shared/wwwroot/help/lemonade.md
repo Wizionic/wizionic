@@ -15,6 +15,7 @@ title: Lemonade (local AI)
 - **Save and Test**, then **Refresh Models from Lemonade**.
 - Enable the chat models you want in the list. Image, speech, and other specialty models are configured on the same page.
 - **Context size** is filled from Lemonade’s advertised window when you Refresh models. Chat loads the model with that size (Wizionic will not leave Lemonade at the 4096 auto-load default). Save the model only if you type a different number.
+- When Lemonade omits a context window, Wizionic can fill it from [models.dev](https://models.dev). Lemonade's labels and the size it reports always win.
 
 ## Browser on wizionic.com
 

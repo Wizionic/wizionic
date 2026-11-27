@@ -12,6 +12,13 @@ public sealed class OllamaModelSettings
     public bool IsVisionProxy { get; set; }
     public int ContextSize { get; set; }
 
+    /// <summary>Canonical models.dev id when the local tag was matched.</summary>
+    public string? ModelsDevId { get; set; }
+    public int MaxOutputTokens { get; set; }
+    public bool SupportsReasoning { get; set; }
+    public string? KnowledgeCutoff { get; set; }
+    public string? ReleaseDate { get; set; }
+
     /// <summary>On-disk size from Ollama <c>/api/tags</c> (bytes). 0 when unknown.</summary>
     public long SizeBytes { get; set; }
 
@@ -27,6 +34,11 @@ public sealed class OllamaModelSettings
         SupportsVision = SupportsVision,
         IsVisionProxy = IsVisionProxy,
         ContextSize = ContextSize,
+        ModelsDevId = ModelsDevId,
+        MaxOutputTokens = MaxOutputTokens,
+        SupportsReasoning = SupportsReasoning,
+        KnowledgeCutoff = KnowledgeCutoff,
+        ReleaseDate = ReleaseDate,
         SizeBytes = SizeBytes,
         UserOverrideTools = UserOverrideTools,
         UserOverrideVision = UserOverrideVision,

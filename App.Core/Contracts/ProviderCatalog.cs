@@ -4,6 +4,7 @@ namespace App.Contracts;
 
 /// <summary>
 /// Known local-model name patterns (Ollama and similar) for tool + vision badges.
+/// Used as a last resort after live server metadata and models.dev.
 /// User-keyed cloud models live in <c>IKeyStore.CloudProviders</c>, not here.
 /// </summary>
 public static class ProviderCatalog

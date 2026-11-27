@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using App.Contracts;
+using App.Core.ModelsDev;
 using App.Core.Storage;
 
 namespace App.Core.Ollama;
@@ -14,7 +15,15 @@ public static partial class OllamaCapabilitiesResolver
 {
     private const int DefaultContextSize = 8192;
 
-    public sealed record OllamaLiveMetadata(bool SupportsTools, bool SupportsVision, int ContextSize);
+    public sealed record OllamaLiveMetadata(
+        bool SupportsTools,
+        bool SupportsVision,
+        int ContextSize,
+        int MaxOutputTokens = 0,
+        bool SupportsReasoning = false,
+        string? KnowledgeCutoff = null,
+        string? ReleaseDate = null,
+        string? ModelsDevId = null);
 
     public static async Task<OllamaLiveMetadata> FetchLiveMetadataAsync(
         HttpClient http,
@@ -39,9 +48,8 @@ public static partial class OllamaCapabilitiesResolver
 
                 // Show worked but no context — try OpenAI models list (Lemonade-compatible).
                 var fromList = await TryContextFromOpenAiModelsAsync(http, origin, modelName, ct);
-                if (fromList > 0)
-                    return live with { ContextSize = fromList };
-                return live with { ContextSize = DefaultContextSize };
+                var catalog = await ModelsDevCatalogClient.GetCanonicalMetadataAsync(http, modelName, ct, TimeSpan.FromSeconds(3));
+                return MergeCatalog(live, fromList, catalog, contextUnknown: true, applyCapabilities: false);
             }
         }
         catch
@@ -54,14 +62,61 @@ public static partial class OllamaCapabilitiesResolver
         {
             var fromOpenAi = await TryMetadataFromOpenAiModelsAsync(http, origin, modelName, ct);
             if (fromOpenAi != null)
-                return fromOpenAi;
+            {
+                var catalog = await ModelsDevCatalogClient.GetCanonicalMetadataAsync(http, modelName, ct, TimeSpan.FromSeconds(3));
+                return MergeCatalog(
+                    fromOpenAi,
+                    fromOpenAi.ContextSize,
+                    catalog,
+                    contextUnknown: fromOpenAi.ContextSize <= 0,
+                    applyCapabilities: true);
+            }
         }
         catch
         {
             // fall through
         }
 
-        return FallbackFromPattern(modelName);
+        // 3) models.dev canonical metadata, then name patterns, then default.
+        var fallback = FallbackFromPattern(modelName);
+        var fallbackCatalog = await ModelsDevCatalogClient.GetCanonicalMetadataAsync(http, modelName, ct, TimeSpan.FromSeconds(3));
+        return MergeCatalog(fallback, 0, fallbackCatalog, contextUnknown: true, applyCapabilities: true);
+    }
+
+    private static OllamaLiveMetadata MergeCatalog(
+        OllamaLiveMetadata live,
+        int contextFromList,
+        ModelCatalogMetadata? catalog,
+        bool contextUnknown,
+        bool applyCapabilities)
+    {
+        var context = contextFromList > 0
+            ? contextFromList
+            : contextUnknown && catalog is { ContextSize: > 0 }
+                ? catalog.ContextSize
+                : live.ContextSize > 0
+                    ? live.ContextSize
+                    : catalog?.ContextSize ?? DefaultContextSize;
+
+        var merged = live with
+        {
+            ContextSize = context,
+            MaxOutputTokens = catalog?.MaxOutputTokens ?? live.MaxOutputTokens,
+            SupportsReasoning = catalog?.SupportsReasoning ?? live.SupportsReasoning,
+            KnowledgeCutoff = catalog?.KnowledgeCutoff ?? live.KnowledgeCutoff,
+            ReleaseDate = catalog?.ReleaseDate ?? live.ReleaseDate,
+            ModelsDevId = catalog?.ModelsDevId ?? live.ModelsDevId
+        };
+
+        if (applyCapabilities && catalog != null)
+        {
+            if (catalog.SupportsTools.HasValue)
+                merged = merged with { SupportsTools = catalog.SupportsTools.Value };
+            if (catalog.SupportsVision.HasValue)
+                merged = merged with { SupportsVision = catalog.SupportsVision.Value };
+        }
+
+        return merged;
     }
 
     public static OllamaLiveMetadata ParseShowResponse(JsonElement root, string modelName)
@@ -109,6 +164,11 @@ public static partial class OllamaCapabilitiesResolver
             SupportsTools = supportsTools,
             SupportsVision = supportsVision,
             ContextSize = contextSize,
+            ModelsDevId = live.ModelsDevId ?? existing?.ModelsDevId,
+            MaxOutputTokens = live.MaxOutputTokens > 0 ? live.MaxOutputTokens : (existing?.MaxOutputTokens ?? 0),
+            SupportsReasoning = live.SupportsReasoning || (existing?.SupportsReasoning ?? false),
+            KnowledgeCutoff = live.KnowledgeCutoff ?? existing?.KnowledgeCutoff,
+            ReleaseDate = live.ReleaseDate ?? existing?.ReleaseDate,
             SizeBytes = sizeBytes > 0 ? sizeBytes : (existing?.SizeBytes ?? 0),
             UserOverrideTools = existing?.UserOverrideTools ?? false,
             UserOverrideVision = existing?.UserOverrideVision ?? false,
@@ -603,7 +663,7 @@ public static partial class OllamaCapabilitiesResolver
                 return new OllamaLiveMetadata(
                     SupportsTools: tools,
                     SupportsVision: vision,
-                    ContextSize: ctx > 0 ? ctx : DefaultContextSize);
+                    ContextSize: ctx);
             }
             catch
             {
