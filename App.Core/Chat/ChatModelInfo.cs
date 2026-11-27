@@ -19,4 +19,9 @@ public record ChatModelInfo(
     /// </summary>
     bool IsImageGeneration = false,
     /// <summary>Model has Lemonade <c>edit</c> label (img2img / instruction edit).</summary>
-    bool SupportsImageEdit = false);
+    bool SupportsImageEdit = false,
+    int MaxOutputTokens = 0,
+    bool SupportsReasoning = false,
+    string? KnowledgeCutoff = null,
+    double? CostInputPer1M = null,
+    double? CostOutputPer1M = null);

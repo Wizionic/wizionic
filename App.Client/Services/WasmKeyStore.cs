@@ -2,6 +2,7 @@ using App.Core.Auth;
 using App.Core.Cloud;
 using App.Core.Connectors;
 using App.Core.Lemonade;
+using App.Core.ModelsDev;
 using App.Core.Ollama;
 using App.Core.SmartHome;
 using App.Core.Storage;
@@ -645,14 +646,29 @@ public class WasmKeyStore : IKeyStore
 
         settings.Name = settings.Name.Trim();
         settings.Label = string.IsNullOrWhiteSpace(settings.Label) ? settings.Name : settings.Label.Trim();
-        settings.UserOverrideTools = true;
-        settings.UserOverrideVision = true;
-        settings.UserOverrideContext = true;
-        settings.UserOverrideImage = true;
-        settings.UserOverrideEdit = true;
 
         var idx = provider.Models.FindIndex(m =>
             string.Equals(m.Name, settings.Name, StringComparison.OrdinalIgnoreCase));
+        var previous = idx >= 0 ? provider.Models[idx] : null;
+
+        if (previous == null)
+        {
+            settings.UserOverrideTools = true;
+            settings.UserOverrideVision = true;
+            settings.UserOverrideContext = true;
+            settings.UserOverrideImage = true;
+            settings.UserOverrideEdit = true;
+        }
+        else
+        {
+            // Only pin fields the user actually changed so metadata refresh keeps working.
+            settings.UserOverrideTools = previous.UserOverrideTools || settings.SupportsTools != previous.SupportsTools;
+            settings.UserOverrideVision = previous.UserOverrideVision || settings.SupportsVision != previous.SupportsVision;
+            settings.UserOverrideContext = previous.UserOverrideContext || settings.ContextSize != previous.ContextSize;
+            settings.UserOverrideImage = previous.UserOverrideImage || settings.IsImage != previous.IsImage;
+            settings.UserOverrideEdit = previous.UserOverrideEdit || settings.IsEdit != previous.IsEdit;
+        }
+
         if (idx >= 0)
             provider.Models[idx] = settings.Clone();
         else
@@ -694,14 +710,26 @@ public class WasmKeyStore : IKeyStore
         await SaveCloudProvidersAsync(ct);
     }
 
-    public async Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default)
+    public async Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default, bool syncMetadata = false)
     {
         var provider = FindCloudProvider(providerId);
         if (provider == null)
             throw new InvalidOperationException($"Unknown cloud provider '{providerId}'.");
 
+        var (catalogProvider, catalogModels, catalogAliases) = await ModelsDevCatalogClient.GetCloudEnrichmentAsync(
+            http, provider.ModelsDevProviderId, provider.DisplayName, provider.BaseUrl, ct);
+
+        if (catalogProvider != null)
+        {
+            provider.ModelsDevProviderId = catalogProvider.Id;
+            provider.LogoUrl = "https://models.dev/logos/" + catalogProvider.Id + ".svg";
+            provider.DocUrl = catalogProvider.Doc;
+            provider.CatalogUpdatedAt = DateTime.UtcNow;
+        }
+
         var discovered = await CloudModelCatalogResolver.DiscoverAsync(
-            http, provider.BaseUrl, provider.ApiKey, provider.Models, ct);
+            http, provider.BaseUrl, provider.ApiKey, provider.Models,
+            catalogProvider, catalogModels, catalogAliases, syncMetadata, ct);
 
         provider.Models = discovered.Models.Select(m => m.Clone()).ToList();
         provider.Voices = discovered.Voices.ToList();

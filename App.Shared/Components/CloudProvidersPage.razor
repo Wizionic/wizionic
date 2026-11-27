@@ -8,9 +8,10 @@
 @using App.Core.Sync
 @using App.Core.Storage
 @using App.Core.Cloud
+@using App.Core.ModelsDev
 @using App.Core.Auth
 
-<div class="settings-content" style="padding: 1rem 2rem; max-width: 800px; margin: 0 auto;">
+<div class="settings-content" style="padding: 1rem 2rem; max-width: 1200px; margin: 0 auto;">
 
     <h4 class="help-heading">Cloud providers <HelpGlyph Topic="cloud-providers" /></h4>
 
@@ -23,15 +24,16 @@
     <div style="display: grid; gap: 0.6rem; max-width: 560px;">
         <div>
             <label>Template</label>
+            <input type="text" @bind="presetFilter" @bind:event="oninput" placeholder="Search providers…" class="form-control" style="margin-bottom:0.35rem;" />
             <select class="form-select" @bind="presetKey" @bind:after="OnPresetChanged">
                 <option value="">Custom — type name and URL</option>
-                @foreach (var preset in Presets)
+                @foreach (var preset in FilteredPresets())
                 {
-                    <option value="@preset.Name">@preset.Name</option>
+                    <option value="@preset.Key">@preset.DisplayName</option>
                 }
             </select>
             <div style="font-size: 0.75em; color: var(--cf-text-muted); margin-top: 2px;">
-                Fills display name and base URL. You can still edit them. Endpoints should be OpenAI-compatible.
+                Fills display name and base URL from models.dev. You can still edit them. Endpoints should be OpenAI-compatible.
             </div>
         </div>
         <div>
@@ -73,25 +75,38 @@
         <div class="ollama-model-list">
             @foreach (var p in providers)
             {
-                <div class="ollama-model-row @(expandedId == p.Id ? "is-active" : "")">
-                    <div class="ollama-model-row-main">
-                        <div class="ollama-model-row-title">@p.DisplayName</div>
+                <div class="ollama-model-row @(expandedId == p.Id ? "is-active" : "")" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.6rem;">
+                    <div class="ollama-model-row-main" style="flex:1 1 220px; min-width:0;">
+                        <div class="ollama-model-row-title">
+                            @if (!string.IsNullOrWhiteSpace(ProviderLogo(p)))
+                            {
+                                <img src="@ProviderLogo(p)" alt="" style="width:18px;height:18px;margin-right:0.4rem;vertical-align:-2px;" onerror="this.style.display='none'" />
+                            }
+                            @p.DisplayName
+                        </div>
                         <div class="ollama-model-row-subtitle">@p.BaseUrl</div>
                     </div>
-                    <div class="ollama-model-row-meta">
+                    <div class="ollama-model-row-meta" style="display:flex; flex-wrap:wrap; gap:0.25rem; white-space:normal; flex:0 1 auto;">
                         <span class="ollama-vision-proxy-badge">@p.Models.Count model@(p.Models.Count == 1 ? "" : "s")</span>
                         <span class="ollama-vision-proxy-badge">@p.Models.Count(m => m.IsAdded) added</span>
                         @foreach (var badge in ProviderBadges(p))
                         {
                             <span class="ollama-vision-proxy-badge">@badge</span>
                         }
+                        @if (CatalogMatchBadge(p) is { } catalogBadge)
+                        {
+                            <span class="ollama-vision-proxy-badge" title="@CatalogMatchTitle(p)">@catalogBadge</span>
+                        }
                     </div>
-                    <div class="ollama-model-row-actions" style="display:flex; gap:0.25rem;">
+                    <div class="ollama-model-row-actions" style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:0.25rem; flex:0 0 auto; margin-left:auto;">
                         <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleExpand(p.Id)" disabled="@busy">
                             @(expandedId == p.Id ? "Hide" : "Models")
                         </button>
                         <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => RefreshProvider(p.Id)" disabled="@busy">
                             @(busy && busyAction == "refresh-" + p.Id ? "…" : "Refresh")
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" title="Re-apply models.dev metadata to existing models (keeps Add choices, overrides still win)" @onclick="() => RefreshProvider(p.Id, syncMetadata: true)" disabled="@busy">
+                            @(busy && busyAction == "sync-" + p.Id ? "…" : "Sync metadata")
                         </button>
                         <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => BeginEdit(p)" disabled="@busy">Edit</button>
                         <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveProvider(p.Id)" disabled="@busy">Delete</button>
@@ -125,10 +140,18 @@
                                             {
                                                 <span class="ollama-vision-proxy-badge" style="margin-left:0.4rem;">Added</span>
                                             }
+                                            @if (!string.IsNullOrWhiteSpace(m.ModelsDevId))
+                                            {
+                                                <span class="ollama-vision-proxy-badge" style="margin-left:0.4rem;" title="Matched to @m.ModelsDevId on models.dev">models.dev</span>
+                                            }
                                         </div>
                                         @if (!string.Equals(m.Label, m.Name, StringComparison.Ordinal))
                                         {
                                             <div style="font-size:0.75em; color:var(--cf-text-muted);">@m.Name</div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(ModelMeta(m)))
+                                        {
+                                            <div style="font-size:0.72em; color:var(--cf-text-muted);">@ModelMeta(m)</div>
                                         }
                                     </div>
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.SupportsTools" @onchange='e => ToggleModelFlag(p.Id, m, "tools", e)' /> Tools</label>
@@ -137,6 +160,10 @@
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsEdit" @onchange='e => ToggleModelFlag(p.Id, m, "edit", e)' /> Edit</label>
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsTts" @onchange='e => ToggleModelFlag(p.Id, m, "tts", e)' /> TTS</label>
                                     <label style="font-size:0.78em;"><input type="checkbox" checked="@m.IsTranscription" @onchange='e => ToggleModelFlag(p.Id, m, "stt", e)' /> STT</label>
+                                    <label style="font-size:0.78em;" title="Context window in tokens. Saving this value pins it and stops models.dev/refresh from changing it.">
+                                        CTX
+                                        <input type="number" min="0" step="1" value="@m.ContextSize" @onchange='e => SetModelContext(p.Id, m, e)' style="width:6.5rem; margin-left:0.2rem;" />
+                                    </label>
                                     @if (m.IsAdded)
                                     {
                                         <button type="button" class="btn btn-outline-secondary btn-sm" title="Remove from selection lists" @onclick="() => SetModelAdded(p.Id, m, false)"><i class="bi bi-trash"></i></button>
@@ -172,31 +199,36 @@
 </div>
 
 @code {
-    private static readonly (string Name, string DisplayName, string BaseUrl)[] Presets =
+    private sealed record PresetOption(string Key, string DisplayName, string BaseUrl, string ModelsDevId);
+
+    private static readonly (string Key, string DisplayName, string BaseUrl, string ModelsDevId)[] CuratedPresets =
     {
-        ("xAI", "xAI", "https://api.x.ai/v1"),
-        ("OpenAI", "OpenAI", "https://api.openai.com/v1"),
-        ("Anthropic", "Anthropic", "https://api.anthropic.com/v1"),
-        ("Google Gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
-        ("Qwen (Alibaba)", "Qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        ("DeepSeek", "DeepSeek", "https://api.deepseek.com/v1"),
-        ("OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1"),
-        ("Groq", "Groq", "https://api.groq.com/openai/v1"),
-        ("Perplexity", "Perplexity", "https://api.perplexity.ai/v1"),
-        ("Kimi (Moonshot AI)", "Kimi", "https://platform.kimi.ai/api/v1"),
-        ("Together AI", "Together AI", "https://api.together.xyz/v1"),
-        ("Fireworks AI", "Fireworks AI", "https://api.fireworks.ai/inference/v1"),
-        ("Mistral AI", "Mistral AI", "https://api.mistral.ai/v1"),
-        ("Cerebras", "Cerebras", "https://api.cerebras.ai/v1"),
-        ("NVIDIA NIM", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
-        ("Cloudflare Workers AI", "Cloudflare Workers AI", "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai")
+        ("xAI", "xAI", "https://api.x.ai/v1", "xai"),
+        ("OpenAI", "OpenAI", "https://api.openai.com/v1", "openai"),
+        ("Anthropic", "Anthropic", "https://api.anthropic.com/v1", "anthropic"),
+        ("Google Gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "google"),
+        ("Qwen (Alibaba)", "Qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "alibaba"),
+        ("DeepSeek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek"),
+        ("OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1", "openrouter"),
+        ("Groq", "Groq", "https://api.groq.com/openai/v1", "groq"),
+        ("Perplexity", "Perplexity", "https://api.perplexity.ai/v1", "perplexity"),
+        ("Kimi (Moonshot AI)", "Kimi", "https://platform.kimi.ai/api/v1", "moonshotai"),
+        ("Together AI", "Together AI", "https://api.together.xyz/v1", "togetherai"),
+        ("Fireworks AI", "Fireworks AI", "https://api.fireworks.ai/inference/v1", "fireworks-ai"),
+        ("Mistral AI", "Mistral AI", "https://api.mistral.ai/v1", "mistral"),
+        ("Cerebras", "Cerebras", "https://api.cerebras.ai/v1", "cerebras"),
+        ("NVIDIA NIM", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "nvidia"),
+        ("Cloudflare Workers AI", "Cloudflare Workers AI", "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai", "cloudflare-workers-ai")
     };
 
     List<CloudProviderConfig> providers = new();
+    List<PresetOption> presetOptions = new();
     string presetKey = "";
+    string presetFilter = "";
     string formName = "";
     string formBaseUrl = "https://api.x.ai/v1";
     string formApiKey = "";
+    string formModelsDevId = "";
     string? editingId;
     string? expandedId;
     string modelFilter = "";
@@ -211,6 +243,81 @@
         await KeyStore.LoadAsync();
         await AuthService.LoadAsync();
         Reload();
+        presetOptions = CuratedPresets
+            .Select(p => new PresetOption(p.Key, p.DisplayName, p.BaseUrl, p.ModelsDevId))
+            .ToList();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            _ = LoadPresetOptionsAndRefreshAsync();
+        return Task.CompletedTask;
+    }
+
+    async Task LoadPresetOptionsAndRefreshAsync()
+    {
+        try
+        {
+            await LoadPresetOptionsAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // Curated templates already rendered.
+        }
+    }
+
+    async Task LoadPresetOptionsAsync()
+    {
+        presetOptions = CuratedPresets
+            .Select(p => new PresetOption(p.Key, p.DisplayName, p.BaseUrl, p.ModelsDevId))
+            .ToList();
+
+        try
+        {
+            var catalog = await ModelsDevCatalogClient.GetProvidersAsync(Http);
+            var known = new HashSet<string>(
+                presetOptions.Select(p => p.ModelsDevId).Where(id => !string.IsNullOrWhiteSpace(id)),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var provider in catalog)
+            {
+                if (string.IsNullOrWhiteSpace(provider.Id) ||
+                    string.IsNullOrWhiteSpace(provider.Api) ||
+                    !known.Add(provider.Id))
+                    continue;
+                if (provider.Api.Contains("${", StringComparison.Ordinal) ||
+                    provider.Api.Contains('{', StringComparison.Ordinal))
+                    continue;
+
+                presetOptions.Add(new PresetOption(
+                    "modelsdev:" + provider.Id,
+                    provider.DisplayName,
+                    provider.Api!,
+                    provider.Id));
+            }
+
+            presetOptions = presetOptions
+                .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            // Template presets still work without models.dev (curated list above).
+        }
+    }
+
+    IEnumerable<PresetOption> FilteredPresets()
+    {
+        var q = (presetFilter ?? "").Trim();
+        if (q.Length == 0)
+            return presetOptions;
+
+        return presetOptions.Where(p =>
+            p.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+            p.BaseUrl.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+            p.ModelsDevId.Contains(q, StringComparison.OrdinalIgnoreCase));
     }
 
     void Reload() => providers = KeyStore.CloudProviders.ToList();
@@ -219,11 +326,12 @@
     {
         if (string.IsNullOrWhiteSpace(presetKey))
             return;
-        var preset = Presets.FirstOrDefault(p => p.Name == presetKey);
-        if (string.IsNullOrEmpty(preset.Name))
+        var preset = presetOptions.FirstOrDefault(p => p.Key == presetKey);
+        if (preset == null)
             return;
         formName = preset.DisplayName;
         formBaseUrl = preset.BaseUrl;
+        formModelsDevId = preset.ModelsDevId;
     }
 
     void BeginEdit(CloudProviderConfig p)
@@ -232,8 +340,12 @@
         formName = p.DisplayName;
         formBaseUrl = p.BaseUrl;
         formApiKey = p.ApiKey;
-        presetKey = Presets.FirstOrDefault(x =>
-            string.Equals(x.BaseUrl, p.BaseUrl, StringComparison.OrdinalIgnoreCase)).Name ?? "";
+        var preset = presetOptions.FirstOrDefault(x =>
+            string.Equals(x.BaseUrl, p.BaseUrl, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrWhiteSpace(p.ModelsDevProviderId) &&
+             string.Equals(x.ModelsDevId, p.ModelsDevProviderId, StringComparison.OrdinalIgnoreCase)));
+        presetKey = preset?.Key ?? "";
+        formModelsDevId = p.ModelsDevProviderId ?? preset?.ModelsDevId ?? "";
         feedback = null;
     }
 
@@ -243,6 +355,7 @@
         formName = "";
         formBaseUrl = "https://api.x.ai/v1";
         formApiKey = "";
+        formModelsDevId = "";
         presetKey = "";
     }
 
@@ -298,6 +411,8 @@
             existing.DisplayName = name;
             existing.BaseUrl = url;
             existing.ApiKey = key;
+            if (!string.IsNullOrWhiteSpace(formModelsDevId))
+                existing.ModelsDevProviderId = formModelsDevId.Trim();
             provider = existing;
         }
         else
@@ -307,9 +422,13 @@
                 Id = CloudModelCatalogResolver.MakeProviderId(name, providers.Select(p => p.Id)),
                 DisplayName = name,
                 BaseUrl = url,
-                ApiKey = key
+                ApiKey = key,
+                ModelsDevProviderId = string.IsNullOrWhiteSpace(formModelsDevId) ? null : formModelsDevId.Trim()
             };
         }
+
+        if (!string.IsNullOrWhiteSpace(provider.ModelsDevProviderId))
+            provider.LogoUrl = "https://models.dev/logos/" + provider.ModelsDevProviderId + ".svg";
 
         await KeyStore.UpsertCloudProviderAsync(provider);
         await AfterSaveAsync();
@@ -318,25 +437,33 @@
         formName = "";
         formBaseUrl = url;
         formApiKey = "";
+        formModelsDevId = "";
         presetKey = "";
         expandedId = provider.Id;
         return KeyStore.GetCloudProvider(provider.Id) ?? provider;
     }
 
-    async Task RefreshProvider(string id)
+    async Task RefreshProvider(string id, bool syncMetadata = false)
     {
         busy = true;
-        busyAction ??= "refresh-" + id;
+        busyAction ??= (syncMetadata ? "sync-" : "refresh-") + id;
         feedback = null;
         try
         {
-            using var discoverHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
-            await KeyStore.RefreshCloudProviderModelsAsync(id, discoverHttp);
+            await KeyStore.RefreshCloudProviderModelsAsync(id, Http, default, syncMetadata);
             await AfterSaveAsync();
             Reload();
             var p = KeyStore.GetCloudProvider(id);
             var count = p?.Models.Count ?? 0;
-            SetFeedback($"Loaded {count} model{(count == 1 ? "" : "s")} from {p?.DisplayName ?? id}. Click Add to use them in Chat.", error: false);
+            var enriched = p?.Models.Count(m => !string.IsNullOrWhiteSpace(m.ModelsDevId)) ?? 0;
+            var catalogNote = !string.IsNullOrWhiteSpace(p?.ModelsDevProviderId)
+                ? $" models.dev matched {enriched}."
+                : enriched > 0
+                    ? $" Provider is not on models.dev; matched {enriched} model name(s)."
+                    : " Provider is not on models.dev and no model names matched.";
+            SetFeedback(
+                $"Loaded {count} model{(count == 1 ? "" : "s")} from {p?.DisplayName ?? id}.{catalogNote} Click Add to use them in Chat.",
+                error: false);
             expandedId = id;
         }
         catch (Exception ex)
@@ -397,6 +524,18 @@
         Reload();
     }
 
+    async Task SetModelContext(string providerId, CloudModelSettings model, ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var contextSize) || contextSize < 0)
+            return;
+
+        var draft = model.Clone();
+        draft.ContextSize = contextSize;
+        await KeyStore.SaveCloudModelSettingsAsync(providerId, draft);
+        await AfterSaveAsync();
+        Reload();
+    }
+
     async Task SetDefault(string providerId, string slot, ChangeEventArgs e)
     {
         var p = KeyStore.GetCloudProvider(providerId);
@@ -424,6 +563,51 @@
         if (p.Models.Any(m => m.IsEdit)) yield return "Edit";
         if (p.HasXaiTts || p.Models.Any(m => m.IsTts)) yield return "TTS";
         if (p.HasXaiStt || p.Models.Any(m => m.IsTranscription)) yield return "STT";
+    }
+
+    static string? ProviderLogo(CloudProviderConfig p) =>
+        !string.IsNullOrWhiteSpace(p.ModelsDevProviderId)
+            ? "https://models.dev/logos/" + p.ModelsDevProviderId + ".svg"
+            : p.LogoUrl;
+
+    static string? CatalogMatchBadge(CloudProviderConfig p)
+    {
+        if (!string.IsNullOrWhiteSpace(p.ModelsDevProviderId) || p.Models.Count == 0)
+            return null;
+
+        var matched = p.Models.Count(m => !string.IsNullOrWhiteSpace(m.ModelsDevId));
+        return matched > 0 ? $"name-matched {matched}" : "not in models.dev";
+    }
+
+    static string CatalogMatchTitle(CloudProviderConfig p)
+    {
+        var matched = p.Models.Count(m => !string.IsNullOrWhiteSpace(m.ModelsDevId));
+        return $"This provider is not listed on models.dev. Wizionic matched {matched} of {p.Models.Count} model name(s) to canonical model metadata. Unmatched rows keep their vendor/heuristic values; set CTX manually if needed.";
+    }
+
+    static string ModelMeta(CloudModelSettings m)
+    {
+        var parts = new List<string>();
+        if (m.ContextSize > 0)
+            parts.Add($"ctx {FormatTokenCount(m.ContextSize)}");
+        if (m.MaxOutputTokens > 0)
+            parts.Add($"out {FormatTokenCount(m.MaxOutputTokens)}");
+        if (m.CostInputPer1M.HasValue || m.CostOutputPer1M.HasValue)
+            parts.Add($"${m.CostInputPer1M?.ToString("0.##") ?? "?"}/${m.CostOutputPer1M?.ToString("0.##") ?? "?"} per 1M");
+        if (m.SupportsReasoning)
+            parts.Add("reasoning");
+        if (!string.IsNullOrWhiteSpace(m.KnowledgeCutoff))
+            parts.Add("knowledge " + m.KnowledgeCutoff);
+        return string.Join(" · ", parts);
+    }
+
+    static string FormatTokenCount(int value)
+    {
+        if (value >= 1_000_000)
+            return (value / 1_000_000.0).ToString("0.#") + "M";
+        if (value >= 1_000)
+            return (value / 1_000.0).ToString("0.#") + "k";
+        return value.ToString();
     }
 
     void SetFeedback(string message, bool error)

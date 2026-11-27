@@ -13,6 +13,13 @@ public sealed class LemonadeModelSettings
     public bool IsVisionProxy { get; set; }
     public int ContextSize { get; set; }
 
+    /// <summary>Canonical models.dev id when the Lemonade model was matched.</summary>
+    public string? ModelsDevId { get; set; }
+    public int MaxOutputTokens { get; set; }
+    public bool SupportsReasoning { get; set; }
+    public string? KnowledgeCutoff { get; set; }
+    public string? ReleaseDate { get; set; }
+
     /// <summary>Deployment: text-to-image generation.</summary>
     public bool IsImage { get; set; }
 
@@ -70,6 +77,11 @@ public sealed class LemonadeModelSettings
         SupportsVision = SupportsVision,
         IsVisionProxy = IsVisionProxy,
         ContextSize = ContextSize,
+        ModelsDevId = ModelsDevId,
+        MaxOutputTokens = MaxOutputTokens,
+        SupportsReasoning = SupportsReasoning,
+        KnowledgeCutoff = KnowledgeCutoff,
+        ReleaseDate = ReleaseDate,
         IsImage = IsImage,
         IsEdit = IsEdit,
         IsTts = IsTts,

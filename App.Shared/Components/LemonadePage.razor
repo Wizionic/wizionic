@@ -425,6 +425,18 @@
         if (m.IsEmbeddings) yield return "Embed";
         if (m.IsReranking) yield return "Rerank";
         if (m.IsVisionProxy) yield return "Vision proxy";
+        if (m.ContextSize > 0) yield return "ctx " + FormatTokenCount(m.ContextSize);
+        if (m.MaxOutputTokens > 0) yield return "out " + FormatTokenCount(m.MaxOutputTokens);
+        if (!string.IsNullOrWhiteSpace(m.ModelsDevId)) yield return "models.dev";
+    }
+
+    static string FormatTokenCount(int value)
+    {
+        if (value >= 1_000_000)
+            return (value / 1_000_000.0).ToString("0.#") + "M";
+        if (value >= 1_000)
+            return (value / 1_000.0).ToString("0.#") + "k";
+        return value.ToString();
     }
 
     async Task TestLemonadeConnection()

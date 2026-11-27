@@ -71,7 +71,7 @@ public interface IKeyStore
         string? sttModel = null,
         string? voice = null,
         CancellationToken ct = default);
-    Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default);
+    Task RefreshCloudProviderModelsAsync(string providerId, HttpClient http, CancellationToken ct = default, bool syncMetadata = false);
 
     string OllamaBaseUrl { get; }
     string OllamaChatEndpoint { get; }

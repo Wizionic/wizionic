@@ -24,6 +24,10 @@ Browsers block `http://localhost` from an `https://` page. On the machine that r
 
 Then restart Ollama. The desktop app does not need that — it is not a mixed-content page.
 
+## Model metadata
+
+Ollama reports each model's context window and capabilities from `/api/show`. When a model does not expose them, Wizionic fills the gaps from [models.dev](https://models.dev) so long-context models are not cut down to the 8k fallback. Values Ollama reports, and values you edit on this page, always win. Only public model metadata is requested.
+
 ## Vision proxy
 
 If you chat with a text-only model but attach an image, Wizionic can send the image to a vision-capable Ollama model first and inject the description. Pick one vision-proxy model on this page.

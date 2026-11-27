@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using App.Core.ModelsDev;
 using App.Core.Storage;
 
 namespace App.Core.Cloud;
@@ -75,6 +76,10 @@ public static class CloudModelCatalogResolver
         string baseUrl,
         string? apiKey,
         IReadOnlyList<CloudModelSettings>? existing,
+        ModelsDevProvider? modelsDevProvider = null,
+        IReadOnlyDictionary<string, ModelsDevModel>? modelsDevModels = null,
+        IReadOnlyDictionary<string, string>? modelsDevAliases = null,
+        bool syncMetadata = false,
         CancellationToken ct = default)
     {
         var origin = NormalizeBaseUrl(baseUrl);
@@ -94,10 +99,27 @@ public static class CloudModelCatalogResolver
         var (voices, ttsVoicesOk) = await TryFetchTtsVoicesAsync(http, origin, apiKey, ct);
 
         var merged = new List<CloudModelSettings>();
+        var enriched = 0;
         foreach (var discovered in byName.Values)
         {
             existingMap.TryGetValue(discovered.Name, out var prev);
-            merged.Add(ResolveSettings(discovered, prev));
+            var isNew = prev == null;
+
+            if (modelsDevProvider != null || modelsDevModels != null || modelsDevAliases != null)
+            {
+                var meta = ModelsDevMatcher.Resolve(
+                    modelsDevProvider, discovered.Name, modelsDevModels, modelsDevAliases);
+                if (meta != null)
+                {
+                    if (meta.IsVideo == true || meta.IsRealtime == true)
+                        continue;
+                    ModelsDevEnricher.Apply(discovered, meta, overwrite: isNew || syncMetadata);
+                    enriched++;
+                }
+            }
+
+            var next = ResolveSettings(discovered, prev, preserveExistingFlags: !syncMetadata);
+            merged.Add(next);
         }
 
         var hasTtsModel = merged.Any(m => m.IsTts);
@@ -109,10 +131,14 @@ public static class CloudModelCatalogResolver
             HasOpenAiAudio: hasTtsModel || hasSttModel,
             HasXaiTts: ttsVoicesOk,
             HasXaiStt: languageOk || ttsVoicesOk,
-            HasXaiImageApi: imageOk);
+            HasXaiImageApi: imageOk,
+            EnrichedModels: enriched);
     }
 
-    public static CloudModelSettings ResolveSettings(CloudModelSettings discovered, CloudModelSettings? existing)
+    public static CloudModelSettings ResolveSettings(
+        CloudModelSettings discovered,
+        CloudModelSettings? existing,
+        bool preserveExistingFlags = false)
     {
         if (existing == null)
             return discovered.Clone();
@@ -123,17 +149,51 @@ public static class CloudModelCatalogResolver
             Label = string.IsNullOrWhiteSpace(existing.Label) || existing.Label == existing.Name
                 ? discovered.Label
                 : existing.Label,
-            SupportsTools = existing.UserOverrideTools ? existing.SupportsTools : discovered.SupportsTools,
-            SupportsVision = existing.UserOverrideVision ? existing.SupportsVision : discovered.SupportsVision,
-            ContextSize = existing.UserOverrideContext && existing.ContextSize > 0
+            SupportsTools = existing.UserOverrideTools
+                ? existing.SupportsTools
+                : preserveExistingFlags ? existing.SupportsTools : discovered.SupportsTools,
+            SupportsVision = existing.UserOverrideVision
+                ? existing.SupportsVision
+                : preserveExistingFlags ? existing.SupportsVision : discovered.SupportsVision,
+            ContextSize = existing.UserOverrideContext
                 ? existing.ContextSize
-                : discovered.ContextSize,
-            IsImage = existing.UserOverrideImage ? existing.IsImage : discovered.IsImage,
-            IsEdit = existing.UserOverrideEdit ? existing.IsEdit : discovered.IsEdit,
-            IsTts = discovered.IsTts,
-            IsTranscription = discovered.IsTranscription,
-            IsEmbeddings = discovered.IsEmbeddings,
-            IsReranking = discovered.IsReranking,
+                : preserveExistingFlags && existing.ContextSize > 0 && discovered.ContextSize <= 0
+                    ? existing.ContextSize
+                    : discovered.ContextSize > 0 ? discovered.ContextSize : existing.ContextSize,
+            ModelsDevId = discovered.ModelsDevId ?? existing.ModelsDevId,
+            CatalogSource = discovered.CatalogSource ?? existing.CatalogSource,
+            Family = discovered.Family ?? existing.Family,
+            MaxOutputTokens = discovered.MaxOutputTokens > 0
+                ? discovered.MaxOutputTokens
+                : existing.MaxOutputTokens,
+            SupportsReasoning = discovered.SupportsReasoning || existing.SupportsReasoning,
+            KnowledgeCutoff = discovered.KnowledgeCutoff ?? existing.KnowledgeCutoff,
+            ReleaseDate = discovered.ReleaseDate ?? existing.ReleaseDate,
+            InputModalities = discovered.InputModalities is { Count: > 0 }
+                ? discovered.InputModalities.ToList()
+                : existing.InputModalities?.ToList() ?? new List<string>(),
+            OutputModalities = discovered.OutputModalities is { Count: > 0 }
+                ? discovered.OutputModalities.ToList()
+                : existing.OutputModalities?.ToList() ?? new List<string>(),
+            CostInputPer1M = discovered.CostInputPer1M ?? existing.CostInputPer1M,
+            CostOutputPer1M = discovered.CostOutputPer1M ?? existing.CostOutputPer1M,
+            CostCacheReadPer1M = discovered.CostCacheReadPer1M ?? existing.CostCacheReadPer1M,
+            IsImage = existing.UserOverrideImage
+                ? existing.IsImage
+                : preserveExistingFlags ? existing.IsImage : discovered.IsImage,
+            IsEdit = existing.UserOverrideEdit
+                ? existing.IsEdit
+                : preserveExistingFlags ? existing.IsEdit : discovered.IsEdit,
+            IsTts = preserveExistingFlags ? (existing.IsTts || discovered.IsTts) : discovered.IsTts,
+            IsTranscription = preserveExistingFlags
+                ? (existing.IsTranscription || discovered.IsTranscription)
+                : discovered.IsTranscription,
+            IsEmbeddings = preserveExistingFlags
+                ? (existing.IsEmbeddings || discovered.IsEmbeddings)
+                : discovered.IsEmbeddings,
+            IsReranking = preserveExistingFlags
+                ? (existing.IsReranking || discovered.IsReranking)
+                : discovered.IsReranking,
             IsAdded = existing.IsAdded,
             UserOverrideTools = existing.UserOverrideTools,
             UserOverrideVision = existing.UserOverrideVision,
@@ -420,4 +480,5 @@ public sealed record CloudDiscoveryResult(
     bool HasOpenAiAudio,
     bool HasXaiTts,
     bool HasXaiStt,
-    bool HasXaiImageApi);
+    bool HasXaiImageApi,
+    int EnrichedModels = 0);

@@ -177,6 +177,14 @@ builder.Services.AddHttpClient("ai-proxy", client =>
 });
 builder.Services.AddSingleton<AiProviderProxyService>();
 
+// Public metadata cache for models.dev provider/model enrichment.
+builder.Services.AddHttpClient("models-dev", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(45);
+    client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Wizionic");
+});
+builder.Services.AddSingleton<ModelsDevCatalogService>();
+
 // Shared state for WASM sidebar toggle (used by WasmTopBar in WasmLayout for /chat etc.)
 // Must be registered here (main app DI) so that server-side rendering of WASM pages (layout + topbar)
 // can provide the service. The Client's DI also registers it for the interactive WASM runtime.
@@ -706,6 +714,7 @@ app.MapGet("/logout", async (HttpContext ctx, AuthSessionService sessions) =>
 // All under /api + cookie auth. See Apis/WasmApiEndpoints.cs for the implementations.
 app.MapWasmApis();
 app.MapAiProxyApis();
+app.MapModelCatalogApis();
 app.MapOAuthApis();
 app.MapConnectorProxyApis();
 app.MapConnectorCatalogApis();

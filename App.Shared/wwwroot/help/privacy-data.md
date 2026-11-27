@@ -24,6 +24,11 @@ Full legal text: [Privacy](/privacy) and [Terms](/terms).
 - Transactional email (login codes) via Brevo
 - SMS codes via Twilio if you enrolled a number
 - Tool-proxy and model-proxy traffic you actually trigger
+- Public provider/model metadata requests to [models.dev](https://models.dev) when you open Cloud providers or refresh models. These requests contain no API key, prompt, or chat content.
+
+## Model catalog
+
+Provider templates and model context/capability details come from the open [models.dev](https://models.dev) catalog. Wizionic fetches it through the host when available (otherwise directly) and caches it for a day. The upstream request is a plain `GET` for public JSON; your API keys and conversations are never part of it.
 
 ## Report inappropriate content {#report-content}
 

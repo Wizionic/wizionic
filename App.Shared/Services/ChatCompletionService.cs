@@ -115,6 +115,9 @@ public sealed class ChatCompletionService : IChatCompletionService
 
         // Global cap (Settings → Reply length). Default 16k — not a Lemonade/model limit.
         int defaultMaxOutputTokens = KeyStoreDefaults.ClampMaxOutputTokens(_keyStore.MaxOutputTokens);
+        // A model's published output ceiling (models.dev / provider) is the hard cap.
+        if (modelInfo?.MaxOutputTokens is int modelOutputLimit && modelOutputLimit > 0)
+            defaultMaxOutputTokens = Math.Min(defaultMaxOutputTokens, modelOutputLimit);
         int messagesTrimmed = 0;
         int contextLimit = contextSize > 0 ? contextSize : 8192;
 

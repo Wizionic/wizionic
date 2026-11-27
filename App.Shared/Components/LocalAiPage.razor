@@ -107,6 +107,18 @@
                             <div class="ollama-model-row-meta">
                                 <span class="ollama-vision-proxy-badge" title="On-disk size">@OllamaCapabilitiesResolver.FormatSize(model.SizeBytes)</span>
                                 <span class="ollama-vision-proxy-badge">Chat</span>
+                                @if (model.ContextSize > 0)
+                                {
+                                    <span class="ollama-vision-proxy-badge" title="Context window">ctx @FormatTokenCount(model.ContextSize)</span>
+                                }
+                                @if (model.MaxOutputTokens > 0)
+                                {
+                                    <span class="ollama-vision-proxy-badge" title="Maximum output tokens">out @FormatTokenCount(model.MaxOutputTokens)</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(model.ModelsDevId))
+                                {
+                                    <span class="ollama-vision-proxy-badge" title="Matched on models.dev: @model.ModelsDevId">models.dev</span>
+                                }
                                 @if (model.SupportsVision)
                                 {
                                     <span class="ollama-vision-proxy-badge">Vision</span>
@@ -299,6 +311,15 @@
     static bool ShowModelSubtitle(OllamaModelSettings model) =>
         !string.IsNullOrWhiteSpace(model.Label)
         && !string.Equals(model.Label.Trim(), model.Name.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    static string FormatTokenCount(int value)
+    {
+        if (value >= 1_000_000)
+            return (value / 1_000_000.0).ToString("0.#") + "M";
+        if (value >= 1_000)
+            return (value / 1_000.0).ToString("0.#") + "k";
+        return value.ToString();
+    }
 
     async Task LoadLibraryCatalog()
     {

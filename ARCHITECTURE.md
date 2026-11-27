@@ -160,6 +160,18 @@ Wizionic treats **two local OpenAI-compatible servers** as first-class peers. Bo
 - Pointing the **Ollama** base URL at Lemonade is supported: list + context use OpenAI-compatible endpoints when Ollama `/api/tags` / `/api/show` are missing.
 - Browser HTTPS → local HTTP is **mixed content**; prefer MAUI, or set CORS origins (`OLLAMA_ORIGINS`, `LEMONADE_ALLOWED_ORIGINS`) and avoid mixed content on the public site.
 
+### models.dev metadata
+
+[models.dev](https://models.dev) is a public catalog of provider endpoints and model specs (context/output limits, modalities, tools/vision, pricing). Wizionic uses it as an **enrichment** source, never as authority over a running local server or a user override:
+
+- Cloud provider templates and provider ids come from models.dev; native-SDK providers (OpenAI, Anthropic, Google, xAI, Groq, …) keep curated base URLs because models.dev omits `api` for them.
+- Providers that are **not listed** on models.dev (e.g. CometAPI) still match individual model names against the canonical model index. The host also builds a reseller-alias map from provider model ids, and matching normalizes snapshot/date suffixes (`deepseek-v3-1-250821` → `deepseek-v3.1`). Unmatched rows stay `CTX 0` and are marked “not in models.dev”.
+- `Refresh models` prefers vendor-reported fields, then models.dev, then name heuristics. `Sync metadata` re-applies catalog values to existing rows; user overrides and `IsAdded` win.
+- Ollama/Lemonade only use models.dev when the local server does not report a context window or capability.
+- Host routes `/api/model-catalog/providers`, `/provider/{id}`, `/models` and `/aliases` cache the upstream JSON for 24 h. Clients fall back to the public models.dev endpoints when the host cache is unavailable. Only public metadata is requested; no keys or chat content leave the device through this path.
+
+**Key files:** `App.Core/ModelsDev/*`, `Apis/ModelCatalogEndpoints.cs`, `Services/ModelsDevCatalogService.cs`, `CloudProvidersPage.razor`, `CloudModelCatalogResolver.cs`, `OllamaCapabilitiesResolver.cs`, `LemonadeModelCatalogResolver.cs`
+
 ### Model routing in the chat picker
 
 | Selection | Behavior |
