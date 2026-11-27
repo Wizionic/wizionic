@@ -216,6 +216,9 @@ a:hover {
     --cf-error-fg:     #c00;
     --cf-border:       #e8e8e8;
     --cf-bg-surface:   #ffffff;
+    /* Legacy alias — several panels use var(--cf-bg, #fff). Tie it to the
+       per-theme surface token so dark themes (Slate/Dark) don't get a white box. */
+    --cf-bg:           var(--cf-bg-surface, #ffffff);
     --cf-bg-subtle:    #f5f5f5;
     --cf-bg-muted:     var(--color-bg-muted);
     --cf-info-box-bg:  var(--color-bg-muted);
@@ -4529,7 +4532,7 @@ body .chat-container,
     scroll-behavior: smooth !important;
 }
 
-/* Input bar at bottom */
+/* Input bar at bottom — same max width as the centered new-chat composer. */
 body .input-area,
 .input-area {
     background: var(--workspace-canvas, var(--color-chat-bg)) !important;
@@ -4537,6 +4540,9 @@ body .input-area,
     box-shadow: none !important;
     padding: 10px 24px 14px !important;
     width: 100% !important;
+    max-width: var(--chat-composer-max, 720px) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
     box-sizing: border-box !important;
 }
 
@@ -4775,6 +4781,8 @@ body .message-bot,
     --chat-max-width: 840px;
     --chat-bubble-max: 76%;
     --chat-indent: 6%;
+    /* Composer width — matches the chat max width. */
+    --chat-composer-max: var(--chat-max-width, 1080px);
 }
 
 /* Message bubbles: capped width + indented outer edge (staggered layout). */
@@ -4824,15 +4832,8 @@ body .message-bot,
     color: var(--color-text);
 }
 
-/* Center the composer while the chat is empty. The later `.input-area` rule sets
-   `width: 100% !important`, so cap the width and center it explicitly here. */
-.chat-page .chat-column.chat-empty .input-area {
-    width: min(var(--chat-max-width, 1080px), 720px) !important;
-    max-width: min(var(--chat-max-width, 1080px), 720px) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    align-self: center !important;
-}
+/* Composer width/centering is handled by the shared .input-area rule above
+   (--chat-composer-max), so it matches in both the empty and docked states. */
 
 @media (max-width: 640.98px) {
     .chat-page .message-me,
@@ -4853,6 +4854,20 @@ body .message-bot,
 
 .chat-page .input-container:focus-within {
     border-color: var(--color-accent) !important;
+}
+
+/* Speech actions (mic, voice mode, auto-speak) pinned to the right edge,
+   immediately before the send button. */
+.input-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.chat-page .input-actions-right + .send-btn {
+    margin-left: 6px !important;
 }
 
 /* Narrow phones: slightly tighter toolbar (stacked layout is already the default everywhere) */

@@ -353,7 +353,7 @@
             {
                 <div class="chat-empty-hero">
                     <img src="/images/icon512.png" alt="Wizionic" />
-                    <h2>Where should we start?</h2>
+                    <h2>Hello</h2>
                 </div>
             }
 
@@ -569,6 +569,8 @@
                             </button>
                         }
 
+                        @* Right-aligned speech actions, grouped just before the send button. *@
+                        <div class="input-actions-right">
                         @if (ShowSpeechActions && IsSttAvailable)
                         {
                             <button type="button"
@@ -614,6 +616,7 @@
                                 <i class="bi @(autoSpeakReplies ? "bi-volume-up-fill" : "bi-volume-mute")"></i>
                             </button>
                         }
+                        </div>
 
                         @if (isSending)
                         {
