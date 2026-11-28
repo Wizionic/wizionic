@@ -1681,5 +1681,6 @@ public class WasmSyncService : ISyncService, IWebRtcTransportCallbacks
             model.SupportsVision,
             model.IsOllamaBackend,
             model.ContextSize,
-            model.VisionProxyModelId);
+            model.VisionProxyModelId,
+            model.IsRouterOnly);
 }

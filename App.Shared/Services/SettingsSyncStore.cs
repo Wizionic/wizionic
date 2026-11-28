@@ -312,7 +312,8 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
             _keys.EnabledMcpServerNames.ToList(),
             _keys.GetAllMcpTokens().ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase),
             _keys.GetCustomConnectors().ToList(),
-            oauth);
+            oauth,
+            _keys.DisabledBuiltinToolIds.ToList());
         return JsonSerializer.Serialize(dto, JsonOpts);
     }
 
@@ -464,6 +465,9 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         if (dto.EnabledServers != null)
             await _keys.SetEnabledMcpServersAsync(dto.EnabledServers, ct);
 
+        if (dto.DisabledBuiltinTools != null)
+            await _keys.SetDisabledBuiltinToolIdsAsync(dto.DisabledBuiltinTools, ct);
+
         if (dto.Tokens != null)
         {
             foreach (var (name, token) in dto.Tokens)
@@ -613,7 +617,8 @@ public sealed class SettingsSyncStore : ISettingsSyncStore
         List<string>? EnabledServers,
         Dictionary<string, string>? Tokens,
         List<CustomMcpConnector>? CustomConnectors,
-        List<OAuthConnectorSyncDto>? OAuthConnectors = null);
+        List<OAuthConnectorSyncDto>? OAuthConnectors = null,
+        List<string>? DisabledBuiltinTools = null);
 
     private sealed record OAuthConnectorSyncDto(
         string? ConnectorId,

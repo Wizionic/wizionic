@@ -47,6 +47,9 @@ public static class ProxiedProviderContracts
 
         [JsonPropertyName("isVisionProxy")]
         public bool IsVisionProxy { get; set; }
+
+        [JsonPropertyName("isRouterOnly")]
+        public bool IsRouterOnly { get; set; }
     }
 
     public sealed record ProxyChatRequest(
@@ -54,7 +57,11 @@ public static class ProxiedProviderContracts
         string Model,
         List<Dictionary<string, object?>> Messages,
         List<Dictionary<string, object?>>? Tools = null,
-        object? ToolChoice = null);
+        object? ToolChoice = null,
+        double? Temperature = null,
+        int? MaxOutputTokens = null,
+        object? ResponseFormat = null,
+        Dictionary<string, object?>? AdditionalBody = null);
 
     public sealed class ProxyProvidersResponse
     {

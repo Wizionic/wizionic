@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using App.Core.SmartHome;
 using App.Core.Tools;
 using App.Shared.Services.Tools;
@@ -54,24 +55,42 @@ public sealed class HomeAssistantToolModule : IToolModule
         return result;
     }
 
-    [Description("Turn a light on/off; optional color and brightness 0-255.")]
+    [Description("Turn a light on/off; optional color and brightness 0-255. Color names are resolved to RGB.")]
     private async Task<string> ControlLight(
         [Description("Entity ID, e.g. 'light.kitchen'")] string entityId,
         [Description("State: 'on' or 'off'")] string state,
-        [Description("Optional color name (e.g. 'blue', 'red') or hex like '#0000FF'")] string? color = null,
-        [Description("Optional brightness 0-255")] int? brightness = null)
+        [Description("Optional color name (e.g. 'purple', 'violet', 'magenta', 'white') or hex like '#8000FF'. Wizionic sends rgb_color. Omit unless the user asked for a color.")] string? color = null,
+        [Description("Optional brightness 0-255 (50% ≈ 128). Omit unless the user asked for a specific brightness.")] int? brightness = null)
     {
         if (string.IsNullOrWhiteSpace(entityId))
             return "Entity ID is required.";
 
         var normalizedState = state?.Trim().ToLowerInvariant() ?? "";
-        _trace.Record($"🏠 control_light(entity=\"{entityId}\", state=\"{normalizedState}\")");
+        var colorText = color?.Trim();
+        int[]? rgb = null;
+
+        if (normalizedState == "on" && !string.IsNullOrWhiteSpace(colorText))
+        {
+            if (!HomeAssistantColor.TryParse(colorText, out var parsed))
+                return $"Unknown color '{colorText}'. Use a color name or #RRGGBB.";
+            rgb = parsed;
+        }
+
+        var requested = new List<string> { $"state=\"{normalizedState}\"" };
+        if (normalizedState == "on")
+        {
+            if (rgb is not null)
+                requested.Add($"rgb_color={HomeAssistantColor.FormatRgb(rgb)}");
+            if (brightness.HasValue)
+                requested.Add($"brightness={Math.Clamp(brightness.Value, 0, 255)}");
+        }
+        _trace.Record($"🏠 control_light(entity=\"{entityId}\", {string.Join(", ", requested)})");
 
         if (normalizedState == "off")
         {
-            var result = await _ha.CallServiceAsync("light", "turn_off", new { entity_id = entityId });
-            TraceResult(result);
-            return IsSuccess(result) ? $"Turned off {entityId}.\n{result}" : result;
+            var offResult = await _ha.CallServiceAsync("light", "turn_off", new { entity_id = entityId });
+            TraceResult(offResult);
+            return await ConfirmLightChangeAsync(entityId, offResult, "off", null, null);
         }
 
         if (normalizedState != "on")
@@ -79,20 +98,100 @@ public sealed class HomeAssistantToolModule : IToolModule
 
         var serviceData = new Dictionary<string, object?> { ["entity_id"] = entityId };
 
+        if (rgb is not null)
+            serviceData["rgb_color"] = rgb;
+
         if (brightness.HasValue)
             serviceData["brightness"] = Math.Clamp(brightness.Value, 0, 255);
 
-        if (!string.IsNullOrWhiteSpace(color))
-        {
-            if (color.StartsWith('#'))
-                serviceData["rgb_color"] = HexToRgb(color);
-            else
-                serviceData["color_name"] = color.Trim();
-        }
+        _trace.Record($"🏠 control_light_payload({JsonSerializer.Serialize(serviceData)})");
 
         var onResult = await _ha.CallServiceAsync("light", "turn_on", serviceData);
         TraceResult(onResult);
-        return IsSuccess(onResult) ? $"Turned on {entityId}.\n{onResult}" : onResult;
+        return await ConfirmLightChangeAsync(entityId, onResult, "on", rgb, brightness);
+    }
+
+    /// <summary>
+    /// HA integrations can accept a service call and still report the old state. Verify
+    /// the requested color/brightness, poll once for lag, then retry once with the
+    /// current brightness (or transition 0) before telling the model it is unconfirmed.
+    /// </summary>
+    private async Task<string> ConfirmLightChangeAsync(
+        string entityId,
+        string result,
+        string expectedState,
+        int[]? rgb,
+        int? brightness)
+    {
+        if (HomeAssistantResult.IsFailure(result))
+            return result;
+
+        var expected = new List<string> { $"is {expectedState}" };
+        if (rgb is not null)
+            expected.Add($"rgb_color={HomeAssistantColor.FormatRgb(rgb)}");
+        if (brightness.HasValue)
+            expected.Add($"brightness={Math.Clamp(brightness.Value, 0, 255)}");
+
+        if (Matches(result, expected))
+            return result;
+
+        var state = await _ha.GetEntityStateAsync(entityId);
+        if (Matches(state, expected))
+        {
+            _trace.Record($"   ✅ confirmed: {Truncate(state.Replace('\n', ' '), 400)}");
+            return result + "\nConfirmed state:\n" + state;
+        }
+
+        await Task.Delay(300);
+
+        state = await _ha.GetEntityStateAsync(entityId);
+        if (Matches(state, expected))
+        {
+            _trace.Record($"   ✅ confirmed after delay: {Truncate(state.Replace('\n', ' '), 400)}");
+            return result + "\nConfirmed state:\n" + state;
+        }
+
+        var retryData = new Dictionary<string, object?> { ["entity_id"] = entityId };
+        if (expectedState == "on")
+        {
+            if (rgb is not null)
+                retryData["rgb_color"] = rgb;
+            if (brightness.HasValue)
+                retryData["brightness"] = Math.Clamp(brightness.Value, 0, 255);
+            else if (TryReadBrightness(state, out var currentBrightness) && currentBrightness > 0)
+                retryData["brightness"] = currentBrightness;
+            else
+                retryData["transition"] = 0;
+        }
+        else
+        {
+            retryData["transition"] = 0;
+        }
+
+        _trace.Record($"🏠 control_light_retry({JsonSerializer.Serialize(retryData)})");
+        var retryResult = await _ha.CallServiceAsync(
+            "light", expectedState == "on" ? "turn_on" : "turn_off", retryData);
+        TraceResult(retryResult);
+
+        var retryState = await _ha.GetEntityStateAsync(entityId);
+        if (Matches(retryState, expected))
+        {
+            _trace.Record($"   ✅ confirmed after retry: {Truncate(retryState.Replace('\n', ' '), 400)}");
+            return retryResult + "\nConfirmed state:\n" + retryState;
+        }
+
+        return $"{retryResult}\nRequested {string.Join(", ", expected)}; HA reports:\n{retryState}\nThe change was not confirmed.";
+    }
+
+    private static bool Matches(string text, IReadOnlyList<string> expected) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        expected.All(e => text.Contains(e, StringComparison.OrdinalIgnoreCase));
+
+    private static bool TryReadBrightness(string state, out int brightness)
+    {
+        brightness = 0;
+        var match = Regex.Match(state, @"\bbrightness=(\d{1,3})\b");
+        return match.Success && int.TryParse(match.Groups[1].Value, out brightness);
     }
 
     [Description(
@@ -156,13 +255,7 @@ public sealed class HomeAssistantToolModule : IToolModule
 
         var result = await _ha.CallServiceAsync(domain, service, serviceData);
         TraceResult(result);
-        if (!IsSuccess(result))
-            return result;
-
-        if (act is "volume" or "volume_set" or "set_volume")
-            return $"Set volume on {entityId} to {Math.Clamp(volumePercent!.Value, 0, 100)}%.\n{result}";
-
-        return $"Media player {entityId}: {service} succeeded.\n{result}";
+        return result;
     }
 
     [Description(
@@ -212,7 +305,7 @@ public sealed class HomeAssistantToolModule : IToolModule
 
         var result = await _ha.CallServiceAsync("climate", service, data);
         TraceResult(result);
-        return IsSuccess(result) ? $"Climate {entityId}: {service} succeeded.\n{result}" : result;
+        return result;
     }
 
     [Description(
@@ -257,7 +350,7 @@ public sealed class HomeAssistantToolModule : IToolModule
 
         var result = await _ha.CallServiceAsync("cover", service, data);
         TraceResult(result);
-        return IsSuccess(result) ? $"Cover {entityId}: {service} succeeded.\n{result}" : result;
+        return result;
     }
 
     [Description("Activate a scene. ListEntities(domain='scene') if entity_id is unknown.")]
@@ -270,7 +363,7 @@ public sealed class HomeAssistantToolModule : IToolModule
         _trace.Record($"🏠 activate_scene(entity=\"{entityId}\")");
         var result = await _ha.CallServiceAsync("scene", "turn_on", new { entity_id = entityId.Trim() });
         TraceResult(result);
-        return IsSuccess(result) ? $"Activated scene {entityId}.\n{result}" : result;
+        return result;
     }
 
     [Description("Run a named script only. ListEntities(domain='script') if entity_id is unknown.")]
@@ -283,41 +376,18 @@ public sealed class HomeAssistantToolModule : IToolModule
         _trace.Record($"🏠 run_script(entity=\"{entityId}\")");
         var result = await _ha.CallServiceAsync("script", "turn_on", new { entity_id = entityId.Trim() });
         TraceResult(result);
-        return IsSuccess(result) ? $"Ran script {entityId}.\n{result}" : result;
+        return result;
     }
 
-    [Description("Current state of one entity_id.")]
+    [Description("Current state of one entity_id, with key attributes such as brightness, color, volume, or temperature.")]
     private async Task<string> GetEntityState(
         [Description("Entity ID, e.g. 'light.kitchen', 'media_player.living_room', 'sensor.temperature'")] string entityId)
     {
         _trace.Record($"🏠 get_entity_state(entity=\"{entityId}\")");
 
-        var json = await _ha.GetEntityStateAsync(entityId);
-        if (IsFailure(json))
-        {
-            _trace.Record($"   ❌ {Truncate(json, 300)}");
-            return json;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            var state = root.TryGetProperty("state", out var s) ? s.GetString() : "unknown";
-            var friendly = root.TryGetProperty("attributes", out var attrs) &&
-                           attrs.TryGetProperty("friendly_name", out var fn)
-                ? fn.GetString()
-                : entityId;
-
-            var summary = $"{friendly} ({entityId}) is {state}.";
-            _trace.Record($"   ✅ {summary}");
-            return $"{summary}\n\nFull state:\n{json}";
-        }
-        catch
-        {
-            _trace.Record("   ✅ returned state JSON");
-            return json;
-        }
+        var state = await _ha.GetEntityStateAsync(entityId);
+        TraceResult(state);
+        return state;
     }
 
     [Description(
@@ -369,11 +439,7 @@ public sealed class HomeAssistantToolModule : IToolModule
     }
 
     private static bool IsFailure(string? result) =>
-        HomeAssistantService.IsHaFailure(result) ||
-        (result?.StartsWith("Invalid service_data", StringComparison.OrdinalIgnoreCase) == true) ||
-        (result?.StartsWith("Entity ID is required", StringComparison.OrdinalIgnoreCase) == true) ||
-        (result?.StartsWith("State must be", StringComparison.OrdinalIgnoreCase) == true) ||
-        (result?.StartsWith("Assist could not handle", StringComparison.OrdinalIgnoreCase) == true);
+        HomeAssistantResult.IsFailure(result);
 
     private static bool IsSuccess(string? result) => !IsFailure(result);
 
@@ -382,19 +448,5 @@ public sealed class HomeAssistantToolModule : IToolModule
         if (string.IsNullOrEmpty(text) || text.Length <= max)
             return text ?? "";
         return text[..max] + "…";
-    }
-
-    private static int[] HexToRgb(string hex)
-    {
-        hex = hex.TrimStart('#');
-        if (hex.Length != 6)
-            return [255, 255, 255];
-
-        return
-        [
-            Convert.ToInt32(hex[..2], 16),
-            Convert.ToInt32(hex[2..4], 16),
-            Convert.ToInt32(hex[4..6], 16)
-        ];
     }
 }

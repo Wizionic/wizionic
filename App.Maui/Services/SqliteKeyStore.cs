@@ -30,6 +30,7 @@ public class SqliteKeyStore : IKeyStore
     private const string LastSelectedModelKey = "wasm-last-selected-model";
     private const string MaxOutputTokensKey = "wasm-max-output-tokens";
     private const string ToolRoutingKey = "wasm-tool-routing";
+    private const string BuiltinToolsKey = "wasm-builtin-tools";
     private const string HelpModelsKey = "wasm-help-models";
     private const string SystemPromptKey = "wasm-system-prompt";
     private const string UserProfileKey = "wasm-user-profile";
@@ -57,6 +58,7 @@ public class SqliteKeyStore : IKeyStore
     private List<UserMemory> _userMemories = new();
     private OllamaConfig _ollamaConfig = new();
     private LemonadeConfig _lemonadeConfig = new();
+    private HashSet<string> _disabledBuiltinTools = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _enabledMcpServers = new();
     private Dictionary<string, string> _mcpTokens = new();
     private List<CustomMcpConnector> _customMcpConnectors = new();
@@ -99,6 +101,14 @@ public class SqliteKeyStore : IKeyStore
             var loaded = JsonSerializer.Deserialize<LemonadeConfig>(lemonadeJson);
             if (loaded != null)
                 _lemonadeConfig = MigrateLemonadeConfig(loaded);
+        }
+
+        var builtinJson = await GetItemAsync(BuiltinToolsKey, ct);
+        if (!string.IsNullOrEmpty(builtinJson))
+        {
+            var ids = JsonSerializer.Deserialize<List<string>>(builtinJson);
+            if (ids != null)
+                _disabledBuiltinTools = new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
         }
 
         var mcpJson = await GetItemAsync(McpEnabledKey, ct);
@@ -245,6 +255,7 @@ public class SqliteKeyStore : IKeyStore
         _userMemories = new();
         _ollamaConfig = new();
         _lemonadeConfig = new();
+        _disabledBuiltinTools = new(StringComparer.OrdinalIgnoreCase);
         _enabledMcpServers = new();
         _mcpTokens = new();
         _customMcpConnectors = new();
@@ -441,6 +452,64 @@ public class SqliteKeyStore : IKeyStore
     {
         public int Mode { get; set; }
         public string? ModelId { get; set; }
+    }
+
+    public IReadOnlySet<string> DisabledBuiltinToolIds => _disabledBuiltinTools;
+
+    public bool IsBuiltinToolEnabled(string id) =>
+        !string.IsNullOrWhiteSpace(id) && !_disabledBuiltinTools.Contains(id);
+
+    public async Task SetBuiltinToolEnabledAsync(string id, bool enabled, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return;
+
+        if (enabled)
+            _disabledBuiltinTools.Remove(id);
+        else
+            _disabledBuiltinTools.Add(id);
+
+        await SaveBuiltinToolsAsync(ct);
+    }
+
+    public async Task SetDisabledBuiltinToolIdsAsync(IEnumerable<string> ids, CancellationToken ct = default)
+    {
+        _disabledBuiltinTools = new HashSet<string>(
+            ids.Where(id => !string.IsNullOrWhiteSpace(id)), StringComparer.OrdinalIgnoreCase);
+        await SaveBuiltinToolsAsync(ct);
+    }
+
+    public async Task SetBuiltinToolsDeviceDefaultAsync(bool useHomeAssistant, CancellationToken ct = default)
+    {
+        var disabled = new List<string>(_disabledBuiltinTools);
+        disabled.RemoveAll(id => id.Equals(BuiltinToolCatalog.HomeAssistant, StringComparison.OrdinalIgnoreCase));
+        if (!useHomeAssistant)
+            disabled.Add(BuiltinToolCatalog.HomeAssistant);
+
+        var json = JsonSerializer.Serialize(disabled
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .ToList());
+
+        _disabledBuiltinTools = new HashSet<string>(disabled, StringComparer.OrdinalIgnoreCase);
+
+        if (_auth.IsAuthenticated)
+        {
+            await SetItemAsync(BuiltinToolsKey, json, ct);
+            return;
+        }
+
+        // Signed out (first-run wizard): write both the guest key (for in-session
+        // reloads) and the unprefixed device default (inherited by the first sign-in).
+        await SetItemAsync(BuiltinToolsKey, json, ct);
+        await _db.SetStringAsync(BuiltinToolsKey, json, ct);
+    }
+
+    private async Task SaveBuiltinToolsAsync(CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(_disabledBuiltinTools
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .ToList());
+        await SetItemAsync(BuiltinToolsKey, json, ct);
     }
 
     public string? HelpAnswerModelId => _helpAnswerModelId;

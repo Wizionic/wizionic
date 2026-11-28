@@ -12,14 +12,17 @@ public sealed class CompositeToolProvider : IToolProvider
     private readonly IEnumerable<IToolModule> _modules;
     private readonly McpToolSource _mcpSource;
     private readonly OpenApiConnectorToolSource? _openApiSource;
+    private readonly BuiltinToolGate _gate;
 
     public CompositeToolProvider(
         IEnumerable<IToolModule> modules,
         McpToolSource mcpSource,
+        BuiltinToolGate gate,
         OpenApiConnectorToolSource? openApiSource = null)
     {
         _modules = modules ?? throw new ArgumentNullException(nameof(modules));
         _mcpSource = mcpSource ?? throw new ArgumentNullException(nameof(mcpSource));
+        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         _openApiSource = openApiSource;
     }
 
@@ -32,7 +35,7 @@ public sealed class CompositeToolProvider : IToolProvider
     }
 
     public IReadOnlyList<IToolModule> GetActiveModules() =>
-        _modules.Where(m => m.IsAvailable).ToList();
+        _modules.Where(m => m.IsAvailable && _gate.IsModuleEnabled(m.ModuleName)).ToList();
 
     private IReadOnlyList<AITool> BuildToolList(HashSet<string>? moduleFilter, bool includeMcp)
     {
@@ -43,10 +46,13 @@ public sealed class CompositeToolProvider : IToolProvider
             if (!module.IsAvailable)
                 continue;
 
+            if (!_gate.IsModuleEnabled(module.ModuleName))
+                continue;
+
             if (moduleFilter != null && !moduleFilter.Contains(module.ModuleName))
                 continue;
 
-            tools.AddRange(module.GetTools());
+            tools.AddRange(_gate.FilterTools(module.ModuleName, module.GetTools()));
         }
 
         if (includeMcp)

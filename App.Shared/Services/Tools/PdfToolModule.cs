@@ -52,7 +52,7 @@ public sealed class PdfToolModule : IToolModule
                     "printable document, report, letter, invoice, summary handout, or 'export as PDF'. " +
                     "Write the complete document body as markdown (headings, paragraphs, bold/italic, " +
                     "lists, code blocks, quotes, links). Tables and images are not rendered. " +
-                    "To export a note, first read it with the Notes tools, then pass its content here. " +
+                    "To export a note, first read it with the Notes tools when available, then pass its content here. " +
                     "Returns a short pdf_id only — the PDF is shown to the user automatically as a " +
                     "preview card. In a project, the file is saved automatically. Outside projects, to keep it call " +
                     "save_pdf_to_library with that pdf_id. Never re-output the document content or base64 in your reply."

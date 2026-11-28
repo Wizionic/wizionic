@@ -36,6 +36,7 @@ Secrets belong in the environment, not in git.
 | `Turn__Cloudflare__TokenId` | Optional Cloudflare Realtime TURN token ID. Short-lived ICE credentials for sync across NATs. |
 | `Turn__Cloudflare__ApiToken` | Cloudflare TURN API token. Server-side only; never put this in the desktop/WASM client. |
 | `ZYPHRA_API_KEY` | Optional proxied Zyphra models |
+| `LEMONADE_API_KEY` | Optional server-side key for proxied Lemonade models (`free-chat`, `wizionic-router`) |
 | `ConnectionStrings__DefaultConnection` | Override SQLite path |
 
 OAuth *app* Client IDs and secrets (Google, GitHub, Notion, Stripe) live in the host SQLite `OAuthProviders` table, not in `appsettings.json`. Seed them in the database (the production notes live in the private ops repo).
@@ -46,7 +47,9 @@ A wizard-installed Home Server listens on **all interfaces** (`http://*:5150`), 
 
 The first account is created in the setup wizard (username + password, no email code). That API only accepts requests from loopback, and only while the Users table is empty. Later sign-in is password on that username. Email login codes still need a mailer (`BREVO_API_KEY` or SMTP), which a typical Home Server does not have.
 
-The sample `free-chat` proxied provider in `appsettings.json` points at `http://127.0.0.1:11434/v1/` (local Ollama). Change or remove it if you do not run Ollama there.
+The sample `free-chat` and `wizionic-router` proxied providers in `appsettings.json` point at Lemonade on `http://127.0.0.1:13305/v1/` and read `LEMONADE_API_KEY`. `free-chat` uses `Qwen3.5-4B-GGUF`; `wizionic-router` exposes the stable `wizionic/router` id and forwards to `Wizionic3.5-0.8B-router-Q5_K_M.gguf`. Both set `AllowOnHomeserver: true` so they are available on a local Home Server. The router is `IsRouterOnly` — it appears under Settings → Tool routing, not the chat model menu. Change the base URL, key, or upstream model in config; the app’s saved routing id stays `wizionic/router`.
+
+`/api/proxy/*` requires a signed-in account and is rate limited. Change or remove the providers if you do not run Lemonade there.
 
 SMS two-factor is optional. If the Twilio variables are unset, users can still enable 2FA and complete the second step with an email code. Do not put the Twilio auth token in config; use an API key.
 

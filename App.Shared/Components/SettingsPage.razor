@@ -399,7 +399,8 @@
             }
         </select>
         <p style="color: var(--color-text-muted); font-size: 0.8em; margin: 0.35rem 0 0;">
-            Prefer a small local model (Lemonade / Ollama). Not used when mode is Rules or model is empty.
+            Prefer a small local model (Lemonade / Ollama). Not used when mode is Rules, when no model is set,
+            or when Hybrid sees only predictable tools (Time, Calculator, Notes, Calendar, Gallery, PDF).
         </p>
 
         <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
@@ -1044,8 +1045,9 @@
         {
             routingModelOptions = ModelCatalog.GetAvailableModels()
                 .Where(m => !string.IsNullOrWhiteSpace(m.Id) && !m.IsImageGeneration)
+                .OrderByDescending(m => m.IsRouterOnly)
+                .ThenBy(m => string.IsNullOrWhiteSpace(m.Label) ? m.Id : m.Label, StringComparer.OrdinalIgnoreCase)
                 .Select(m => (m.Id, string.IsNullOrWhiteSpace(m.Label) ? m.Id : $"{m.Label} ({m.Id})"))
-                .OrderBy(m => m.Item2, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
         catch

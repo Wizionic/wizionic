@@ -18,16 +18,19 @@ public sealed class ContextualRequestRouter : IRequestRouter
     private readonly IRoutingSessionStore _sessions;
     private readonly IBrowserPanelState _browserPanel;
     private readonly ISkillStore? _skills;
+    private readonly BuiltinToolGate _gate;
 
     public ContextualRequestRouter(
         IKeyStore keyStore,
         IRoutingSessionStore sessions,
         IBrowserPanelState browserPanel,
+        BuiltinToolGate gate,
         ISkillStore? skills = null)
     {
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _browserPanel = browserPanel ?? throw new ArgumentNullException(nameof(browserPanel));
+        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         _skills = skills;
     }
 
@@ -55,10 +58,12 @@ public sealed class ContextualRequestRouter : IRequestRouter
         bool useSessionStickiness = true)
     {
         var available = new HashSet<string>(
-            activeModules.Where(m => m.IsAvailable).Select(m => m.ModuleName),
+            activeModules.Where(m => m.IsAvailable && _gate.IsModuleEnabled(m.ModuleName)).Select(m => m.ModuleName),
             StringComparer.OrdinalIgnoreCase);
 
         bool Has(string name) => available.Contains(name);
+        bool HasNative(string functionName) =>
+            Has("Native") && _gate.IsFunctionEnabled("Native", functionName);
 
         if (string.IsNullOrWhiteSpace(message))
             return RequestRoute.PureChat("empty message", "Rules");
@@ -78,7 +83,7 @@ public sealed class ContextualRequestRouter : IRequestRouter
             if (wake || sticky)
             {
                 var modules = new List<string> { "HomeAssistant" };
-                if (MessageSuggestsUtilityTools(message) && Has("Native"))
+                if (MessageSuggestsNativeUtility(message, HasNative))
                     modules.Add("Native");
                 if (MessageSuggestsGalleryTools(message) && Has("Gallery"))
                     modules.Add("Gallery");
@@ -107,11 +112,30 @@ public sealed class ContextualRequestRouter : IRequestRouter
             if (MessageSuggestsHomeAssistant(message))
             {
                 var modules = new List<string> { "HomeAssistant" };
-                if (MessageSuggestsUtilityTools(message) && Has("Native"))
+                if (MessageSuggestsNativeUtility(message, HasNative))
                     modules.Add("Native");
                 return RequestRoute.WithModules(
                     modules,
                     "Home Assistant device intent",
+                    targetModule: "HomeAssistant",
+                    includeMcp: MessageSuggestsConnectorTools(message),
+                    source: "Rules");
+            }
+
+            // Short follow-ups ("turn it off", "make it brighter", "what color is it?")
+            // after a real HA action. Narrower than blanket stickiness so a weather
+            // question is not stolen after a light command.
+            if (session.IsActive("HomeAssistant", SessionTtl)
+                && !string.IsNullOrWhiteSpace(session.LastEntityActedOn)
+                && !MessageSuggestsHomeAssistant(message)
+                && MessageLooksLikeSmartHomeFollowUp(message))
+            {
+                var modules = new List<string> { "HomeAssistant" };
+                if (MessageSuggestsNativeUtility(message, HasNative))
+                    modules.Add("Native");
+                return RequestRoute.WithModules(
+                    modules,
+                    "Home Assistant follow-up (active session)",
                     targetModule: "HomeAssistant",
                     includeMcp: MessageSuggestsConnectorTools(message),
                     source: "Rules");
@@ -196,12 +220,18 @@ public sealed class ContextualRequestRouter : IRequestRouter
             return RequestRoute.WithModules(modules, "notes intent", source: "Rules");
         }
 
-        if (MessageSuggestsUtilityTools(message))
+        if (MessageSuggestsNativeUtility(message, HasNative))
         {
             return RequestRoute.WithModules(
                 ["Native"],
                 "utility intent (search/weather/time/math)",
                 source: "Rules");
+        }
+
+        if (!_gate.IsModuleEnabled("HomeAssistant") && MessageLooksLikeHomeAssistantCommand(message))
+        {
+            return RequestRoute.PureChat(
+                "Home Assistant is disabled by the user", "Rules");
         }
 
         return RequestRoute.PureChat("general chat — no tools", "Rules");
@@ -226,13 +256,14 @@ public sealed class ContextualRequestRouter : IRequestRouter
         {
             var doc = SkillMarkdown.Parse(rec.Markdown);
             var res = SkillToolResolver.Resolve(doc.AllowedTools);
-            // Prefer available modules, but keep skill-declared modules so HA etc. still attach when registered.
+            // Degraded run: only modules the user still has enabled+available.
             var modules = res.Modules.Where(available.Contains).ToList();
-            if (modules.Count == 0)
-                modules = res.Modules.ToList();
+            var skipped = res.Modules.Where(m => !available.Contains(m)).ToList();
+            var reason = "skill /" + doc.Name
+                + (skipped.Count == 0 ? "" : " (unavailable: " + string.Join(", ", skipped) + ")");
             return RequestRoute.WithModules(
                 modules,
-                reason: "skill /" + doc.Name,
+                reason: reason,
                 includeMcp: res.IncludeMcp,
                 source: "Rules",
                 skillId: rec.Id);
@@ -308,7 +339,24 @@ public sealed class ContextualRequestRouter : IRequestRouter
     /// Heuristic: general knowledge chat should NOT get tools (matches Lemonade pure-chat quality).
     /// Only attach Native tools when the user clearly wants search, weather, time, or math.
     /// </summary>
-    public static bool MessageSuggestsUtilityTools(string message)
+    public static bool MessageSuggestsUtilityTools(string message) =>
+        MessageSuggestsWebSearch(message)
+        || MessageSuggestsWeather(message)
+        || MessageSuggestsTime(message)
+        || MessageSuggestsCalculator(message)
+        || MessageSuggestsUrl(message);
+
+    /// <summary>Native is attached only when an enabled function covers the matched intent.</summary>
+    private static bool MessageSuggestsNativeUtility(string message, Func<string, bool> hasFunction) =>
+        (MessageSuggestsWebSearch(message)
+            && (hasFunction("SearchWeb") || hasFunction("SummarizeUrl")))
+        || (MessageSuggestsWeather(message) && hasFunction("GetCurrentWeather"))
+        || (MessageSuggestsTime(message) && hasFunction("GetCurrentTimeUtc"))
+        || (MessageSuggestsCalculator(message) && hasFunction("Calculate"))
+        || (MessageSuggestsUrl(message)
+            && (hasFunction("SummarizeUrl") || hasFunction("SearchWeb")));
+
+    public static bool MessageSuggestsWebSearch(string message)
     {
         if (string.IsNullOrWhiteSpace(message))
             return false;
@@ -316,25 +364,50 @@ public sealed class ContextualRequestRouter : IRequestRouter
         var m = message.ToLowerInvariant();
 
         // Avoid bare "latest" — it matches "append to the latest one" (notes) and similar.
-        if (m.Contains("search") || m.Contains("look up") || m.Contains("lookup") ||
-            m.Contains("google") || m.Contains("news") ||
-            m.Contains("latest news") || m.Contains("the latest") && (m.Contains("news") || m.Contains("score") || m.Contains("price") || m.Contains("headline")) ||
-            m.Contains("current price") || m.Contains("today's") || m.Contains("todays") ||
-            m.Contains("what happened") || m.Contains("who won") || m.Contains("score"))
-            return true;
+        return m.Contains("search") || m.Contains("look up") || m.Contains("lookup") ||
+               m.Contains("google") || m.Contains("news") ||
+               m.Contains("latest news") ||
+               m.Contains("the latest") && (m.Contains("news") || m.Contains("score") || m.Contains("price") || m.Contains("headline")) ||
+               m.Contains("current price") || m.Contains("today's") || m.Contains("todays") ||
+               m.Contains("what happened") || m.Contains("who won") || m.Contains("score");
+    }
 
-        if (m.Contains("weather") || m.Contains("forecast") || m.Contains("temperature") ||
-            m.Contains("what time") || m.Contains("current time") || m.Contains("utc"))
-            return true;
+    public static bool MessageSuggestsWeather(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
 
-        if (m.Contains("calculate") || m.Contains("compute") || m.Contains("what is ") &&
-            (m.Contains("+") || m.Contains("*") || m.Contains("%") || m.Contains("divided")))
-            return true;
+        var m = message.ToLowerInvariant();
+        return m.Contains("weather") || m.Contains("forecast") || m.Contains("temperature");
+    }
 
-        if (m.Contains("http://") || m.Contains("https://") || m.Contains("www."))
-            return true;
+    public static bool MessageSuggestsTime(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
 
-        return false;
+        var m = message.ToLowerInvariant();
+        return m.Contains("what time") || m.Contains("current time") || m.Contains("utc");
+    }
+
+    public static bool MessageSuggestsCalculator(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+        return m.Contains("calculate") || m.Contains("compute") ||
+               m.Contains("what is ") &&
+               (m.Contains("+") || m.Contains("*") || m.Contains("%") || m.Contains("divided"));
+    }
+
+    public static bool MessageSuggestsUrl(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+        return m.Contains("http://") || m.Contains("https://") || m.Contains("www.");
     }
 
     /// <summary>
@@ -625,6 +698,62 @@ public sealed class ContextualRequestRouter : IRequestRouter
             return true;
 
         return false;
+    }
+
+    /// <summary>
+    /// A short follow-up that refers to the active smart-home session, e.g.
+    /// "turn it off", "make it brighter", "what color is it?". Deliberately narrow:
+    /// messages that clearly need another tool are excluded so follow-up routing does
+    /// not steal weather, notes, or calendar turns.
+    /// </summary>
+    public static bool MessageLooksLikeSmartHomeFollowUp(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var m = message.ToLowerInvariant().Trim();
+
+        if (MessageSuggestsNotesTools(m) || MessageSuggestsCalendarTools(m) ||
+            MessageSuggestsGalleryTools(m) || MessageSuggestsPdfTools(m) ||
+            MessageSuggestsImageTools(m) || MessageSuggestsUtilityTools(m) ||
+            MessageSuggestsConnectorTools(m))
+            return false;
+
+        if (m.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length > 10)
+            return false;
+
+        return m.Contains("turn it") || m.Contains("turn that") ||
+               m.Contains("switch it") || m.Contains("switch that") ||
+               m.Contains("make it") || m.Contains("set it") ||
+               m.Contains("dim it") || m.Contains("brighten it") ||
+               m.Contains("what color") || m.Contains("how bright") ||
+               m.Contains("is it on") || m.Contains("is it off") ||
+               m.Contains("the light") || m.Contains("the lights") ||
+               m.Contains("the volume") || m.Contains("the tv") ||
+               m.Contains("the thermostat") || m.Contains("the blinds") ||
+               m.Contains("the cover") || m.Contains("brighter") ||
+               m.Contains("dimmer") || m.Contains("warmer") ||
+               m.Contains("cooler") || m.Contains("again") ||
+               m.Contains("same") || m == "on" || m == "off";
+    }
+
+    /// <summary>
+    /// A clear request to change a house device, not just a question that mentions one.
+    /// Used to avoid labeling "what's on TV?" as a disabled Home Assistant command.
+    /// </summary>
+    public static bool MessageLooksLikeHomeAssistantCommand(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message) || !MessageSuggestsHomeAssistant(message))
+            return false;
+
+        var m = message.ToLowerInvariant();
+        return m.Contains("turn ") || m.Contains("switch ") || m.Contains("set ") ||
+               m.Contains("dim ") || m.Contains("brighten") || m.Contains("mute") ||
+               m.Contains("unmute") || m.Contains("play ") || m.Contains("pause") ||
+               m.Contains("resume") || m.Contains("stop ") || m.Contains("open ") ||
+               m.Contains("close ") || m.Contains("lock") || m.Contains("unlock") ||
+               m.Contains("activate ") || m.Contains("run ") || m.Contains("volume") ||
+               m.Contains("temperature");
     }
 
     /// <summary>

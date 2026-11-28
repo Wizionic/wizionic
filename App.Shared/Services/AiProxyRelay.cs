@@ -438,7 +438,7 @@ public sealed class AiProxyRelay
     private static SyncModelInfo ToSyncModel(ChatModelInfo model) =>
         new(model.Id, model.Label, model.Icon, model.ProviderId, model.ProviderName,
             model.SupportsTools, model.SupportsVision, model.IsOllamaBackend,
-            model.ContextSize, model.VisionProxyModelId);
+            model.ContextSize, model.VisionProxyModelId, model.IsRouterOnly);
 
     private record DataChannelMessage(
         string type,

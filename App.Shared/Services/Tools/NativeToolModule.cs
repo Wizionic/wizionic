@@ -24,17 +24,17 @@ public sealed class NativeToolModule : IToolModule
 
         _tools =
         [
-            AIFunctionFactory.Create(SearchWeb),
-            AIFunctionFactory.Create(SummarizeUrl),
-            AIFunctionFactory.Create(GetCurrentTimeUtc),
-            AIFunctionFactory.Create(Calculate),
-            AIFunctionFactory.Create(GetCurrentWeather)
+            AIFunctionFactory.Create(SearchWeb, name: "SearchWeb"),
+            AIFunctionFactory.Create(SummarizeUrl, name: "SummarizeUrl"),
+            AIFunctionFactory.Create(GetCurrentTimeUtc, name: "GetCurrentTimeUtc"),
+            AIFunctionFactory.Create(Calculate, name: "Calculate"),
+            AIFunctionFactory.Create(GetCurrentWeather, name: "GetCurrentWeather")
         ];
     }
 
     public IReadOnlyList<AITool> GetTools() => _tools;
 
-    [Description("Search the web for current, recent, or upcoming/future information (e.g. sports tournaments, events, forecasts, results). Use this when the user asks about recent events, prices, facts, news, weather forecasts, or anything that may have changed or will change. You can find info about future events via search. Strongly prefer the most relevant-looking official or results-page links over social media. Always consider following up the best 1-2 links with summarize_url for full details. Returns top results with titles, links, and short snippets.")]
+    [Description("Search the web for current, recent, or upcoming/future information (e.g. sports tournaments, events, forecasts, results). Use this when the user asks about recent events, prices, facts, news, weather forecasts, or anything that may have changed or will change. You can find info about future events via search. Strongly prefer the most relevant-looking official or results-page links over social media. Always consider following up the best 1-2 links with a page-reading tool when one is available. Returns top results with titles, links, and short snippets.")]
     private async Task<string> SearchWeb(
         [Description("The search query, e.g. 'latest news on AI regulation' or 'current price of Bitcoin'")] string query,
         [Description("Maximum number of results to return (1-10). Default 5.")] int maxResults = 5)
@@ -125,7 +125,7 @@ public sealed class NativeToolModule : IToolModule
         }
     }
 
-    [Description("Get real-time current weather or a forecast via the free Open-Meteo API. You HAVE live weather access when you call this tool — use it for weather questions instead of saying you cannot check. Provide latitude/longitude (approximate coords are fine for named cities, e.g. Santa Cruz, CA ≈ 36.97, -122.03; or SearchWeb first to find coordinates if unsure). Supports current conditions and daily forecasts up to 7 days.")]
+    [Description("Get real-time current weather or a forecast via the free Open-Meteo API. You HAVE live weather access when you call this tool — use it for weather questions instead of saying you cannot check. Provide latitude/longitude (approximate coords are fine for named cities, e.g. Santa Cruz, CA ≈ 36.97, -122.03; or use a web search when one is available to find coordinates if unsure). Supports current conditions and daily forecasts up to 7 days.")]
     private async Task<string> GetCurrentWeather(
         [Description("Latitude, e.g. 36.97 for Santa Cruz, CA")] double latitude,
         [Description("Longitude, e.g. -122.03 for Santa Cruz, CA")] double longitude,
