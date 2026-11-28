@@ -39,6 +39,12 @@ public class ProxiedProviderOptions
     public bool DiscoverModels { get; set; }
 
     /// <summary>
+    /// When true, this provider is available when the host runs as a local Home Server.
+    /// Default false keeps hosted free-chat providers off Home Servers.
+    /// </summary>
+    public bool AllowOnHomeserver { get; set; }
+
+    /// <summary>
     /// When true, this provider and its models are omitted from the WASM model selector
     /// (chat may still be routed through the proxy when configured).
     /// </summary>
@@ -60,6 +66,17 @@ public class ProxiedModelOptions
     public string Icon { get; set; } = "🤖";
     public bool SupportsTools { get; set; } = true;
     public bool SupportsVision { get; set; }
+
+    /// <summary>
+    /// Actual model name sent upstream when it differs from the public <see cref="Id"/>.
+    /// Keeps the app's saved model id stable when the served model changes.
+    /// </summary>
+    public string? UpstreamModelId { get; set; }
+
+    /// <summary>
+    /// Show in Settings → Tool routing but hide from the normal chat model picker.
+    /// </summary>
+    public bool IsRouterOnly { get; set; }
 
     /// <summary>
     /// When true, non-vision models in the same provider route image uploads through this model first.

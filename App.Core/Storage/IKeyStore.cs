@@ -42,6 +42,19 @@ public interface IKeyStore
     string? ToolRoutingModelId { get; }
     Task SetToolRoutingAsync(ToolRoutingMode mode, string? modelId, CancellationToken ct = default);
 
+    /// <summary>Built-in tool ids the user turned off. Empty = every built-in is enabled.</summary>
+    IReadOnlySet<string> DisabledBuiltinToolIds { get; }
+    bool IsBuiltinToolEnabled(string id);
+    Task SetBuiltinToolEnabledAsync(string id, bool enabled, CancellationToken ct = default);
+    Task SetDisabledBuiltinToolIdsAsync(IEnumerable<string> ids, CancellationToken ct = default);
+
+    /// <summary>
+    /// Setup-wizard default for built-in tools. Writes the current user's settings when
+    /// signed in; otherwise writes the unprefixed device key, which the next sign-in
+    /// inherits from the legacy-key fallback.
+    /// </summary>
+    Task SetBuiltinToolsDeviceDefaultAsync(bool useHomeAssistant, CancellationToken ct = default);
+
     /// <summary>Chat-eligible model used to answer Ask in Help. Empty = browse only.</summary>
     string? HelpAnswerModelId { get; }
     /// <summary>Optional embeddings model used to build the local help vector index.</summary>

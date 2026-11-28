@@ -12,7 +12,9 @@ public static class AiProxyEndpoints
 {
     public static IEndpointRouteBuilder MapAiProxyApis(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup("/api/proxy");
+        var group = endpoints.MapGroup("/api/proxy")
+            .RequireAuthorization()
+            .RequireRateLimiting("ai-proxy");
 
         group.MapGet("/providers", async (AiProviderProxyService proxy, CancellationToken ct) =>
         {

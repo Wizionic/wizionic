@@ -9,6 +9,8 @@ Open [Tools](/tools). Tabs: **Tools**, **Skills**, **Workflows**, **Agents**.
 
 ## Built-in tools
 
+Every built-in capability can be switched off under **Tools → Built-in**. A disabled tool is never offered to the model, so it cannot be called even by a skill. Home Assistant and the embedded browser are desktop-only; the web app does not list them. The desktop setup wizard asks whether you use Home Assistant before it installs local AI models.
+
 When listed for a chat, the model may call web search, URL summarize, time, weather, and calculator. Search and summarize run through the Wizionic host so the browser does not hit CORS limits. Those requests include the query or URL you (or the model) sent.
 
 `generate_pdf` creates a PDF from markdown entirely on your device — nothing is uploaded. The result appears under the reply as a downloadable card. See [Chat → PDF documents](/help/chat).

@@ -13,4 +13,5 @@ public record SyncModelInfo(
     bool SupportsVision = false,
     bool IsOllamaBackend = false,
     int ContextSize = 0,
-    string? VisionProxyModelId = null);
+    string? VisionProxyModelId = null,
+    bool IsRouterOnly = false);

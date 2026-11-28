@@ -98,6 +98,24 @@
                         Install one or both. You can change settings later on the 🍋 Lemonade and 🦙 Ollama pages.
                     </p>
 
+                    <!-- Home Assistant question before the model installers -->
+                    <div class="setup-ai-block">
+                        <div class="setup-ai-heading">
+                            <strong>🏠 Home Assistant</strong>
+                        </div>
+                        <p class="setup-ai-note">
+                            Control lights, climate, media, and scenes from chat.
+                            Skip this if you do not use Home Assistant.
+                        </p>
+                        <label class="setup-check">
+                            <input type="checkbox"
+                                   checked="@wantHomeAssistant"
+                                   @onchange="OnHomeAssistantToggled"
+                                   disabled="@busy" />
+                            I use Home Assistant
+                        </label>
+                    </div>
+
                     <!-- Lemonade -->
                     <div class="setup-ai-block">
                         <div class="setup-ai-heading">
@@ -246,6 +264,7 @@
                         <li>Other devices: copy the network URL from Settings → Home Server</li>
                         <li>Lemonade: @(lemonadeDoneLabel)</li>
                         <li>Ollama: @(ollamaDoneLabel)</li>
+                        <li>Home Assistant: @(wantHomeAssistant ? "on" : "off")</li>
                     </ul>
                     @if (!homeserverOk && !string.IsNullOrEmpty(homeserverMessage))
                     {
@@ -405,6 +424,8 @@
     private string firstAdminDoneLabel = "skipped";
     private bool wantLemonade;
     private bool wantOllama;
+    private bool wantHomeAssistant = true;
+    private bool _wizardWasVisible;
     private readonly HashSet<string> selectedLemonadeModels = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> selectedOllamaModels = new(StringComparer.OrdinalIgnoreCase);
     private string? progressLine;
@@ -428,7 +449,7 @@
         && (homeserverInstalledThisRun
             || (Auth.IsAuthenticated && !Homeserver.IsLoginServerThisHomeserver(Auth.ServerBaseUrl)));
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         Wizard.OnChanged += OnWizardChanged;
         foreach (var m in Lemonade.AvailableInstallModels.Where(x => x.DefaultSelected))
@@ -441,9 +462,38 @@
             wantLemonade = true;
         if (Ollama.IsSupported && Ollama.IsInstalled)
             wantOllama = true;
+
+        try
+        {
+            if (AppEnvironment.IsMaui)
+            {
+                await KeyStore.LoadAsync();
+                wantHomeAssistant = KeyStore.IsBuiltinToolEnabled(App.Core.Tools.BuiltinToolCatalog.HomeAssistant);
+            }
+        }
+        catch
+        {
+            // Setup still runs with the default (on).
+        }
+
+        _wizardWasVisible = Wizard.IsVisible;
     }
 
-    private void OnWizardChanged() => InvokeAsync(StateHasChanged);
+    private void OnWizardChanged()
+    {
+        var visible = Wizard.IsVisible;
+        if (visible && !_wizardWasVisible && AppEnvironment.IsMaui)
+            wantHomeAssistant = KeyStore.IsBuiltinToolEnabled(App.Core.Tools.BuiltinToolCatalog.HomeAssistant);
+        _wizardWasVisible = visible;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnHomeAssistantToggled(ChangeEventArgs e)
+    {
+        wantHomeAssistant = e.Value is bool b
+            ? b
+            : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+    }
 
     public void Dispose() => Wizard.OnChanged -= OnWizardChanged;
 
@@ -519,6 +569,16 @@
                 progressLine = "Starting…";
                 progressPercent = null;
                 StateHasChanged();
+
+                try
+                {
+                    await KeyStore.SetBuiltinToolsDeviceDefaultAsync(wantHomeAssistant);
+                }
+                catch
+                {
+                    // Tools page can still change it later.
+                }
+
                 await RunLocalAiStepAsync();
                 step = 4;
             }

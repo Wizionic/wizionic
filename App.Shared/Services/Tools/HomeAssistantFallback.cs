@@ -9,12 +9,6 @@ namespace App.Shared.Services.Tools;
 /// </summary>
 public static class HomeAssistantFallback
 {
-    private static readonly string[] ColorNames =
-    [
-        "white", "warm_white", "cold_white", "red", "green", "blue", "yellow", "orange",
-        "purple", "pink", "cyan", "magenta", "lime", "turquoise", "gold"
-    ];
-
     /// <summary>
     /// Deterministic control from user text + session + device catalog (no LLM).
     /// Returns user-facing success text, or null if intent/entity could not be resolved.
@@ -127,7 +121,7 @@ public static class HomeAssistantFallback
                     if (!IsFailure(result))
                     {
                         trace.Record($"   ✅ {Truncate(result.Replace('\n', ' '), 300)}");
-                        return ($"Turned off {label}.", lightEntity, "turn_off");
+                        return ($"Turned off {label}.\n{result}", lightEntity, "turn_off");
                     }
 
                     trace.Record($"   ❌ {Truncate(result, 300)}");
@@ -136,7 +130,12 @@ public static class HomeAssistantFallback
                 {
                     var data = new Dictionary<string, object?> { ["entity_id"] = lightEntity };
                     if (color is not null)
-                        data["color_name"] = color;
+                    {
+                        if (HomeAssistantColor.TryParse(color, out var rgb))
+                            data["rgb_color"] = rgb;
+                        else
+                            data["color_name"] = color;
+                    }
                     if (brightnessPct is int bp)
                         data["brightness"] = (int)Math.Round(Math.Clamp(bp, 0, 100) * 255.0 / 100.0);
 
@@ -152,7 +151,7 @@ public static class HomeAssistantFallback
                         if (brightnessPct is int b2)
                             parts.Add($"{b2}% brightness");
                         var detail = parts.Count > 0 ? string.Join(", ", parts) : "on";
-                        return ($"Set {label} to {detail}.", lightEntity, "turn_on");
+                        return ($"Set {label} to {detail}.\n{result}", lightEntity, "turn_on");
                     }
 
                     trace.Record($"   ❌ {Truncate(result, 300)}");
@@ -188,7 +187,7 @@ public static class HomeAssistantFallback
                 if (!IsFailure(result))
                 {
                     trace.Record($"   ✅ {Truncate(result.Replace('\n', ' '), 300)}");
-                    return ($"Set {label} to {tempVal}.", climateEntity, "set_temperature");
+                    return ($"Set {label} to {tempVal}.\n{result}", climateEntity, "set_temperature");
                 }
 
                 trace.Record($"   ❌ {Truncate(result, 300)}");
@@ -470,14 +469,18 @@ public static class HomeAssistantFallback
 
     private static string? ExtractColor(string text)
     {
-        foreach (var c in ColorNames.OrderByDescending(x => x.Length))
+        var hex = Regex.Match(text, @"#[0-9a-fA-F]{6}\b");
+        if (hex.Success)
+            return hex.Value;
+
+        foreach (var c in HomeAssistantColor.KnownNames.OrderByDescending(x => x.Length))
         {
             if (Regex.IsMatch(text, $@"\b{Regex.Escape(c.Replace('_', ' '))}\b", RegexOptions.IgnoreCase)
                 || Regex.IsMatch(text, $@"\b{Regex.Escape(c)}\b", RegexOptions.IgnoreCase))
                 return c;
         }
 
-        var m = Regex.Match(text, @"\b(white|red|green|blue|yellow|orange|purple|pink|cyan)\b(?:\s+color)?", RegexOptions.IgnoreCase);
+        var m = Regex.Match(text, @"\b(white|red|green|blue|yellow|orange|purple|pink|cyan|violet|magenta)\b(?:\s+color)?", RegexOptions.IgnoreCase);
         return m.Success ? m.Groups[1].Value.ToLowerInvariant() : null;
     }
 
@@ -508,13 +511,7 @@ public static class HomeAssistantFallback
 
     private static bool IsFailure(string? result)
     {
-        if (string.IsNullOrWhiteSpace(result))
-            return true;
-        return result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase)
-               || result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase)
-               || result.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase)
-               || result.StartsWith("Domain and service", StringComparison.OrdinalIgnoreCase)
-               || result.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase);
+        return HomeAssistantResult.IsFailure(result);
     }
 
     private static string Truncate(string? text, int max)

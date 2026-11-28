@@ -5,6 +5,25 @@ All notable changes to Wizionic are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Built-in tools can be switched on or off individually under **Tools → Built-in**, including PDF and cloud images. A disabled tool is never offered to the model, even when a skill or slash command asks for it.
+- The desktop setup wizard asks whether you use Home Assistant before it installs Lemonade or Ollama. Answering no leaves Home Assistant off for the first signed-in account on that device.
+- Hosted providers now support a stable public model id (`UpstreamModelId`) and a router-only flag. The sample `wizionic-router` proxy exposes `wizionic/router` and forwards to Lemonade's `Wizionic3.5-0.8B-router-Q5_K_M.gguf`; it appears under Settings → Tool routing, not the chat picker.
+- Proxied providers can opt in on a local Home Server with `AllowOnHomeserver`. Free Chat is restored through Lemonade on `http://127.0.0.1:13305/v1/` using `LEMONADE_API_KEY`.
+
+### Changed
+
+- Hybrid routing skips the router-model call when only predictable tools are enabled (Time, Calculator, Notes, Calendar, Gallery, PDF), reducing time to first token.
+- The AI router describes only the enabled capabilities, and skills run with the tools that remain available when one is disabled.
+- Home Assistant replies now include confirmed state attributes (brightness, color, volume, temperature) instead of only the entity state. If HA returns no changed states, Wizionic fetches the entity state once.
+- Chat remembers compact tool results from recent turns, so follow-ups can use the actual entity, color, brightness, or volume rather than relying on the assistant's prose.
+- When a built-in tool is turned off, the system prompt tells the model it is disabled and where to re-enable it. Home Assistant follow-ups like "turn it off" route from the active device session in AI/Hybrid mode.
+- `GetEntityState` returns a compact state and key attributes instead of the full HA JSON blob; provider failures are marked as failed in the tool trace.
+- Light colors resolve names and `#RRGGBB` to explicit `rgb_color` (purple/violet = `#8000FF`). `ControlLight` verifies the readback, polls briefly for lag, and retries once with the current brightness before reporting an unconfirmed change. Compact state uses `last_updated` so attribute changes are visible.
+
 ## [0.3.23] — 2026-11-21
 
 ### Changed

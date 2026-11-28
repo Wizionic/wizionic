@@ -15,7 +15,8 @@ public static class ChatModelMapper
             model.SupportsVision,
             model.IsOllamaBackend,
             model.ContextSize,
-            model.VisionProxyModelId);
+            model.VisionProxyModelId,
+            model.IsRouterOnly);
 
     public static List<ChatModelInfo> ToChatModelInfoList(IEnumerable<SyncModelInfo> models) =>
         models.Select(ToChatModelInfo).ToList();

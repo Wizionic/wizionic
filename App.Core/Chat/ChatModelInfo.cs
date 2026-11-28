@@ -24,4 +24,6 @@ public record ChatModelInfo(
     bool SupportsReasoning = false,
     string? KnowledgeCutoff = null,
     double? CostInputPer1M = null,
-    double? CostOutputPer1M = null);
+    double? CostOutputPer1M = null,
+    /// <summary>Routing-only model: shown in Settings → Tool routing, hidden from the chat picker.</summary>
+    bool IsRouterOnly = false);

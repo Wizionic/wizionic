@@ -1791,6 +1791,8 @@
         else
             modelList = ModelCatalog.GetAvailableModels();
 
+        modelList = modelList.Where(m => !m.IsRouterOnly).ToList();
+
         var profiles = KeyStore.ModelProfiles;
         if (profiles.Count == 0)
             return;
@@ -3467,7 +3469,8 @@
 
         // Direct image-model path has no LLM tools — auto-save when the prompt names an album.
         string? autoSaveNote = null;
-        if (ContextualRequestRouter.MessageSuggestsGalleryTools(prompt))
+        if (KeyStore.IsBuiltinToolEnabled(BuiltinToolCatalog.Gallery)
+            && ContextualRequestRouter.MessageSuggestsGalleryTools(prompt))
         {
             autoSaveNote = await TryAutoSaveGeneratedImageAsync(prompt, resultB64);
         }
@@ -4305,7 +4308,8 @@
         }
 
         string? panelAutoSave = null;
-        if (ContextualRequestRouter.MessageSuggestsGalleryTools(imagePrompt))
+        if (KeyStore.IsBuiltinToolEnabled(BuiltinToolCatalog.Gallery)
+            && ContextualRequestRouter.MessageSuggestsGalleryTools(imagePrompt))
             panelAutoSave = await TryAutoSaveGeneratedImageAsync(imagePrompt, panelB64);
 
         await AppendGeneratedImageMessageAsync(

@@ -93,20 +93,82 @@ public sealed class HomeAssistantService : ISmartHomeService
         if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(service))
             return "Domain and service are required (e.g. media_player / media_play).";
 
-        var endpoint = $"{url}/api/services/{Uri.EscapeDataString(domain.Trim())}/{Uri.EscapeDataString(service.Trim())}";
+        domain = domain.Trim();
+        service = service.Trim();
+
+        var endpoint = $"{url}/api/services/{Uri.EscapeDataString(domain)}/{Uri.EscapeDataString(service)}";
         var raw = await SendAsync(HttpMethod.Post, endpoint, token, JsonContent.Create(serviceData), ct, $"CallService/{domain}.{service}");
+        if (!string.IsNullOrWhiteSpace(raw) && IsHaFailure(raw))
+            return raw;
+
+        var summary = FormatServiceSuccess(domain, service, raw);
+
+        // Some HA versions return an empty body/array for a service call. Fetch the
+        // affected entity's state once so the model gets a confirmed result instead
+        // of having to remember a follow-up GetEntityState call.
+        if (summary == $"Called {domain}.{service} successfully.")
+        {
+            var entityId = TryGetEntityId(serviceData);
+            if (!string.IsNullOrWhiteSpace(entityId) && StateDomains.Contains(domain))
+            {
+                var state = await GetEntityStateAsync(entityId, ct);
+                if (!IsHaFailure(state))
+                    summary += "\nConfirmed state:\n" + state;
+            }
+        }
+
+        return summary;
+    }
+
+    private static readonly HashSet<string> StateDomains = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "light", "switch", "media_player", "climate", "cover", "fan", "vacuum", "input_boolean"
+    };
+
+    private static string? TryGetEntityId(object? serviceData)
+    {
+        if (serviceData is null)
+            return null;
+
+        try
+        {
+            var el = JsonSerializer.SerializeToElement(serviceData);
+            if (el.ValueKind != JsonValueKind.Object ||
+                !el.TryGetProperty("entity_id", out var id))
+                return null;
+
+            if (id.ValueKind == JsonValueKind.String)
+                return id.GetString();
+
+            if (id.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in id.EnumerateArray())
+                    if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                        return item.GetString();
+            }
+        }
+        catch
+        {
+            // Best effort only.
+        }
+
+        return null;
+    }
+
+    public async Task<string> GetEntityStateAsync(string entityId, CancellationToken ct = default)
+    {
+        if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
+            return NotConfigured;
+
+        if (string.IsNullOrWhiteSpace(entityId))
+            return "Entity ID is required.";
+
+        var endpoint = $"{url}/api/states/{Uri.EscapeDataString(entityId.Trim())}";
+        var raw = await SendAsync(HttpMethod.Get, endpoint, token, content: null, ct, $"GetEntityState/{entityId}");
         if (IsHaFailure(raw))
             return raw;
 
-        return FormatServiceSuccess(domain.Trim(), service.Trim(), raw);
-    }
-
-    public Task<string> GetEntityStateAsync(string entityId, CancellationToken ct = default)
-    {
-        if (!HomeAssistantCredentials.TryNormalize(_keyStore.HomeAssistantBaseUrl, _keyStore.HomeAssistantToken, out var url, out var token))
-            return Task.FromResult(NotConfigured);
-
-        return GetEntityStateAsync(url, token, entityId, ct);
+        return DescribeState(raw) ?? Truncate(raw, 400);
     }
 
     public Task<string> ListLightEntitiesAsync(CancellationToken ct = default) =>
@@ -601,22 +663,21 @@ public sealed class HomeAssistantService : ISmartHomeService
                 states = changed;
 
             if (states.ValueKind != JsonValueKind.Array)
-                return Truncate(body, 400);
+            {
+                var single = DescribeState(states);
+                return string.IsNullOrWhiteSpace(single)
+                    ? Truncate(body, 400)
+                    : "Changed states:\n  • " + single;
+            }
 
             var lines = new List<string>();
             foreach (var item in states.EnumerateArray())
             {
-                if (!item.TryGetProperty("entity_id", out var idEl))
+                var described = DescribeState(item);
+                if (string.IsNullOrWhiteSpace(described))
                     continue;
 
-                var id = idEl.GetString() ?? "";
-                var state = item.TryGetProperty("state", out var st) ? st.GetString() ?? "?" : "?";
-                var name = id;
-                if (item.TryGetProperty("attributes", out var attrs) &&
-                    attrs.TryGetProperty("friendly_name", out var fn))
-                    name = fn.GetString() ?? id;
-
-                lines.Add($"  • {name} ({id}) → {state}");
+                lines.Add("  • " + described);
                 if (lines.Count >= 8)
                     break;
             }
@@ -630,6 +691,149 @@ public sealed class HomeAssistantService : ISmartHomeService
         {
             return Truncate(body, 400);
         }
+    }
+
+    /// <summary>
+    /// Compact one-line state for the model: state plus the attributes a user is
+    /// likely to ask about. Never the whole HA attribute blob.
+    /// </summary>
+    private static string? DescribeState(string raw)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return DescribeState(doc.RootElement);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? DescribeState(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var id = item.TryGetProperty("entity_id", out var idEl) && idEl.ValueKind == JsonValueKind.String
+            ? idEl.GetString() ?? ""
+            : "";
+        if (string.IsNullOrWhiteSpace(id))
+            return null;
+
+        var state = item.TryGetProperty("state", out var st) && st.ValueKind == JsonValueKind.String
+            ? st.GetString() ?? "?"
+            : "?";
+
+        var friendly = id;
+        var attrs = default(JsonElement);
+        if (item.TryGetProperty("attributes", out var attrsEl) && attrsEl.ValueKind == JsonValueKind.Object)
+        {
+            attrs = attrsEl;
+            if (attrs.TryGetProperty("friendly_name", out var fn) && fn.ValueKind == JsonValueKind.String)
+                friendly = fn.GetString() ?? id;
+        }
+
+        var sb = new StringBuilder($"{friendly} ({id}) is {state}");
+        if (attrs.ValueKind == JsonValueKind.Object)
+            AppendKeyAttributes(sb, DomainOf(id), attrs);
+
+        if (item.TryGetProperty("last_updated", out var lu) && lu.ValueKind == JsonValueKind.String)
+        {
+            var updated = lu.GetString();
+            if (!string.IsNullOrWhiteSpace(updated))
+                sb.Append(", updated=").Append(updated.Length >= 19 ? updated[..19] : updated);
+        } else if (item.TryGetProperty("last_changed", out var lc) && lc.ValueKind == JsonValueKind.String)
+        {
+            var changed = lc.GetString();
+            if (!string.IsNullOrWhiteSpace(changed))
+                sb.Append(", updated=").Append(changed.Length >= 19 ? changed[..19] : changed);
+        }
+
+        var text = sb.ToString();
+        return text.Length <= 500 ? text : text[..500] + "…";
+    }
+
+    private static void AppendKeyAttributes(StringBuilder sb, string domain, JsonElement attrs)
+    {
+        void Add(string name, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                sb.Append(", ").Append(name).Append('=').Append(value);
+        }
+
+        void AddNumber(string name, string property)
+        {
+            if (attrs.TryGetProperty(property, out var el) && el.ValueKind == JsonValueKind.Number)
+                Add(name, el.GetRawText());
+        }
+
+        void AddString(string name, string property)
+        {
+            if (attrs.TryGetProperty(property, out var el) && el.ValueKind == JsonValueKind.String)
+                Add(name, el.GetString());
+        }
+
+        void AddArray(string name, string property)
+        {
+            if (!attrs.TryGetProperty(property, out var el) || el.ValueKind != JsonValueKind.Array)
+                return;
+
+            var values = el.EnumerateArray()
+                .Where(x => x.ValueKind is JsonValueKind.Number or JsonValueKind.String)
+                .Take(4)
+                .Select(x => x.ValueKind == JsonValueKind.Number ? x.GetRawText() : x.GetString())
+                .Where(x => !string.IsNullOrWhiteSpace(x));
+            var joined = string.Join(",", values);
+            if (!string.IsNullOrWhiteSpace(joined))
+                Add(name, "[" + joined + "]");
+        }
+
+        switch (domain)
+        {
+            case "light":
+                AddNumber("brightness", "brightness");
+                if (attrs.TryGetProperty("rgb_color", out var rgbEl) && rgbEl.ValueKind == JsonValueKind.Array)
+                    AddArray("rgb_color", "rgb_color");
+                else
+                    AddArray("hs_color", "hs_color");
+                AddNumber("color_temp_kelvin", "color_temp_kelvin");
+                AddString("color_mode", "color_mode");
+                AddString("effect", "effect");
+                AddArray("modes", "supported_color_modes");
+                break;
+
+            case "media_player":
+                if (attrs.TryGetProperty("volume_level", out var vol) && vol.ValueKind == JsonValueKind.Number)
+                    Add("volume", $"{Math.Round(vol.GetDouble() * 100)}%");
+                if (attrs.TryGetProperty("is_volume_muted", out var muted) &&
+                    muted.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    Add("muted", muted.GetBoolean() ? "true" : "false");
+                AddString("media_title", "media_title");
+                AddString("source", "source");
+                AddString("app_name", "app_name");
+                break;
+
+            case "climate":
+                AddNumber("current_temperature", "current_temperature");
+                AddNumber("temperature", "temperature");
+                AddString("hvac_mode", "hvac_mode");
+                AddString("hvac_action", "hvac_action");
+                AddString("fan_mode", "fan_mode");
+                break;
+
+            case "cover":
+                AddNumber("position", "current_position");
+                AddNumber("tilt", "current_tilt_position");
+                break;
+
+            case "vacuum":
+                AddNumber("battery", "battery_level");
+                AddString("fan_speed", "fan_speed");
+                break;
+        }
+
+        AddString("unit", "unit_of_measurement");
     }
 
     private static string FormatConversationResponse(string raw)
@@ -714,35 +918,8 @@ public sealed class HomeAssistantService : ISmartHomeService
         return text[..max] + "…";
     }
 
-    public static bool IsHaFailure(string? result)
-    {
-        if (string.IsNullOrWhiteSpace(result))
-            return true;
-
-        return result.StartsWith("HA error", StringComparison.OrdinalIgnoreCase) ||
-               result.StartsWith("Connection", StringComparison.OrdinalIgnoreCase) ||
-               result.StartsWith("Home Assistant is not configured", StringComparison.OrdinalIgnoreCase) ||
-               result.StartsWith("Enter both", StringComparison.OrdinalIgnoreCase) ||
-               result.StartsWith("Domain and service", StringComparison.OrdinalIgnoreCase) ||
-               result.StartsWith("Could not parse", StringComparison.OrdinalIgnoreCase) ||
-               result.StartsWith("Smart home integration", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private Task<string> GetEntityStateAsync(
-        string baseUrl,
-        string token,
-        string entityId,
-        CancellationToken ct)
-    {
-        if (!HomeAssistantCredentials.TryNormalize(baseUrl, token, out var url, out var normalizedToken))
-            return Task.FromResult("Enter both base URL and access token.");
-
-        if (string.IsNullOrWhiteSpace(entityId))
-            return Task.FromResult("Entity ID is required.");
-
-        var endpoint = $"{url}/api/states/{Uri.EscapeDataString(entityId.Trim())}";
-        return SendAsync(HttpMethod.Get, endpoint, normalizedToken, content: null, ct, $"GetEntityState/{entityId}");
-    }
+    public static bool IsHaFailure(string? result) =>
+        HomeAssistantResult.IsFailure(result);
 
     private async Task<string> SendAsync(
         HttpMethod method,

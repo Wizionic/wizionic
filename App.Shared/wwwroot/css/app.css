@@ -6659,6 +6659,60 @@ html[data-theme="slate"] {
 .cf-builtin-chip-label {
   font-weight: 500;
 }
+.cf-builtin-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+  gap: 0.45rem;
+}
+.cf-builtin-tool {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 0.55rem;
+  background: var(--color-bg-muted, #f3f4f6);
+  cursor: pointer;
+  user-select: none;
+}
+.cf-builtin-tool.is-off {
+  border-style: dashed;
+  background: transparent;
+  opacity: 0.62;
+}
+.cf-builtin-tool input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--color-accent, #0d6efd);
+  flex: 0 0 auto;
+}
+.cf-builtin-tool-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+.cf-builtin-tool-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text, #111827);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cf-builtin-tool-state {
+  font-size: 0.68rem;
+  color: var(--color-text-muted, #6b7280);
+}
+.cf-builtin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.55rem;
+  align-items: center;
+  margin-top: 0.65rem;
+}
 
 .cf-tool-list {
   display: flex;

@@ -36,8 +36,7 @@ public class AiProviderProxyService
         CancellationToken ct = default)
     {
         var result = new List<ProxiedProviderContracts.ProxiedProviderDto>();
-        if (IsHomeserverHost())
-            return result;
+        var isHomeserver = IsHomeserverHost();
 
         foreach (var provider in _options.Proxied)
         {
@@ -47,7 +46,12 @@ public class AiProviderProxyService
             if (provider.HideFromModelList)
                 continue;
 
-            if (!IsOllama(provider) && !TryResolveApiKey(provider, out _))
+            if (isHomeserver && !provider.AllowOnHomeserver)
+                continue;
+
+            if (!IsOllama(provider) &&
+                !TryResolveApiKey(provider, out _) &&
+                !TryResolveSecretHeader(provider, out _))
                 continue;
 
             var models = await ResolveProviderModelsAsync(provider, ct);
@@ -77,20 +81,33 @@ public class AiProviderProxyService
         if (request.Messages is not { Count: > 0 })
             throw new ArgumentException("At least one message is required.");
 
-        if (IsHomeserverHost())
-            throw new InvalidOperationException("Hosted Free Chat is not available on a local Home Server.");
-
         var provider = _options.Proxied.FirstOrDefault(p =>
             string.Equals(p.Id, request.ProviderId, StringComparison.OrdinalIgnoreCase));
 
         if (provider == null)
             throw new InvalidOperationException($"Unknown proxied provider '{request.ProviderId}'.");
 
-        if (!TryResolveApiKey(provider, out var apiKey))
+        if (IsHomeserverHost() && !provider.AllowOnHomeserver)
+            throw new InvalidOperationException("This hosted provider is not available on a local Home Server.");
+
+        var hasKey = TryResolveApiKey(provider, out var apiKey);
+        var hasSecretHeader = TryResolveSecretHeader(provider, out _);
+        if (!hasKey && !hasSecretHeader)
             throw new InvalidOperationException($"No API key configured for proxied provider '{request.ProviderId}'.");
 
         var messages = await ApplyVisionProxyAsync(provider, request.Model, request.Messages, ct);
-        return await SendChatCompletionAsync(provider, request.Model, messages, request.Tools, request.ToolChoice, apiKey, ct);
+        return await SendChatCompletionAsync(
+            provider,
+            request.Model,
+            messages,
+            request.Tools,
+            request.ToolChoice,
+            apiKey,
+            request.Temperature,
+            request.MaxOutputTokens,
+            request.ResponseFormat,
+            request.AdditionalBody,
+            ct);
     }
 
     private async Task<string> SendChatCompletionAsync(
@@ -100,46 +117,129 @@ public class AiProviderProxyService
         List<Dictionary<string, object?>>? tools,
         object? toolChoice,
         string apiKey,
+        double? temperature,
+        int? maxOutputTokens,
+        object? responseFormat,
+        Dictionary<string, object?>? additionalBody,
         CancellationToken ct)
     {
-        var baseUrl = provider.BaseUrl.TrimEnd('/');
-        var url = $"{baseUrl}/chat/completions";
+        var configured = ResolveConfiguredModel(provider, model);
+        var upstreamModel = string.IsNullOrWhiteSpace(configured?.UpstreamModelId)
+            ? model
+            : configured!.UpstreamModelId!.Trim();
 
-        var body = new Dictionary<string, object?>
+        var baseBody = new Dictionary<string, object?>
         {
-            ["model"] = model,
+            ["model"] = upstreamModel,
             ["messages"] = messages,
             ["stream"] = false
         };
 
         if (tools is { Count: > 0 })
-            body["tools"] = tools;
+            baseBody["tools"] = tools;
 
         if (toolChoice != null)
-            body["tool_choice"] = toolChoice;
+            baseBody["tool_choice"] = toolChoice;
+
+        if (temperature.HasValue)
+            baseBody["temperature"] = temperature.Value;
+
+        if (maxOutputTokens.HasValue)
+            baseBody["max_tokens"] = maxOutputTokens.Value;
+
+        if (responseFormat != null)
+            baseBody["response_format"] = responseFormat;
+
+        if (additionalBody is { Count: > 0 })
+        {
+            foreach (var (key, value) in additionalBody)
+                baseBody[key] = value;
+        }
+
+        var variants = new List<Dictionary<string, object?>> { new(baseBody) };
+
+        if (baseBody.ContainsKey("response_format"))
+        {
+            var withoutFormat = new Dictionary<string, object?>(baseBody);
+            withoutFormat.Remove("response_format");
+            variants.Add(withoutFormat);
+        }
+
+        if (additionalBody is { Count: > 0 })
+        {
+            var withoutThinking = new Dictionary<string, object?>(baseBody);
+            foreach (var key in additionalBody.Keys)
+                withoutThinking.Remove(key);
+            variants.Add(withoutThinking);
+        }
+
+        if (maxOutputTokens.HasValue)
+        {
+            var completionTokens = new Dictionary<string, object?>(baseBody);
+            completionTokens.Remove("max_tokens");
+            completionTokens["max_completion_tokens"] = maxOutputTokens.Value;
+            variants.Add(completionTokens);
+        }
+
+        var minimal = new Dictionary<string, object?>
+        {
+            ["model"] = upstreamModel,
+            ["messages"] = messages,
+            ["stream"] = false
+        };
+        if (tools is { Count: > 0 })
+            minimal["tools"] = tools;
+        if (toolChoice != null)
+            minimal["tool_choice"] = toolChoice;
+        variants.Add(minimal);
 
         var client = _httpClientFactory.CreateClient("ai-proxy");
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
-        ApplyOutgoingHeaders(httpRequest, provider, apiKey);
-        httpRequest.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        var url = provider.BaseUrl.TrimEnd('/') + "/chat/completions";
 
-        using var response = await client.SendAsync(httpRequest, ct);
-        var responseText = await response.Content.ReadAsStringAsync(ct);
+        (int Status, string Text)? lastFailure = null;
+        foreach (var body in variants)
+        {
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
+            ApplyOutgoingHeaders(httpRequest, provider, apiKey);
+            httpRequest.Content = new StringContent(
+                JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        if (!response.IsSuccessStatusCode)
+            using var response = await client.SendAsync(httpRequest, ct);
+            var responseText = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+                return responseText;
+
+            lastFailure = ((int)response.StatusCode, responseText);
+            if (!IsOptionalFieldFailure((int)response.StatusCode, responseText))
+                break;
+        }
+
+        if (lastFailure is { } failure)
         {
             _logger.LogWarning(
                 "Proxied provider {ProviderId} returned {StatusCode}: {Body}",
                 provider.Id,
-                (int)response.StatusCode,
-                Truncate(responseText, 500));
+                failure.Status,
+                Truncate(failure.Text, 500));
 
             throw new HttpRequestException(
-                $"Provider '{provider.Id}' returned {(int)response.StatusCode}: {Truncate(responseText, 300)}");
+                $"Provider '{provider.Id}' returned {failure.Status}: {Truncate(failure.Text, 300)}");
         }
 
-        return responseText;
+        throw new HttpRequestException($"Provider '{provider.Id}' did not return a response.");
     }
+
+    private static bool IsOptionalFieldFailure(int statusCode, string body) =>
+        statusCode is 400 or 422 &&
+        (body.Contains("unknown", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("unrecognized", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("unsupported", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("not supported", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("unexpected", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("response_format", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("max_completion_tokens", StringComparison.OrdinalIgnoreCase) ||
+         body.Contains("max_tokens", StringComparison.OrdinalIgnoreCase));
 
     private async Task<List<Dictionary<string, object?>>> ApplyVisionProxyAsync(
         ProxiedProviderOptions provider,
@@ -188,7 +288,9 @@ public class AiProviderProxyService
 
             try
             {
-                var json = await SendChatCompletionAsync(provider, proxyModelId, visionMessages, tools: null, toolChoice: null, apiKey, ct);
+                var json = await SendChatCompletionAsync(
+                    provider, proxyModelId, visionMessages, null, null, apiKey,
+                    null, null, null, null, ct);
                 var description = ExtractAssistantContent(json);
                 if (!string.IsNullOrWhiteSpace(description))
                     descriptions.Add($"[attachment {i + 1}]: {description.Trim()}");
@@ -233,7 +335,7 @@ public class AiProviderProxyService
             int modelCount = provider.Models?.Count ?? 0;
             bool discover = provider.DiscoverModels && IsOllama(provider);
             _logger.LogInformation(
-                "[AiProxy] Provider {Id} ({Name}): type={Type} baseUrl={BaseUrl} keyConfigured={HasKey} secretHeaderConfigured={HasSecretHeader} staticModels={ModelCount} discoverModels={Discover}",
+                "[AiProxy] Provider {Id} ({Name}): type={Type} baseUrl={BaseUrl} keyConfigured={HasKey} secretHeaderConfigured={HasSecretHeader} staticModels={ModelCount} discoverModels={Discover} allowOnHomeserver={AllowOnHomeserver}",
                 provider.Id,
                 provider.DisplayName,
                 NormalizeType(provider.Type),
@@ -241,12 +343,13 @@ public class AiProviderProxyService
                 hasKey,
                 hasSecretHeader,
                 modelCount,
-                discover);
+                discover,
+                provider.AllowOnHomeserver);
 
-            if (!hasKey && !IsOllama(provider) && !string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
+            if (!hasKey && !hasSecretHeader && !IsOllama(provider) && !string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
             {
                 _logger.LogWarning(
-                    "[AiProxy] Provider {Id} has no API key. Set env var {EnvVar} to enable it.",
+                    "[AiProxy] Provider {Id} has no API key or secret header. Set env var {EnvVar} to enable it.",
                     provider.Id,
                     provider.ApiKeyEnvVar);
             }
@@ -317,7 +420,10 @@ public class AiProviderProxyService
         if (configuredModels.Count == 0)
             return new List<ProxiedProviderContracts.ProxiedModelDto>();
 
-        var allowlist = configuredModels.ToDictionary(m => m.Id, m => m, StringComparer.OrdinalIgnoreCase);
+        var allowlist = configuredModels.ToDictionary(
+            m => string.IsNullOrWhiteSpace(m.UpstreamModelId) ? m.Id : m.UpstreamModelId.Trim(),
+            m => m,
+            StringComparer.OrdinalIgnoreCase);
         var allowlistOrder = configuredModels.Select(m => m.Id).ToList();
 
         var models = resp.Models
@@ -326,6 +432,7 @@ public class AiProviderProxyService
             .Select(m =>
             {
                 allowlist.TryGetValue(m.Name!, out var configured);
+                var publicId = string.IsNullOrWhiteSpace(configured?.Id) ? m.Name! : configured!.Id;
 
                 var caps = m.Capabilities ?? Array.Empty<string>();
                 bool supportsTools = caps.Any(c => string.Equals(c, "tools", StringComparison.OrdinalIgnoreCase));
@@ -349,12 +456,13 @@ public class AiProviderProxyService
 
                 return new ProxiedProviderContracts.ProxiedModelDto
                 {
-                    Id = m.Name!,
-                    Label = string.IsNullOrWhiteSpace(configured?.Label) ? m.Name! : configured!.Label,
+                    Id = publicId,
+                    Label = string.IsNullOrWhiteSpace(configured?.Label) ? publicId : configured!.Label,
                     Icon = string.IsNullOrWhiteSpace(configured?.Icon) ? "🦙" : configured!.Icon,
                     SupportsTools = supportsTools,
                     SupportsVision = supportsVision,
-                    IsVisionProxy = configured?.IsVisionProxy ?? false
+                    IsVisionProxy = configured?.IsVisionProxy ?? false,
+                    IsRouterOnly = configured?.IsRouterOnly ?? false
                 };
             })
             .Where(dto => dto != null)
@@ -375,7 +483,8 @@ public class AiProviderProxyService
             Icon = string.IsNullOrWhiteSpace(m.Icon) ? "🤖" : m.Icon,
             SupportsTools = m.SupportsTools,
             SupportsVision = m.SupportsVision,
-            IsVisionProxy = m.IsVisionProxy
+            IsVisionProxy = m.IsVisionProxy,
+            IsRouterOnly = m.IsRouterOnly
         };
 
     private static ProxiedModelOptions? ResolveConfiguredModel(ProxiedProviderOptions provider, string modelId) =>

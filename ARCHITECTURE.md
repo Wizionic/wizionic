@@ -272,9 +272,11 @@ Dumping every tool schema into a small local model inflates prefill and can degr
 
 | Mode (`ToolRoutingMode` in `IKeyStore`) | Behavior |
 |----------------------------------------|----------|
-| **Rules** (default) | `ContextualRequestRouter` heuristics only — wake word / HA session stickiness / **device-intent keywords** (lights, play music, AVR, Denon, climate, covers, …), browser panel, Notes/Gallery/Calendar/image/utility. Zero router model cost. |
+| **Rules** (default) | `ContextualRequestRouter` heuristics only — wake word / HA session stickiness / **device-intent keywords** (lights, play music, AVR, Denon, climate, covers, …), browser panel, Notes/Gallery/Calendar/PDF/image/utility. Zero router model cost. |
 | **AI** | `AiRequestRouter` asks a configured **routing model** (`ToolRoutingModelId`) for JSON module names. No tools on the router call. For `lemonade/*` and `ollama/*`, classification uses `HelpEmbeddingClient.CompleteRouterAsync` (`enable_thinking: false`, short `max_tokens`) so Qwen thinking models do not return empty / non-JSON `ChatResponse.Text`. Cloud routing models still use ME.AI (`ChatResponseFormat.Json`). Falls back to rules (and an HA device-intent heuristic) only on timeout / parse failure — a successful JSON result is traced as `AI→AI` and is not overridden by rules. A Home Assistant module in that JSON is kept only when the message is a device command or includes the wake word; otherwise it is dropped so ordinary questions (trading, coding, advice) stay PureChat. HA session stickiness is **off** so weather after lights still reclassifies. |
-| **Hybrid** | Rules first; if the route is “strong” (HA wake word or device intent, browser panel, clear Lemonade image intent) keep it. Otherwise call the AI router. Without a routing model configured, Hybrid/AI degrade to Rules. |
+| **Hybrid** | Rules first; if the route is “strong” (HA wake word or device intent, browser panel, clear Lemonade image intent) keep it. Otherwise call the AI router. If only deterministic tools are enabled (Time, Calculator, Notes, Calendar, Gallery, PDF), Hybrid stays on rules and skips the router call. Without a routing model configured, Hybrid/AI degrade to Rules. |
+
+**Built-in tool toggles.** `Tools → Built-in` stores disabled ids in `IKeyStore.DisabledBuiltinToolIds` (`wasm-builtin-tools`, synced under **Tools**). `BuiltinToolGate` is a hard gate: it removes disabled modules from `GetActiveModules()`, filters individual `AIFunction`s (Native is per-function), and keeps them out of the AI router prompt. `ChatCompletionService`, project turns, `SkillRunner`, and slash skills all resolve tools through the provider, so a disabled tool is never sent to the model. The desktop setup wizard asks about Home Assistant before the Lemonade/Ollama step; signed-out answers are written as the unprefixed device default and inherited by the first sign-in via the legacy-key fallback.
 
 ```mermaid
 flowchart TD
@@ -303,7 +305,7 @@ flowchart TD
 
 `CompositeRequestRouter` is the app-wide `IRequestRouter`. `ChatCompletionService` records the route in tool traces (`🧭 Route: …`) and appends module-specific system instructions when needed.
 
-Known module names for the AI router: `Native`, `Cloud`, `Lemonade`, `Gallery`, `Calendar`, `Notes`, `HomeAssistant`, `BrowserAgent` (plus MCP tools when utility/MCP path is open).
+Known module names for the AI router: `Native`, `Cloud`, `Lemonade`, `Gallery`, `Calendar`, `Notes`, `Pdf`, `HomeAssistant`, `BrowserAgent` (plus MCP tools when utility/MCP path is open).
 
 **Configure:** Settings / chat tool-routing UI → mode + catalog model id. Stored in `WasmKeyStore` / `SqliteKeyStore` and can sync under settings categories (e.g. local-ai / related prefs).
 
@@ -318,6 +320,19 @@ Known module names for the AI router: `Native`, `Cloud`, `Lemonade`, `Gallery`, 
 **Key files:** `IChatCompletionService.cs` / `ChatCompletionStats`, `ChatCompletionService.cs` (`TrimHistoryToContext`, streaming), `ChatPage.razor` (ctx button, compact), `app.css` (`.ctx-btn`)
 
 ---
+
+## Hosted AI provider proxy (server-side keys)
+
+`AiProviders:Proxied` in `appsettings.json` / environment defines server-side OpenAI-compatible providers. The WASM/MAUI client fetches `GET /api/proxy/providers` and calls `POST /api/proxy/chat`; `AiProviderProxyService` resolves the provider, adds `Authorization: Bearer <key>` (and an optional secret header), and forwards to `{BaseUrl}/chat/completions`. Keys stay on the host.
+
+- `free-chat` and `wizionic-router` both use Lemonade at `http://127.0.0.1:13305/v1/` with `LEMONADE_API_KEY`.
+- `wizionic-router` exposes the stable public id `wizionic/router`; `UpstreamModelId` forwards to the actual served GGUF (`Wizionic3.5-0.8B-router-Q5_K_M.gguf`). Updating the model only changes server config.
+- `IsRouterOnly` hides a model from the chat picker while keeping it in Settings → Tool routing.
+- `AllowOnHomeserver` opts a provider in on a local Home Server; the default is off.
+- `ServerProxyChatClient` forwards `temperature`, `max_tokens`, `response_format`, `enable_thinking`, and `chat_template_kwargs`; the proxy retries without optional fields if the upstream rejects them.
+- `/api/proxy` requires authorization and uses the `ai-proxy` rate-limit policy.
+
+**Key files:** `Apis/AiProxyEndpoints.cs`, `Services/AiProviderProxyService.cs`, `Services/AiProviderProxyOptions.cs`, `App.Shared/Services/ServerProxyChatClient.cs`, `ChatModelCatalogService.cs`.
 
 ## Vision Proxy (image routing for non-vision models)
 
@@ -671,9 +686,10 @@ User message (typed or Voice mode)
         │
         ▼
 CompositeRequestRouter (Rules / AI / Hybrid)
-        ├── HomeAssistant module available (IsConfigured)?
+        ├── HomeAssistant module available (IsConfigured and enabled in Tools)?
         ├── Wake word (IKeyStore.AssistantName)?
         │       OR Rules-mode 15 min HA session?
+        │       OR targeted follow-up with an active HA session ("turn it off", "make it brighter")?
         │       OR MessageSuggestsHomeAssistant (lights, play music, AVR, Denon, climate, covers, …)?
         └── Yes → TargetModule = HomeAssistant
         │
@@ -687,7 +703,11 @@ ChatCompletionService
 
 **Wake word:** `ContextualRequestRouter.ContainsWakeWord` — whole word for single-token names; substring for multi-word (`Hey Bro`).
 
-**Chat follow-ups:** After a successful HA tool call, *"make it blue"* works for **15 minutes** in that conversation (`RoutingSession.SessionTtl`). Voice mode is separate: by default it still requires the wake word every spoken command.
+**Chat follow-ups:** After a successful HA tool call, *"make it blue"* works for **15 minutes** in that conversation (`RoutingSession.SessionTtl`). AI/Hybrid also get a session line in the router prompt, and `MessageLooksLikeSmartHomeFollowUp` gives Rules/Hybrid a narrow deterministic follow-up route. Voice mode is separate: by default it still requires the wake word every spoken command.
+
+**Confirmation:** `HomeAssistantService` formats changed states with domain attributes (`brightness`, `rgb_color`, `color_mode`, `volume`, `temperature`, `position`, `supported_color_modes`) and uses `last_updated` for attribute freshness. `ControlLight` resolves color names/hex through `HomeAssistantColor` and always sends `rgb_color` (purple/violet = `#8000FF`). After a light change it verifies the readback, polls once after ~300 ms, then retries once with the current brightness (or `transition: 0`) before reporting an unconfirmed change. If HA returns no changed states, `CallServiceAsync` fetches the entity state once and appends `Confirmed state:`. `GetEntityState` returns that compact state, not raw JSON. `ChatCompletionService` also injects recent persisted tool activity into the system context so follow-ups can use prior facts without replaying raw tool-call protocol messages.
+
+**Disabled tools:** `BuiltinToolGate` removes a disabled HA module from the active set. The chat system prompt also names user-disabled tools so the model says “turned off in Tools → Built-in” instead of guessing that access is broken.
 
 **Enforcement:** If the model claims it changed a device without tools, retry / fallback / honest failure.
 

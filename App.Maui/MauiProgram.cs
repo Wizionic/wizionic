@@ -387,6 +387,7 @@ public static class MauiProgram
 		services.AddScoped<ICryptoService>(sp => sp.GetRequiredService<MauiCryptoService>());
 		services.AddSingleton<IToolExecutionTrace, ToolExecutionTrace>();
 		services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
+		services.AddSingleton<BuiltinToolGate>();
 		services.AddSingleton<ContextualRequestRouter>();
 		services.AddSingleton<AiRequestRouter>();
 		services.AddSingleton<IRequestRouter, CompositeRequestRouter>();

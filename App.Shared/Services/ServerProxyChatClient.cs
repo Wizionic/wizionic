@@ -31,13 +31,22 @@ internal sealed class ServerProxyChatClient : IChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        var responseFormat = options?.ResponseFormat is not null &&
+                             options.ResponseFormat.Equals(ChatResponseFormat.Json)
+            ? new Dictionary<string, object?> { ["type"] = "json_object" }
+            : null;
+
         var request = new ProxiedProviderContracts.ProxyChatRequest(
             _providerId,
             _modelId,
             BuildOpenAiMessages(messages),
             BuildOpenAiTools(options),
             options?.ToolMode == ChatToolMode.RequireAny ? "required" :
-            options?.ToolMode == ChatToolMode.None ? "none" : null);
+            options?.ToolMode == ChatToolMode.None ? "none" : null,
+            options?.Temperature,
+            options?.MaxOutputTokens,
+            responseFormat,
+            BuildAdditionalBody(options));
 
         using var response = await _http.PostAsJsonAsync("/api/proxy/chat", request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -168,6 +177,39 @@ internal sealed class ServerProxyChatClient : IChatClient
         }
 
         return tools.Count > 0 ? tools : null;
+    }
+
+    private static readonly HashSet<string> ForwardedAdditionalKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "enable_thinking",
+        "chat_template_kwargs",
+        "reasoning_effort",
+        "think",
+        "top_p",
+        "stop",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty"
+    };
+
+    private static Dictionary<string, object?>? BuildAdditionalBody(ChatOptions? options)
+    {
+        if (options?.AdditionalProperties is not { Count: > 0 } props)
+            return null;
+
+        var body = new Dictionary<string, object?>();
+        foreach (var (key, value) in props)
+        {
+            if (value is not null && ForwardedAdditionalKeys.Contains(key))
+                body[key] = value;
+        }
+
+        if (options.StopSequences is { Count: > 0 } stops)
+            body["stop"] = stops;
+        if (options.Seed is long seed)
+            body["seed"] = seed;
+
+        return body.Count > 0 ? body : null;
     }
 
     private static ChatResponse ParseOpenAiChatResponse(string json)

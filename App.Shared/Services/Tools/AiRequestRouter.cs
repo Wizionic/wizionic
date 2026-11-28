@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using App.Core.Storage;
+using App.Core.Tools;
 using App.Shared.Services.Help;
 using Microsoft.Extensions.AI;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
@@ -27,17 +28,23 @@ public sealed class AiRequestRouter
     private readonly IKeyStore _keyStore;
     private readonly ContextualRequestRouter _rules;
     private readonly HelpEmbeddingClient _localComplete;
+    private readonly BuiltinToolGate _gate;
+    private readonly IRoutingSessionStore _sessions;
 
     public AiRequestRouter(
         ChatModelCatalogService catalog,
         IKeyStore keyStore,
         ContextualRequestRouter rules,
-        HelpEmbeddingClient localComplete)
+        HelpEmbeddingClient localComplete,
+        BuiltinToolGate gate,
+        IRoutingSessionStore sessions)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore));
         _rules = rules ?? throw new ArgumentNullException(nameof(rules));
         _localComplete = localComplete ?? throw new ArgumentNullException(nameof(localComplete));
+        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
     }
 
     public async Task<RequestRoute> ClassifyAsync(
@@ -56,7 +63,7 @@ public sealed class AiRequestRouter
             return Relabel(fallback, sourceLabel + "→Rules", "no routing model");
 
         var available = activeModules
-            .Where(m => m.IsAvailable)
+            .Where(m => m.IsAvailable && _gate.IsModuleEnabled(m.ModuleName))
             .Select(m => m.ModuleName)
             .Where(n => !string.IsNullOrWhiteSpace(n))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -70,21 +77,23 @@ public sealed class AiRequestRouter
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(DefaultTimeout);
 
-            var prompt = BuildPrompt(message, available);
+            var session = _sessions.Get(conversationId);
+            var prompt = BuildPrompt(message, available, session);
+            var systemPrompt = BuildSystemPrompt(available, _gate, session);
             string text;
             if (_localComplete.SupportsDirectChat(modelId))
             {
                 // Raw Lemonade/Ollama HTTP with enable_thinking=false. ME.AI leaves
                 // ChatResponse.Text empty on Qwen thinking models (0.8B/4B).
                 text = await _localComplete.CompleteRouterAsync(
-                    modelId, SystemPrompt, prompt, timeoutCts.Token);
+                    modelId, systemPrompt, prompt, timeoutCts.Token);
             }
             else
             {
                 var client = _catalog.GetChatClientForModel(modelId);
                 var history = new List<AiChatMessage>
                 {
-                    new(ChatRole.System, SystemPrompt),
+                    new(ChatRole.System, systemPrompt),
                     new(ChatRole.User, prompt)
                 };
                 var options = new ChatOptions
@@ -263,31 +272,83 @@ public sealed class AiRequestRouter
             skillId: route.SkillId);
     }
 
-    private static string SystemPrompt =>
-        "You are a tool router. Reply with ONLY one JSON object. No markdown, no prose, no thinking tags. " +
-        "Schema: {\"modules\":[\"...\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"short\"}. " +
-        "modules must be from the available list only. " +
-        "Include a module only when one of its tools can carry out the request. If unsure, pure_chat=true. " +
-        "pure_chat=true for general chat, coding, advice, stocks, crypto, and finance questions. " +
-        "HomeAssistant only controls house devices: lights, switches, climate, media players, covers, scenes, locks, vacuum, " +
-        "brightness, color, turn on/off, volume, thermostat. It cannot trade, look up stocks, or answer questions. " +
-        "When using HomeAssistant set target_module to \"HomeAssistant\" and include it in modules. " +
-        "Cloud: generate/edit images with the selected cloud provider (use instead of Lemonade when Cloud is listed). " +
-        "Lemonade: local draw/generate/create images. Gallery: albums/save photos. " +
-        "Calendar: schedule/add/list/update/delete calendar events and appointments. " +
-        "Notes: create notebooks, add/append note entries, attach chat images to notes. " +
-        "Pdf: create/generate PDF documents from markdown, save PDFs to the device Documents library, list saved documents. " +
-        "Native: weather, search, time, math, URLs. " +
-        "BrowserAgent: control embedded browser only.";
-
-    private static string BuildPrompt(string message, IReadOnlyList<string> available)
+    private static string BuildSystemPrompt(
+        IReadOnlyList<string> available,
+        BuiltinToolGate gate,
+        RoutingSession session)
     {
+        bool Has(string module) => available.Any(m => m.Equals(module, StringComparison.OrdinalIgnoreCase));
+        var haSessionActive = Has("HomeAssistant") &&
+                              session.IsActive("HomeAssistant", ContextualRequestRouter.SessionTtl);
+
+        var sb = new StringBuilder();
+        sb.Append("You are a tool router. Reply with ONLY one JSON object. No markdown, no prose, no thinking tags. ");
+        sb.Append("Schema: {\"modules\":[\"...\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"short\"}. ");
+        sb.Append("modules must be from the available list only. ");
+        sb.Append("Include a module only when one of its tools can carry out the request. If unsure, pure_chat=true. ");
+        sb.Append("pure_chat=true for general chat, coding, advice, stocks, crypto, and finance questions. ");
+
+        if (haSessionActive)
+        {
+            sb.Append("An active smart-home session exists. Short follow-ups that refer to it/that/them ");
+            sb.Append("(\"turn it off\", \"make it brighter\", \"what color is it?\") map to HomeAssistant, even without a device noun. ");
+        }
+
+        if (Has("HomeAssistant"))
+        {
+            sb.Append("HomeAssistant only controls house devices: lights, switches, climate, media players, covers, scenes, locks, vacuum, ");
+            sb.Append("brightness, color, turn on/off, volume, thermostat. It cannot trade, look up stocks, or answer questions. ");
+            sb.Append("When using HomeAssistant set target_module to \"HomeAssistant\" and include it in modules. ");
+        }
+        if (Has("Cloud"))
+            sb.Append("Cloud: generate/edit images with the selected cloud provider (use instead of Lemonade when Cloud is listed). ");
+        if (Has("Lemonade"))
+            sb.Append("Lemonade: local draw/generate images, edit images, or speak text. ");
+        if (Has("Gallery"))
+            sb.Append("Gallery: albums/save photos. ");
+        if (Has("Calendar"))
+            sb.Append("Calendar: schedule/add/list/update/delete calendar events and appointments. ");
+        if (Has("Notes"))
+            sb.Append("Notes: create notebooks, add/append note entries, attach chat images to notes. ");
+        if (Has("Pdf"))
+            sb.Append("Pdf: create/generate PDF documents from markdown, save PDFs to the device Documents library, list saved documents. ");
+        if (Has("Native"))
+        {
+            var caps = gate.EnabledNativeCapabilities();
+            if (caps.Count > 0)
+                sb.Append("Native: ").Append(string.Join(", ", caps)).Append(". ");
+        }
+        if (Has("BrowserAgent"))
+            sb.Append("BrowserAgent: control embedded browser only.");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildPrompt(
+        string message,
+        IReadOnlyList<string> available,
+        RoutingSession session)
+    {
+        bool Has(string module) => available.Any(m => m.Equals(module, StringComparison.OrdinalIgnoreCase));
+        var haSessionActive = Has("HomeAssistant") &&
+                              session.IsActive("HomeAssistant", ContextualRequestRouter.SessionTtl);
+
         var sb = new StringBuilder();
         sb.AppendLine("Available modules: " + string.Join(", ", available));
         sb.AppendLine("Example chat: {\"modules\":[],\"pure_chat\":true,\"target_module\":null,\"reason\":\"chit-chat\"}");
         sb.AppendLine("Example finance: {\"modules\":[],\"pure_chat\":true,\"target_module\":null,\"reason\":\"general question\"}");
-        sb.AppendLine("Example HomeAssistant: {\"modules\":[\"HomeAssistant\"],\"pure_chat\":false,\"target_module\":\"HomeAssistant\",\"reason\":\"kitchen light\"}");
-        sb.AppendLine("Example weather: {\"modules\":[\"Native\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"weather\"}");
+        if (Has("HomeAssistant"))
+            sb.AppendLine("Example HomeAssistant: {\"modules\":[\"HomeAssistant\"],\"pure_chat\":false,\"target_module\":\"HomeAssistant\",\"reason\":\"kitchen light\"}");
+        if (haSessionActive)
+        {
+            var last = string.IsNullOrWhiteSpace(session.LastEntityActedOn)
+                ? "unknown"
+                : session.LastEntityActedOn;
+            sb.AppendLine($"Active smart-home session: last entity {last}; last action {session.LastAction ?? "unknown"}.");
+            sb.AppendLine("Example follow-up: {\"modules\":[\"HomeAssistant\"],\"pure_chat\":false,\"target_module\":\"HomeAssistant\",\"reason\":\"follow-up to active light session\"}");
+        }
+        if (Has("Native"))
+            sb.AppendLine("Example utility: {\"modules\":[\"Native\"],\"pure_chat\":false,\"target_module\":null,\"reason\":\"weather or current facts\"}");
         sb.AppendLine();
         sb.AppendLine("User message:");
         sb.AppendLine(message.Length > 1500 ? message[..1500] : message);

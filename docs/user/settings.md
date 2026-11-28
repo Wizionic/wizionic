@@ -70,10 +70,10 @@ How many new tokens a chat reply may generate. Default is **16,384**. This is an
 Decides which tool **modules** (Native, Lemonade, Gallery, Notes, and so on) are attached before the model runs.
 
 - **Rules** — instant, no extra model call. Default.
-- **Hybrid** — rules for clear cases; a small model when the message is ambiguous.
+- **Hybrid** — rules for clear cases; a small model when the message is ambiguous. When only predictable tools are enabled (Time, Calculator, Notes, Calendar, Gallery, PDF), Hybrid stays on rules and skips the router model.
 - **AI router** — always classify with the routing model; falls back to rules only when that call fails. A Home Assistant pick is kept only when the message is a device command or includes the wake word.
 
-This is not the same as enabling MCP servers. Routing only chooses among modules that are already available.
+This is not the same as enabling MCP servers. Routing only chooses among modules that are already available. Turn individual built-in tools off under [Tools → Built-in](/help/tools); disabled tools are never offered to the model. Hosted router models (for example `wizionic/router`) appear in the routing dropdown but stay out of the normal chat model menu.
 
 ## Chat HTTP inspector {#chat-http-inspector}
 

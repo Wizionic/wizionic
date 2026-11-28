@@ -139,6 +139,7 @@ builder.Services.AddSingleton<App.Core.UI.IUrlEmbedOverlay>(
 // (ToolExecutionTrace no longer uses AsyncLocal — that type fails on WASM).
 builder.Services.AddScoped<IToolExecutionTrace, ToolExecutionTrace>();
 builder.Services.AddSingleton<IRoutingSessionStore, InMemoryRoutingSessionStore>();
+builder.Services.AddSingleton<BuiltinToolGate>();
 builder.Services.AddScoped<ContextualRequestRouter>();
 builder.Services.AddScoped<AiRequestRouter>();
 builder.Services.AddScoped<IRequestRouter, CompositeRequestRouter>();

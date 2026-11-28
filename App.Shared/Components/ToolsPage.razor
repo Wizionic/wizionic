@@ -8,6 +8,9 @@
 @inject App.Core.Connectors.OAuthReturnBridge? OAuthReturn
 @inject App.Core.Storage.IMcpToolRefresher? McpToolRefresher
 @inject App.Core.Connectors.IOpenApiConnectorRefresher? OpenApiRefresher
+@inject App.Shared.Services.Tools.IToolProvider ToolProvider
+@inject App.Shared.Services.Tools.BuiltinToolGate ToolGate
+@using App.Core.Tools
 @using App.Core.Connectors
 @using App.Core.Sync
 @using App.Shared.Services
@@ -85,20 +88,39 @@
     else
     {
 
-    <!-- ========== Built-in (always available) ========== -->
+    <!-- ========== Built-in (toggle per tool) ========== -->
     <section class="cf-conn-section cf-builtin-section">
         <div class="cf-conn-section-head">
             <h2 class="cf-conn-section-title">Built-in</h2>
-            <span class="cf-builtin-hint">Always available to chat · no install</span>
+            <span class="cf-builtin-hint">Only enabled tools are offered to chat</span>
         </div>
-        <div class="cf-builtin-chips">
-            @foreach (var t in BuiltinTools)
+        <div class="cf-builtin-tool-grid">
+            @{ var activeModules = ActiveModuleNames; }
+            @foreach (var t in VisibleBuiltinTools)
             {
-                <span class="cf-builtin-chip" title="@t.Detail">
+                var enabled = KeyStore.IsBuiltinToolEnabled(t.Id);
+                var available = activeModules.Contains(t.Module);
+                var state = !enabled ? "Off" : available ? "On" : "Needs setup";
+                <label class="cf-builtin-tool @(enabled ? "" : "is-off")" title="@t.Detail">
+                    <input type="checkbox"
+                           checked="@enabled"
+                           @onchange="e => ToggleBuiltinToolAsync(t, e)" />
                     <span class="cf-builtin-chip-icon" aria-hidden="true">@t.Icon</span>
-                    <span class="cf-builtin-chip-label">@t.Label</span>
-                </span>
+                    <span class="cf-builtin-tool-body">
+                        <span class="cf-builtin-tool-label">@t.Label</span>
+                        <span class="cf-builtin-tool-state">@state</span>
+                    </span>
+                </label>
             }
+        </div>
+        <div class="cf-builtin-actions">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="EnableAllBuiltinToolsAsync">
+                Enable all
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="DisableAllBuiltinToolsAsync">
+                Disable all
+            </button>
+            <span class="cf-builtin-hint">@RoutingHint</span>
         </div>
     </section>
 
@@ -465,32 +487,84 @@
     private void ShowFleetTab() => activeTab = "fleet";
     private void ShowToolsTab() => activeTab = "tools";
 
-    /// <summary>Compact list of always-on app tool modules (no enable/disable UI yet).</summary>
-    private static IReadOnlyList<BuiltinToolChip> BuiltinToolsBase { get; } =
+    /// <summary>Built-in capabilities. Native is split per function; other modules are one toggle.</summary>
+    private static readonly IReadOnlyList<BuiltinToolRow> BuiltinToolRows =
     [
-        new("🔎", "Web search", "DuckDuckGo search_web — current facts, news, prices"),
-        new("📖", "Summarize URL", "summarize_url — fetch and summarize any page"),
-        new("🌤", "Weather", "get_current_weather"),
-        new("🕒", "Time", "get_time / UTC clock"),
-        new("∑", "Calculator", "calculate — arithmetic"),
-        new("📓", "Notes", "Notebooks and entries"),
-        new("🖼", "Gallery", "Albums and chat images"),
-        new("📅", "Calendar", "Calendars and events"),
-        new("🍋", "Lemonade", "Local image / speech tools when Lemonade is configured"),
+        new(BuiltinToolCatalog.WebSearch, "🔎", "Web search", "Search the web for current facts, news, prices", "Native", false),
+        new(BuiltinToolCatalog.WebSummarize, "📖", "Summarize URL", "Fetch and summarize a specific page", "Native", false),
+        new(BuiltinToolCatalog.Weather, "🌤", "Weather", "Current conditions and forecasts", "Native", false),
+        new(BuiltinToolCatalog.Time, "🕒", "Time", "Current UTC date and time", "Native", false),
+        new(BuiltinToolCatalog.Calculator, "∑", "Calculator", "Arithmetic", "Native", false),
+        new(BuiltinToolCatalog.Notes, "📓", "Notes", "Notebooks and entries", "Notes", false),
+        new(BuiltinToolCatalog.Gallery, "🖼", "Gallery", "Albums and chat images", "Gallery", false),
+        new(BuiltinToolCatalog.Calendar, "📅", "Calendar", "Calendars and events", "Calendar", false),
+        new(BuiltinToolCatalog.Pdf, "📄", "PDF", "Generate PDFs and save to Documents", "Pdf", false),
+        new(BuiltinToolCatalog.LocalImages, "🍋", "Lemonade", "Local image and speech tools", "Lemonade", false),
+        new(BuiltinToolCatalog.CloudImages, "☁️", "Cloud images", "Generate and edit images with the selected cloud provider", "Cloud", false),
+        new(BuiltinToolCatalog.Browser, "🌐", "Web browser", "Embedded browser agent (desktop app)", "BrowserAgent", true),
+        new(BuiltinToolCatalog.HomeAssistant, "🏠", "Home Assistant", "Control HA devices (desktop app)", "HomeAssistant", true)
     ];
 
-    private static IReadOnlyList<BuiltinToolChip> BuiltinToolsMauiOnly { get; } =
-    [
-        new("🌐", "Web browser", "Embedded browser agent (desktop app)"),
-        new("🏠", "Home Assistant", "Control HA devices (desktop app)"),
-    ];
+    private IEnumerable<BuiltinToolRow> VisibleBuiltinTools =>
+        BuiltinToolRows.Where(t => !t.MauiOnly || AppEnvironment.IsMaui);
 
-    private IEnumerable<BuiltinToolChip> BuiltinTools =>
-        AppEnvironment.IsMaui
-            ? BuiltinToolsBase.Concat(BuiltinToolsMauiOnly)
-            : BuiltinToolsBase;
+    private HashSet<string> ActiveModuleNames =>
+        ToolProvider.GetActiveModules()
+            .Select(m => m.ModuleName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private sealed record BuiltinToolChip(string Icon, string Label, string Detail);
+    private string RoutingHint
+    {
+        get
+        {
+            var mode = KeyStore.ToolRoutingMode;
+            var active = ActiveModuleNames;
+            if (active.Count == 0)
+                return "All built-in tools are off — chat runs without tools.";
+            if (mode == ToolRoutingMode.Hybrid && !ToolGate.HasContextualToolsEnabled(active))
+                return "Hybrid uses rules only — no ambiguous tools are enabled.";
+            return mode switch
+            {
+                ToolRoutingMode.Ai => "AI router classifies every turn.",
+                ToolRoutingMode.Hybrid => "Hybrid uses rules first and AI when ambiguous.",
+                _ => "Rules only — instant, no router model call."
+            };
+        }
+    }
+
+    private async Task ToggleBuiltinToolAsync(BuiltinToolRow row, ChangeEventArgs e)
+    {
+        var enabled = e.Value is bool b
+            ? b
+            : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+
+        await KeyStore.SetBuiltinToolEnabledAsync(row.Id, enabled);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+        StateHasChanged();
+    }
+
+    private async Task EnableAllBuiltinToolsAsync()
+    {
+        await KeyStore.SetDisabledBuiltinToolIdsAsync([]);
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+        StateHasChanged();
+    }
+
+    private async Task DisableAllBuiltinToolsAsync()
+    {
+        await KeyStore.SetDisabledBuiltinToolIdsAsync(BuiltinToolCatalog.All.Select(t => t.Id));
+        await SettingsSyncHooks.AfterLocalSaveAsync(SettingsSync, SyncService, SettingsSyncCategory.Tools);
+        StateHasChanged();
+    }
+
+    private sealed record BuiltinToolRow(
+        string Id,
+        string Icon,
+        string Label,
+        string Detail,
+        string Module,
+        bool MauiOnly);
+
     private List<ManagedMcpTool> registryTools = new();
     private List<ManagedMcpTool> customTools = new();
     private bool isLoading;

@@ -49,11 +49,13 @@ If a room is missing, assign the entity to an area in Home Assistant, then **Ref
 
 ## Chat and Voice {#chat}
 
-In Chat, address the assistant name from Settings → Voice, then the command: `Hey Bro, play music on the Denon AVR`. Follow-ups like `make it louder` work for a while in the same chat after a successful device command.
+In Chat, address the assistant name from Settings → Voice, then the command: `Hey Bro, play music on the Denon AVR`. Follow-ups like `make it louder`, `turn it off`, or `what color is it?` work in the same chat after a successful device command.
 
 Voice mode (soundwave on the chat box) listens for that name, captures until you pause, then sends the turn. By default it waits for the wake word again so it does not transcribe music or background noise.
 
-Chat can list and control lights, media players, climate, covers, scenes, and scripts when Home Assistant is connected. The assistant is instructed to ask or refuse high-risk actions (locks, garage doors, alarms, unnamed scripts).
+Chat can list and control lights, media players, climate, covers, scenes, and scripts when Home Assistant is connected. Replies report the state and key attributes Home Assistant returns — brightness, color, volume, temperature. Color names and `#RRGGBB` values are resolved to RGB (`purple` = `#8000FF`, `magenta` = `#FF00FF`). After a light change Wizionic verifies the readback, polls briefly for lag, and retries once with the current brightness when needed. If the color still does not match, chat says it was not confirmed instead of claiming success. The assistant is instructed not to invent values. It also asks or refuses high-risk actions (locks, garage doors, alarms, unnamed scripts).
+
+If you turn Home Assistant off under **Tools → Built-in**, chat says the tool is turned off and where to re-enable it. It can still use earlier tool results for context, but it will not claim to control a device.
 
 ## Setup wizard {#setup-wizard}
 

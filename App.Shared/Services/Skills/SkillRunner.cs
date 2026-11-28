@@ -85,10 +85,11 @@ public sealed class SkillRunner : ISkillRunner
         var resolution = SkillToolResolver.Resolve(doc.AllowedTools);
         var active = _tools.GetActiveModules().Select(m => m.ModuleName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var modules = resolution.Modules
-            .Where(m => active.Contains(m) || string.Equals(m, "Native", StringComparison.OrdinalIgnoreCase))
+            .Where(m => active.Contains(m))
             .ToList();
-        if (modules.Count == 0)
-            modules = resolution.Modules.ToList();
+        var disabledModules = resolution.Modules
+            .Where(m => !active.Contains(m))
+            .ToList();
 
         var body = !string.IsNullOrWhiteSpace(request.BodyOverride)
             ? request.BodyOverride!
@@ -96,6 +97,12 @@ public sealed class SkillRunner : ISkillRunner
 
         var prior = SkillPriorOutcomes.Format(_runLogs, record.Id);
         var system = BuildSkillSystemPrompt(doc, body, request.Parameters, resolution, modelId, prior);
+        if (disabledModules.Count > 0)
+        {
+            system += "\n\nUnavailable tools (disabled or not configured on this device): " +
+                      string.Join(", ", disabledModules) +
+                      ". Do not claim to have used them. If the task requires one, explain which tool to enable in Tools.";
+        }
         var userMsg = string.IsNullOrWhiteSpace(request.UserMessageOverride)
             ? $"Execute the skill `{doc.Name}` now. Follow every step completely and use the available tools."
             : request.UserMessageOverride!.Trim();
